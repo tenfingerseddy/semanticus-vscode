@@ -1,0 +1,26 @@
+# Semanticus fulfillment Worker — see README.md for the full deploy runbook.
+name = "semanticus-fulfillment"
+main = "worker.mjs"
+compatibility_date = "2026-07-01"
+
+# KV namespace for sale records. Create once with:
+#   npx wrangler kv namespace create FULFILL_KV
+# and paste the id it prints here.
+[[kv_namespaces]]
+binding = "FULFILL_KV"
+id = "20044fdb86fe4e628b0a637aa236d7d7"
+
+[vars]
+# Paddle price ids (public — they appear in the site's checkout JS too).
+PRICE_ANNUAL = "pri_01kwnbs1c84h2ew4vhtp8jqf0j"
+PRICE_MONTHLY = "pri_01kwnbtsvcg14xzwt8s7k4125w"
+# Sender must be on a Resend-verified domain; the owner copy rides Cloudflare Email Routing.
+FROM_EMAIL = "Semanticus <hello@semanticus.com.au>"
+OWNER_EMAIL = "hello@semanticus.com.au"
+
+# Secrets (set via `npx wrangler secret put <NAME>` — pasted interactively, never in this file):
+#   PADDLE_WEBHOOK_SECRET   the notification destination's secret ("pdl_ntfset_…")
+#   PADDLE_API_KEY          server-side API key (customer email lookup only)
+#   SEMANTICUS_SIGNING_KEY  PKCS8 base64 private key from `Semanticus.License keygen`
+#   RESEND_API_KEY          optional until Resend is set up — mints queue as pending-delivery
+#   ADMIN_KEY               any long random string; bearer token for GET /pending

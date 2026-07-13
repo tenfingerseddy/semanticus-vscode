@@ -1,0 +1,162 @@
+{
+  "$comment": "ProBench v1 frozen task corpus. 24 tasks: 6 basic (weight 1), 10 intermediate (2), 8 advanced (3). Schema targets the SQLBI-style Contoso star (Sales/Product/'Date'/Customer/Store; Sales[Order Date]->'Date'[Date] active, Sales[Delivery Date]->'Date'[Date] inactive). referenceDax is the reviewed known-good answer; it is NEVER shown to any arm. matrix.groupBy columns are materialized into frozen cells at gold time (top members + requested edges). Tasks marked requires[] need the staged fiscal calendar column.",
+  "schemaAssumptions": {
+    "tables": ["Sales", "Product", "'Date'", "Customer", "Store"],
+    "columns": [
+      "Sales[Quantity]", "Sales[Net Price]", "Sales[Unit Price]", "Sales[Unit Cost]",
+      "Sales[Order Date]", "Sales[Delivery Date]", "Sales[Order Number]", "Sales[CustomerKey]", "Sales[StoreKey]",
+      "Product[Category]", "Product[Subcategory]", "Product[Brand]", "Product[Product Name]",
+      "'Date'[Date]", "'Date'[Year]", "'Date'[Month]",
+      "Customer[Country]", "Store[Country]", "Store[Name]"
+    ],
+    "inactiveRelationship": "Sales[Delivery Date] -> 'Date'[Date]"
+  },
+  "tasks": [
+    {
+      "id": "B1-total-sales", "tier": "basic", "failureMode": "none",
+      "prompt": "Create a measure that returns total sales revenue: the sum over sales rows of quantity times net price.",
+      "referenceDax": "SUMX ( Sales, Sales[Quantity] * Sales[Net Price] )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Category]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "B2-distinct-buyers", "tier": "basic", "failureMode": "none",
+      "prompt": "Create a measure that counts how many distinct customers made at least one purchase.",
+      "referenceDax": "DISTINCTCOUNT ( Sales[CustomerKey] )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Category]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "B3-avg-order-value", "tier": "basic", "failureMode": "blank-error",
+      "prompt": "Create a measure for average order value: total sales revenue divided by the number of distinct orders. It must not error or show anything misleading where there are no orders.",
+      "referenceDax": "DIVIDE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), DISTINCTCOUNT ( Sales[Order Number] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Brand]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "B4-total-quantity", "tier": "basic", "failureMode": "none",
+      "prompt": "Create a measure for total units sold.",
+      "referenceDax": "SUM ( Sales[Quantity] )",
+      "matrix": { "groupBy": ["Product[Brand]", "Store[Country]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "B5-total-margin", "tier": "basic", "failureMode": "none",
+      "prompt": "Create a measure for total gross margin in currency: quantity times (net price minus unit cost), summed over sales rows.",
+      "referenceDax": "SUMX ( Sales, Sales[Quantity] * ( Sales[Net Price] - Sales[Unit Cost] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Category]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "B6-margin-pct", "tier": "basic", "failureMode": "blank-error",
+      "prompt": "Create a measure for gross margin percentage: gross margin divided by sales revenue. Where there is no revenue it must show blank, not an error and not zero.",
+      "referenceDax": "DIVIDE ( SUMX ( Sales, Sales[Quantity] * ( Sales[Net Price] - Sales[Unit Cost] ) ), SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Subcategory]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "beyondDateRange", "grandTotal"] }
+    },
+
+    {
+      "id": "I1-fiscal-ytd", "tier": "intermediate", "failureMode": "time-intel-at-grains",
+      "prompt": "Create a fiscal year-to-date sales revenue measure. The fiscal year ends on 30 June. It must be correct at day, month and year grain.",
+      "referenceDax": "TOTALYTD ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), 'Date'[Date], \"30/6\" )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal", "fiscalBoundaryMonths"] }
+    },
+    {
+      "id": "I2-sales-py", "tier": "intermediate", "failureMode": "time-intel-at-grains",
+      "prompt": "Create a measure for sales revenue in the same period of the previous year. It must be correct at year and month grain, and blank where the previous year has no data.",
+      "referenceDax": "CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), SAMEPERIODLASTYEAR ( 'Date'[Date] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["firstYearInData", "beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "I3-yoy-growth", "tier": "intermediate", "failureMode": "blank-error",
+      "prompt": "Create a year-over-year sales growth percentage measure: (this period minus same period last year) divided by same period last year. It must be blank, not an error and not a misleading number, where last year has no sales.",
+      "referenceDax": "VAR s = SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) VAR py = CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), SAMEPERIODLASTYEAR ( 'Date'[Date] ) ) RETURN DIVIDE ( s - py, py )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Category]"], "maxMembersPerColumn": 3, "edges": ["firstYearInData", "emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "I4-delivered-revenue", "tier": "intermediate", "failureMode": "relationship-ambiguity",
+      "prompt": "Create a measure for sales revenue attributed to the date the goods were DELIVERED, not the date they were ordered. The model's date table relates to the order date by default.",
+      "referenceDax": "CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), USERELATIONSHIP ( Sales[Delivery Date], 'Date'[Date] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "I5-avg-revenue-per-customer", "tier": "intermediate", "failureMode": "context-transition",
+      "prompt": "Create a measure for the average sales revenue per purchasing customer: for the customers who bought in the current context, their average total revenue.",
+      "referenceDax": "AVERAGEX ( VALUES ( Sales[CustomerKey] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Product[Category]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "I6-pct-of-category-total", "tier": "intermediate", "failureMode": "filter-manipulation",
+      "prompt": "Create a measure showing each product category's sales revenue as a percentage of the revenue of ALL categories (other filters, like year, still apply). At the all-categories level it should show 100%.",
+      "referenceDax": "DIVIDE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), ALL ( Product[Category] ) ) )",
+      "matrix": { "groupBy": ["Product[Category]", "'Date'[Year]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "I7-running-total", "tier": "intermediate", "failureMode": "time-intel-at-grains",
+      "prompt": "Create an all-time running total of sales revenue: for any period, the cumulative revenue from the beginning of the data through the end of that period.",
+      "referenceDax": "CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), FILTER ( ALL ( 'Date'[Date] ), 'Date'[Date] <= MAX ( 'Date'[Date] ) ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "I8-orders-per-customer", "tier": "intermediate", "failureMode": "blank-error",
+      "prompt": "Create a measure for the average number of distinct orders per purchasing customer. Blank where there are no customers.",
+      "referenceDax": "DIVIDE ( DISTINCTCOUNT ( Sales[Order Number] ), DISTINCTCOUNT ( Sales[CustomerKey] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Store[Country]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "I9-best-product-quantity", "tier": "intermediate", "failureMode": "non-additivity",
+      "prompt": "Create a measure that returns the units sold of the single best-selling product (by units) in the current context. Note this does NOT add up across contexts: the total level shows the best product overall, not a sum.",
+      "referenceDax": "MAXX ( VALUES ( Product[Product Name] ), CALCULATE ( SUM ( Sales[Quantity] ) ) )",
+      "matrix": { "groupBy": ["Product[Category]", "'Date'[Year]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "I10-new-customers", "tier": "intermediate", "failureMode": "context-transition",
+      "prompt": "Create a measure counting NEW customers: customers whose first-ever purchase falls inside the current period.",
+      "referenceDax": "COUNTROWS ( FILTER ( VALUES ( Sales[CustomerKey] ), CALCULATE ( MIN ( Sales[Order Date] ), ALL ( 'Date' ) ) >= MIN ( 'Date'[Date] ) && CALCULATE ( MIN ( Sales[Order Date] ), ALL ( 'Date' ) ) <= MAX ( 'Date'[Date] ) ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["firstYearInData", "grandTotal"] }
+    },
+
+    {
+      "id": "A1-prev-month-fiscal-boundary", "tier": "advanced", "failureMode": "time-intel-at-grains",
+      "prompt": "Create a measure for the previous month's sales revenue. It must work across year boundaries, and at grains where a single previous month is not defined (for example year grain) it must show blank rather than a misleading number.",
+      "referenceDax": "IF ( ISFILTERED ( 'Date'[Month] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), PREVIOUSMONTH ( 'Date'[Date] ) ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["firstYearInData", "grandTotal", "fiscalBoundaryMonths"] }
+    },
+    {
+      "id": "A2-top10-share", "tier": "advanced", "failureMode": "filter-manipulation",
+      "prompt": "Create a measure for the revenue share of the top 10 products: the combined sales revenue of the 10 highest-revenue products in the current context, divided by total revenue in the current context.",
+      "referenceDax": "VAR total = SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) VAR top10 = SUMX ( TOPN ( 10, VALUES ( Product[Product Name] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) ) ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) ) ) RETURN DIVIDE ( top10, total )",
+      "matrix": { "groupBy": ["Product[Category]", "'Date'[Year]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "A3-weighted-avg-price", "tier": "advanced", "failureMode": "non-additivity",
+      "prompt": "Create a measure for the average selling price per unit, weighted by units: total revenue divided by total units. It must be correct at every grain (a simple average of prices is wrong) and blank where nothing was sold.",
+      "referenceDax": "DIVIDE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), SUM ( Sales[Quantity] ) )",
+      "matrix": { "groupBy": ["Product[Subcategory]", "'Date'[Year]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "A4-avg-monthly-revenue", "tier": "advanced", "failureMode": "context-transition",
+      "prompt": "Create a measure for average monthly sales revenue: the average, over the months visible in the current context that have sales, of each month's revenue. At month grain it should equal that month's revenue.",
+      "referenceDax": "AVERAGEX ( VALUES ( 'Date'[Month] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "A5-delivery-lag", "tier": "advanced", "failureMode": "blank-error",
+      "prompt": "Create a measure for the average delivery lag in days: the average number of days between order date and delivery date over sales rows, ignoring rows with no delivery date. Blank when no rows qualify.",
+      "referenceDax": "AVERAGEX ( FILTER ( Sales, NOT ISBLANK ( Sales[Delivery Date] ) ), INT ( Sales[Delivery Date] - Sales[Order Date] ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "Store[Country]"], "maxMembersPerColumn": 3, "edges": ["emptyIntersection", "grandTotal"] }
+    },
+    {
+      "id": "A6-customers-cumulative", "tier": "advanced", "failureMode": "non-additivity",
+      "prompt": "Create a measure for the cumulative number of distinct customers acquired: how many distinct customers have made their first purchase on or before the end of the current period. This is non-additive: the year total is NOT the sum of the months.",
+      "referenceDax": "VAR cutoff = MAX ( 'Date'[Date] ) RETURN COUNTROWS ( FILTER ( CALCULATETABLE ( VALUES ( Sales[CustomerKey] ), ALL ( 'Date' ) ), CALCULATE ( MIN ( Sales[Order Date] ), ALL ( 'Date' ) ) <= cutoff ) )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "A7-delivered-vs-ordered-gap", "tier": "advanced", "failureMode": "relationship-ambiguity",
+      "prompt": "Create a measure for the difference between revenue by delivery date and revenue by order date for the same period (delivered minus ordered). The model's date table relates to order date by default.",
+      "referenceDax": "CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ), USERELATIONSHIP ( Sales[Delivery Date], 'Date'[Date] ) ) - SUMX ( Sales, Sales[Quantity] * Sales[Net Price] )",
+      "matrix": { "groupBy": ["'Date'[Year]", "'Date'[Month]"], "maxMembersPerColumn": 4, "edges": ["beyondDateRange", "grandTotal"] }
+    },
+    {
+      "id": "A8-pareto-category-rank", "tier": "advanced", "failureMode": "filter-manipulation",
+      "prompt": "Create a measure that ranks product categories by sales revenue within the current context (1 = highest revenue), blank for categories with no sales, and blank at the all-categories level.",
+      "referenceDax": "VAR s = SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) RETURN IF ( ISINSCOPE ( Product[Category] ) && NOT ISBLANK ( s ), RANKX ( ALL ( Product[Category] ), CALCULATE ( SUMX ( Sales, Sales[Quantity] * Sales[Net Price] ) ), s, DESC, DENSE ) )",
+      "matrix": { "groupBy": ["Product[Category]", "'Date'[Year]"], "maxMembersPerColumn": 4, "edges": ["emptyIntersection", "grandTotal"] }
+    }
+  ]
+}

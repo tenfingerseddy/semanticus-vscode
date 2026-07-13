@@ -1,0 +1,5 @@
+# Per-platform packaging outputs (built by scripts/package.mjs, never committed):
+#   engine/ = a transient self-contained engine publish, staged into the vsix then cleaned
+#   dist/   = the produced .vsix files
+engine/
+dist/

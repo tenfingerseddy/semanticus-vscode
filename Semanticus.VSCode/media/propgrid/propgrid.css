@@ -1,0 +1,49 @@
+:root { --gap: 10px; }
+body { font: var(--vscode-font-size)/1.45 var(--vscode-font-family); color: var(--vscode-foreground); margin: 0; }
+.empty { padding: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.hdr { padding: 7px var(--gap); font-weight: 600; font-size: 12px; background: var(--vscode-sideBar-background); position: sticky; top: 0; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi { color: var(--vscode-charts-blue, var(--vscode-textLink-foreground)); }
+.search { position: sticky; top: 28px; z-index: 2; padding: 4px var(--gap) 6px; background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
+.search input { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; font-size: 12px; border-radius: 3px; }
+.cat { display: flex; align-items: center; gap: 4px; padding: 6px var(--gap) 3px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); cursor: pointer; user-select: none; position: sticky; top: 58px; background: var(--vscode-sideBar-background); }
+.cat:hover { color: var(--vscode-foreground); }
+.twist { display: inline-block; width: 9px; transition: transform .1s; }
+.collapsed .twist { transform: rotate(-90deg); }
+.rowx { display: grid; grid-template-columns: 42% 58%; align-items: start; gap: 6px; padding: 2px var(--gap); }
+.rowx label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; cursor: help; }
+.rowx.changed label { color: var(--vscode-charts-green, var(--vscode-foreground)); }
+input[type=text], input[type=number], select, textarea { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 2px 5px; font-size: 12px; border-radius: 3px; font-family: inherit; }
+textarea { resize: none; overflow: hidden; min-height: 22px; line-height: 1.4; }
+input::placeholder, textarea::placeholder { color: var(--vscode-input-placeholderForeground); font-style: italic; }
+input[type=checkbox] { accent-color: var(--vscode-checkbox-foreground); justify-self: start; margin: 2px 0 0; width: 15px; height: 15px; }
+.ro { font-size: 12px; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.err { grid-column: 1 / -1; color: var(--vscode-errorForeground); font-size: 11px; padding: 1px 0 2px; }
+.invalid { border-color: var(--vscode-errorForeground) !important; }
+.hint { grid-column: 1 / -1; color: var(--vscode-descriptionForeground); font-size: 11px; padding: 1px 0 2px; }
+.btn { font-family: inherit; font-size: 11px; padding: 2px 9px; border: none; border-radius: 3px; cursor: pointer; background: var(--vscode-button-secondaryBackground, var(--vscode-input-background)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+.btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-input-background)); }
+.btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.btn.primary:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+/* Format String picker: input + a dropdown affordance; the popup lists the catalog's common entries per category. */
+.combo { position: relative; display: flex; gap: 2px; min-width: 0; }
+.combo input { flex: 1; min-width: 0; }
+.combo-btn { flex: none; width: 18px; padding: 0; border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 9px; }
+.combo-btn:hover { color: var(--vscode-foreground); }
+.combo-pop { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin-top: 2px; max-height: 300px; overflow-y: auto; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border)); border-radius: 4px; box-shadow: 0 4px 10px rgba(0,0,0,.35); }
+.combo-cat { padding: 5px 8px 2px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
+.combo-item { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.combo-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.15)); }
+.combo-item code { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo-note { padding: 4px 8px 6px; font-size: 10px; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border); }
+/* Format expression (a measure's dynamic format): status + Edit, expanding into a lightweight DAX editor. */
+.fx-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fx-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; background: var(--vscode-input-background); padding: 2px 5px; border-radius: 3px; }
+.fx-none { flex: 1; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.fx-locked { white-space: normal; }
+.fx-panel { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-editor-background); }
+.fx-ta { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+.fx-msg { color: var(--vscode-errorForeground); font-size: 11px; }
+.fx-msg:empty { display: none; }
+.fx-actions { display: flex; align-items: center; gap: 6px; }
+.fx-actions .hint { padding: 0; }

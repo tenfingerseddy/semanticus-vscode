@@ -1,0 +1,13 @@
+{
+  "name": "semanticus-uishot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Headless screenshot harness for the Semanticus Studio webview (renders the built media/studio bundle with the engine mocked, then screenshots a tab via Edge/Chromium).",
+  "scripts": {
+    "shot": "node shot.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}

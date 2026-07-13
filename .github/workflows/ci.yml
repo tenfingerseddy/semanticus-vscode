@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main, ai-readiness-rules]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: build + smokes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive          # the vendored TE2 TOMWrapper donor (pinned)
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4       # ANTLR DAX-lexer codegen (FormulaFixup) needs a JDK at build time
+        with:
+          distribution: microsoft
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: Semanticus.VSCode/package-lock.json
+      - name: Install extension dependencies from the lockfile
+        working-directory: Semanticus.VSCode
+        run: npm ci --no-fund --no-audit
+      - name: Extension behavioral tests
+        working-directory: Semanticus.VSCode
+        run: npm test
+      - name: Build the solution (hermetic — this run IS the proof of the cross-platform offline lane)
+        run: dotnet build Semanticus.sln -c Release
+      - name: 'Unit tests: dual-drive / interleaved-undo / FormulaFixup invariants (xUnit)'
+        run: dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build
+      # The smoke runners ARE the integration harness (complement the unit tests above). They degrade live-only checks (no XMLA / no local Power BI
+      # Desktop on a runner) to logged skips, so the OFFLINE invariants are what CI asserts here.
+      - name: 'Smoke: engine core / TMDL round-trip'
+        run: dotnet run --project Semanticus.Smoke -c Release --no-build
+      - name: 'Smoke: RPC two-client shared session'
+        run: dotnet run --project Semanticus.RpcSmoke -c Release --no-build
+      - name: 'Smoke: MCP agent edit seen live'
+        run: dotnet run --project Semanticus.McpSmoke -c Release --no-build
+      - name: 'Smoke: learning loop L0→L2 wiring (gate-fail → post-mortem insight → same-shape recall over the MCP door)'
+        run: dotnet run --project Semanticus.LearnSmoke -c Release --no-build
+      - name: 'Bench: learning-loop efficacy A/B (scripted agent, memory ON vs OFF — returns nonzero if lift is not positive)'
+        run: dotnet run --project Semanticus.LearnBench -c Release --no-build
+      - name: 'Smoke: AI-readiness scan / score / safe-fix / change-plan (+ READ-ONLY live model when the SP + test dataset are set)'
+        run: dotnet run --project Semanticus.AirSmoke -c Release --no-build
+        env:
+          # SP creds + a configured test dataset (SEMANTICUS_LIVE_XMLA = the workspace XMLA endpoint, SEMANTICUS_LIVE_DB
+          # = the semantic model). When all are set, AirSmoke runs the READ-ONLY live model lane (open_live → run_dax →
+          # vertipaq_scan → ai_readiness_scan_live) against the tenant; unset → it skips (offline-green). No live writes.
+          FABRIC_CLIENT: ${{ secrets.FABRIC_CLIENT }}
+          FABRIC_SECRET: ${{ secrets.FABRIC_SECRET }}
+          FABRIC_TENANT: ${{ secrets.FABRIC_TENANT }}
+          SEMANTICUS_LIVE_XMLA: ${{ secrets.SEMANTICUS_LIVE_XMLA }}
+          SEMANTICUS_LIVE_DB: ${{ secrets.SEMANTICUS_LIVE_DB }}
+      - name: 'Smoke: ALM compare / cherry-pick / reference-tree (+ READ-ONLY live Fabric when the SP secrets are set)'
+        run: dotnet run --project Semanticus.CicdSmoke -c Release --no-build
+        env:
+          # The CI service principal (RELEASE-CHECKLIST). When these org/repo secrets are set, CicdSmoke verifies the
+          # READ-ONLY Fabric REST surface against the real tenant; when unset they're empty → the live block skips
+          # (offline-green). Never used for live WRITES (those are confirm + SEMANTICUS_LIVE_WRITES_OK gated).
+          FABRIC_CLIENT: ${{ secrets.FABRIC_CLIENT }}
+          FABRIC_SECRET: ${{ secrets.FABRIC_SECRET }}
+          FABRIC_TENANT: ${{ secrets.FABRIC_TENANT }}
+
+  vsix:
+    name: package extension (.vsix, unsigned)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: Semanticus.VSCode/package-lock.json
+      - name: Install extension dependencies from the lockfile
+        working-directory: Semanticus.VSCode
+        run: npm ci --no-fund --no-audit
+      - name: Package and verify the Windows x64 production VSIX
+        working-directory: Semanticus.VSCode
+        run: npm run package:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semanticus-win32-x64-vsix
+          path: Semanticus.VSCode/dist/semanticus-win32-x64-*.vsix
+          if-no-files-found: error

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Semanticus.PerfSmoke</RootNamespace>
+    <AssemblyName>Semanticus.PerfSmoke</AssemblyName>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Engine\Semanticus.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\external\TabularEditor\TOMWrapperTest\TestData\AdventureWorks.bim"
+          Link="TestData\AdventureWorks.bim"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

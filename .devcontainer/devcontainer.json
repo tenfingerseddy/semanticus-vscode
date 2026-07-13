@@ -1,0 +1,16 @@
+{
+  "name": "Semanticus (.NET 8 + JDK)",
+  "image": "mcr.microsoft.com/devcontainers/dotnet:1-8.0",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": { "version": "17", "jdkDistro": "ms" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+  "comment": "JDK is required by the ANTLR DAX-lexer codegen (FormulaFixup); Node is for the VS Code extension + React webview. The vendored TE2 TOMWrapper is a pinned submodule.",
+  "updateContentCommand": "git submodule update --init --depth 1 external/TabularEditor",
+  "postCreateCommand": "dotnet restore Semanticus.sln",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-dotnettools.csdevkit"]
+    }
+  }
+}

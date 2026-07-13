@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Semanticus.Engine (M1)
+    ======================
+    The long-lived sidecar process. Owns the canonical in-memory model (one Session per workspace)
+    and exposes it through TWO front doors over the SAME SessionManager:
+      (A) RpcHost  - StreamJsonRpc over a named pipe  <- the VS Code extension UI
+      (B) McpHost  - MCP over stdio (added in Phase B) <- the user's Claude Code
+    All model access is serialized through a single-writer ModelDispatcher thread, so TOM (which is
+    not thread-safe) is only ever touched by one thread. Change events fan out to every connected
+    client via the ChangeBus -> model/didChange notifications, which is what makes one driver's edits
+    appear live to the other.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Semanticus.Engine</RootNamespace>
+    <AssemblyName>Semanticus.Engine</AssemblyName>
+    <LangVersion>11.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS1591;VSTHRD200;VSTHRD103;VSTHRD003;VSTHRD110</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Core\Semanticus.Core.csproj" />
+    <ProjectReference Include="..\Semanticus.Analysis\Semanticus.Analysis.csproj" />
+  </ItemGroup>
+
+  <!-- Curated format-string template library (docs scratchpad format-string-template-library.md): the SINGLE
+       source of truth, compiled into the engine and served identically to the webview (RPC) and the agent (MCP)
+       via list_format_templates. Embedded (not CopyToOutput) so it can't drift from the binary or go missing. -->
+  <ItemGroup>
+    <EmbeddedResource Include="format-templates.json" />
+  </ItemGroup>
+
+  <!-- The Model Interview failure-to-fix map is catalog data, embedded so it cannot drift from the binary. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Catalog\interview-fix-map.json" Link="interview-fix-map.json" />
+  </ItemGroup>
+
+  <!-- The built-in hard-question pack is embedded catalog data like the fix map above. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Catalog\interview-hard-pack.json" Link="interview-hard-pack.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dax.Model.Extractor" Version="1.12.0" />
+    <PackageReference Include="Dax.Vpax" Version="1.12.1" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.AnalysisServices.AdomdClient" Version="19.114.0" />
+    <PackageReference Include="Microsoft.AnalysisServices" Version="19.114.0" />
+    <PackageReference Include="Azure.Identity" Version="1.13.1" />
+  </ItemGroup>
+
+  <!-- Stock workflow library (docs/pro-mode-spec.md §6): ship the seed *.md beside the binary,
+       read-only at runtime (a user file in .semanticus/workflows shadows one of the same name).
+       Copied transitively to referencing projects' output so the parse-proof tests see it too. -->
+  <ItemGroup>
+    <None Include="workflows\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Stock workflow TEMPLATES (docs/pro-mode-spec.md §10 — the customisation layer): ship the seed
+       recipes beside the binary in their OWN dir, read-only (a user file in .semanticus/workflow-templates
+       shadows one of the same name). Separate dir on purpose — a shelf is not the board: the workflow
+       loader, seed counts, and list_workflows are untouched. Copied transitively like the workflows above. -->
+  <ItemGroup>
+    <None Include="workflow-templates\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,23 @@
+{
+  "comment": "The Model Interview failure→fix FALLBACK map (docs/product-innovation-brainstorm.md §1). Keyed {tier, outcome} → an AI-readiness rule id (Semanticus.Analysis/ReadinessRules.cs) + a PLAIN-language hint the Studio card shows verbatim (never a rule id — Kane's UX bar). A question's author-supplied fixRuleId always wins; this table only fills the gap so a red row is never a dead end. Lives beside docs/ai-readiness-catalog.json as data (not hardcoded) and is embedded into Semanticus.Engine at build (the format-templates.json precedent) so it cannot drift from the binary. Unverified has no entries on purpose: 'couldn't check' is a connectivity/authoring gap, not a model fix.",
+  "map": [
+    {
+      "tier": "value",
+      "outcome": "SilentlyWrong",
+      "ruleId": "DAC-VERIFIED-ANSWERS",
+      "hint": "Record a verified answer for this question so AI returns the trusted number."
+    },
+    {
+      "tier": "paraphrase",
+      "outcome": "SilentlyWrong",
+      "ruleId": "SYN-FIELD",
+      "hint": "Add synonyms so different phrasings of this question land on the same field."
+    },
+    {
+      "tier": "refusal",
+      "outcome": "SilentlyWrong",
+      "ruleId": "DAC-AI-INSTRUCTIONS",
+      "hint": "Add AI instructions saying what this model cannot answer, so the assistant declines instead of guessing."
+    }
+  ]
+}

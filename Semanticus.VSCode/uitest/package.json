@@ -1,0 +1,13 @@
+{
+  "name": "semanticus-uitest",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Headless render harness: screenshots the Studio webview bundle with mocked engine RPC, for iterating on the UI without VS Code.",
+  "scripts": {
+    "shoot": "node shoot.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

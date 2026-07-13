@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Semanticus.Analysis (P-AIR1)
+    ============================
+    The AI-Readiness analyzer: scores a semantic model A-F for AI consumers (Copilot / Q&A / Fabric
+    Data Agents / NL) and produces findings + safe deterministic remediations. Built as a clean,
+    modern, typed rule set over the TOMWrapper model — deliberately NOT the TE2 Dynamic-LINQ fork
+    ("only what's good from TE2; better way if there is one"). The curated rules are ours, so typed
+    C# rules are more testable/debuggable than user-authored LINQ strings. (TE2's BPALib remains the
+    home for general user-authored structural BPA later.)
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Semanticus.Analysis</RootNamespace>
+    <AssemblyName>Semanticus.Analysis</AssemblyName>
+    <LangVersion>11.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS1591;CS0618;CS0612</NoWarn>
+    <!-- Root of the pristine TE2 donor clone (same conditional as Core): in-repo submodule first, sibling fallback. -->
+    <TE2 Condition="Exists('$(MSBuildThisFileDirectory)..\external\TabularEditor\TOMWrapper')">$(MSBuildThisFileDirectory)..\external\TabularEditor</TE2>
+    <TE2 Condition="'$(TE2)' == ''">$(MSBuildThisFileDirectory)..\..\TabularEditor</TE2>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Core\Semanticus.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The genuinely-valuable, self-contained BPA IP: the legacy System.Linq.Dynamic engine that
+       evaluates standard BPARules.json predicate/fix expressions. Compiled in place from the donor. -->
+  <ItemGroup>
+    <Compile Include="$(TE2)\TabularEditor\UIServices\DynamicLinq.cs" />
+  </ItemGroup>
+
+  <!-- The canonical Power BI Best-Practice ruleset (TabularEditor/BestPracticeRules, MIT), bundled as the
+       default BPA rule set. BpaRuleSet.Standard() reads this embedded resource. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Rules\BPARules-PowerBI.json" />
+  </ItemGroup>
+
+</Project>

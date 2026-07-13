@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Semanticus.CicdSmoke</RootNamespace>
+    <AssemblyName>Semanticus.CicdSmoke</AssemblyName>
+    <LangVersion>11.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>$(NoWarn);VSTHRD200;VSTHRD103;VSTHRD003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Engine\Semanticus.Engine.csproj" />
+    <ProjectReference Include="..\Semanticus.Analysis\Semanticus.Analysis.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,374 @@
+{
+ "pinnedAt": "2026-07-04T06:00:42.951Z",
+ "corpus": [
+  {
+   "repo": "microsoft/PowerBI-LogAnalytics-Template-Reports",
+   "path": "PBIASEngine/src/SemanticModel",
+   "format": "tmdl",
+   "kind": "microsoft-sample",
+   "license": "MIT",
+   "notes": "Official Log Analytics template report; 22-table TMDL model",
+   "commit": "787064bfc54f26c0af32e7f16b8de504effb8228"
+  },
+  {
+   "repo": "microsoft/fabric-samples",
+   "path": "docs-samples/data-science/enrich-powerbi-report-with-machine-learning/Bank Customer Churn Analysis/Bank Customer Churn Analysis/Bank Customer Churn Analysis.SemanticModel",
+   "format": "tmdl",
+   "kind": "microsoft-sample",
+   "license": "MIT",
+   "notes": "Official Fabric docs sample; single flat churn table",
+   "commit": "0284cf0f60096ec56bbe8da07ef323ca39400797"
+  },
+  {
+   "repo": "microsoft/fabric-racing-sim",
+   "path": "src/Forza Session Report.SemanticModel",
+   "format": "tmdl",
+   "kind": "microsoft-sample",
+   "license": "MIT",
+   "notes": "Fabric racing-sim demo; 9-table telemetry model",
+   "commit": "a2a9184ee4ea71982a8522bd7c320977a9b471a4"
+  },
+  {
+   "repo": "Azure/tech-debt-analytics",
+   "path": "report/appcat.SemanticModel",
+   "format": "tmdl",
+   "kind": "microsoft-sample",
+   "license": "MIT",
+   "notes": "Azure AppCAT tech-debt report; 6 tables",
+   "commit": "686d1bab01f70e375364f69998abc0c46bd701e5"
+  },
+  {
+   "repo": "microsoft/Analysis-Services",
+   "path": "AsPartitionProcessing/AsPartitionProcessing.AdventureWorks/Model.bim",
+   "format": "bim",
+   "kind": "microsoft-sample",
+   "license": "MIT",
+   "notes": "Official AS samples; AdventureWorks TMSL (63 KB)",
+   "commit": "61ee41607dfb0fa50378165fdb0fc03042c0ef17"
+  },
+  {
+   "repo": "kevchant/GitHub-FUAM-Deploymenator",
+   "path": "workspace/FUAM_Core_SM.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "FUAM (Fabric admin monitoring) core model; 35 tables",
+   "commit": "e51de45601af3977aa721dc6aca36beb90c8e5df"
+  },
+  {
+   "repo": "alisonpezzott/pbi-docs",
+   "path": "pbi/pbi_docs_report.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Community model-documentation tool; 11 tables",
+   "commit": "2470004d1df31a0243a9912753c7ec634d8e66a2"
+  },
+  {
+   "repo": "ProdataSQL/FinancialModelling",
+   "path": "Workspace/Finance-GL.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Consultancy financial-modelling patterns; 11 tables",
+   "commit": "ec738ceb6a801f416b88b93c1dcfddbbe89426b7"
+  },
+  {
+   "repo": "RuiRomano/fabric-cli-powerbi-cicd-sample",
+   "path": "src/SM_SalesSense.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "CI/CD demo (Fabric PM personal repo); 10 tables",
+   "commit": "1df48c9cf7b56eccb6a646d49d95d8283d81dbbf"
+  },
+  {
+   "repo": "ecotte/Fabric-Monitoring-RTI",
+   "path": "src/Gateway/Gateway Monitoring.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Real-time gateway monitoring solution; 12 tables",
+   "commit": "2cd63743c45b11b15ef697f29ad5034cfcb1d18a"
+  },
+  {
+   "repo": "djouallah/aemo_fabric",
+   "path": "Semantic_Model.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Australian energy-market (AEMO) data on Fabric; TMSL 57 KB",
+   "commit": "1c712bdf10233442a128afbaea70efeafc7395b8"
+  },
+  {
+   "repo": "jurgenfolz/Stock-Intelligence",
+   "path": "Stock Intelligence.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Stock analytics demo; 8 tables",
+   "commit": "8fd9eb2d9ba02f0e93b06079b96fb6093ed91fd0"
+  },
+  {
+   "repo": "jurgenfolz/WorldDataReport",
+   "path": "World Data.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "World-data report; 5 tables",
+   "commit": "be8c6438fee55f3045f846c0c773f4db72c12111"
+  },
+  {
+   "repo": "Mike-Honey/covid-19-au-vaccinations",
+   "path": "PBIP/covid-19-au-vaccinations.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Long-running real COVID vaccination tracker; 40 tables",
+   "commit": "4cbf051e0a6db442b8a5599214e80830098e162d"
+  },
+  {
+   "repo": "pbi-tools/sales-sample",
+   "path": "Sales.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "pbi-tools reference sales model; 11 tables",
+   "commit": "d9d976f21f1c9c00444c57a0ddfdfd96f7d617ce"
+  },
+  {
+   "repo": "FHaurum/FHSQLMonitor",
+   "path": "src/Report/FHSQLMonitor.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "SQL Server monitoring solution; 149 tables — largest in corpus",
+   "commit": "c8c08b8338dfdffeec3356f25af20cfc3db36e8a"
+  },
+  {
+   "repo": "vlpatkosdani/powerbi-cicd-with-githubactions-demos",
+   "path": "Contoso 10k.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Contoso 10k CI/CD demo; 6 tables",
+   "commit": "203173e6abf4760edf7e226fcec014b5ef7ddc1d"
+  },
+  {
+   "repo": "stephbruno/Power-BI-Accessibility-Checker",
+   "path": "Accessibility Checker - Service.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "GPL-3.0",
+   "notes": "Accessibility-checker community tool; 9 tables",
+   "commit": "7844a41436775176fdd6f4cee30602678fdbace7"
+  },
+  {
+   "repo": "data-goblin/power-bi-visual-templates",
+   "path": "templates/pbip/V013/V013.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Visual templates; V013 PBIP model",
+   "commit": "9063b9e52f3e96c08bceba8ea324aed25edfd7b3"
+  },
+  {
+   "repo": "DataChant/Trello-Power-BI",
+   "path": "Trello.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Trello analytics template; 17 tables",
+   "commit": "250f924c55e71f13a7f23a49192f0adacbbf8fe3"
+  },
+  {
+   "repo": "tomatminceddata/PBIR_XRAY",
+   "path": "The Power BI Reports/PBIR x-ray.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Report-metadata x-ray tool; 11 tables",
+   "commit": "8c344454c229e12fec84ad22aff2e6483c886ef6"
+  },
+  {
+   "repo": "Cyberlorians/nistframework",
+   "path": "powerbi/NISTCoverage.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "NIST coverage tracking; single-table model",
+   "commit": "3debf571680028f86ee88b92c65eee6beb5c18cc"
+  },
+  {
+   "repo": "CareTogether/CareTogether-PowerBI",
+   "path": "CareTogether.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "AGPL-3.0",
+   "notes": "Real product analytics for a case-management SaaS; 32 tables",
+   "commit": "60440f72df2055b5ddcb8aadacae806d3d79351b"
+  },
+  {
+   "repo": "bcgov/moh-APO-Reporting",
+   "path": "Cloud_Status.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "Apache-2.0",
+   "notes": "BC Government (Ministry of Health) real reporting; TMSL 130 KB",
+   "commit": "55a9148c0b5dbc495a3eb7179d94b09c09d3e8f6"
+  },
+  {
+   "repo": "Open-Education-AI/OEAI",
+   "path": "report/oeai_report_mvp.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "Apache-2.0",
+   "notes": "Open education-AI analytics; 17 tables",
+   "commit": "a71890128c41a39fb1bbf1e540f7409e3691bb20"
+  },
+  {
+   "repo": "sonbaoharryson/Data_Engineer_JobPulse_Project",
+   "path": "dashboard/JobPulse.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Personal DE portfolio project; 16 tables",
+   "commit": "13c3fa529c8dc81e51cb8b92d6307121e79f57e0"
+  },
+  {
+   "repo": "aditiv101/Youtube_analytics_dashboard",
+   "path": "YT.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Personal YouTube analytics; 5 tables",
+   "commit": "bc0340556d5e80ba45487333f7b443bbd9ec6299"
+  },
+  {
+   "repo": "miguelASL/Eurocopa_Espana",
+   "path": "eurocopa.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Euro-cup football analytics; TMSL 91 KB",
+   "commit": "8fdd41b8cbfa893c838d3d22d9835a35b4daa8f6"
+  },
+  {
+   "repo": "jeremypj/budget-intelligence-ynab",
+   "path": "Power BI Analytics for YNAB.Dataset",
+   "format": "bim",
+   "kind": "community",
+   "license": "GPL-2.0",
+   "notes": "YNAB personal-budget analytics; TMSL 844 KB",
+   "commit": "511672910dbdf727feb82a4a683a7ca99187f9f9"
+  },
+  {
+   "repo": "jeremypj/Power-BI-for-BigTime",
+   "path": "Big Time Analytics.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "GPL-3.0",
+   "notes": "BigTime timesheet analytics; TMSL 606 KB",
+   "commit": "d6242c2f370d56a5fd6a7d970977438186d4beaa"
+  },
+  {
+   "repo": "ayodejiayodele/github-developer-metrics",
+   "path": "src/github_copilot_dev_metrics.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "GitHub Copilot dev-metrics model; TMSL 2 MB",
+   "commit": "7cea2d7fa05d2bd6204fd147b1527e0314a10f63"
+  },
+  {
+   "repo": "Rede-DSBR/DocPBI2",
+   "path": "pbip/PNP_Publicada_dev.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Brazilian public-education data (PNP); 86 tables",
+   "commit": "9c5522d8869d1f97f69aa33372fa7e8a522b02d1"
+  },
+  {
+   "repo": "MeteoWatch/MeteoWatch",
+   "path": "fabric/MeteoWatch.SemanticModel",
+   "format": "bim",
+   "kind": "community",
+   "license": "unknown",
+   "notes": "Weather-monitoring Fabric solution; TMSL 76 KB",
+   "commit": "30c88715f41b223e38968d96dc3b4fcbc3943a43"
+  },
+  {
+   "repo": "NelsonNeba/Workforce-Hiring-Optimization-Dashboard-",
+   "path": "WorkSmart.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Portfolio HR-analytics dashboard; 9 tables",
+   "commit": "30f28edb370c8f77a7fc6461fdb01efc8bb53fc7"
+  },
+  {
+   "repo": "PBI-DataVizzle/pbi_content",
+   "path": "my_deneb_showcases/slope/slope.SemanticModel",
+   "format": "tmdl",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Deneb showcase collection; small PBIP model",
+   "commit": "fc055302181e29512ec2a9db6c1f7f38716e7e47"
+  },
+  {
+   "repo": "CSCfi/antero",
+   "path": "tabular/ARVO/ARVO/Model.bim",
+   "format": "bim",
+   "kind": "community",
+   "license": "MIT",
+   "notes": "Finnish national education-statistics production repo",
+   "commit": "836c2a2c15e499bbd3e472289ca1945f43b9b5ac"
+  },
+  {
+   "repo": "kerski/fabric-dataops-patterns",
+   "path": "Semantic Model/SampleModel.SemanticModel",
+   "format": "bim",
+   "kind": "training",
+   "license": "MIT",
+   "notes": "DataOps patterns sample model (PBIP w/ TMSL)",
+   "commit": "6ec433bb7dbe1dcebe26cf29dc34658cd627a810"
+  },
+  {
+   "repo": "alisonpezzott/reactor-pbi-maio-25",
+   "path": "src/Sample.SemanticModel",
+   "format": "tmdl",
+   "kind": "training",
+   "license": "unknown",
+   "notes": "MS Reactor session demo; minimal single-table model",
+   "commit": "bcc829422ff4b34cdb69aafced9159f5b375044f"
+  },
+  {
+   "repo": "DaniBunny/Fabric-DE-CICD",
+   "path": "deployment/workshop_template/MySemanticModel.SemanticModel",
+   "format": "tmdl",
+   "kind": "training",
+   "license": "unknown",
+   "notes": "Fabric CI/CD workshop template; single table",
+   "commit": "44bedd3777aaece9a42a9f16d99c6d5f6f40d4fb"
+  },
+  {
+   "repo": "PacktPublishing/Microsoft-Power-BI-Cookbook",
+   "path": "Chapter13/5-Migrate a PBI Data Model to SSAS Tabular/Visual Studio/Model.bim",
+   "format": "bim",
+   "kind": "training",
+   "license": "MIT",
+   "notes": "Packt book companion; TMSL 156 KB",
+   "commit": "803ac4ba50d88449dd3b56e959bfeaf8d6024f2b"
+  },
+  {
+   "repo": "AllanYiin/TabularModelBook",
+   "path": "Ch08/Ch08/Model.bim",
+   "format": "bim",
+   "kind": "training",
+   "license": "unknown",
+   "notes": "Tabular-modeling book (zh-TW) chapter models; TMSL 321 KB",
+   "commit": "42f26aec1d67180a29caeff21bb310f7076f6afe"
+  }
+ ]
+}

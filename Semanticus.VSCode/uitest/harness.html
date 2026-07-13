@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="../media/studio/studio.css" />
+  <style>
+    /* Representative VS Code dark-theme tokens so the harness looks like the real host. */
+    :root {
+      --vscode-editor-background: #1e1e22;
+      --vscode-editor-foreground: #e6e6ea;
+      --vscode-foreground: #e6e6ea;
+      --vscode-panel-border: rgba(140,140,160,0.22);
+      --vscode-descriptionForeground: #9aa0aa;
+      --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    html, body, #root { height: 100%; margin: 0; }
+  </style>
+  <script>
+    // ---- mock engine: canned fixtures for every RPC the Studio calls --------------------------
+    const SCORECARD = {
+      overall: 72.4, rawOverall: 78.1, grade: 'C', gatedBy: [],
+      categories: [
+        { category: 'Descriptions', score: 55, weight: 0.22, applicable: 40, violations: 18, hasRules: true },
+        { category: 'Naming', score: 82, weight: 0.18, applicable: 38, violations: 7, hasRules: true },
+        { category: 'Synonyms', score: 12, weight: 0.15, applicable: 39, violations: 34, hasRules: true },
+        { category: 'Relationships', score: 90, weight: 0.15, applicable: 14, violations: 1, hasRules: true },
+        { category: 'Visibility', score: 70, weight: 0.12, applicable: 20, violations: 6, hasRules: true },
+        { category: 'Formatting', score: 88, weight: 0.05, applicable: 38, violations: 4, hasRules: true },
+      ],
+      coverage: { measuresWithDescription: 45, columnsWithDescription: 61, fieldsWithSynonyms: 12, measuresWithFormat: 88 },
+      findings: [
+        { ruleId: 'DESC-MEASURE', ruleTitle: 'Measure has no description', category: 'Descriptions', severity: 'High', fix: 'AiContent', objectRef: 'measure:Sales/Total Sales', objectName: 'Total Sales', message: 'Measure [Total Sales] has no description; Copilot/Q&A ground on these.' },
+        { ruleId: 'VIS-FK', ruleTitle: 'Foreign-key column is visible', category: 'Visibility', severity: 'Medium', fix: 'SafeFix', objectRef: 'column:Sales/CustomerKey', objectName: 'CustomerKey', message: 'Foreign-key column [Sales].[CustomerKey] should be hidden from AI consumers.' },
+        { ruleId: 'CAT-GEO', ruleTitle: 'Geographic column has no data category', category: 'Formatting', severity: 'Info', fix: 'SafeFix', objectRef: 'column:Geography/City', objectName: 'City', message: 'Column [Geography].[City] looks geographic; set a Data Category.' },
+        { ruleId: 'NAME-COLUMN', ruleTitle: 'Cryptic visible column name', category: 'Naming', severity: 'Medium', fix: 'AiContent', objectRef: 'column:Sales/cust_id', objectName: 'cust_id', message: 'Column [Sales].[cust_id] is not human-readable.' },
+        { ruleId: 'DESC-TABLE', ruleTitle: 'Table has no description', category: 'Descriptions', severity: 'Medium', fix: 'AiContent', objectRef: 'table:Geography', objectName: 'Geography', message: "Table 'Geography' has no description." },
+        { ruleId: 'REL-BIDI', ruleTitle: 'Bidirectional cross-filter', category: 'Relationships', severity: 'High', fix: 'Proposal', objectRef: 'relationship:r5', objectName: 'r5', message: 'Relationship Customer->Geography is bidirectional; can confuse filter context for AI.' },
+        { ruleId: 'FMT-SUMMARIZE', ruleTitle: 'Key column aggregates by default', category: 'Formatting', severity: 'Medium', fix: 'SafeFix', objectRef: 'column:Date/Year', objectName: 'Year', message: 'Column [Date].[Year] is a key column but summarizes by Sum; should be None.' },
+        { ruleId: 'SYN-FIELD', ruleTitle: 'Visible field has no synonyms', category: 'Synonyms', severity: 'Medium', fix: 'AiContent', objectRef: 'measure:Sales/Margin', objectName: 'Margin', message: "'Margin' has no synonyms; users may phrase questions differently." },
+      ],
+      safeFixCount: 5,
+    };
+
+    const GRAPH = {
+      tables: [
+        { ref: 'table:Sales', name: 'Sales', isHidden: false, isDateTable: false, isCalculated: false, columns: 8, measures: 12, keyColumns: [], hasDescription: true },
+        { ref: 'table:Date', name: 'Date', isHidden: false, isDateTable: true, isCalculated: true, columns: 9, measures: 0, keyColumns: ['Date'], hasDescription: true },
+        { ref: 'table:Customer', name: 'Customer', isHidden: false, isDateTable: false, isCalculated: false, columns: 10, measures: 0, keyColumns: ['CustomerKey'], hasDescription: true },
+        { ref: 'table:Product', name: 'Product', isHidden: false, isDateTable: false, isCalculated: false, columns: 12, measures: 0, keyColumns: ['ProductKey'], hasDescription: false },
+        { ref: 'table:Geography', name: 'Geography', isHidden: false, isDateTable: false, isCalculated: false, columns: 6, measures: 0, keyColumns: ['GeographyKey'], hasDescription: false },
+        { ref: 'table:Store', name: 'Store', isHidden: true, isDateTable: false, isCalculated: false, columns: 7, measures: 0, keyColumns: ['StoreKey'], hasDescription: true },
+        { ref: 'table:Budget', name: 'Budget', isHidden: false, isDateTable: false, isCalculated: false, columns: 4, measures: 2, keyColumns: [], hasDescription: false },
+      ],
+      relationships: [
+        { name: 'r1', fromTable: 'Sales', fromColumn: 'CustomerKey', toTable: 'Customer', toColumn: 'CustomerKey', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'OneDirection', isActive: true },
+        { name: 'r2', fromTable: 'Sales', fromColumn: 'ProductKey', toTable: 'Product', toColumn: 'ProductKey', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'OneDirection', isActive: true },
+        { name: 'r3', fromTable: 'Sales', fromColumn: 'OrderDate', toTable: 'Date', toColumn: 'Date', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'OneDirection', isActive: true },
+        { name: 'r4', fromTable: 'Sales', fromColumn: 'ShipDate', toTable: 'Date', toColumn: 'Date', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'OneDirection', isActive: false },
+        { name: 'r5', fromTable: 'Customer', fromColumn: 'GeographyKey', toTable: 'Geography', toColumn: 'GeographyKey', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'BothDirections', isActive: true },
+        { name: 'r6', fromTable: 'Store', fromColumn: 'GeographyKey', toTable: 'Geography', toColumn: 'GeographyKey', fromCardinality: 'Many', toCardinality: 'One', crossFilter: 'OneDirection', isActive: true },
+      ],
+    };
+
+    const MB = 1024 * 1024;
+    const VPAQ = {
+      modelSize: 1180 * MB, columnCount: 64,
+      tables: [
+        { name: 'Sales', rows: 5_000_000, size: 620 * MB, columns: 8, pctOfModel: 52.5 },
+        { name: 'Customer', rows: 1_200_000, size: 210 * MB, columns: 10, pctOfModel: 17.8 },
+        { name: 'Product', rows: 80_000, size: 150 * MB, columns: 12, pctOfModel: 12.7 },
+        { name: 'Geography', rows: 60_000, size: 95 * MB, columns: 6, pctOfModel: 8.0 },
+        { name: 'Date', rows: 3650, size: 60 * MB, columns: 9, pctOfModel: 5.1 },
+        { name: 'Store', rows: 1200, size: 45 * MB, columns: 7, pctOfModel: 3.8 },
+      ],
+      topColumns: [
+        { table: 'Sales', column: 'OrderID', totalSize: 180 * MB, dataSize: 120 * MB, dictionarySize: 60 * MB, encoding: 'Hash', pctOfModel: 15.3 },
+        { table: 'Sales', column: 'CustomerKey', totalSize: 150 * MB, dataSize: 110 * MB, dictionarySize: 40 * MB, encoding: 'Hash', pctOfModel: 12.7 },
+        { table: 'Sales', column: 'Amount', totalSize: 130 * MB, dataSize: 130 * MB, dictionarySize: 0, encoding: 'Value', pctOfModel: 11.0 },
+        { table: 'Customer', column: 'Email', totalSize: 120 * MB, dataSize: 70 * MB, dictionarySize: 50 * MB, encoding: 'Hash', pctOfModel: 10.2 },
+        { table: 'Product', column: 'Description', totalSize: 95 * MB, dataSize: 55 * MB, dictionarySize: 40 * MB, encoding: 'Hash', pctOfModel: 8.0 },
+        { table: 'Customer', column: 'Name', totalSize: 80 * MB, dataSize: 50 * MB, dictionarySize: 30 * MB, encoding: 'Hash', pctOfModel: 6.8 },
+        { table: 'Sales', column: 'Quantity', totalSize: 60 * MB, dataSize: 60 * MB, dictionarySize: 0, encoding: 'Value', pctOfModel: 5.1 },
+        { table: 'Geography', column: 'City', totalSize: 55 * MB, dataSize: 30 * MB, dictionarySize: 25 * MB, encoding: 'Hash', pctOfModel: 4.7 },
+        { table: 'Product', column: 'Category', totalSize: 22 * MB, dataSize: 12 * MB, dictionarySize: 10 * MB, encoding: 'RLE', pctOfModel: 1.9 },
+        { table: 'Date', column: 'Date', totalSize: 18 * MB, dataSize: 18 * MB, dictionarySize: 0, encoding: 'Value', pctOfModel: 1.5 },
+      ],
+    };
+
+    function mkResult(columns, rows, ms) {
+      return { columns: columns.map((c) => ({ name: c })), rows, rowCount: rows.length, truncated: false, elapsedMs: ms ?? 14 };
+    }
+    const QUERY_RESULT = mkResult(
+      ['Date[Year]', 'Product[Category]', '[Total Sales]', '[Margin %]'],
+      Array.from({ length: 60 }, (_, i) => [2020 + (i % 5), ['Bikes', 'Accessories', 'Clothing', 'Components'][i % 4], (1_000_000 + i * 31337), (0.18 + (i % 7) * 0.01)]),
+      37);
+    const PREVIEW = mkResult(
+      ['Customer[CustomerKey]', 'Customer[Name]', 'Customer[City]', 'Customer[Segment]', 'Customer[Lifetime Value]'],
+      Array.from({ length: 200 }, (_, i) => [10000 + i, 'Customer ' + (i + 1), ['Seattle', 'Denver', 'Austin', 'Miami'][i % 4], ['SMB', 'Enterprise', 'Consumer'][i % 3], 1000 + i * 137]),
+      9);
+    const PIVOT = mkResult(
+      ['Product[Category]', 'Date[Year]', '[__v]'],
+      [
+        ['Accessories', 2021, 820000], ['Accessories', 2022, 910000], ['Accessories', 2023, 1010000], ['Accessories', 2024, 1180000],
+        ['Bikes', 2021, 4200000], ['Bikes', 2022, 4850000], ['Bikes', 2023, 5300000], ['Bikes', 2024, 6100000],
+        ['Clothing', 2021, 610000], ['Clothing', 2022, 680000], ['Clothing', 2023, 720000], ['Clothing', 2024, 805000],
+        ['Components', 2021, 1500000], ['Components', 2022, 1620000], ['Components', 2023, 1710000], ['Components', 2024, 1890000],
+      ], 21);
+
+    // ---- Change-Plan (Optimize tab) -----------------------------------------------------------
+    const PLAN = {
+      planId: 'plan-1', scope: null, revision: 12,
+      items: [
+        { id: 'ci-0001', objectRef: 'column:Sales/CustomerKey', objectName: 'Sales[CustomerKey]', kind: 'set_column_hidden', source: 'deterministic', category: 'Visibility', severity: 'Medium', risk: 'safe', target: 'isHidden', title: 'Hide foreign-key column', rationale: 'Foreign-key column should be hidden from AI consumers.', before: 'Visible', after: 'Hidden', status: 'approved' },
+        { id: 'ci-0002', objectRef: 'column:Date/Year', objectName: 'Date[Year]', kind: 'set_summarize_by', source: 'deterministic', category: 'Formatting', severity: 'Medium', risk: 'safe', target: 'summarizeBy', title: 'Set SummarizeBy = None', rationale: 'Key/relationship column should not aggregate by default.', before: 'Sum', after: 'None', status: 'approved' },
+        { id: 'ci-0003', objectRef: 'column:Geography/City', objectName: 'Geography[City]', kind: 'set_data_category', source: 'deterministic', category: 'Formatting', severity: 'Info', risk: 'safe', target: 'dataCategory', title: 'Set geographic data category', rationale: 'Column looks geographic; set a Data Category.', before: '(none)', after: 'City', status: 'approved' },
+        { id: 'ci-0004', objectRef: 'relationship:r5', objectName: 'Customer → Geography', kind: 'bpa_fix', source: 'bpa', category: 'Performance', severity: 'Medium', risk: 'safe', ruleId: 'PERFORMANCE_BIDIRECTIONAL_RELATIONSHIP', target: 'crossfilteringbehavior', title: 'Avoid bi-directional relationships', rationale: 'Prefer single-direction in a star schema.', before: 'BothDirections', after: 'OneDirection', status: 'approved' },
+        { id: 'ci-0005', objectRef: 'obj:Model/Contoso', objectName: 'Contoso Sales', kind: 'enable_qna', source: 'deterministic', category: 'Synonyms', severity: 'High', risk: 'safe', target: 'linguisticSchema', title: 'Enable Q&A linguistic schema', rationale: 'No linguistic schema — enable Q&A so users’ words map to fields.', before: '(none)', after: 'Seed linguistic schema', status: 'approved' },
+        { id: 'ci-0006', objectRef: 'measure:Sales/Total Sales', objectName: 'Total Sales', kind: 'set_description', source: 'ai', category: 'Descriptions', severity: 'High', risk: 'ai', target: 'description', title: 'Write a business description', rationale: 'Measure has no description; Copilot/Q&A ground on these.', before: '(none)', after: null, status: 'needs_content', grounding: { objectRef: 'measure:Sales/Total Sales', name: 'Total Sales', kind: 'measure', table: 'Sales', expression: 'SUMX(Sales, Sales[Quantity] * Sales[Net Price])', siblingNames: ['Margin', 'Margin %', 'Profit', 'Orders'] } },
+        { id: 'ci-0007', objectRef: 'table:Geography', objectName: 'Geography', kind: 'set_description', source: 'ai', category: 'Descriptions', severity: 'Medium', risk: 'ai', target: 'description', title: 'Write a business description', rationale: "Table 'Geography' has no description.", before: '(none)', after: null, status: 'needs_content', grounding: { objectRef: 'table:Geography', name: 'Geography', kind: 'table', siblingNames: ['City', 'StateProvince', 'Country', 'PostalCode'] } },
+        { id: 'ci-0008', objectRef: 'measure:Sales/Margin %', objectName: 'Margin %', kind: 'set_measure_format', source: 'ai', category: 'Formatting', severity: 'Medium', risk: 'ai', target: 'formatString', title: 'Choose a format string', rationale: 'Measure has no format string.', before: '(none)', after: '0.0%', status: 'approved', generated: true },
+        { id: 'ci-0009', objectRef: 'column:Sales/cust_id', objectName: 'cust_id', kind: 'rename', source: 'ai', category: 'Naming', severity: 'Medium', risk: 'rename', target: 'name', title: 'Rename to a clear, human name', rationale: 'Column [Sales].[cust_id] is not human-readable.', before: 'cust_id', after: null, status: 'needs_content', grounding: { objectRef: 'column:Sales/cust_id', name: 'cust_id', kind: 'column', table: 'Sales', siblingNames: ['CustomerKey', 'OrderDate', 'Quantity', 'Net Price'] } },
+        { id: 'ci-0010', objectRef: 'measure:Sales/Margin', objectName: 'Margin', kind: 'set_synonyms', source: 'ai', category: 'Synonyms', severity: 'Medium', risk: 'ai', target: 'synonyms', title: 'Add natural-language synonyms', rationale: "'Margin' has no synonyms; users may phrase questions differently.", before: '(none)', after: null, status: 'needs_content', grounding: { objectRef: 'measure:Sales/Margin', name: 'Margin', kind: 'measure', table: 'Sales', siblingNames: ['Total Sales', 'Profit'] } },
+      ],
+      summary: { total: 10, deterministic: 4, bpa: 1, ai: 5, renames: 1, needsContent: 4, approved: 6, rejected: 0, applied: 0, unverified: 0 },
+    };
+    const APPLY_REPORT = {
+      revision: 20, appliedCount: 6, skippedCount: 0, failedCount: 0,
+      items: PLAN.items.filter((i) => i.status === 'approved').map((i) => ({ ...i, status: 'applied' })),
+      bpaViolationsBefore: 6, bpaViolationsAfter: 3, gradeBefore: 'C', gradeAfter: 'B', overallBefore: 72, overallAfter: 84,
+      note: '6 applied · 0 skipped · 0 failed · BPA 6→3 · grade C→B',
+    };
+
+    const FIX = {
+      sessionInfo: { sessionId: 's1', revision: 12, modelName: 'Contoso Sales', source: 'C:/models/Contoso', hasUnsavedChanges: false, tables: 7, measures: 14 },
+      aiReadinessScan: SCORECARD,
+      getPlan: PLAN,
+      proposePlan: PLAN,
+      setPlanItem: PLAN,
+      applyPlan: APPLY_REPORT,
+      clearPlan: { planId: null, scope: null, revision: 21, items: [], summary: { total: 0, deterministic: 0, bpa: 0, ai: 0, renames: 0, needsContent: 0, approved: 0, rejected: 0, applied: 0, unverified: 0 } },
+      bpaScan: {
+        ruleCount: 9, violationCount: 6, autoFixable: 2, ruleErrors: [],
+        violations: [
+          { ruleId: 'PERFORMANCE_BIDIRECTIONAL_RELATIONSHIP', ruleName: 'Avoid bi-directional relationships', category: 'Performance', severity: 2, objectRef: 'relationship:r5', objectName: 'Customer → Geography', message: 'Relationship Customer → Geography is bi-directional; prefer single-direction in a star schema.', canAutoFix: true, hasFixExpression: true },
+          { ruleId: 'PERFORMANCE_SUMMARIZE_KEY_COLUMN', ruleName: 'Key columns should not summarize by default', category: 'Performance', severity: 2, objectRef: 'column:Sales/CustomerKey', objectName: 'Sales[CustomerKey]', message: 'Key/identifier column Sales[CustomerKey] aggregates by default; set SummarizeBy = None.', canAutoFix: true, hasFixExpression: true },
+          { ruleId: 'MAINTENANCE_MEASURE_DESCRIPTION', ruleName: 'Visible measures should have descriptions', category: 'Maintenance', severity: 2, objectRef: 'measure:Sales/Total Sales', objectName: '[Total Sales]', message: 'Measure [Total Sales] has no description.', canAutoFix: false, hasFixExpression: false },
+          { ruleId: 'MAINTENANCE_TABLE_DESCRIPTION', ruleName: 'Visible tables should have descriptions', category: 'Maintenance', severity: 1, objectRef: 'table:Geography', objectName: 'Geography', message: 'Table Geography has no description.', canAutoFix: false, hasFixExpression: false },
+          { ruleId: 'FORMATTING_MEASURE_FORMAT_STRING', ruleName: 'Visible measures should have a format string', category: 'Formatting', severity: 2, objectRef: 'measure:Sales/Margin', objectName: '[Margin]', message: 'Measure [Margin] has no format string.', canAutoFix: false, hasFixExpression: false },
+          { ruleId: 'DAX_AVOID_IFERROR', ruleName: 'Avoid using IFERROR', category: 'DAX Expressions', severity: 2, objectRef: 'measure:Sales/Safe Ratio', objectName: '[Safe Ratio]', message: 'Measure [Safe Ratio] uses IFERROR, which can hurt performance; handle errors explicitly (DIVIDE, etc.).', canAutoFix: false, hasFixExpression: false },
+        ],
+      },
+      applySafeFixes: { revision: 13, applied: ['Hid FK [Sales].[CustomerKey]'], scorecard: SCORECARD },
+      applyFix: { revision: 13, changed: true },
+      getFixPrompt: { objectRef: 'measure:Sales/Total Sales', ruleId: 'DESC-MEASURE', tool: 'set_description', prompt: 'Using the Semanticus MCP, write a concise (<=200 chars) business description for measure [Total Sales]...' },
+      getModelGraph: GRAPH,
+      connectionStatus: { connected: true, kind: 'local', dataSource: 'localhost:51234', catalog: 'Contoso' },
+      connectLocal: { connected: true, kind: 'local', dataSource: 'localhost:51234', catalog: 'Contoso' },
+      vertiPaqScan: VPAQ,
+      runDax: QUERY_RESULT,
+      evaluateAndLog: {
+        traceAvailable: true, note: null, elapsedMs: 34, resultRowCount: 1,
+        resultColumns: [{ name: '[Total]' }], resultRows: [[9975000]],
+        entries: [
+          { label: 'sales per category', expression: "SUMX(VALUES('Product'[Category]), [Total Sales])", rowCount: 4, columns: ['Product[Category]', 'output'], rows: [['Bikes', 6100000], ['Accessories', 1180000], ['Clothing', 805000], ['Components', 1890000]] },
+          { label: 'blended margin', expression: 'DIVIDE([Profit], [Total Sales])', rowCount: 1, columns: ['output'], rows: [[0.182]] },
+        ],
+      },
+      previewTable: PREVIEW,
+      pivotMeasure: PIVOT,
+      benchmarkDax: { runs: 5, firstMs: 48, warmMinMs: 9, warmMedianMs: 11, runsMs: [48, 12, 9, 11, 10], rowCount: 1, note: 'Wall-clock only (caches not force-cleared; safe-by-default). Warm = steady-state cost.' },
+      profileDax: {
+        totalMs: 842, feMs: 210, seMs: 632, seCpuMs: 2100, seQueries: 7, seParallelism: 3.32, rowCount: 1000, traceAvailable: true, note: null,
+        scans: [
+          { kind: 'VertiPaqScan', durationMs: 410, cpuMs: 1300, rows: 5_000_000, query: "SELECT 'Sales'[ProductKey], SUM('Sales'[Amount]) FROM 'Sales' GROUP BY 'Sales'[ProductKey];" },
+          { kind: 'VertiPaqScan', durationMs: 140, cpuMs: 520, rows: 1_200_000, query: "SELECT 'Customer'[GeographyKey] FROM 'Customer';" },
+          { kind: 'VertiPaqScan', durationMs: 60, cpuMs: 180, rows: 80_000, query: "SELECT 'Product'[Category], 'Product'[ProductKey] FROM 'Product';" },
+          { kind: 'VertiPaqScan', durationMs: 22, cpuMs: 100, rows: 3650, query: "SELECT 'Date'[Year], 'Date'[Date] FROM 'Date';" },
+        ],
+      },
+      verifyEquivalence: {
+        allMatch: false, rowsCompared: 16, mismatchCount: 2,
+        mismatches: [
+          { context: 'Product[Category]=Bikes, Date[Year]=2023', valueA: '5300000', valueB: '5299850' },
+          { context: 'Product[Category]=Components, Date[Year]=2024', valueA: '1890000', valueB: '1889500' },
+        ],
+        query: 'EVALUATE SUMMARIZECOLUMNS(...)',
+      },
+    };
+
+    window.acquireVsCodeApi = function () {
+      return {
+        postMessage: function (msg) {
+          if (msg && msg.type === 'rpc') {
+            const has = Object.prototype.hasOwnProperty.call(FIX, msg.method);
+            const result = has ? FIX[msg.method] : { revision: 99, changed: true };
+            setTimeout(function () { window.postMessage({ type: 'rpcResult', id: msg.id, result: result }, '*'); }, 8);
+          }
+        },
+        getState: function () { return undefined; },
+        setState: function () {},
+      };
+    };
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="../media/studio/studio.js"></script>
+</body>
+</html>

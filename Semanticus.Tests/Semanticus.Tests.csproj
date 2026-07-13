@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The FIRST real test project (the smoke runners are Exe integration checks, not unit tests).
+       Closes hole #3 (docs/strategy/04): the dual-drive / interleaved-undo / FormulaFixup-on-adversarial-DAX
+       invariants — the most-irreplaceable code — had only happy-path coverage. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Engine\Semanticus.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="TestSources.txt" />
+    <None Include="TestData\mcp-surface-inventory.json"
+          Link="mcp-surface-inventory.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="TestData\ai-readiness-catalog.json"
+          Link="TestData\ai-readiness-catalog.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\external\TabularEditor\TOMWrapperTest\TestData\AdventureWorks.bim"
+          Link="TestData\AdventureWorks.bim"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Evidence\golden-evidence.html"
+          Link="TestData\golden-evidence.html"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="LoadDeclaredTestSources" BeforeTargets="CoreCompile">
+    <ReadLinesFromFile File="$(MSBuildProjectDirectory)\TestSources.txt">
+      <Output TaskParameter="Lines" ItemName="Compile" />
+    </ReadLinesFromFile>
+    <Error Condition="!Exists('%(Compile.FullPath)')"
+           Text="Declared test source '%(Compile.Identity)' does not exist. Update TestSources.txt with the tracked test-source inventory." />
+  </Target>
+
+</Project>
