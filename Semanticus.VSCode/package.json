@@ -8,9 +8,9 @@
   "qna": false,
   "license": "Elastic-2.0",
   "private": false,
-  "repository": { "type": "git", "url": "https://github.com/tenfingerseddy/semanticus-studio.git" },
-  "homepage": "https://github.com/tenfingerseddy/semanticus-studio#readme",
-  "bugs": { "url": "https://github.com/tenfingerseddy/semanticus-studio/issues" },
+  "repository": { "type": "git", "url": "https://github.com/tenfingerseddy/semanticus-vscode.git" },
+  "homepage": "https://github.com/tenfingerseddy/semanticus-vscode#readme",
+  "bugs": { "url": "https://github.com/tenfingerseddy/semanticus-vscode/issues" },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.90.0"
