@@ -62,7 +62,7 @@ classic-calendar migration are deferred. Unsupported metadata must fail closed w
 The Tabular Editor TOMWrapper donor is pinned as a Git submodule under `external/TabularEditor`.
 
 ```powershell
-git clone --recurse-submodules https://github.com/tenfingerseddy/semanticus-studio.git
+git clone --recurse-submodules https://github.com/tenfingerseddy/semanticus-vscode.git
 dotnet build Semanticus.sln
 dotnet test Semanticus.Tests/Semanticus.Tests.csproj
 dotnet run --project Semanticus.Smoke

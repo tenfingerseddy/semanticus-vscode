@@ -33,7 +33,7 @@ assert.match(marketplaceReadme, /Ubuntu 24\.04 x64[\s\S]*Source and CI coverage 
 assert.match(marketplaceReadme, /macOS[\s\S]*Not supported in 1\.0/u);
 if (support) {
   assert.match(support, /CI build success alone is not an installation or\s+live-environment claim/u);
-  assert.match(support, /Fabric deployment-pipeline, Fabric Git and CI\/CD publication writes remain deferred/u);
+  assert.match(support, /Fabric deployment-pipeline, Fabric Git and CI\/CD publication writes preview as a dry run/u);
 }
 
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');

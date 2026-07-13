@@ -77,8 +77,10 @@ implement checkout, billing, cancellation or license minting.
 - Modern calendar metadata requires compatibility level 1701 or later. Older models keep the classic Date-table
   path until the user explicitly upgrades and authors a calendar.
 - Role security is static-first; there is no view-as-role impersonation proof.
-- Cloud report discovery, Fabric ALM writes beyond dry-run and Data Agent publishing are deferred.
-- Unsupported model metadata or unavailable tenant capabilities must produce an explicit refusal, not a success.
+- Cloud writes are deliberate: report discovery, Fabric git commit and update, and Data Agent publishing always
+  preview as a dry run first and write only on explicit confirmation.
+- When a model or tenant does not support a capability, Semanticus refuses with a clear reason instead of
+  reporting success.
 
 ## Privacy
 
@@ -86,4 +88,4 @@ Model work runs locally. Network access occurs only for data or package sources 
 account website the user chooses to open, and supported optional downloads. Semanticus sends no product telemetry.
 
 **Links:** [Website](https://semanticus.com.au) | [Product details](https://semanticus.com.au/pro) |
-[GitHub](https://github.com/tenfingerseddy/semanticus-studio) | [Support](mailto:hello@semanticus.com.au)
+[GitHub](https://github.com/tenfingerseddy/semanticus-vscode) | [Support](mailto:hello@semanticus.com.au)
