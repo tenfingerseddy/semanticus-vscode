@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+/* Semanticus token layer: maps a few VS Code theme vars and pins a premium accent/surface so the UI
+   auto-follows light/dark/high-contrast yet reads as a designed app, not default gray. */
+:root {
+  /* Page geometry is job-shaped: report/review pages opt into the centered measure; tools stay full width. */
+  --sem-page-gutter: 28px;
+  --sem-page-max: 1420px;
+  --sem-bg: var(--vscode-editor-background, #1e1e1e);
+  --sem-fg: var(--vscode-editor-foreground, var(--vscode-foreground, #ddd));
+  /* subtle neutral (Slate) lift so surfaces read as a designed app, not default gray — never a brand-colour wash */
+  --sem-surface: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 88%, #3A4658 12%);
+  --sem-surface-2: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 92%, #ffffff 8%);
+  --sem-border: var(--vscode-panel-border, rgba(140, 140, 160, 0.22));
+  --sem-muted: var(--vscode-descriptionForeground, #9aa0aa);
+  /* Brand: ONE Signal green. It's a highlight, not a fill — reserved for the primary action, active state,
+     verified/pass and the accent beads. Good/pass and relationship-active reuse it so there's a single green. */
+  --sem-accent: #2ED47A;
+  --sem-on-accent: #06210f;   /* near-black ink for text ON a Signal-green fill — white fails contrast on green */
+  --sem-accent-soft: color-mix(in srgb, #2ED47A 20%, transparent);
+  --sem-good: #2ED47A;
+  --sem-warn: #E0A64A;
+  --sem-on-warn: #241403;   /* dark ink for text on the amber fill; theme foreground is too pale */
+  --sem-bad: #E5544B;
+  /* Not-verifiable: a deliberately COLORLESS slate (Tests-tab I1) — dimmer than muted text so an
+     unknown can never read as pass-ish or fail-ish. Derived from theme vars so light themes follow. */
+  --sem-nv: color-mix(in srgb, var(--sem-muted) 62%, var(--sem-bg) 38%);
+  --sem-rel: #2ED47A;   /* active 1-way relationship lines — Signal green, distinct from the orange bi-di + grey inactive */
+  /* Diff palette — DELIBERATELY NOT the brand Signal green. In a diff body, green must read as "added", not
+     "the primary action / verified", so additions use a forest diff-green distinct from --sem-accent (see the
+     Model Diff view decision). Removals use a diff-red slightly deeper than --sem-bad so the two never blur.
+     -bg = whole-row/line wash · -word = the stronger inline (word-level) highlight inside a changed line. */
+  --sem-diff-add: #3FB950;
+  --sem-diff-add-bg: color-mix(in srgb, #3FB950 15%, transparent);
+  --sem-diff-add-word: color-mix(in srgb, #3FB950 34%, transparent);
+  --sem-diff-del: #F85149;
+  --sem-diff-del-bg: color-mix(in srgb, #F85149 15%, transparent);
+  --sem-diff-del-word: color-mix(in srgb, #F85149 32%, transparent);
+}
+/* Light VS Code themes: darken the green so thin accents and accent-coloured text stay legible on a light surface. */
+body.vscode-light, body.vscode-high-contrast-light {
+  --sem-accent: #12A45A;
+  --sem-accent-soft: color-mix(in srgb, #12A45A 16%, transparent);
+  --sem-good: #12A45A;
+  --sem-rel: #159B57;
+  /* Darker, higher-contrast diff hues for light surfaces (GitHub-light lineage). */
+  --sem-diff-add: #1A7F37;
+  --sem-diff-add-bg: color-mix(in srgb, #1A7F37 13%, transparent);
+  --sem-diff-add-word: color-mix(in srgb, #1A7F37 26%, transparent);
+  --sem-diff-del: #CF222E;
+  --sem-diff-del-bg: color-mix(in srgb, #CF222E 12%, transparent);
+  --sem-diff-del-word: color-mix(in srgb, #CF222E 24%, transparent);
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--sem-bg);
+  color: var(--sem-fg);
+  font-family: var(--vscode-font-family, "Segoe UI", system-ui, sans-serif);
+  font-size: 13px;
+}
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Shared gutters stay independent from width: workbenches use only this class; report/review pages add
+   sem-centered-page. Keeping the modifier explicit prevents a nested tool from being centered accidentally. */
+.sem-evidence-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 24px var(--sem-page-gutter) 48px;
+}
+.sem-centered-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--sem-page-max);
+  margin-inline: auto;
+}
+@media (max-width: 1100px) {
+  :root { --sem-page-gutter: 20px; }
+}
+@media (max-width: 720px) {
+  :root { --sem-page-gutter: 12px; }
+  .sem-evidence-page { padding-top: 16px; padding-bottom: 32px; }
+}
+
+/* New entries in the Watch-Claude feed flash once so you SEE the change land. */
+@keyframes sem-flash-kf {
+  0%   { box-shadow: 0 0 0 2px var(--sem-accent); background: var(--sem-accent-soft); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.sem-flash { animation: sem-flash-kf 1.1s ease-out 1; }
+
+/* React Flow (ER diagram) — follow the VS Code theme instead of its light default. */
+.react-flow { background: var(--sem-bg); }
+.react-flow__controls { box-shadow: none; }
+.react-flow__controls-button {
+  background: var(--sem-surface-2);
+  border-bottom: 1px solid var(--sem-border);
+  color: var(--sem-fg);
+  fill: var(--sem-fg);
+}
+.react-flow__controls-button:hover { background: var(--sem-surface); }
+.react-flow__edge-text { font-variant-numeric: tabular-nums; }
+.react-flow__attribution { display: none; }
+/* An expanded table's column row is a drag-to-relate surface — highlight it on hover so the affordance is discoverable. */
+.sem-colrow:hover { background: color-mix(in srgb, var(--sem-accent) 16%, transparent); }
+.sem-colrow .react-flow__handle { cursor: crosshair; }
+
+/* Primer is one document, not a dashboard. The container stays full width while type, rules and spacing create
+   a calm reading rhythm; the same class styles the live edit preview. */
+.sem-primer { line-height: 1.7; color: var(--sem-fg); }
+.sem-primer > * { max-width: 1040px; }
+.sem-primer h1 { margin: 0 0 30px; font-size: 28px; line-height: 1.15; letter-spacing: -0.02em; }
+.sem-primer h2 { margin: 36px 0 12px; padding-top: 18px; border-top: 1px solid var(--sem-border); font-size: 17px; line-height: 1.25; }
+.sem-primer p { margin: 8px 0 14px; color: color-mix(in srgb, var(--sem-fg) 88%, var(--sem-muted)); }
+.sem-primer ul, .sem-primer ol { margin: 8px 0 16px; padding-left: 24px; }
+.sem-primer li { margin: 6px 0; }
+.sem-primer code { border: 1px solid var(--sem-border); border-radius: 4px; padding: 1px 4px; background: var(--sem-surface-2); font-family: ui-monospace,SFMono-Regular,Consolas,monospace; }
+
+/* CodeMirror ships its autocomplete completion-type icons as glyphs; the keyword one is a colorful
+   key emoji (and class pairs with it) — override those two so the popup carries no colorful pictograph. */
+.cm-completionIcon-keyword::after { content: 'K' !important; }
+.cm-completionIcon-class::after { content: 'C' !important; }

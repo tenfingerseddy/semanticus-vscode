@@ -1,0 +1,138 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Semanticus.Core (M0)
+    ====================
+    A headless .NET 8 port of the Tabular Editor 2 engine (TOMWrapper). It does NOT copy
+    TE2 sources; it COMPILES them in-place from the sibling donor clone at ..\..\TabularEditor,
+    keeping that clone pristine. The include-list is BPALib.csproj's proven net8 set, with three
+    deltas for M0:
+      1. Target net8.0 only (TE2's BPALib also targets net9/net472 which this SDK can't build).
+      2. Re-add TabularModelHandler.Events.cs (the real ObjectChanged/-ing firehose that BPALib
+         stubs to no-ops) and drop those no-op stubs from Compat\Shims.cs.
+      3. Exclude the ANTLR-generated DAX lexer + everything that needs it (FormulaFixup,
+         DaxDependencyHelper, TextServices) and the BPA engine. ANTLR codegen needs a JDK which
+         isn't installed; the real DAX dependency layer is wired in at M2. For M0 we stub
+         FormulaFixup with no-ops (Compat\FormulaFixupStub.cs) — M0 tests load/edit/events/TMDL
+         round-trip, none of which need DAX dependency analysis.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>TabularEditor</RootNamespace>
+    <AssemblyName>Semanticus.Core</AssemblyName>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS1591;NU1701;CS0162;CS0414;CS0649</NoWarn>
+    <!-- Marker constant carried over from BPALib (no #if BPALib guards exist in the shared
+         sources, so this is inert, but kept for parity in case any included app-side file uses it). -->
+    <DefineConstants>$(DefineConstants);BPALib</DefineConstants>
+    <!-- Root of the pristine TE2 donor clone. Prefer the in-repo submodule (external/TabularEditor, pinned
+         at a fixed commit) so a FRESH CLONE / CI runner / autonomous agent builds hermetically; fall back to a
+         sibling ..\..\TabularEditor clone (the legacy local layout) when the submodule isn't initialized.
+         Init it with the git submodule update command (see README / .gitmodules). -->
+    <TE2 Condition="Exists('$(MSBuildThisFileDirectory)..\external\TabularEditor\TOMWrapper')">$(MSBuildThisFileDirectory)..\external\TabularEditor</TE2>
+    <TE2 Condition="'$(TE2)' == ''">$(MSBuildThisFileDirectory)..\..\TabularEditor</TE2>
+    <TOMNugetVersion>19.114.0</TOMNugetVersion>
+  </PropertyGroup>
+
+  <!-- Our own compatibility shims + the M0 FormulaFixup stub live under Compat\ -->
+  <ItemGroup>
+    <Compile Include="Compat\**\*.cs" />
+    <!-- Per-object TMDL scripting helper (needs the wrapper's protected-internal MetadataObject; same-assembly). -->
+    <Compile Include="TmdlScripter.cs" />
+    <Compile Include="TmdlApplier.cs" />
+    <!-- Raw-TOM calendar seam (CL 1701+) — Calendar objects postdate the pinned wrapper; rides the TmdlApplier undo mechanism. -->
+    <Compile Include="CalendarOps.cs" />
+    <!-- Non-undoable audit-annotation seam (Verified Edits) — same-assembly access to the internal undoable:false overload. -->
+    <Compile Include="AuditAnnotations.cs" />
+  </ItemGroup>
+
+  <!-- ===== TOMWrapper project sources (compiled in place from the donor clone) ===== -->
+  <ItemGroup>
+    <!-- Outer TOMWrapper helpers -->
+    <Compile Include="$(TE2)\TOMWrapper\StringHelper.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\EnumerableExtensions.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\DbConnectionStringBuilderExtension.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\PowerBiCompatibilityModeHelper.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\MetadataSerializationOptionsBuilderExtension.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\PropertyGridUI\*Attribute.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\PropertyGridUI\DynamicPropertyObject.cs" />
+    <!-- Connection-string enums (IdentityMode / InteractiveLogin) used by TabularConnection. -->
+    <Compile Include="$(TE2)\TOMWrapper\ConnectionStringProperties.cs" />
+    <!-- These two converters only depend on System.ComponentModel (not WinForms), and define
+         types referenced by attributes in the generated wrappers (EnumBrowsableAttribute etc.). -->
+    <Compile Include="$(TE2)\TOMWrapper\PropertyGridUI\Converters\EnumBrowsableConverter.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\PropertyGridUI\Converters\QueryGroupConverter.cs" />
+
+    <!-- Outer Serialization (TE2 split-folder + helpers) -->
+    <Compile Include="$(TE2)\TOMWrapper\Serialization\**\*.cs" />
+
+    <!-- Inner TOMWrapper object model + handler + (inner) serialization + indexers + PowerBI, etc.
+         EXCLUDE only TabularCommonActions.cs (stubbed in Compat\Shims.cs, exactly as BPALib does).
+         Events.cs is deliberately INCLUDED (the real change-event firehose). -->
+    <Compile Include="$(TE2)\TOMWrapper\TOMWrapper\**\*.cs"
+             Exclude="$(TE2)\TOMWrapper\TOMWrapper\TabularCommonActions.cs" />
+
+    <!-- Undo framework -->
+    <Compile Include="$(TE2)\TOMWrapper\UndoFramework\**\*.cs" />
+
+    <!-- Utils + the real DAX layer: FormulaFixup + ANTLR DAX lexer enable rename-with-reference-fixup
+         (the TE crown-jewel). Replaces the M0 Compat stubs (FormulaFixupStub.cs / DaxAccessors.cs, deleted). -->
+    <Compile Include="$(TE2)\TOMWrapper\Utils\DependencyList.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\JObjectExtension.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\FormulaFixup.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\DaxDependencyHelper.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\DaxToken.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\Utils\DaxToken.Generated.cs" />
+    <!-- TMSL object scripting (JsonScripter under the hood) — powers script_objects' 'tmsl' format. Headless IP. -->
+    <Compile Include="$(TE2)\TOMWrapper\Utils\Scripter.cs" />
+    <Compile Include="$(TE2)\TOMWrapper\TextServices\**\*.cs" />
+
+    <!-- Messages resource (ResourceManager baseName is exactly "TabularEditor.Messages") -->
+    <Compile Include="$(TE2)\TOMWrapper\Messages.Designer.cs" />
+    <EmbeddedResource Include="$(TE2)\TOMWrapper\Messages.resx">
+      <LogicalName>TabularEditor.Messages.resources</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+
+  <!-- ===== Packages (BPALib's net8 set, minus the ANTLR codegen/runtime) ===== -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AnalysisServices" Version="$(TOMNugetVersion)" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.CodeDom" Version="8.0.0" />
+    <PackageReference Include="System.Data.OleDb" Version="8.0.0" />
+    <PackageReference Include="System.Security.Permissions" Version="8.0.0" />
+    <PackageReference Include="Antlr4.Runtime" Version="4.6.6" />
+    <PackageReference Include="Antlr4.CodeGenerator" Version="4.6.6">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- Antlr4.Runtime 4.6.6 targets .NET Standard 1.3 and brings the 1.6 meta-package. On net8 that
+         otherwise resolves advisory-bearing framework packages even though the runtime supplies their
+         implementation. These version constraints must flow to downstream projects to override that graph;
+         exclude their package runtime assets so the .NET 8 implementation is always the one that ships. -->
+    <PackageReference Include="System.Net.Http" Version="4.3.4">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="System.Security.Cryptography.X509Certificates" Version="4.3.2">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="System.Private.Uri" Version="4.3.2">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- ANTLR DAX lexer codegen (needs a JDK on PATH). Generated into namespace TabularEditor.TextServices. -->
+  <ItemGroup>
+    <Antlr4 Include="Grammars\DAXLexer.g4">
+      <Generator>MSBuild:Compile</Generator>
+      <CustomToolNamespace>TabularEditor.TextServices</CustomToolNamespace>
+    </Antlr4>
+  </ItemGroup>
+
+</Project>

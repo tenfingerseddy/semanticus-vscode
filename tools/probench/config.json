@@ -1,0 +1,15 @@
+{
+  "$comment": "ProBench v1 pinned configuration. The pinned model identity is frozen at gold time (runner records a model-summary hash into every gold file). fiscalBoundaryMonths are the month member names either side of the fiscal year end (30 June) as they appear in the pinned model's 'Date'[Month].",
+  "engineDll": "../../Semanticus.Engine/bin/Release/net8.0/Semanticus.Engine.dll",
+  "pinnedModel": {
+    "name": "TBD — Contoso demo (staged per docs/strategy/07-launch-video-storyboard.md)",
+    "hash": "frozen at gold time into gold/*.json"
+  },
+  "attemptCap": 4,
+  "fiscalBoundaryMonths": ["June", "July"],
+  "arms": {
+    "free":     { "tools": [] },
+    "freeplus": { "tools": ["validate_dax", "run_dax"] },
+    "pro":      { "tools": ["validate_dax", "run_dax", "probe_measure", "verify_dax_equivalence", "benchmark_dax_coldwarm"] }
+  }
+}

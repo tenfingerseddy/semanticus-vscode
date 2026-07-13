@@ -1,0 +1,477 @@
+{
+ "scannedAt": "2026-07-04T06:04:45.609Z",
+ "rows": [
+  {
+   "repo": "microsoft/PowerBI-LogAnalytics-Template-Reports",
+   "path": "PBIASEngine/src/SemanticModel",
+   "kind": "microsoft-sample",
+   "commit": "787064bfc54f26c0af32e7f16b8de504effb8228",
+   "grade": "F",
+   "score": 53.6,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 788
+  },
+  {
+   "repo": "microsoft/fabric-samples",
+   "path": "docs-samples/data-science/enrich-powerbi-report-with-machine-learning/Bank Customer Churn Analysis/Bank Customer Churn Analysis/Bank Customer Churn Analysis.SemanticModel",
+   "kind": "microsoft-sample",
+   "commit": "0284cf0f60096ec56bbe8da07ef323ca39400797",
+   "grade": "F",
+   "score": 41.4,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 46
+  },
+  {
+   "repo": "microsoft/fabric-racing-sim",
+   "path": "src/Forza Session Report.SemanticModel",
+   "kind": "microsoft-sample",
+   "commit": "a2a9184ee4ea71982a8522bd7c320977a9b471a4",
+   "grade": "F",
+   "score": 46.2,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 254
+  },
+  {
+   "repo": "Azure/tech-debt-analytics",
+   "path": "report/appcat.SemanticModel",
+   "kind": "microsoft-sample",
+   "commit": "686d1bab01f70e375364f69998abc0c46bd701e5",
+   "grade": "F",
+   "score": 46.6,
+   "gatedBy": [],
+   "findings": 278
+  },
+  {
+   "repo": "microsoft/Analysis-Services",
+   "path": "AsPartitionProcessing/AsPartitionProcessing.AdventureWorks/Model.bim",
+   "kind": "microsoft-sample",
+   "commit": "61ee41607dfb0fa50378165fdb0fc03042c0ef17",
+   "grade": "F",
+   "score": 43.3,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 582
+  },
+  {
+   "repo": "kevchant/GitHub-FUAM-Deploymenator",
+   "path": "workspace/FUAM_Core_SM.SemanticModel",
+   "kind": "community",
+   "commit": "e51de45601af3977aa721dc6aca36beb90c8e5df",
+   "grade": "F",
+   "score": 46.9,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 2445
+  },
+  {
+   "repo": "alisonpezzott/pbi-docs",
+   "path": "pbi/pbi_docs_report.SemanticModel",
+   "kind": "community",
+   "commit": "2470004d1df31a0243a9912753c7ec634d8e66a2",
+   "grade": "D",
+   "score": 60,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 233
+  },
+  {
+   "repo": "ProdataSQL/FinancialModelling",
+   "path": "Workspace/Finance-GL.SemanticModel",
+   "kind": "community",
+   "commit": "ec738ceb6a801f416b88b93c1dcfddbbe89426b7",
+   "grade": "F",
+   "score": 56.4,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 218
+  },
+  {
+   "repo": "RuiRomano/fabric-cli-powerbi-cicd-sample",
+   "path": "src/SM_SalesSense.SemanticModel",
+   "kind": "community",
+   "commit": "1df48c9cf7b56eccb6a646d49d95d8283d81dbbf",
+   "grade": "D",
+   "score": 68.2,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 198
+  },
+  {
+   "repo": "ecotte/Fabric-Monitoring-RTI",
+   "path": "src/Gateway/Gateway Monitoring.SemanticModel",
+   "kind": "community",
+   "commit": "2cd63743c45b11b15ef697f29ad5034cfcb1d18a",
+   "grade": "F",
+   "score": 48.3,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 330
+  },
+  {
+   "repo": "djouallah/aemo_fabric",
+   "path": "Semantic_Model.SemanticModel",
+   "kind": "community",
+   "commit": "1c712bdf10233442a128afbaea70efeafc7395b8",
+   "grade": "F",
+   "score": 53.4,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 746
+  },
+  {
+   "repo": "jurgenfolz/Stock-Intelligence",
+   "path": "Stock Intelligence.SemanticModel",
+   "kind": "community",
+   "commit": "8fd9eb2d9ba02f0e93b06079b96fb6093ed91fd0",
+   "grade": "D",
+   "score": 67,
+   "gatedBy": [],
+   "findings": 323
+  },
+  {
+   "repo": "jurgenfolz/WorldDataReport",
+   "path": "World Data.SemanticModel",
+   "kind": "community",
+   "commit": "be8c6438fee55f3045f846c0c773f4db72c12111",
+   "grade": "D",
+   "score": 61.4,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 155
+  },
+  {
+   "repo": "Mike-Honey/covid-19-au-vaccinations",
+   "path": "PBIP/covid-19-au-vaccinations.SemanticModel",
+   "kind": "community",
+   "commit": "4cbf051e0a6db442b8a5599214e80830098e162d",
+   "grade": "F",
+   "score": 47.6,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 1126
+  },
+  {
+   "repo": "pbi-tools/sales-sample",
+   "path": "Sales.SemanticModel",
+   "kind": "community",
+   "commit": "d9d976f21f1c9c00444c57a0ddfdfd96f7d617ce",
+   "grade": "D",
+   "score": 69,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 171
+  },
+  {
+   "repo": "FHaurum/FHSQLMonitor",
+   "path": "src/Report/FHSQLMonitor.SemanticModel",
+   "kind": "community",
+   "commit": "c8c08b8338dfdffeec3356f25af20cfc3db36e8a",
+   "grade": "F",
+   "score": 54.1,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 3222
+  },
+  {
+   "repo": "vlpatkosdani/powerbi-cicd-with-githubactions-demos",
+   "path": "Contoso 10k.SemanticModel",
+   "kind": "community",
+   "commit": "203173e6abf4760edf7e226fcec014b5ef7ddc1d",
+   "grade": "D",
+   "score": 63.5,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 93
+  },
+  {
+   "repo": "stephbruno/Power-BI-Accessibility-Checker",
+   "path": "Accessibility Checker - Service.SemanticModel",
+   "kind": "community",
+   "commit": "7844a41436775176fdd6f4cee30602678fdbace7",
+   "grade": "D",
+   "score": 63.1,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 163
+  },
+  {
+   "repo": "data-goblin/power-bi-visual-templates",
+   "path": "templates/pbip/V013/V013.SemanticModel",
+   "kind": "community",
+   "commit": "9063b9e52f3e96c08bceba8ea324aed25edfd7b3",
+   "grade": "B",
+   "score": 81.5,
+   "gatedBy": [],
+   "findings": 136
+  },
+  {
+   "repo": "DataChant/Trello-Power-BI",
+   "path": "Trello.SemanticModel",
+   "kind": "community",
+   "commit": "250f924c55e71f13a7f23a49192f0adacbbf8fe3",
+   "grade": "F",
+   "score": 59.9,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 276
+  },
+  {
+   "repo": "tomatminceddata/PBIR_XRAY",
+   "path": "The Power BI Reports/PBIR x-ray.SemanticModel",
+   "kind": "community",
+   "commit": "8c344454c229e12fec84ad22aff2e6483c886ef6",
+   "grade": "F",
+   "score": 43.1,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 648
+  },
+  {
+   "repo": "Cyberlorians/nistframework",
+   "path": "powerbi/NISTCoverage.SemanticModel",
+   "kind": "community",
+   "commit": "3debf571680028f86ee88b92c65eee6beb5c18cc",
+   "grade": "F",
+   "score": 43.3,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 29
+  },
+  {
+   "repo": "CareTogether/CareTogether-PowerBI",
+   "path": "CareTogether.SemanticModel",
+   "kind": "community",
+   "commit": "60440f72df2055b5ddcb8aadacae806d3d79351b",
+   "grade": "F",
+   "score": 57.6,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 806
+  },
+  {
+   "repo": "bcgov/moh-APO-Reporting",
+   "path": "Cloud_Status.SemanticModel",
+   "kind": "community",
+   "commit": "55a9148c0b5dbc495a3eb7179d94b09c09d3e8f6",
+   "grade": "F",
+   "score": 49.5,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 322
+  },
+  {
+   "repo": "Open-Education-AI/OEAI",
+   "path": "report/oeai_report_mvp.SemanticModel",
+   "kind": "community",
+   "commit": "a71890128c41a39fb1bbf1e540f7409e3691bb20",
+   "grade": "F",
+   "score": 51.3,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 797
+  },
+  {
+   "repo": "sonbaoharryson/Data_Engineer_JobPulse_Project",
+   "path": "dashboard/JobPulse.SemanticModel",
+   "kind": "community",
+   "commit": "13c3fa529c8dc81e51cb8b92d6307121e79f57e0",
+   "grade": "F",
+   "score": 52.5,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 431
+  },
+  {
+   "repo": "aditiv101/Youtube_analytics_dashboard",
+   "path": "YT.SemanticModel",
+   "kind": "community",
+   "commit": "bc0340556d5e80ba45487333f7b443bbd9ec6299",
+   "grade": "F",
+   "score": 56.2,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 55
+  },
+  {
+   "repo": "miguelASL/Eurocopa_Espana",
+   "path": "eurocopa.SemanticModel",
+   "kind": "community",
+   "commit": "8fdd41b8cbfa893c838d3d22d9835a35b4daa8f6",
+   "grade": "F",
+   "score": 47.2,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 567
+  },
+  {
+   "repo": "jeremypj/budget-intelligence-ynab",
+   "path": "Power BI Analytics for YNAB.Dataset",
+   "kind": "community",
+   "commit": "511672910dbdf727feb82a4a683a7ca99187f9f9",
+   "grade": "D",
+   "score": 69,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 216
+  },
+  {
+   "repo": "jeremypj/Power-BI-for-BigTime",
+   "path": "Big Time Analytics.SemanticModel",
+   "kind": "community",
+   "commit": "d6242c2f370d56a5fd6a7d970977438186d4beaa",
+   "grade": "C",
+   "score": 72.6,
+   "gatedBy": [],
+   "findings": 611
+  },
+  {
+   "repo": "ayodejiayodele/github-developer-metrics",
+   "path": "src/github_copilot_dev_metrics.SemanticModel",
+   "kind": "community",
+   "commit": "7cea2d7fa05d2bd6204fd147b1527e0314a10f63",
+   "grade": "F",
+   "score": 51.1,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 823
+  },
+  {
+   "repo": "Rede-DSBR/DocPBI2",
+   "path": "pbip/PNP_Publicada_dev.SemanticModel",
+   "kind": "community",
+   "commit": "9c5522d8869d1f97f69aa33372fa7e8a522b02d1",
+   "grade": "C",
+   "score": 70.3,
+   "gatedBy": [],
+   "findings": 1332
+  },
+  {
+   "repo": "MeteoWatch/MeteoWatch",
+   "path": "fabric/MeteoWatch.SemanticModel",
+   "kind": "community",
+   "commit": "30c88715f41b223e38968d96dc3b4fcbc3943a43",
+   "grade": "F",
+   "score": 45.5,
+   "gatedBy": [],
+   "findings": 330
+  },
+  {
+   "repo": "NelsonNeba/Workforce-Hiring-Optimization-Dashboard-",
+   "path": "WorkSmart.SemanticModel",
+   "kind": "community",
+   "commit": "30f28edb370c8f77a7fc6461fdb01efc8bb53fc7",
+   "grade": "D",
+   "score": 61.8,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 143
+  },
+  {
+   "repo": "PBI-DataVizzle/pbi_content",
+   "path": "my_deneb_showcases/slope/slope.SemanticModel",
+   "kind": "community",
+   "commit": "fc055302181e29512ec2a9db6c1f7f38716e7e47",
+   "grade": "F",
+   "score": 58.6,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 353
+  },
+  {
+   "repo": "CSCfi/antero",
+   "path": "tabular/ARVO/ARVO/Model.bim",
+   "kind": "community",
+   "commit": "836c2a2c15e499bbd3e472289ca1945f43b9b5ac",
+   "grade": "F",
+   "score": 39.1,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 352
+  },
+  {
+   "repo": "kerski/fabric-dataops-patterns",
+   "path": "Semantic Model/SampleModel.SemanticModel",
+   "kind": "training",
+   "commit": "6ec433bb7dbe1dcebe26cf29dc34658cd627a810",
+   "grade": "F",
+   "score": 51.2,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 104
+  },
+  {
+   "repo": "alisonpezzott/reactor-pbi-maio-25",
+   "path": "src/Sample.SemanticModel",
+   "kind": "training",
+   "commit": "bcc829422ff4b34cdb69aafced9159f5b375044f",
+   "grade": "F",
+   "score": 55.3,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 10
+  },
+  {
+   "repo": "DaniBunny/Fabric-DE-CICD",
+   "path": "deployment/workshop_template/MySemanticModel.SemanticModel",
+   "kind": "training",
+   "commit": "44bedd3777aaece9a42a9f16d99c6d5f6f40d4fb",
+   "grade": "F",
+   "score": 39,
+   "gatedBy": [],
+   "findings": 43
+  },
+  {
+   "repo": "PacktPublishing/Microsoft-Power-BI-Cookbook",
+   "path": "Chapter13/5-Migrate a PBI Data Model to SSAS Tabular/Visual Studio/Model.bim",
+   "kind": "training",
+   "commit": "803ac4ba50d88449dd3b56e959bfeaf8d6024f2b",
+   "grade": "F",
+   "score": 54.9,
+   "gatedBy": [
+    ">50% of visible measures undescribed — capped at D"
+   ],
+   "findings": 332
+  },
+  {
+   "repo": "AllanYiin/TabularModelBook",
+   "path": "Ch08/Ch08/Model.bim",
+   "kind": "training",
+   "error": "open_model: open_model failed: Unable to load Tabular Model (Compatibility Level 1200+) from C:\\Users\\KaneSnyder(nexwave)\\Semanticus\\tools\\readiness-corpus\\work\\AllanYiin__TabularModelBook\\Ch08\\Ch08\\M"
+  }
+ ]
+}

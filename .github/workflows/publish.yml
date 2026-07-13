@@ -1,0 +1,57 @@
+name: Publish
+
+# DORMANT until release: this only fires on a v* tag (none exists yet) or a manual dispatch, and it needs
+# a registered Marketplace publisher and the VSCE_PAT secret. Until then it never runs.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 'Guard: require the publisher secret'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VSCE_PAT)) {
+            Write-Error 'VSCE_PAT secret is not set. Register the Marketplace publisher and add its PAT as this repository secret.'
+            exit 1
+          }
+      - name: Test, package, and verify the Windows x64 extension
+        working-directory: Semanticus.VSCode
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run package:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish the verified VSIX to the VS Marketplace
+        working-directory: Semanticus.VSCode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          $packages = @(Get-ChildItem -LiteralPath dist -Filter 'semanticus-win32-x64-*.vsix')
+          if ($packages.Count -ne 1) {
+            Write-Error "Expected exactly one verified Windows x64 VSIX, found $($packages.Count)."
+            exit 1
+          }
+          node node_modules/@vscode/vsce/vsce publish --packagePath "$($packages[0].FullName)"

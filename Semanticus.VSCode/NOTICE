@@ -1,0 +1,27 @@
+Semanticus
+Copyright (c) 2026 Kane Snyder
+Licensed under the Elastic License 2.0 (see LICENSE).
+
+This product includes third-party software:
+
+--------------------------------------------------------------------------------
+Tabular Editor 2
+Copyright (c) Tabular Editor ApS
+Licensed under the MIT License.
+https://github.com/TabularEditor/TabularEditor
+
+Semanticus vendors and compiles portions of the Tabular Editor 2 source
+(TOMWrapper change-tracking/undo, FormulaFixup, BPALib and related headless
+libraries) into its engine. The vendored source and its license are retained
+under external/TabularEditor/.
+--------------------------------------------------------------------------------
+Microsoft Analysis Services client libraries
+(Microsoft.AnalysisServices / Tabular Object Model, ADOMD.NET)
+Copyright (c) Microsoft Corporation
+Distributed under the Microsoft Software License Terms that accompany the
+official NuGet packages; redistributed here as permitted by those terms.
+https://learn.microsoft.com/analysis-services/client-libraries
+--------------------------------------------------------------------------------
+
+Additional open-source dependencies are used under their respective licenses
+as declared in the NuGet and npm package manifests of this repository.

@@ -1,0 +1,3645 @@
+{
+  "schemaVersion": 1,
+  "sourceHash": "ae219ac5e64184f30dcf58dc1f8566bd1a9e6a8eee2c121bef72c11903f23034",
+  "sources": [
+    "Semanticus.Engine/McpTools.cs",
+    "Semanticus.Engine/McpTools.Evidence.cs",
+    "Semanticus.Engine/McpTools.Harness.cs",
+    "Semanticus.Engine/McpTools.ImpactAssessment.cs",
+    "Semanticus.Engine/McpTools.Interview.cs",
+    "Semanticus.Engine/McpTools.Testing.cs",
+    "Semanticus.Engine/EngineRpcTarget.cs",
+    "Semanticus.Engine/IEngine.cs",
+    "Semanticus.VSCode/webview/src/App.tsx"
+  ],
+  "summary": {
+    "mcpOperations": 302,
+    "rpcActions": 305,
+    "engineMethods": 304,
+    "studioDestinations": 22,
+    "groupedStudioDestinations": 17,
+    "trackedEvidenceFiles": 160,
+    "operationsWithoutTrackedTestReference": 3,
+    "unclassifiedOperations": 0
+  },
+  "studioDestinations": [
+    "advmodels",
+    "bpa",
+    "compare",
+    "data",
+    "dataagent",
+    "daxlab",
+    "deploy",
+    "diagram",
+    "docs",
+    "evidence",
+    "history",
+    "knowledge",
+    "lineage",
+    "mcode",
+    "optimize",
+    "permissions",
+    "readiness",
+    "search",
+    "spec",
+    "stats",
+    "tests",
+    "workflows"
+  ],
+  "groupedStudioDestinations": [
+    "advmodels",
+    "bpa",
+    "data",
+    "daxlab",
+    "deploy",
+    "diagram",
+    "docs",
+    "evidence",
+    "lineage",
+    "mcode",
+    "optimize",
+    "permissions",
+    "readiness",
+    "search",
+    "spec",
+    "stats",
+    "tests"
+  ],
+  "operations": [
+    {
+      "operation": "abort_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowEvidenceTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "accept_primer_suggestion",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PrimerTests.cs"
+      ]
+    },
+    {
+      "operation": "activate_workflow_profile",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowProfileTests.cs"
+      ]
+    },
+    {
+      "operation": "add_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs",
+        "Semanticus.Tests/PrimerTests.cs"
+      ]
+    },
+    {
+      "operation": "add_interview_question",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs"
+      ]
+    },
+    {
+      "operation": "add_plan_item",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
+      ]
+    },
+    {
+      "operation": "ai_readiness_scan",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/OrientationTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
+        "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/WaiverTests.cs"
+      ]
+    },
+    {
+      "operation": "ai_readiness_scan_live",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "ai_readiness_summary",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "analyze_cloud_reports",
+      "family": "lineage-and-impact",
+      "releaseClass": "deferred",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/CloudReportLineageTests.cs"
+      ]
+    },
+    {
+      "operation": "analyze_reports",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/CloudReportLineageTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_dax_script",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_fix",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "apply_model_diff",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyGateTests.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/RestorePointTests.cs",
+        "Semanticus.Tests/WorkspacePushTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_plan",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_safe_fixes",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/WaiverTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_schema_update",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs"
+      ]
+    },
+    {
+      "operation": "apply_tmdl",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "approve_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "autogenerate_spec_from_fabric",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": []
+    },
+    {
+      "operation": "autogenerate_spec_from_model",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs"
+      ]
+    },
+    {
+      "operation": "benchmark_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "benchmark_dax_coldwarm",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "blame_value",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs"
+      ]
+    },
+    {
+      "operation": "bpa_fix",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs"
+      ]
+    },
+    {
+      "operation": "bpa_fix_all",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs"
+      ]
+    },
+    {
+      "operation": "bpa_get_fix_prompt",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "bpa_scan",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs"
+      ]
+    },
+    {
+      "operation": "bpa_summary",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "build_model_from_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs"
+      ]
+    },
+    {
+      "operation": "capture_baseline",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs"
+      ]
+    },
+    {
+      "operation": "capture_query_plan",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "check_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/SkillDebtSafetyTests.cs",
+        "Semanticus.Tests/WorkflowCheckTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "cherry_pick",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/CompareAuthFallbackTests.cs",
+        "Semanticus.Tests/ModelCompareTests.cs"
+      ]
+    },
+    {
+      "operation": "cicd_generate",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "cicd_publish",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "clear_cache",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/MeasureTimingTests.cs"
+      ]
+    },
+    {
+      "operation": "clear_plan",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "clear_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "compare_baseline",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs"
+      ]
+    },
+    {
+      "operation": "connect_local",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "connect_xmla",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/CompareAuthFallbackTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "connection_context",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionContextTests.cs"
+      ]
+    },
+    {
+      "operation": "connection_status",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "create_calculated_column",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CloudReportLineageTests.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs"
+      ]
+    },
+    {
+      "operation": "create_calculated_table",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "create_calculation_group",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalcGroupReadTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "create_calculation_item",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CalcGroupReadTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "create_column",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
+        "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/ReconcileMappingTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs"
+      ]
+    },
+    {
+      "operation": "create_data_agent",
+      "family": "object-authoring",
+      "releaseClass": "experimental",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "create_data_source",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "create_directlake_table",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs"
+      ]
+    },
+    {
+      "operation": "create_field_parameter",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs"
+      ]
+    },
+    {
+      "operation": "create_function",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/DaxLibTests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs"
+      ]
+    },
+    {
+      "operation": "create_hierarchy",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs"
+      ]
+    },
+    {
+      "operation": "create_history_checkpoint",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/HistoryCheckpointTests.cs",
+        "Semanticus.VSCode/test/history-recovery.test.mjs"
+      ]
+    },
+    {
+      "operation": "create_import_table",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReconcileMappingTests.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs",
+        "Semanticus.Tests/TableRowCountTests.cs"
+      ]
+    },
+    {
+      "operation": "create_measure",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/BpaTokenCheckTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/HarnessReportTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessScopedScanTests.cs",
+        "Semanticus.Tests/ReconcileMappingTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs",
+        "Semanticus.Tests/SessionObserverTests.cs",
+        "Semanticus.Tests/SkillDebtSafetyTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowCheckTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowKernelTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "create_model",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/BpaTokenCheckTests.cs",
+        "Semanticus.Tests/CalcGroupReadTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DaxLibTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
+        "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/ReconcileMappingTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs",
+        "Semanticus.Tests/SessionObserverTests.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs",
+        "Semanticus.Tests/TableRowCountTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/TestReportExportTests.cs",
+        "Semanticus.Tests/TomVersionPinTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowEvidenceTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "create_named_expression",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.VSCode/test/incremental-refresh.test.mjs"
+      ]
+    },
+    {
+      "operation": "create_perspective",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "create_relationship",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "create_role",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "create_table",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/BpaTokenCheckTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessRefsParityTests.cs",
+        "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
+        "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SessionObserverTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_install",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DaxLibTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_list_installed",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DaxLibTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_package_info",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DaxLibTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_search",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_uninstall",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DaxLibTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "daxlib_versions",
+      "family": "daxlib",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "define_calendar",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/DryRunTests.cs"
+      ]
+    },
+    {
+      "operation": "define_calendar_from_template",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_calendar",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/CalendarTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_data_agent",
+      "family": "data-agent",
+      "releaseClass": "experimental",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/DataAgentTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_interview_question",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/InterviewTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_object",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessScopedScanTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_role",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "delete_test",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "delete_workflow_template",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "deploy_gate",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs"
+      ]
+    },
+    {
+      "operation": "deploy_live",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supervised",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyGateTests.cs",
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/EvidenceTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HarnessReportTests.cs",
+        "Semanticus.Tests/LiveDeploySyncTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/WorkflowEvidenceTests.cs",
+        "Semanticus.Tests/WorkspacePushTests.cs"
+      ]
+    },
+    {
+      "operation": "deploy_stage",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DryRunTests.cs"
+      ]
+    },
+    {
+      "operation": "deployment_history",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "diff_schema",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs"
+      ]
+    },
+    {
+      "operation": "disconnect",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "downvote_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "dry_run",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs",
+        "Semanticus.Tests/LiveDeploySyncTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/RestorePointTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowCheckTests.cs"
+      ]
+    },
+    {
+      "operation": "duplicate_object",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs"
+      ]
+    },
+    {
+      "operation": "edit_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "enable_qna",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs"
+      ]
+    },
+    {
+      "operation": "evaluate_and_log",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs"
+      ]
+    },
+    {
+      "operation": "explain_value",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ExplainValueTests.cs"
+      ]
+    },
+    {
+      "operation": "export_test_report",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/TestReportExportTests.cs"
+      ]
+    },
+    {
+      "operation": "export_verified_edits",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "export_vpax",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/VpaxExportTests.cs"
+      ]
+    },
+    {
+      "operation": "export_workflow_evidence",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowEvidenceTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_commit",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_connect",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_connection",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_disconnect",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_status",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "fabric_git_update",
+      "family": "deployment-and-fabric",
+      "releaseClass": "dry-run-only",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "forget_connection",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionPublicDoorTests.cs"
+      ]
+    },
+    {
+      "operation": "generate_data_agent_config",
+      "family": "data-agent",
+      "releaseClass": "experimental",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/DataAgentTests.cs"
+      ]
+    },
+    {
+      "operation": "generate_date_table",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "generate_time_intelligence",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_agent_policy",
+      "family": "agent-governance",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_ai_instructions",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/HarnessFixTests.cs"
+      ]
+    },
+    {
+      "operation": "get_custom_rules",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs"
+      ]
+    },
+    {
+      "operation": "get_data_agent",
+      "family": "data-agent",
+      "releaseClass": "experimental",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "get_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/OptimizeMeasureTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "get_dependencies",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_doc_model",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_doc_outline",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_doc_section",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_entitlement",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.VSCode/test/licensing-path.test.mjs"
+      ]
+    },
+    {
+      "operation": "get_evidence",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.VSCode/test/evidence-library.test.mjs"
+      ]
+    },
+    {
+      "operation": "get_fix_prompt",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_grounding",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/WorkflowKernelTests.cs"
+      ]
+    },
+    {
+      "operation": "get_incremental_refresh_policy",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "get_layout",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs"
+      ]
+    },
+    {
+      "operation": "get_lineage",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/LineageTests.cs"
+      ]
+    },
+    {
+      "operation": "get_model_fingerprint",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "get_model_graph",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/OrientationTests.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "get_model_objects",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "get_model_primer",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/OrientationTests.cs"
+      ]
+    },
+    {
+      "operation": "get_model_summary",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/OrientationTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "get_named_expression",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "get_object",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs"
+      ]
+    },
+    {
+      "operation": "get_op_catalog",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs"
+      ]
+    },
+    {
+      "operation": "get_partition_m",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs"
+      ]
+    },
+    {
+      "operation": "get_perspectives",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "get_pipeline_stages",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "get_plan",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "get_properties",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "get_reference_tree",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "get_source_schema",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs"
+      ]
+    },
+    {
+      "operation": "get_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs"
+      ]
+    },
+    {
+      "operation": "get_stage_items",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "get_verified_mode",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/VerifiedModeTests.cs"
+      ]
+    },
+    {
+      "operation": "get_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/HardMeasureWorkflowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowAvailabilityTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowProfileTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "get_workflow_enforcement",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs"
+      ]
+    },
+    {
+      "operation": "get_workflow_policy",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowProfileTests.cs"
+      ]
+    },
+    {
+      "operation": "get_workflow_run",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "get_workflow_template",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/HardMeasureWorkflowTests.cs"
+      ]
+    },
+    {
+      "operation": "git_branch",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/GitPublicOperationTests.cs"
+      ]
+    },
+    {
+      "operation": "git_checkout",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/GitPublicOperationTests.cs"
+      ]
+    },
+    {
+      "operation": "git_clone",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/GitPublicOperationTests.cs"
+      ]
+    },
+    {
+      "operation": "git_commit",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "git_diff",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "git_log",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "git_pull",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/GitPublicOperationTests.cs"
+      ]
+    },
+    {
+      "operation": "git_push",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "git_status",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "harness_report",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/HarnessReportTests.cs"
+      ]
+    },
+    {
+      "operation": "impact_assessment",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.VSCode/test/copy-rules.test.mjs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
+      ]
+    },
+    {
+      "operation": "impact_of",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/LineageTests.cs"
+      ]
+    },
+    {
+      "operation": "instantiate_workflow_template",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/HardMeasureWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "label_connection",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionPublicDoorTests.cs"
+      ]
+    },
+    {
+      "operation": "lint_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "list_calculation_groups",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/CalcGroupReadTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_calendars",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/DryRunTests.cs"
+      ]
+    },
+    {
+      "operation": "list_columns",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SchemaSyncTests.cs"
+      ]
+    },
+    {
+      "operation": "list_connections",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.Tests/ConnectionRegistryTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "list_data_agents",
+      "family": "data-agent",
+      "releaseClass": "experimental",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_deployment_pipelines",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_evidence",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.VSCode/test/evidence-library.test.mjs"
+      ]
+    },
+    {
+      "operation": "list_format_templates",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs"
+      ]
+    },
+    {
+      "operation": "list_functions",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "list_history_checkpoints",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/HistoryCheckpointTests.cs"
+      ]
+    },
+    {
+      "operation": "list_insights",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_interview_questions",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs"
+      ]
+    },
+    {
+      "operation": "list_interview_seeds",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs"
+      ]
+    },
+    {
+      "operation": "list_local_instances",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "list_measures",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/CloudReportLineageTests.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs",
+        "Semanticus.Tests/DuplicateObjectTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ExplainValueTests.cs",
+        "Semanticus.Tests/FieldParameterTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/GitPublicOperationTests.cs",
+        "Semanticus.Tests/HistoryCheckpointTests.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/OptimizeMeasureTests.cs",
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs",
+        "Semanticus.Tests/TestSuiteCoverageTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/VerifiedModeTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "list_named_expressions",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "list_objects",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_partitions",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_pending_approvals",
+      "family": "agent-governance",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "list_primer_suggestions",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PrimerTests.cs"
+      ]
+    },
+    {
+      "operation": "list_refresh_types",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "list_reports",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": []
+    },
+    {
+      "operation": "list_restore_points",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "list_roles",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "list_test_runs",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "list_tests",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicReadMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "list_value_history",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs"
+      ]
+    },
+    {
+      "operation": "list_verified_edits",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/WorkspacePushTests.cs"
+      ]
+    },
+    {
+      "operation": "list_waivers",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WaiverTests.cs"
+      ]
+    },
+    {
+      "operation": "list_workflow_profiles",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowProfileTests.cs"
+      ]
+    },
+    {
+      "operation": "list_workflow_templates",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "list_workflows",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowAvailabilityTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "list_workspaces",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "load_bpa_rules",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "load_readiness_rules",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs"
+      ]
+    },
+    {
+      "operation": "load_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "make_model_ai_ready",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "mark_date_table",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/BestPracticeRulesTests.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs"
+      ]
+    },
+    {
+      "operation": "model_diff",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyGateTests.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/ModelCompareTests.cs",
+        "Semanticus.Tests/RestorePointTests.cs",
+        "Semanticus.Tests/WorkspacePushTests.cs"
+      ]
+    },
+    {
+      "operation": "model_graph_summary",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "model_overview",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "open_live",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs",
+        "Semanticus.Tests/SnapshotCleanupTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs",
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+      ]
+    },
+    {
+      "operation": "open_local",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.Tests/SnapshotCleanupTests.cs",
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+      ]
+    },
+    {
+      "operation": "open_model",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/CloudReportLineageTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ModelCompareTests.cs",
+        "Semanticus.Tests/OrientationTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/TestReportExportTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "optimize_measure",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/OptimizeMeasureTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "pivot_measure",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs"
+      ]
+    },
+    {
+      "operation": "prepare_working_copy",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkingCopyTests.cs",
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+      ]
+    },
+    {
+      "operation": "preview_deploy",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs"
+      ]
+    },
+    {
+      "operation": "preview_table",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs"
+      ]
+    },
+    {
+      "operation": "probe_measure",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ProbeMeasureTests.cs",
+        "Semanticus.Tests/SkillDebtSafetyTests.cs",
+        "Semanticus.Tests/WorkflowCheckTests.cs",
+        "Semanticus.Tests/WorkflowEvidenceTests.cs"
+      ]
+    },
+    {
+      "operation": "profile_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "propose_plan",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "propose_replace",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs"
+      ]
+    },
+    {
+      "operation": "publish_data_agent",
+      "family": "data-agent",
+      "releaseClass": "deferred",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/DataAgentTests.cs"
+      ]
+    },
+    {
+      "operation": "purge_knowledge",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "purge_restore_points",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/RestorePointTests.cs"
+      ]
+    },
+    {
+      "operation": "recall_experience",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "reconcile_measure",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ReconcileGateTests.cs"
+      ]
+    },
+    {
+      "operation": "redo_change",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "refresh_partition",
+      "family": "deployment-and-fabric",
+      "releaseClass": "experimental",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyHardeningTests.cs"
+      ]
+    },
+    {
+      "operation": "reject_primer_suggestion",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/PrimerTests.cs"
+      ]
+    },
+    {
+      "operation": "remember_xmla_connection",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionRegistryTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "remove_incremental_refresh_policy",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "remove_safe_objects",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs"
+      ]
+    },
+    {
+      "operation": "rename_display_folder",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/DisplayFolderTests.cs"
+      ]
+    },
+    {
+      "operation": "rename_object",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs",
+        "Semanticus.Tests/ReadinessScopedScanTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "replace_in_object",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs"
+      ]
+    },
+    {
+      "operation": "replay_check_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ReplayCheckTests.cs"
+      ]
+    },
+    {
+      "operation": "reset_bpa_rules",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "reset_readiness_rules",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs"
+      ]
+    },
+    {
+      "operation": "restore_history_checkpoint",
+      "family": "compare-and-source-control",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/HistoryCheckpointTests.cs",
+        "Semanticus.VSCode/test/history-recovery.test.mjs"
+      ]
+    },
+    {
+      "operation": "review_reconcile_mapping",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ReconcileMappingTests.cs"
+      ]
+    },
+    {
+      "operation": "rollback_push",
+      "family": "deployment-and-fabric",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/RestorePointTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "run_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/HarnessReportTests.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs"
+      ]
+    },
+    {
+      "operation": "run_dmv",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs"
+      ]
+    },
+    {
+      "operation": "run_interview",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/RunDaxQueryGateTests.cs",
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+      ]
+    },
+    {
+      "operation": "run_tests",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/EvidenceTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/TableRowCountTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/TestReportExportTests.cs",
+        "Semanticus.Tests/TestSuiteCoverageTests.cs",
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+      ]
+    },
+    {
+      "operation": "save_evidence",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.VSCode/test/evidence-library.test.mjs"
+      ]
+    },
+    {
+      "operation": "save_layout",
+      "family": "cross-cutting-tools",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs"
+      ]
+    },
+    {
+      "operation": "save_model",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/HarnessReportTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SnapshotCleanupTests.cs",
+        "Semanticus.Tests/ValueBlameTests.cs"
+      ]
+    },
+    {
+      "operation": "save_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "save_test",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/TestObjectIdentityStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "save_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SkillDebtSafetyTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowCheckTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "save_workflow_template",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
+      ]
+    },
+    {
+      "operation": "script_objects",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs"
+      ]
+    },
+    {
+      "operation": "search_model",
+      "family": "orientation-and-model-reads",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs"
+      ]
+    },
+    {
+      "operation": "set_ai_data_schema",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs"
+      ]
+    },
+    {
+      "operation": "set_ai_instructions",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs"
+      ]
+    },
+    {
+      "operation": "set_calc_group_precedence",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CalcGroupReadTests.cs"
+      ]
+    },
+    {
+      "operation": "set_calc_item_format_string",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CalcGroupReadTests.cs"
+      ]
+    },
+    {
+      "operation": "set_column_data_type",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "set_column_hidden",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/ReadinessCopyTests.cs"
+      ]
+    },
+    {
+      "operation": "set_column_ols",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_compatibility_level",
+      "family": "object-authoring",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/LayoutSidecarTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WriteRoutingTests.cs",
+        "Semanticus.VSCode/test/calendar-upgrade.test.mjs"
+      ]
+    },
+    {
+      "operation": "set_data_category",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "set_description",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/DistillableHintTests.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessScopedScanTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/SearchReplaceTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "set_display_folder",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs"
+      ]
+    },
+    {
+      "operation": "set_doc_section",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_incremental_refresh_policy",
+      "family": "source-and-m",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.VSCode/test/incremental-refresh.test.mjs"
+      ]
+    },
+    {
+      "operation": "set_measure_format",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/HealthDeltaTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs"
+      ]
+    },
+    {
+      "operation": "set_measure_format_expression",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/FormatTemplatesTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs"
+      ]
+    },
+    {
+      "operation": "set_model_primer",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": []
+    },
+    {
+      "operation": "set_partition_m",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "set_perspective_member",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PerspectiveTests.cs"
+      ]
+    },
+    {
+      "operation": "set_plan_item",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ChangePlanDeleteTests.cs",
+        "Semanticus.Tests/ExperienceLogTests.cs",
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "set_properties",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs"
+      ]
+    },
+    {
+      "operation": "set_property",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/AgentPolicyTests.cs",
+        "Semanticus.Tests/BatchPropertyEditsTests.cs",
+        "Semanticus.Tests/DisplayFolderTests.cs"
+      ]
+    },
+    {
+      "operation": "set_publish_destination",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "set_relationship_active",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_relationship_cardinality",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_relationship_crossfilter",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "set_role_member",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ResultContractTests.cs"
+      ]
+    },
+    {
+      "operation": "set_role_permission",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_sort_by_column",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "set_spec",
+      "family": "documentation-and-spec",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/SpecCardinalityTests.cs",
+        "Semanticus.VSCode/test/navigation.test.mjs"
+      ]
+    },
+    {
+      "operation": "set_summarize_by",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_synonyms",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_table_ols",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "set_table_permission",
+      "family": "model-security",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DualDriveUndoTests.cs"
+      ]
+    },
+    {
+      "operation": "set_verified_mode",
+      "family": "change-plan-and-verified-edits",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs",
+        "Semanticus.Tests/VerifiedModeTests.cs"
+      ]
+    },
+    {
+      "operation": "set_workflow_activation",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowProfileTests.cs"
+      ]
+    },
+    {
+      "operation": "set_workflow_binding",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowBindingTests.cs"
+      ]
+    },
+    {
+      "operation": "set_workflow_enabled",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/WorkflowAvailabilityTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs"
+      ]
+    },
+    {
+      "operation": "set_workflow_enforcement",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs"
+      ]
+    },
+    {
+      "operation": "skip_workflow_step",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowOpsTests.cs"
+      ]
+    },
+    {
+      "operation": "start_workflow",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowAvailabilityTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs",
+        "Semanticus.Tests/WorkflowEvidenceTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "submit_workflow_step",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.LearnBench/Program.cs",
+        "Semanticus.LearnSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
+        "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowActivationTests.cs",
+        "Semanticus.Tests/WorkflowAvailabilityTests.cs",
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.Tests/WorkflowEnforcementTests.cs",
+        "Semanticus.Tests/WorkflowOpsTests.cs",
+        "Semanticus.Tests/WorkflowVerifyExecutorTests.cs"
+      ]
+    },
+    {
+      "operation": "tag_calendar_column",
+      "family": "calendars",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/CalendarTests.cs"
+      ]
+    },
+    {
+      "operation": "undo_change",
+      "family": "session-and-lifecycle",
+      "releaseClass": "supported",
+      "risk": "critical",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/VerifiedEditsAuditTests.cs"
+      ]
+    },
+    {
+      "operation": "unused_objects",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ReadinessCopyTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs"
+      ]
+    },
+    {
+      "operation": "unwaive_finding",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/WaiverTests.cs"
+      ]
+    },
+    {
+      "operation": "update_data_agent",
+      "family": "data-agent",
+      "releaseClass": "experimental",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/DataAgentTests.cs",
+        "Semanticus.VSCode/test/data-agent-schema.test.mjs"
+      ]
+    },
+    {
+      "operation": "update_measure",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/WorkflowKernelTests.cs"
+      ]
+    },
+    {
+      "operation": "update_named_expression",
+      "family": "metadata-and-properties",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.VSCode/test/incremental-refresh.test.mjs"
+      ]
+    },
+    {
+      "operation": "upvote_insight",
+      "family": "primer-and-learning",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/KnowledgeStoreTests.cs"
+      ]
+    },
+    {
+      "operation": "validate_dax",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+        "Semanticus.Tests/HarnessReportTests.cs"
+      ]
+    },
+    {
+      "operation": "validate_rule",
+      "family": "ai-readiness",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs"
+      ]
+    },
+    {
+      "operation": "verify_dax_equivalence",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeMcpSurfaceTests.cs"
+      ]
+    },
+    {
+      "operation": "vpaq_scan",
+      "family": "dax-and-query",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "waive_finding",
+      "family": "bpa-and-waivers",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/WaiverTests.cs"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Properties grid — screenshot harness</title>
+  <!-- The grid uses --vscode-* theme vars directly; supply a representative VS Code dark theme so the shot
+       matches what the docked Properties view looks like. -->
+  <style>
+    :root {
+      --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+      --vscode-font-size: 13px;
+      --vscode-foreground: #cccccc;
+      --vscode-descriptionForeground: #9d9d9d;
+      --vscode-editor-background: #1e1e1e;
+      --vscode-editor-font-family: Consolas, "Courier New", monospace;
+      --vscode-editorWidget-background: #252526;
+      --vscode-editorWidget-border: #454545;
+      --vscode-sideBar-background: #252526;
+      --vscode-panel-border: #3c3c3c;
+      --vscode-input-background: #3c3c3c;
+      --vscode-input-foreground: #cccccc;
+      --vscode-input-border: #3c3c3c;
+      --vscode-input-placeholderForeground: #a6a6a6;
+      --vscode-checkbox-foreground: #cccccc;
+      --vscode-focusBorder: #007fd4;
+      --vscode-errorForeground: #f48771;
+      --vscode-charts-blue: #4ea0e0;
+      --vscode-charts-green: #89d185;
+      --vscode-textLink-foreground: #3794ff;
+      --vscode-button-background: #0e639c;
+      --vscode-button-foreground: #ffffff;
+      --vscode-button-hoverBackground: #1177bb;
+      --vscode-button-secondaryBackground: #3a3d41;
+      --vscode-button-secondaryForeground: #cccccc;
+      --vscode-button-secondaryHoverBackground: #45494e;
+      --vscode-list-hoverBackground: #2a2d2e;
+    }
+    html, body { height: 100%; }
+    body { background: var(--vscode-sideBar-background); }
+  </style>
+
+  <!-- MOCK HOST: stub acquireVsCodeApi and answer the grid's 'ready' with a 'load' carrying fixture props.
+       Scenario via ?s=model|measure|multi|column|formatexpr|lowcl|staledraft|error|empty. Must run BEFORE propgrid.js
+       (which calls acquireVsCodeApi). -->
+  <script>
+  (function () {
+    const scenario = new URLSearchParams(location.search).get('s') || 'measure';
+    const P = (name, displayName, category, kind, value, extra) =>
+      Object.assign({ name, displayName, category, kind, value: value == null ? '' : String(value),
+                      description: displayName, options: [], readOnly: false, varies: false }, extra || {});
+
+    const DATA_CATEGORIES = ['Uncategorized', 'Address', 'City', 'Continent', 'Country', 'County',
+      'Latitude', 'Longitude', 'Place', 'PostalCode', 'StateOrProvince', 'WebUrl'];
+    // What the engine sends: set_column_data_type's allow-list, never the raw enum (no Unknown/Variant noise).
+    const SETTABLE_TYPES = ['String', 'Int64', 'Decimal', 'Double', 'DateTime', 'Boolean'];
+    const FOLDERS = ['KPIs', 'Sales\\Internals', 'Sales\\KPIs', 'Finance\\Ratios', 'Growth'];
+
+    // The model is the default property target when the native tree has no object selection. These are ordinary
+    // reflected TOM properties over the same grid/get_properties/set_property path as every child object.
+    const MODEL = {
+      name: 'LH Gold', multi: false,
+      props: [
+        P('Name', 'Name', 'Basic', 'string', 'LH Gold'),
+        P('Description', 'Description', 'Basic', 'string', 'Curated semantic model over the governed gold layer.'),
+        P('Culture', 'Culture', 'Basic', 'string', 'en-AU'),
+        P('DefaultPowerBIDataSourceVersion', 'Default Data Source Version', 'Options', 'enum', 'PowerBI_V3',
+          { options: ['PowerBI_V1', 'PowerBI_V2', 'PowerBI_V3'] }),
+        P('DiscourageImplicitMeasures', 'Discourage Implicit Measures', 'Options', 'bool', 'True'),
+        P('ForceUniqueNames', 'Force Unique Names', 'Options', 'bool', 'False'),
+        P('SourceQueryCulture', 'Source Query Culture', 'Options', 'string', 'en-AU'),
+        P('LineageTag', 'Lineage Tag', 'Metadata', 'string', '8f858866-c8c4-4b99-b538-cf99cdd78f20', { readOnly: true }),
+      ],
+    };
+
+    // A slim slice of the engine's curated format-template catalog (list_format_templates) — enough entries to
+    // exercise the Format String picker (static+common, grouped) and the dynamic template picker in the editor.
+    const TEMPLATES = [
+      { name: 'Integer, grouped', category: 'Whole numbers', kind: 'static', formatString: '#,##0', exampleOutput: '1,234,567', common: true, note: 'Thousands separator, no decimals.' },
+      { name: 'Two decimals, grouped', category: 'Decimals', kind: 'static', formatString: '#,##0.00', exampleOutput: '1,234,567.89', common: true, note: '' },
+      { name: 'Percent, one decimal', category: 'Percentages', kind: 'static', formatString: '0.0%', exampleOutput: '12.3%', common: true, note: 'Input is a ratio (0-1).' },
+      { name: 'Currency, grouped', category: 'Currency', kind: 'static', formatString: '\\$#,##0', exampleOutput: '$1,234,568', common: true, note: '' },
+      { name: 'Currency, accounting', category: 'Accounting / parentheses', kind: 'static', formatString: '\\$#,##0.00;(\\$#,##0.00)', exampleOutput: '($1,234.57)', common: true, note: 'Negatives in parentheses.' },
+      { name: 'Thousands (K)', category: 'Scaled (K/M/B/T)', kind: 'static', formatString: '#,##0,"K"', exampleOutput: '1,235K', common: true, note: '' },
+      { name: 'Signed percent', category: 'Signed / variance', kind: 'static', formatString: '+0.0%;-0.0%;0.0%', exampleOutput: '+12.3%', common: true, note: '' },
+      { name: 'Auto-scale (K/M/B)', category: 'Scaled (K/M/B/T)', kind: 'dynamic', formatString: 'SWITCH(\n    TRUE(),\n    ABS(SELECTEDMEASURE()) >= 1e9, "#,##0,,,.0\\"B\\"",\n    ABS(SELECTEDMEASURE()) >= 1e6, "#,##0,,.0\\"M\\"",\n    ABS(SELECTEDMEASURE()) >= 1e3, "#,##0,.0\\"K\\"",\n    "#,##0"\n)', exampleOutput: '1.2M', common: false, note: 'Scales by magnitude.' },
+      { name: 'Sign-aware currency', category: 'Signed / variance', kind: 'dynamic', formatString: 'IF(SELECTEDMEASURE() < 0, "(\\$#,##0.00)", "\\$#,##0.00")', exampleOutput: '($1,234.57)', common: false, note: '' },
+    ];
+
+    // A measure with the full range of editor kinds — the two fields Kane flagged (Description = multiline,
+    // Format String = long single-line text input), plus the prefill rows: Display Folder autocomplete
+    // (suggestions), the Format String picker (needs TEMPLATES), and the Format expression row.
+    const MEASURE = {
+      name: 'Total Sales', multi: false,
+      props: [
+        P('Name', 'Name', 'Basic', 'string', 'Total Sales'),
+        P('Description', 'Description', 'Basic', 'string',
+          'Sum of SalesAmount across all rows. The base sales KPI; reused by the time-intelligence measures.'),
+        P('DisplayFolder', 'Display Folder', 'Basic', 'string', 'Sales\\KPIs', { suggestions: FOLDERS }),
+        P('IsHidden', 'Is Hidden', 'Basic', 'bool', 'False'),
+        P('FormatString', 'Format String', 'Formatting', 'string', '\\$#,##0.00;(\\$#,##0.00);"—"'),
+        P('DataCategory', 'Data Category', 'Formatting', 'enum', 'Uncategorized', { options: DATA_CATEGORIES }),
+        P('FormatStringExpression', 'Format expression', 'Options', 'formatExpression',
+          'SWITCH(TRUE(), ABS(SELECTEDMEASURE()) >= 1e6, "#,##0,,.0\\"M\\"", "#,##0")',
+          { description: 'A DAX expression that returns the format string for the current filter context (a dynamic format). When set, it replaces the static Format String.' }),
+        P('Expression', 'Expression', 'Advanced', 'string', 'SUM ( Sales[SalesAmount] )'),
+        P('DisplayFolderSort', 'Folder Sort Order', 'Advanced', 'number', '0'),
+        P('LineageTag', 'Lineage Tag', 'Metadata', 'string', 'a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d', { readOnly: true }),
+        P('ModifiedTime', 'Modified Time', 'Metadata', 'string', '2026-06-26T09:14:00', { readOnly: true }),
+      ],
+    };
+
+    // A data column: the Data Type dropdown restricted to the engine's settable set, folder suggestions, and the
+    // Format String picker (auto-opened by this scenario so the popup itself is regression-captured).
+    const COLUMN = {
+      name: 'Sales Amount', multi: false,
+      props: [
+        P('Name', 'Name', 'Basic', 'string', 'Sales Amount'),
+        P('DataType', 'Data Type', 'Basic', 'enum', 'Decimal', { options: SETTABLE_TYPES }),
+        P('Description', 'Description', 'Basic', 'string', 'Net sale amount per order line.'),
+        P('DisplayFolder', 'Display Folder', 'Basic', 'string', '', { suggestions: FOLDERS }),
+        P('IsHidden', 'Is Hidden', 'Basic', 'bool', 'False'),
+        P('FormatString', 'Format String', 'Formatting', 'string', '#,##0.00'),
+        P('SummarizeBy', 'Summarize By', 'Options', 'enum', 'Sum', { options: ['Default', 'None', 'Sum', 'Min', 'Max', 'Count', 'Average', 'DistinctCount'] }),
+      ],
+    };
+
+    // The below-floor state: the Format expression row is LOCKED and states the compatibility requirement
+    // plainly (no dead editor, no raw exception).
+    const LOWCL = {
+      name: 'Total Sales', multi: false,
+      props: [
+        P('Name', 'Name', 'Basic', 'string', 'Total Sales'),
+        P('FormatString', 'Format String', 'Formatting', 'string', '#,##0'),
+        P('FormatStringExpression', 'Format expression', 'Options', 'formatExpression', '',
+          { readOnly: true, hint: 'Dynamic format expressions need model compatibility level 1601 or higher; this model is 1200.' }),
+        P('Expression', 'Expression', 'Advanced', 'string', 'SUM ( Sales[SalesAmount] )'),
+      ],
+    };
+
+    // Multi-select: common props across several objects; some agree, some vary (placeholder / indeterminate).
+    const MULTI = {
+      name: '3 objects selected', multi: true,
+      props: [
+        P('DisplayFolder', 'Display Folder', 'Basic', 'string', 'Sales', { suggestions: FOLDERS }),
+        P('Description', 'Description', 'Basic', 'string', '', { varies: true }),
+        P('IsHidden', 'Is Hidden', 'Basic', 'bool', '', { varies: true }),
+        P('FormatString', 'Format String', 'Formatting', 'string', '', { varies: true }),
+        P('DataCategory', 'Data Category', 'Formatting', 'enum', '', { varies: true, options: DATA_CATEGORIES }),
+      ],
+    };
+
+    // Loads carry the provider's selection KEY (the refs) — the grid resets in-progress editors when the key
+    // changes, because a header NAME is not unique (two tables can hold same-named objects).
+    const STATES = {
+      model: { type: 'load', key: '["model:"]', name: MODEL.name, multi: false, props: MODEL.props },
+      measure: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
+      multi: { type: 'load', key: '["measure:Sales/Total Sales","measure:Sales/Margin","column:Sales/Sales Amount"]', name: MULTI.name, multi: true, props: MULTI.props },
+      column: { type: 'load', key: '["column:Sales/Sales Amount"]', name: COLUMN.name, multi: false, props: COLUMN.props },
+      formatexpr: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
+      lowcl: { type: 'load', key: '["measure:Sales/Total Sales"]', name: LOWCL.name, multi: false, props: LOWCL.props },
+      staledraft: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
+      empty: { type: 'empty' },
+    };
+    // staledraft's SECOND load: a DIFFERENT measure that shares the display name (another table's ref → new
+    // key). The grid must close the open Format expression editor and drop the draft — if the reset regresses
+    // to name-comparison, the shot shows the previous object's editor still open with its stale draft.
+    const STALE_SECOND = {
+      type: 'load', key: '["measure:Finance/Total Sales"]', name: 'Total Sales', multi: false,
+      props: [
+        P('Name', 'Name', 'Basic', 'string', 'Total Sales'),
+        P('DisplayFolder', 'Display Folder', 'Basic', 'string', 'Finance\\KPIs', { suggestions: FOLDERS }),
+        P('FormatString', 'Format String', 'Formatting', 'string', '#,##0'),
+        P('FormatStringExpression', 'Format expression', 'Options', 'formatExpression', '',
+          { description: 'A DAX expression that returns the format string for the current filter context (a dynamic format). When set, it replaces the static Format String.' }),
+        P('Expression', 'Expression', 'Advanced', 'string', 'SUM ( Finance[Amount] )'),
+      ],
+    };
+    const loadMsg = STATES[scenario] || STATES.measure;
+
+    window.acquireVsCodeApi = function () {
+      return {
+        postMessage: function (msg) {
+          if (!msg) return;
+          if (msg.type === 'ready') {
+            setTimeout(function () {
+              window.dispatchEvent(new MessageEvent('message', { data: loadMsg }));
+              // The provider pushes the format-template catalog once per session right after load.
+              window.dispatchEvent(new MessageEvent('message', { data: { type: 'formatTemplates', templates: TEMPLATES } }));
+            }, 0);
+            // 'error' scenario: render the measure, then flag a failed set on Format String (inline validation).
+            if (scenario === 'error') setTimeout(function () {
+              window.dispatchEvent(new MessageEvent('message', { data: STATES.measure }));
+              window.dispatchEvent(new MessageEvent('message', { data: { type: 'setError', name: 'FormatString', error: 'Invalid format string token near "—".' } }));
+            }, 10);
+            // 'formatexpr' scenario: open the Format expression editor (what Edit expands into).
+            if (scenario === 'formatexpr') setTimeout(function () {
+              const b = document.querySelector('[data-fx-edit]'); if (b) b.click();
+            }, 30);
+            // 'column' scenario: open the Format String picker popup so the catalog dropdown is captured.
+            if (scenario === 'column') setTimeout(function () {
+              const b = document.querySelector('.combo-btn'); if (b) b.click();
+            }, 30);
+            // 'staledraft' scenario: open the editor + type a draft on measure A, then load a SAME-NAMED measure
+            // with a different ref key — the expected shot shows the editor CLOSED (draft dropped with it).
+            if (scenario === 'staledraft') {
+              setTimeout(function () {
+                const b = document.querySelector('[data-fx-edit]'); if (b) b.click();
+                const ta = document.querySelector('.fx-ta');
+                if (ta) { ta.value = '"draft typed on Sales, must not survive"'; ta.dispatchEvent(new Event('input')); }
+              }, 30);
+              setTimeout(function () {
+                window.dispatchEvent(new MessageEvent('message', { data: STALE_SECOND }));
+              }, 60);
+            }
+          }
+        },
+        getState: function () { return undefined; },
+        setState: function () {},
+      };
+    };
+  })();
+  </script>
+  <link rel="stylesheet" href="../../media/propgrid/propgrid.css" />
+</head>
+<body>
+  <div id="root"></div>
+  <script src="../../media/propgrid/propgrid.js"></script>
+</body>
+</html>

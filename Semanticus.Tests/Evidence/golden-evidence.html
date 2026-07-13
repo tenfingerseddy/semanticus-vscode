@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zephyr revenue model review · evidence</title>
+<style>
+:root{--bg:#f8fafc;--card:#ffffff;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--soft:#f1f5f9;--accent:#16a34a}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5}
+code,pre{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+.ev{max-width:820px;margin:0 auto;padding:32px 20px}
+.ev-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px}
+.ev-head{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:6px}
+.ev-kind{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.ev-title{font-size:24px;line-height:1.25;margin:12px 0 10px}
+.ev-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 14px}
+.ev-coverage{color:var(--muted);font-size:14px}
+.ev-override{background:#f5f3ff;border:1px solid #ddd6fe;color:#5b21b6;border-radius:8px;padding:8px 12px;margin:0 0 14px;font-size:14px}
+.ev-override-label{font-weight:700;margin-right:6px}
+.ev-id{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin:8px 0 0;font-size:13px}
+.ev-id div{display:flex;gap:8px}
+.ev-id dt{color:var(--muted);min-width:92px}
+.ev-id dd{margin:0;color:var(--ink);word-break:break-word}
+.ev-produced{color:var(--muted);font-size:13px;margin-top:12px}
+.ev-sec{margin:24px 0}
+.ev-sec-title{font-size:16px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.ev-sec p{margin:0 0 10px}
+.ev-table{width:100%;border-collapse:collapse;font-size:14px}
+.ev-table th,.ev-table td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--line)}
+.ev-table thead th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.ev-kv-table th{color:var(--muted);font-weight:600;width:38%}
+.ev-count{color:var(--muted);font-weight:400}
+.ev-diff-lang{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+.ev-diff{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ev-diff-label{font-size:12px;color:var(--muted);margin-bottom:4px}
+.ev-diff pre{margin:0;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;font-size:13px;white-space:pre-wrap;word-break:break-word}
+.ev-steps{margin:0;padding-left:0;list-style:none}
+.ev-steps li{padding:8px 0;border-bottom:1px solid var(--line)}
+.ev-step-head{display:flex;align-items:center;gap:10px}
+.ev-step-name{font-weight:600}
+.ev-step-when{color:var(--muted);font-size:12px;margin-left:auto}
+.ev-step-note{color:var(--muted);font-size:13px;margin-top:4px;padding-left:2px}
+.ev-note{border-radius:8px;padding:12px 14px;border:1px solid var(--line)}
+.ev-note-info{background:var(--soft)}
+.ev-note-warning{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.v-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;line-height:1.6;border:1px solid transparent;white-space:nowrap}
+.v-lg{font-size:14px;padding:5px 14px}
+.v-verified{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.v-needsreview{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.v-broken{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.v-unknown{background:#f1f5f9;color:#475569;border-color:#e2e8f0}
+.v-overridden{background:#ede9fe;color:#5b21b6;border-color:#ddd6fe}
+.ev-foot{border-top:1px solid var(--line);margin-top:24px;padding-top:16px;font-size:13px;color:var(--muted)}
+.ev-honesty{color:var(--ink);font-weight:600}
+.ev-hash{margin:4px 0}
+.ev-hash-full{margin:2px 0 10px;word-break:break-all;font-size:11px}
+.ev-mark{margin:8px 0 0;font-weight:600;color:var(--accent)}
+@media (prefers-color-scheme:dark){
+:root{--bg:#0b1220;--card:#0f172a;--ink:#e5e7eb;--muted:#94a3b8;--line:#1f2937;--soft:#111c30;--accent:#22c55e}
+.ev-override{background:#241a3a;border-color:#4c1d95;color:#c4b5fd}
+.ev-note-warning{background:#3a2a0a;border-color:#713f12;color:#fcd34d}
+.v-verified{background:#052e16;color:#86efac;border-color:#14532d}
+.v-needsreview{background:#3a2a0a;color:#fcd34d;border-color:#713f12}
+.v-broken{background:#3f1416;color:#fca5a5;border-color:#7f1d1d}
+.v-unknown{background:#1e293b;color:#cbd5e1;border-color:#334155}
+.v-overridden{background:#241a3a;color:#c4b5fd;border-color:#4c1d95}
+}
+@media print{body{background:#ffffff}.ev{padding:0}.ev-card{border:none;border-radius:0;padding:0}.ev-sec,.ev-steps li,.ev-diff-side{page-break-inside:avoid}}
+@media (max-width:640px){.ev-id{grid-template-columns:1fr}.ev-diff{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="ev">
+<div class="ev-card">
+<header class="ev-head">
+<div class="ev-kind">test-suite</div>
+<h1 class="ev-title">Zephyr revenue model review</h1>
+<div class="ev-verdict"><span class="v-chip v-needsreview v-lg">Needs review</span><span class="ev-coverage">Verified 34 of 41 · 5 unknown · 2 need review</span></div>
+<dl class="ev-id">
+<div><dt>Model</dt><dd>Contoso Sales</dd></div>
+<div><dt>Fingerprint</dt><dd>fp-abc123</dd></div>
+<div><dt>Base commit</dt><dd>0123456789ab</dd></div>
+<div><dt>Session</dt><dd>sess-42</dd></div>
+<div><dt>Revision</dt><dd>17</dd></div>
+</dl>
+<div class="ev-produced">Produced by run_tests 0.2.0 · AI Assistant · 2026-07-10T09:30:00Z</div>
+</header>
+<section class="ev-sec ev-summary">
+<h2 class="ev-sec-title">Summary</h2>
+<p>The model passed most checks. Five could not be verified without a live connection.</p>
+<p>Two measures need a human to confirm the intended grain.</p>
+</section>
+<section class="ev-sec ev-kv">
+<h2 class="ev-sec-title">At a glance</h2>
+<table class="ev-table ev-kv-table"><tbody>
+<tr><th scope="row">Tables</th><td>12</td></tr>
+<tr><th scope="row">Measures</th><td>41</td></tr>
+<tr><th scope="row">Relationships</th><td>15</td></tr>
+</tbody></table>
+</section>
+<section class="ev-sec ev-findings">
+<h2 class="ev-sec-title">Findings <span class="v-chip v-needsreview">Needs review</span></h2>
+<table class="ev-table ev-findings-table">
+<thead><tr><th>Finding</th><th>Status</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Total Sales returns a number</td><td><span class="v-chip v-verified">Verified</span></td><td>Matched the reference within tolerance.</td></tr>
+<tr><td>Margin grain <span class="ev-count">(2)</span></td><td><span class="v-chip v-needsreview">Needs review</span></td><td>Ambiguous at the product level.</td></tr>
+<tr><td>Live row counts <span class="ev-count">(5)</span></td><td><span class="v-chip v-unknown">Unknown</span></td><td>No connection was available.</td></tr>
+</tbody></table>
+</section>
+<section class="ev-sec ev-diff">
+<h2 class="ev-sec-title">Rewrite of Total Sales</h2>
+<div class="ev-diff-lang">dax</div>
+<div class="ev-diff">
+<div class="ev-diff-side ev-diff-before"><div class="ev-diff-label">Before</div><pre><code>SUM ( Sales[Amount] )</code></pre></div>
+<div class="ev-diff-side ev-diff-after"><div class="ev-diff-label">After</div><pre><code>SUMX ( Sales, Sales[Qty] * Sales[Price] )</code></pre></div>
+</div>
+</section>
+<section class="ev-sec ev-probe">
+<h2 class="ev-sec-title">Probes</h2>
+<table class="ev-table ev-probe-table">
+<thead><tr><th>Query</th><th>Expected</th><th>Actual</th><th>Status</th><th>Time</th></tr></thead>
+<tbody>
+<tr><td><code>EVALUATE ROW(&quot;v&quot;, [Total Sales])</code></td><td>1,000</td><td>1,000</td><td><span class="v-chip v-verified">Verified</span></td><td>12.5 ms</td></tr>
+<tr><td><code>EVALUATE ROW(&quot;v&quot;, [Margin])</code></td><td>0.30</td><td>0.42</td><td><span class="v-chip v-broken">Broken</span></td><td>9 ms</td></tr>
+</tbody></table>
+</section>
+<section class="ev-sec ev-steps">
+<h2 class="ev-sec-title">Workflow steps</h2>
+<ol class="ev-steps">
+<li><div class="ev-step-head"><span class="v-chip v-verified">Verified</span><span class="ev-step-name">Capture baseline</span><span class="ev-step-when">2026-07-10T09:28:00Z</span></div><div class="ev-step-note">Snapshot taken.</div></li>
+<li><div class="ev-step-head"><span class="v-chip v-verified">Verified</span><span class="ev-step-name">Apply rewrite</span></div><div class="ev-step-note">One measure changed.</div></li>
+<li><div class="ev-step-head"><span class="v-chip v-needsreview">Needs review</span><span class="ev-step-name">Confirm grain</span></div><div class="ev-step-note">Handed to a reviewer.</div></li>
+</ol>
+</section>
+<section class="ev-sec ev-note ev-note-warning">
+<h2 class="ev-sec-title">Heads up</h2>
+<p>Run this again with a live connection to clear the unknowns.</p>
+</section>
+<footer class="ev-foot">
+<p class="ev-honesty">This report names 5 item(s) it could not check. Unknown is not counted as verified.</p>
+<p class="ev-hash">Tamper-evident record. Content signature <code>25bd864f5502</code></p>
+<p class="ev-hash-full"><code>25bd864f5502ab603ce10e443d8b303a00341994e068d2e83af4fbb5650f301b</code></p>
+<p class="ev-hash">Linked to the prior record <code>00ff00ff00ff</code></p>
+<p class="ev-mark">Produced by Semanticus</p>
+</footer>
+</div>
+</main>
+</body>
+</html>

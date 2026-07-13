@@ -1,0 +1,101 @@
+{
+  "$comment": "The built-in hard-question pack for the Model Interview (embedded into Semanticus.Engine like interview-fix-map.json — edit HERE, never a copy). Each template is a MODEL-AGNOSTIC question pattern distilled from the benchmark's trap families: the shapes of question an AI assistant most often answers confidently wrong. Templates carry NO data-specific text and NO gold values — HardQuestionPack.Bind instantiates one only when every shape in `needs` exists in the open model, and the trusted answer is confirmed by a human before add_interview_question records it as an oracle. Tokens: {measure} {measureRef} {factTable} {dim} {dimCol} {dateTable} {dateCol} {dateAttr} {dateAttrCol} {entity} {entityKeyCol} {num1} {num1Col} {num2} {num2Col} {inactiveFrom} {inactiveFromCol} {inactiveToCol} {inactiveToTable}. needs vocabulary: measure | dimension | dateTable | dateAttr | entityKey | twoNumeric | inactiveRel.",
+  "templates": [
+    {
+      "id": "rank-ties",
+      "family": "rank-with-ties",
+      "needs": ["measure", "dimension"],
+      "question": "Which {dim} values rank highest by {measure}, and how are ties handled?",
+      "trap": "Ranking with ties: skipped ranks and shared ranks silently disagree, so two plausible answers differ.",
+      "query": "EVALUATE TOPN(10, ADDCOLUMNS(ALLNOBLANKROW({dimCol}), \"Rank\", RANKX(ALLNOBLANKROW({dimCol}), CALCULATE({measureRef}),, DESC, Dense)), [Rank], ASC) ORDER BY [Rank] ASC"
+    },
+    {
+      "id": "ytd-attr-slice",
+      "family": "ytd-under-a-text-date-attribute",
+      "needs": ["measure", "dateTable", "dateAttr"],
+      "question": "What is the year-to-date {measure} for each {dateAttr}?",
+      "trap": "A year-to-date calculation wipes a filter on a text date attribute (like a weekday name) unless the slice is explicitly kept, so the split quietly reverts to the unsliced total.",
+      "query": "EVALUATE SUMMARIZECOLUMNS({dateAttrCol}, \"YTD {measure}\", CALCULATE({measureRef}, DATESYTD({dateCol}), KEEPFILTERS(VALUES({dateAttrCol}))))"
+    },
+    {
+      "id": "rolling-12m-distinct",
+      "family": "rolling-12-month-distinct-count",
+      "needs": ["dateTable", "entityKey"],
+      "question": "How many distinct {entity} were there in the rolling 12 months up to the latest date?",
+      "trap": "Distinct counts do not add up across months, so summing monthly distinct counts overstates the rolling figure. The window here anchors on the date table's last date — if your calendar runs past the data, confirm the anchor.",
+      "query": "EVALUATE VAR LastDay = MAX({dateCol}) RETURN ROW(\"Rolling 12-month distinct {entity}\", CALCULATE(DISTINCTCOUNT({entityKeyCol}), DATESINPERIOD({dateCol}, LastDay, -12, MONTH)))"
+    },
+    {
+      "id": "prior-full-month",
+      "family": "prior-full-period",
+      "needs": ["measure", "dateTable"],
+      "question": "What was {measure} in the previous full month?",
+      "trap": "\"Last month\" quietly becomes \"same days last month\" or a partial month; the honest answer covers the previous COMPLETE month.",
+      "query": "EVALUATE VAR LastDay = MAX({dateCol}) RETURN ROW(\"Previous full month {measure}\", CALCULATE({measureRef}, DATESBETWEEN({dateCol}, DATE(YEAR(EOMONTH(LastDay, -1)), MONTH(EOMONTH(LastDay, -1)), 1), EOMONTH(LastDay, -1))))"
+    },
+    {
+      "id": "pct-of-total",
+      "family": "share-of-grand-total-under-slicers",
+      "needs": ["measure", "dimension"],
+      "question": "What share of total {measure} does each {dim} contribute?",
+      "trap": "\"Percent of total\" is ambiguous once anything is filtered: share of the filtered total and share of the grand total are different numbers, and the wrong denominator looks perfectly plausible.",
+      "query": "EVALUATE TOPN(10, ADDCOLUMNS(ALLNOBLANKROW({dimCol}), \"Share of total\", DIVIDE(CALCULATE({measureRef}), CALCULATE({measureRef}, REMOVEFILTERS({dimCol})))), [Share of total], DESC) ORDER BY [Share of total] DESC"
+    },
+    {
+      "id": "semi-additive-closing",
+      "family": "semi-additive-snapshot",
+      "needs": ["measure", "dateTable"],
+      "question": "What is the closing {measure} at the latest date with data, rather than the sum over time?",
+      "trap": "Balance-style measures must not be summed across dates: the honest figure is the value on the last date that has data, not the total of every day.",
+      "query": "EVALUATE ROW(\"Closing {measure}\", CALCULATE({measureRef}, LASTNONBLANK({dateCol}, CALCULATE({measureRef}))))"
+    },
+    {
+      "id": "ytd-vs-sply",
+      "family": "same-period-last-year",
+      "needs": ["measure", "dateTable"],
+      "question": "How does year-to-date {measure} compare with the same period last year?",
+      "trap": "Comparing a partial year against a FULL prior year flatters or hides the trend; the honest comparison is period-to-date against the same days last year. Anchored on the date table's last date — if your calendar runs past the data, confirm the anchor.",
+      "query": "EVALUATE ROW(\"Year to date {measure}\", CALCULATE({measureRef}, DATESYTD({dateCol})), \"Same period last year\", CALCULATE({measureRef}, SAMEPERIODLASTYEAR(DATESYTD({dateCol}))))"
+    },
+    {
+      "id": "retention-cohort",
+      "family": "retention-cohort",
+      "needs": ["dateTable", "entityKey"],
+      "question": "How many {entity} from last year are still active this year to date?",
+      "trap": "Retention needs the INTERSECTION of two periods' entity sets; counting either period alone, or double-counting, gives a confident wrong answer.",
+      "query": "EVALUATE VAR ThisPeriod = CALCULATETABLE(VALUES({entityKeyCol}), DATESYTD({dateCol})) VAR PriorPeriod = CALCULATETABLE(VALUES({entityKeyCol}), SAMEPERIODLASTYEAR(DATESYTD({dateCol}))) RETURN ROW(\"{entity} kept since last year\", COUNTROWS(INTERSECT(ThisPeriod, PriorPeriod)), \"{entity} last year\", COUNTROWS(PriorPeriod))"
+    },
+    {
+      "id": "weighted-average",
+      "family": "weighted-average",
+      "needs": ["measure", "twoNumeric"],
+      "question": "What is the average {num1} weighted by {num2}, rather than the simple average?",
+      "trap": "A simple average of rows and a weighted average are different numbers whenever the weights vary — and the simple one is what gets reached for by default. Review that {num1} weighted by {num2} makes business sense before trusting either number.",
+      "query": "EVALUATE ROW(\"Weighted average {num1}\", DIVIDE(SUMX({factTable}, {num1Col} * {num2Col}), SUM({num2Col})), \"Simple average {num1}\", AVERAGE({num1Col}))"
+    },
+    {
+      "id": "inactive-relationship-total",
+      "family": "inactive-relationship-totals",
+      "needs": ["measure", "inactiveRel"],
+      "question": "What is the total {measure} when related through {inactiveFrom} instead of the default relationship?",
+      "trap": "With two date roles (ordered vs shipped, opened vs closed) only one relationship is active; totals by the other role need the inactive relationship activated, or the answer silently uses the wrong dates.",
+      "query": "EVALUATE ROW(\"{measure} by {inactiveFrom}\", CALCULATE({measureRef}, USERELATIONSHIP({inactiveFromCol}, {inactiveToCol})), \"{measure} by the default relationship\", CALCULATE({measureRef}))"
+    },
+    {
+      "id": "blank-vs-zero",
+      "family": "blank-vs-zero",
+      "needs": ["measure", "dimension"],
+      "question": "How many {dim} values have no {measure} at all, and is that blank rather than zero?",
+      "trap": "A blank (no activity at all) and an exact zero are different facts; treating blank as zero miscounts both groups. If no values are blank the first figure itself comes back blank, not zero.",
+      "query": "EVALUATE ROW(\"{dim} values with no {measure} (blank)\", COUNTROWS(FILTER(ALLNOBLANKROW({dimCol}), ISBLANK(CALCULATE({measureRef})))), \"{dim} values at exactly zero\", COUNTROWS(FILTER(ALLNOBLANKROW({dimCol}), CALCULATE({measureRef}) = 0)))"
+    },
+    {
+      "id": "total-vs-sum-of-parts",
+      "family": "grand-total-additivity",
+      "needs": ["measure", "dimension"],
+      "question": "Do the {dim}-level values of {measure} add up to the overall total?",
+      "trap": "For non-additive measures (ratios, distinct counts, balances) the parts do NOT sum to the total; adding up a breakdown is the classic confident wrong answer.",
+      "query": "EVALUATE ROW(\"Sum of {dim} parts\", SUMX(ALLNOBLANKROW({dimCol}), CALCULATE({measureRef})), \"Overall total\", CALCULATE({measureRef}, REMOVEFILTERS()))"
+    }
+  ]
+}

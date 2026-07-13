@@ -1,0 +1,29 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- app tile -->
+  <rect x="2" y="2" width="124" height="124" rx="30" fill="#0D1117"/>
+  <rect x="2.5" y="2.5" width="123" height="123" rx="29.5" stroke="#EAEEF2" stroke-opacity="0.1"/>
+
+  <!-- abacus frame -->
+  <rect x="26" y="24" width="76" height="80" rx="16" stroke="#EAEEF2" stroke-width="3.5"/>
+
+  <!-- three rods -->
+  <g stroke="#39424E" stroke-width="3" stroke-linecap="round">
+    <line x1="34" y1="44" x2="94" y2="44"/>
+    <line x1="34" y1="64" x2="94" y2="64"/>
+    <line x1="34" y1="84" x2="94" y2="84"/>
+  </g>
+
+  <!-- idle beads -->
+  <g fill="#5A6675">
+    <circle cx="64" cy="44" r="7"/><circle cx="84" cy="44" r="7"/>
+    <circle cx="44" cy="64" r="7"/><circle cx="84" cy="64" r="7"/>
+    <circle cx="44" cy="84" r="7"/><circle cx="64" cy="84" r="7"/>
+  </g>
+
+  <!-- the three Signal-green accent beads trace a diagonal -->
+  <g fill="#2ED47A">
+    <circle cx="44" cy="44" r="7"/>
+    <circle cx="64" cy="64" r="7"/>
+    <circle cx="84" cy="84" r="7"/>
+  </g>
+</svg>

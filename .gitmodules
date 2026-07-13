@@ -1,0 +1,4 @@
+[submodule "external/TabularEditor"]
+	path = external/TabularEditor
+	url = https://github.com/TabularEditor/TabularEditor.git
+	shallow = true

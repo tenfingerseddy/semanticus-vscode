@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+  <rect x="4" y="3.5" width="16" height="17" rx="3"/>
+  <path d="M5.5 8h13M5.5 12h13M5.5 16h13"/>
+  <!-- the three accent beads trace a diagonal (matches the brand mark) -->
+  <g fill="currentColor" stroke="none">
+    <circle cx="8" cy="8" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="16" cy="16" r="1.6"/>
+  </g>
+  <!-- idle beads, dimmed -->
+  <g fill="currentColor" stroke="none" opacity="0.3">
+    <circle cx="12" cy="8" r="1.6"/><circle cx="16" cy="8" r="1.6"/>
+    <circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/>
+    <circle cx="8" cy="16" r="1.6"/><circle cx="12" cy="16" r="1.6"/>
+  </g>
+</svg>

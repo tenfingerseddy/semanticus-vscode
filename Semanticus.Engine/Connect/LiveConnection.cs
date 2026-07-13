@@ -1,0 +1,238 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
+using Adomd = Microsoft.AnalysisServices.AdomdClient;
+using TOM = Microsoft.AnalysisServices.Tabular;
+
+namespace Semanticus.Engine
+{
+    /// <summary>
+    /// A live ADOMD connection to an XMLA endpoint (Fabric / Power BI Premium / PPU) or a local
+    /// instance, used for read-only DAX/DMV execution while editing TMDL offline (attached-readonly).
+    /// All ADOMD access is serialized on a dedicated query thread (separate from the model writer),
+    /// so a slow EVALUATE never blocks edits, and the connection is touched by one thread only.
+    /// </summary>
+    public sealed class LiveConnection : IDisposable
+    {
+        private readonly Adomd.AdomdConnection _conn;
+        private readonly string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
+        private readonly ModelDispatcher _queryThread = new ModelDispatcher();
+
+        public string Kind { get; }
+        public string DataSource { get; }
+        /// <summary>The resolved catalog (database) the connection is bound to — captured after Open (ADOMD
+        /// resolves the real dataset even when open_live passed an empty Initial Catalog). Needed by ClearCache,
+        /// whose XMLA command requires a &lt;DatabaseID&gt;. Empty until a successful open.</summary>
+        public string Database { get; private set; }
+        /// <summary>The query session's id (DISCOVER_SESSIONS) — captured after Open. Used to scope a session-level
+        /// trace to OUR session so server timings / query plans / EVALUATEANDLOG work on a Power BI XMLA endpoint
+        /// WITHOUT server-admin rights (a workspace member may trace their own session). Empty if unavailable.</summary>
+        public string SessionId { get; private set; }
+        /// <summary>The session's server process id (SPID), from DISCOVER_SESSIONS. The SPID is the ONLY trace column
+        /// carried by EVERY query event — including DAXQueryPlan / DAXEvaluationLog, which do NOT carry the SessionID
+        /// column — so it is the universal key for scoping a session trace (SessionID alone captures QueryEnd + SE
+        /// timings but misses the query plan + EVALUATEANDLOG events). Empty if it could not be resolved.</summary>
+        public string Spid { get; private set; }
+        /// <summary>Diagnostic note on how (or whether) the SPID was resolved — surfaced in trace fallback messages
+        /// while server-side tracing is brought up on cloud XMLA. Never contains a secret.</summary>
+        public string SpidNote { get; private set; }
+
+        private LiveConnection(string kind, string dataSource, Adomd.AdomdConnection conn, string connectionString)
+        {
+            Kind = kind; DataSource = dataSource; _conn = conn; _connectionString = connectionString;
+        }
+
+        public static string XmlaConnectionString(string endpoint, string database, string bearerToken)
+        {
+            var cs = $"Data Source={endpoint};Application Name=Semanticus";
+            if (!string.IsNullOrEmpty(database)) cs += $";Initial Catalog={database}";   // empty = let the server pick its only/first dataset (open_live)
+            if (!string.IsNullOrEmpty(bearerToken)) cs += $";Password={bearerToken}";
+            return cs;
+        }
+
+        public static string LocalConnectionString(string dataSource, string database) =>
+            string.IsNullOrEmpty(database)
+                ? $"Data Source={dataSource};Application Name=Semanticus"
+                : $"Data Source={dataSource};Initial Catalog={database};Application Name=Semanticus";
+
+        public static async Task<LiveConnection> OpenAsync(string kind, string dataSource, string connectionString)
+        {
+            var conn = new Adomd.AdomdConnection(connectionString);
+            var lc = new LiveConnection(kind, dataSource, conn, connectionString);
+            try
+            {
+                // Capture the resolved catalog on the query thread right after Open (the connection is thread-affine).
+                await lc._queryThread.RunAsync(() =>
+                {
+                    conn.Open();
+                    try { lc.Database = conn.Database; } catch { }
+                    try { lc.SessionId = conn.SessionID; } catch { }
+                    lc.CaptureSpid(conn);   // best-effort SPID for the trace filter (the only key carried by every event)
+                    return true;
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Open failed (bad endpoint / expired token / unreachable) — dispose the connection AND the
+                // query thread we already spun up, otherwise every failed connect leaks a thread + a socket.
+                lc.Dispose();
+                // GOLDEN RULE #1: the connection string carries the bearer token as Password=. Re-throw with a
+                // SCRUBBED message so the token can never reach a caller, an RPC error, or a log — for ANY caller
+                // (connect_xmla propagates this exception to the UI; the unified opens swallow it).
+                throw new InvalidOperationException($"Could not open the {kind} live connection to '{dataSource}': {ScrubSecrets(ex.Message)}");
+            }
+            return lc;
+        }
+
+        // Test-only: a NEVER-OPENED connection stub, so lifecycle tests can prove _live is dropped/swapped without a
+        // real XMLA endpoint. Status() reports Connected (it does not probe the socket); executing a query would fail,
+        // which is fine — these tests only assert connection PRESENCE and that Dispose() is clean.
+        internal static LiveConnection ForTest(string kind, string dataSource, string database = null) =>
+            new LiveConnection(kind, dataSource, new Adomd.AdomdConnection(), "") { Database = database };
+
+        public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds) =>
+            _queryThread.RunAsync(() => Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds));
+
+        private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                using var cmd = new Adomd.AdomdCommand(query, _conn) { CommandTimeout = commandTimeoutSeconds <= 0 ? 120 : commandTimeoutSeconds };
+                using var rdr = cmd.ExecuteReader();
+                var cols = Enumerable.Range(0, rdr.FieldCount)
+                    .Select(i => new ColumnDef { Name = rdr.GetName(i), Type = SafeTypeName(rdr, i) })
+                    .ToArray();
+                var rows = new List<object[]>();
+                var truncated = false;
+                while (rdr.Read())
+                {
+                    if (rows.Count >= maxRows) { truncated = true; break; }
+                    var r = new object[rdr.FieldCount];
+                    for (var i = 0; i < rdr.FieldCount; i++) r[i] = rdr.IsDBNull(i) ? null : rdr.GetValue(i);
+                    rows.Add(r);
+                }
+                sw.Stop();
+                return new ResultSet { Columns = cols, Rows = rows.ToArray(), RowCount = rows.Count, Truncated = truncated, ElapsedMs = sw.ElapsedMilliseconds };
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                // Scrub before surfacing (golden rule #1): query errors normally carry only DAX-semantic text, but
+                // this Error is now also fanned out to every Studio client via model/activity, so never let a stray
+                // secret (or server/RLS detail) ride a raw exception message out. ScrubSecrets is a no-op on normal text.
+                // Classify auth with the NARROW, XMLA/Entra-specific matcher (this is a DAX query path, so a broad
+                // matcher would flag a DAX ERROR("Unauthorized") as a sign-in problem). A typed AuthFailed marker lets
+                // the interview scorer tell "sign in" from "fix the DAX" without re-sniffing the scrubbed message.
+                return new ResultSet { Error = ScrubSecrets(ex.Message), AuthFailed = XmlaAuthHint.IsQueryAuthFailure(ex.Message), ElapsedMs = sw.ElapsedMilliseconds };
+            }
+        }
+
+        private static string SafeTypeName(Adomd.AdomdDataReader rdr, int i)
+        {
+            try { return rdr.GetFieldType(i)?.Name; } catch { return null; }
+        }
+
+        // Remove any secret value (Password/PWD, but also token/bearer/access_token/key/secret) from a message before
+        // it can be surfaced. Delegates to the shared XmlaAuthHint.Scrub so query errors AND connection-open errors use
+        // ONE hardened scrubber (key=value in ';'/'&'/whitespace forms + bare JWTs), not two drifting copies.
+        private static string ScrubSecrets(string message) => XmlaAuthHint.Scrub(message);
+
+        public ConnectionStatus Status()
+        {
+            var record = ConnectionRegistry.FindByEndpoint(DataSource, Database);
+            return new ConnectionStatus { Connected = true, Kind = Kind, DataSource = DataSource, Database = Database, ConnectionId = record?.Id };
+        }
+
+        /// <summary>
+        /// Open a fresh, authenticated AMO Server for server-side tracing (Profile / EvaluateAndLog / query plans)
+        /// and cache control. Reuses the SAME connection string the live ADOMD connection authenticated with — so
+        /// the bearer token rides along and tracing works on a token-auth Power BI / Fabric XMLA endpoint, not just
+        /// localhost. The token stays encapsulated (never returned or logged). AMO is thread-affine: the caller must
+        /// use + dispose the returned Server on its own thread.
+        /// </summary>
+        public TOM.Server ConnectTraceServer()
+        {
+            var server = new TOM.Server();
+            // Join OUR query session (SessionId) so a session-scoped, session-filtered trace is permitted WITHOUT
+            // server-admin — the mechanism DAX Studio uses to trace a Power BI XMLA endpoint. Falls back to a plain
+            // connect (localhost / no session id), where a server trace already works.
+            var cs = string.IsNullOrEmpty(SessionId) ? _connectionString : _connectionString + ";SessionId=" + SessionId;
+            server.Connect(cs);
+            return server;
+        }
+
+        /// <summary>
+        /// Best-effort capture of THIS session's SPID from $SYSTEM.DISCOVER_SESSIONS. That DMV is row-scoped to the
+        /// caller on a Power BI / Fabric XMLA endpoint (a non-server-admin sees their OWN session row), so we read all
+        /// rows we're given and match our SESSION_ID, falling back to the lone row when there's no exact match (it is
+        /// ours). The SPID is the universal trace-filter key (see the Spid property). Pure best-effort: any failure
+        /// just leaves Spid empty and the trace falls back to a SessionID filter. Records SpidNote for diagnostics.
+        /// Runs on the query thread (the connection is thread-affine) — call it there, as OpenAsync/EnsureSpid do.
+        /// </summary>
+        public void CaptureSpid(Adomd.AdomdConnection conn)
+        {
+            try
+            {
+                using var c = new Adomd.AdomdCommand("SELECT SESSION_SPID, SESSION_ID FROM $SYSTEM.DISCOVER_SESSIONS", conn);
+                using var rdr = c.ExecuteReader();
+                int spidOrd = -1, sidOrd = -1;
+                for (var i = 0; i < rdr.FieldCount; i++)
+                {
+                    var n = rdr.GetName(i);
+                    if (string.Equals(n, "SESSION_SPID", StringComparison.OrdinalIgnoreCase)) spidOrd = i;
+                    else if (string.Equals(n, "SESSION_ID", StringComparison.OrdinalIgnoreCase)) sidOrd = i;
+                }
+                string firstSpid = null, matchSpid = null;
+                var rows = 0;
+                while (rdr.Read())
+                {
+                    rows++;
+                    var sp = spidOrd >= 0 && !rdr.IsDBNull(spidOrd) ? rdr.GetValue(spidOrd)?.ToString() : null;
+                    if (string.IsNullOrEmpty(firstSpid) && !string.IsNullOrEmpty(sp)) firstSpid = sp;
+                    var sid = sidOrd >= 0 && !rdr.IsDBNull(sidOrd) ? rdr.GetValue(sidOrd)?.ToString() : null;
+                    if (!string.IsNullOrEmpty(sid) && string.Equals(sid, SessionId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(sp))
+                        matchSpid = sp;
+                }
+                Spid = matchSpid ?? firstSpid;        // exact SESSION_ID match preferred; else the only row we got (it's ours)
+                SpidNote = string.IsNullOrEmpty(Spid)
+                    ? $"dmv {rows} row(s), no spid"
+                    : (matchSpid != null ? "dmv match" : "dmv first-row");
+            }
+            catch (Exception ex)
+            {
+                SpidNote = "dmv err: " + ScrubSecrets(ex.Message);
+            }
+        }
+
+        /// <summary>If the SPID is not yet known, retry capturing it on the query thread (the session is reliably
+        /// active by the time a trace is requested, even if it wasn't at connect time). Safe to call from any thread
+        /// other than the query thread.</summary>
+        public void EnsureSpid()
+        {
+            if (!string.IsNullOrEmpty(Spid)) return;
+            try { _queryThread.RunAsync(() => { CaptureSpid(_conn); return true; }).GetAwaiter().GetResult(); } catch { }
+        }
+
+        /// <summary>Persist a SPID discovered out-of-band (e.g. read off a trace event when the DMV was unavailable at
+        /// open), so subsequent session traces scope by SPID and capture the SessionID-less events (query plan / eval
+        /// log). Idempotent; ignores empty input.</summary>
+        public void SetSpid(string spid)
+        {
+            if (!string.IsNullOrEmpty(spid) && string.IsNullOrEmpty(Spid)) { Spid = spid; SpidNote = (SpidNote ?? "") + "+evt"; }
+        }
+
+        // Test-observable only: the lifecycle pins assert a still-attached connection is never disposed out from
+        // under _live (the SwapLive self-swap contract). Nothing in production reads it.
+        internal bool DisposedForTest { get; private set; }
+
+        public void Dispose()
+        {
+            DisposedForTest = true;
+            try { _queryThread.RunAsync(() => { try { _conn.Dispose(); } catch { } return true; }).Wait(2000); } catch { }
+            _queryThread.Dispose();
+        }
+    }
+}

@@ -1,0 +1,38 @@
+bin/
+obj/
+.vs/
+*.user
+.smoke-out/
+.perf/
+.test-results/
+.semanticus/
+node_modules/
+*.vsix
+*.log
+
+# Claude Code — personal, machine-local settings (shared config is .claude/settings.json)
+.claude/settings.local.json
+
+# Session-internal working log (local progress notes, not a deliverable)
+_session-recovery.md
+
+# Per-developer editor cosmetics (Peacock colors, etc.)
+.vscode/
+!Semanticus.VSCode/.vscode/
+!Semanticus.VSCode/.vscode/launch.json
+!Semanticus.VSCode/.vscode/tasks.json
+
+# license issuance private key (never commit)
+.secrets/
+
+# Local MCP server config — holds the SEMANTICUS_DEV_PRO dev-license flag + machine-absolute paths; never commit
+.mcp.json
+
+# Stray .daxpkg blobs saved during manual DaxLib testing (tests use in-memory bytes)
+daxpkg.bin
+
+# wrangler local state (fulfillment worker deploys)
+.wrangler/
+
+# readiness-corpus local clones
+tools/readiness-corpus/work/
