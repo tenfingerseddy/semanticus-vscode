@@ -190,6 +190,7 @@ export function mdToHtml(md: string): string {
 // ---- ER diagram → inline SVG ----------------------------------------------------------------------
 
 const NODE_W = 190, NODE_H = 84;
+const COMPONENT_GAP_X = 48, COMPONENT_GAP_Y = 56, DIAGRAM_ROW_WIDTH = 1180;
 // Crow's-foot marker path data (mirrors diagram.tsx): "many" → fork, "one" → bar; start/end variants.
 const SVG_MARKERS: { id: string; refX: number; d: string }[] = [
   { id: 'many-end', refX: 11, d: 'M1,6 L11,1 M1,6 L11,11' },
@@ -198,43 +199,57 @@ const SVG_MARKERS: { id: string; refX: number; d: string }[] = [
   { id: 'one-start', refX: 1, d: 'M4,1.5 L4,10.5' },
 ];
 
+interface DiagramPoint { x: number; y: number; }
+interface DiagramComponent {
+  tables: GraphTable[];
+  relationships: { relationship: GraphRelationship; index: number }[];
+}
+interface DiagramComponentLayout extends DiagramComponent {
+  width: number;
+  height: number;
+  nodes: Map<string, DiagramPoint>;
+  edges: Map<number, DiagramPoint[]>;
+  offsetX: number;
+  offsetY: number;
+}
+
 /** Build a self-contained ER diagram as an inline <svg> string (dagre layout + crow's-foot markers).
- *  Pure: no React Flow, no DOM. Colours come from CSS custom properties so the doc theme drives them. */
+ *  Pure: no React Flow, no DOM. Colours come from CSS custom properties so the doc theme drives them.
+ *
+ *  Dagre stacks disconnected nodes in one narrow column. A responsive width then magnifies that column into
+ *  giant cards and a multi-screen-tall pseudo-diagram. Lay out each connected component independently, put the
+ *  relationship-bearing components first, and tile isolated tables below them so preview and export stay useful. */
 export function graphToSvg(graph: ModelGraph, opts?: { includeHidden?: boolean }): string {
   const tables = (graph?.tables ?? []).filter((t) => opts?.includeHidden || !t.isHidden);
   if (tables.length === 0) return '<p class="doc-muted">No tables to diagram.</p>';
   const names = new Set(tables.map((t) => t.name));
   const rels = (graph?.relationships ?? []).filter((r) => names.has(r.fromTable) && names.has(r.toTable));
-
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'LR', nodesep: 30, ranksep: 90, marginx: 16, marginy: 16 });
-  tables.forEach((t) => g.setNode(t.name, { width: NODE_W, height: NODE_H }));
-  rels.forEach((r) => g.setEdge(r.fromTable, r.toTable));
-  dagre.layout(g);
-
-  let maxX = 0, maxY = 0;
-  const pos = new Map<string, { x: number; y: number }>();
-  tables.forEach((t) => {
-    const n = g.node(t.name);
-    const x = (n?.x ?? 0) - NODE_W / 2, y = (n?.y ?? 0) - NODE_H / 2;
-    pos.set(t.name, { x, y });
-    maxX = Math.max(maxX, x + NODE_W); maxY = Math.max(maxY, y + NODE_H);
+  const components = relationshipComponents(tables, rels).map(layoutDiagramComponent);
+  const connected = components.filter((c) => c.relationships.length > 0)
+    .sort((a, b) => b.tables.length - a.tables.length || a.tables[0].name.localeCompare(b.tables[0].name));
+  const isolated = components.filter((c) => c.relationships.length === 0)
+    .sort((a, b) => a.tables[0].name.localeCompare(b.tables[0].name));
+  const layouts = [...connected, ...isolated];
+  const { width: W, height: H } = packDiagramComponents(connected, isolated);
+  const pos = new Map<string, DiagramPoint>();
+  const edgePoints = new Map<number, DiagramPoint[]>();
+  layouts.forEach((c) => {
+    c.nodes.forEach((p, name) => pos.set(name, { x: p.x + c.offsetX, y: p.y + c.offsetY }));
+    c.edges.forEach((points, index) => edgePoints.set(index, points.map((p) => ({ x: p.x + c.offsetX, y: p.y + c.offsetY }))));
   });
-  const W = Math.ceil(maxX + 16), H = Math.ceil(maxY + 16);
 
   const defs = `<defs>${SVG_MARKERS.map((s) =>
     `<marker id="doc-${s.id}" viewBox="0 0 12 12" markerWidth="15" markerHeight="15" refX="${s.refX}" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="${s.d}" fill="none" stroke="var(--doc-accent)" stroke-width="1.3"/></marker>`).join('')}</defs>`;
 
-  const edges = rels.map((r) => {
-    const a = pos.get(r.fromTable)!, b = pos.get(r.toTable)!;
-    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
-    const mx = (x1 + x2) / 2;
+  const edges = rels.map((r, index) => {
+    const points = edgePoints.get(index) ?? [];
+    if (points.length < 2) return '';
+    const path = points.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
     const ms = `doc-${r.fromCardinality === 'Many' ? 'many' : 'one'}-start`;
     const me = `doc-${r.toCardinality === 'Many' ? 'many' : 'one'}-end`;
     const dash = r.isActive ? '' : ' stroke-dasharray="5 4"';
     const op = r.isActive ? '0.85' : '0.5';
-    return `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} C${mx.toFixed(1)},${y1.toFixed(1)} ${mx.toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}" fill="none" stroke="var(--doc-accent)" stroke-width="1.3" opacity="${op}"${dash} marker-start="url(#${ms})" marker-end="url(#${me})"/>`;
+    return `<path d="${path}" fill="none" stroke="var(--doc-accent)" stroke-width="1.3" opacity="${op}"${dash} marker-start="url(#${ms})" marker-end="url(#${me})"/>`;
   }).join('');
 
   const nodes = tables.map((t) => {
@@ -251,7 +266,78 @@ export function graphToSvg(graph: ModelGraph, opts?: { includeHidden?: boolean }
       + `</g>`;
   }).join('');
 
-  return `<svg class="doc-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMin meet" role="img" aria-label="Relationship diagram">${defs}${edges}${nodes}</svg>`;
+  return `<svg class="doc-svg" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" preserveAspectRatio="xMidYMin meet" role="img" aria-label="Relationship diagram" data-components="${layouts.length}" data-isolated="${isolated.length}">${defs}${edges}${nodes}</svg>`;
+}
+
+function relationshipComponents(tables: GraphTable[], rels: GraphRelationship[]): DiagramComponent[] {
+  const byName = new Map(tables.map((t) => [t.name, t]));
+  const adjacent = new Map(tables.map((t) => [t.name, new Set<string>()]));
+  rels.forEach((r) => { adjacent.get(r.fromTable)?.add(r.toTable); adjacent.get(r.toTable)?.add(r.fromTable); });
+  const seen = new Set<string>();
+  const out: DiagramComponent[] = [];
+  for (const table of tables) {
+    if (seen.has(table.name)) continue;
+    const queue = [table.name], componentNames = new Set<string>();
+    seen.add(table.name);
+    while (queue.length) {
+      const name = queue.shift()!;
+      componentNames.add(name);
+      for (const next of adjacent.get(name) ?? []) if (!seen.has(next)) { seen.add(next); queue.push(next); }
+    }
+    out.push({
+      tables: [...componentNames].map((name) => byName.get(name)!),
+      relationships: rels.map((relationship, index) => ({ relationship, index }))
+        .filter(({ relationship }) => componentNames.has(relationship.fromTable) && componentNames.has(relationship.toTable)),
+    });
+  }
+  return out;
+}
+
+function layoutDiagramComponent(component: DiagramComponent): DiagramComponentLayout {
+  if (component.tables.length === 1) return {
+    ...component, width: NODE_W + 32, height: NODE_H + 32,
+    nodes: new Map([[component.tables[0].name, { x: 16, y: 16 }]]), edges: new Map(), offsetX: 0, offsetY: 0,
+  };
+  const g = new dagre.graphlib.Graph({ multigraph: true });
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'LR', nodesep: 30, ranksep: 90, marginx: 16, marginy: 16 });
+  component.tables.forEach((t) => g.setNode(t.name, { width: NODE_W, height: NODE_H }));
+  component.relationships.forEach(({ relationship: r, index }) => g.setEdge(r.fromTable, r.toTable, {}, String(index)));
+  dagre.layout(g);
+  const nodes = new Map<string, DiagramPoint>();
+  component.tables.forEach((t) => {
+    const n = g.node(t.name);
+    nodes.set(t.name, { x: (n?.x ?? NODE_W / 2) - NODE_W / 2, y: (n?.y ?? NODE_H / 2) - NODE_H / 2 });
+  });
+  const edges = new Map<number, DiagramPoint[]>();
+  component.relationships.forEach(({ relationship: r, index }) => {
+    const edge = g.edge({ v: r.fromTable, w: r.toTable, name: String(index) }) as { points?: DiagramPoint[] } | undefined;
+    edges.set(index, edge?.points ?? []);
+  });
+  const graphSize = g.graph() as { width?: number; height?: number };
+  return {
+    ...component, width: Math.ceil(graphSize.width ?? NODE_W + 32), height: Math.ceil(graphSize.height ?? NODE_H + 32),
+    nodes, edges, offsetX: 0, offsetY: 0,
+  };
+}
+
+function packDiagramComponents(connected: DiagramComponentLayout[], isolated: DiagramComponentLayout[]): { width: number; height: number } {
+  let x = 0, y = 0, rowHeight = 0, maxWidth = 0;
+  const place = (component: DiagramComponentLayout) => {
+    if (x > 0 && x + component.width > DIAGRAM_ROW_WIDTH) {
+      y += rowHeight + COMPONENT_GAP_Y; x = 0; rowHeight = 0;
+    }
+    component.offsetX = x; component.offsetY = y;
+    x += component.width + COMPONENT_GAP_X;
+    rowHeight = Math.max(rowHeight, component.height);
+    maxWidth = Math.max(maxWidth, x - COMPONENT_GAP_X);
+  };
+  connected.forEach(place);
+  // Keep the isolated-table grid below the actual relationship graph. Otherwise short isolated cards beside a
+  // tall star component create a large blank trench before the next row and hide the useful graph among noise.
+  if (connected.length && isolated.length) { y += rowHeight + COMPONENT_GAP_Y; x = 0; rowHeight = 0; }
+  isolated.forEach(place);
+  return { width: Math.max(1, Math.ceil(maxWidth)), height: Math.max(1, Math.ceil(y + rowHeight)) };
 }
 
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
@@ -561,7 +647,8 @@ pre.doc-code code{background:none;padding:0;}
 .doc-narr p{margin:4px 0;} .doc-narr ul,.doc-narr ol{margin:4px 0 4px 18px;}
 .doc-footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--doc-border);color:var(--doc-muted);font-size:12px;}
 .doc-gen{font-size:11px;margin-top:4px;opacity:0.8;}
-.doc-svg{max-width:100%;height:auto;background:var(--doc-bg);border:1px solid var(--doc-border);border-radius:10px;}
+.doc-diagram{overflow:auto;}
+.doc-svg{display:block;height:auto;margin:0 auto;background:var(--doc-bg);border:1px solid var(--doc-border);border-radius:10px;}
 .doc-hidden{display:none !important;}
 @media print{
   .doc-sidebar,.doc-search{display:none !important;}

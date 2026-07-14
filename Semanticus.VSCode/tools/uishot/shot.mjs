@@ -301,6 +301,16 @@ async function capture(browser, port, { target, variant, out, drawer }) {
         await page.waitForFunction((expected) => (document.body.textContent || '').includes(expected),
           { timeout: 15000 }, process.env.UISHOT_EXPECT);
       }
+      // Docs renders the actual export inside an iframe. Scroll that inner document to a named section so visual
+      // review can inspect relationship diagrams and other below-the-fold exported content, not only the cover.
+      if (variant === 'Docs' && process.env.UISHOT_DOC_SECTION) {
+        const iframe = await page.waitForSelector('iframe[title="Documentation preview"]', { timeout: 15000 });
+        const frame = await iframe.contentFrame();
+        if (!frame) throw new Error('Docs preview iframe was unavailable');
+        await frame.waitForFunction((id) => !!document.getElementById(id), { timeout: 15000 }, process.env.UISHOT_DOC_SECTION);
+        await frame.evaluate((id) => document.getElementById(id)?.scrollIntoView({ block: 'start' }), process.env.UISHOT_DOC_SECTION);
+        await new Promise((r) => setTimeout(r, 500));
+      }
       // UISHOT_FULL=1 → capture the whole scrolled page (long content like an expanded audit trail),
       // not just the 1000px viewport.
       await page.screenshot({ path: out, fullPage: !!process.env.UISHOT_FULL });

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using TabularEditor.TOMWrapper;
 using TabularEditor.TOMWrapper.Linguistics;
@@ -173,6 +174,14 @@ namespace Semanticus.Analysis
         // An all-caps run (≥2 letters). Reads as cryptic UNLESS it's a recognised business acronym (see below).
         private static readonly Regex AllCapsRun = new Regex(@"\b[A-Z]{2,}\b", RegexOptions.Compiled);
 
+        // Identifier-shaped column names are useful candidates for a focused ambiguity check. A compound name such
+        // as "Product Code" is self-explanatory enough to pass; the bare "Code" / "Key" / "Number" form is not.
+        // Keep this disjoint from NAME-COLUMN: cryptic ProductID / Product_Key shapes already belong there.
+        private static readonly Regex IdentifierShapedColumnName = new Regex(
+            @"(?i)(^|[\s\-])(id|identifier|key|code|number|num|no)$", RegexOptions.Compiled);
+        private static readonly Regex BareIdentifierColumnName = new Regex(
+            @"(?i)^(id|identifier|key|code|number|num|no)$", RegexOptions.Compiled);
+
         // Mixed-case "period-over-period" time-intelligence abbreviations (Year-over-Year, Month-over-Month, …).
         // These are standard, AI-legible metric suffixes — but the inner lowercase-o-then-uppercase reads as a
         // camelCase hump to CodeyName's [a-z][A-Z] tell, so "Sales YoY" was wrongly flagged as cryptic. We strip
@@ -203,6 +212,41 @@ namespace Semanticus.Analysis
 
         // Text columns whose values are month/weekday labels need a Sort By Column or Q&A/Copilot sort them alphabetically.
         private static readonly Regex MonthOrWeekday = new Regex(@"(?i)\b(month\s*name|month|weekday|day\s*of\s*(the\s*)?week|day\s*name)\b", RegexOptions.Compiled);
+
+        // A second high-confidence Sort By signal: a text label with one unambiguous numeric companion on the same
+        // table (Priority + Priority Sort, Month Name + Month Number). This closes ordered business labels without
+        // guessing their order from the label name alone. The readiness fix remains a Proposal because the author
+        // still confirms that the companion encodes the intended business order.
+        private static readonly string[] SortLabelSuffixes = { "name", "label", "text" };
+        private static readonly string[] SortOrderSuffixes = { "number", "ordinal", "sequence", "index", "order", "sort", "rank", "num", "no" };
+
+        private static string SortNameKey(string name) =>
+            Regex.Replace(name ?? string.Empty, @"[^A-Za-z0-9]", string.Empty).ToLowerInvariant();
+
+        private static string StripSuffix(string key, IEnumerable<string> suffixes)
+        {
+            foreach (var suffix in suffixes)
+                if (key.Length > suffix.Length + 2 && key.EndsWith(suffix, StringComparison.Ordinal))
+                    return key.Substring(0, key.Length - suffix.Length);
+            return key;
+        }
+
+        private static Column SortCompanion(Column label)
+        {
+            if (label?.Table == null) return null;
+            var key = SortNameKey(label.Name);
+            var stem = StripSuffix(key, SortLabelSuffixes);
+            var matches = label.Table.Columns
+                .Where(c => !ReferenceEquals(c, label) && IsNumeric(c))
+                .Select(c => new { Column = c, Key = SortNameKey(c.Name) })
+                .Where(x => SortOrderSuffixes.Any(s => x.Key.EndsWith(s, StringComparison.Ordinal)))
+                .Where(x =>
+                {
+                    var candidateStem = StripSuffix(x.Key, SortOrderSuffixes);
+                    return candidateStem == key || candidateStem == stem;
+                }).Select(x => x.Column).Take(2).ToList();
+            return matches.Count == 1 ? matches[0] : null;
+        }
 
         // Naming conventions that mark a measure as an internal helper/intermediate, not a business metric.
         // Only underscore-anchored / leading-token conventions — NOT a free 'helper' word, which matches legit
@@ -235,9 +279,11 @@ namespace Semanticus.Analysis
         //    Number" are spared while "Account/Order/Invoice Number" (where "count"/"total" aren't whole words) still match.
         //  • a CASE-SENSITIVE camel-junction branch catches the no-space warehouse convention (ProductID, EmployeeID,
         //    CalendarYear, ProductKey, WeekNumber, AccountNo) that the \b forms miss, without re-flagging Decode/Acid/Grid.
+        //  • month/day/age/order/rank/sequence/latitude/longitude are canonical numeric dimensions whose totals have
+        //    no business meaning. Each is end-anchored so additive names such as "Order Quantity" remain untouched.
         //  • zip is END-anchored / "zip code" only, so "Zip Compression Ratio" is not a postal false positive.
         private static readonly Regex NonAdditiveDimName = new Regex(
-            @"(?i)(\byear$|\b(month|quarter|week)\s*(number|num|no)\b|\b(monthnum|monthnumber|weeknum|weeknumber|quarternum)\b|\bpostal\s*code\b|\bpostcode\b|\bzip\s*code\b|\bzip$|\b(?:(?<!\btotal\s)(?<!\bcount\s)(?<!\bunits\s)number|code|id|key)$)" +
+            @"(?i)(\b(year|month|quarter|week|day|age|rank|order|sort|sequence|latitude|longitude|lat|lon|lng)$|\b(month|quarter|week|day)\s*(number|num|no)\b|\b(monthnum|monthnumber|weeknum|weeknumber|quarternum|daynum|daynumber)\b|\bpin(?:\s*code)?$|\bpostal\s*code\b|\bpostcode\b|\bzip\s*code\b|\bzip$|\b(?:(?<!\btotal\s)(?<!\bcount\s)(?<!\bunits\s)number|code|id|key)$)" +
             @"|(?-i:(?<=[a-z])(ID|Id|Key|Code|No|Number|Year)$)",
             RegexOptions.Compiled);
 
@@ -348,14 +394,122 @@ namespace Semanticus.Analysis
         public static string GeoCategory(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            var n = name.ToLowerInvariant();
-            if (n.Contains("city")) return "City";
-            if (n.Contains("country")) return "Country";
-            if (n.Contains("continent")) return "Continent";
-            if (n.Contains("county")) return "County";
-            if (n.Contains("state") || n.Contains("province")) return "StateOrProvince";
-            if (n.Contains("postal") || n.Contains("zip")) return "PostalCode";
+            if (ContainsNameToken(name, "latitude")) return "Latitude";
+            if (ContainsNameToken(name, "longitude")) return "Longitude";
+            if (ContainsNameToken(name, "address") && !NonGeoAddressName.IsMatch(name)) return "Address";
+            if (ContainsNameToken(name, "place")) return "Place";
+            if (ContainsNameToken(name, "city")) return "City";
+            if (ContainsNameToken(name, "country")) return "Country";
+            if (ContainsNameToken(name, "continent")) return "Continent";
+            if (ContainsNameToken(name, "county")) return "County";
+            if (ContainsNameToken(name, "state") || ContainsNameToken(name, "province")) return "StateOrProvince";
+            if (ContainsNameToken(name, "postal") || ContainsNameToken(name, "zip")) return "PostalCode";
             return null;
+        }
+
+        // Word and camel-case boundary matching keeps field-name heuristics precise: CustomerCity and City_Name
+        // match, while Capacity (contains "city") and Statement (starts with "state") do not.
+        private static bool ContainsNameToken(string name, string token)
+        {
+            for (var start = 0; (start = name.IndexOf(token, start, StringComparison.OrdinalIgnoreCase)) >= 0; start++)
+            {
+                var end = start + token.Length;
+                var left = start == 0 || !char.IsLetterOrDigit(name[start - 1])
+                    || (char.IsLower(name[start - 1]) && char.IsUpper(name[start]));
+                var right = end == name.Length || !char.IsLetterOrDigit(name[end])
+                    || (char.IsLower(name[end - 1]) && char.IsUpper(name[end]));
+                if (left && right) return true;
+            }
+            return false;
+        }
+
+        // Read only the highest-weight USER-AUTHORED term for each visible object. Generated/Suggested terms caused
+        // the rejected naive SYN-COLLIDE prototype to flag legitimate recurring thesaurus words across a curated
+        // model. Missing State means Authored in the published LSDL contract; equal weights preserve array order.
+        private static List<(TabularNamedObject Object, string Term)> PrimaryAuthoredSynonyms(Model model, Culture culture)
+        {
+            var result = new List<(TabularNamedObject, string)>();
+            if (culture?.ContentType != ContentType.Json || string.IsNullOrWhiteSpace(culture.Content)) return result;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(culture.Content);
+                if (!doc.RootElement.TryGetProperty("Entities", out var entities) || entities.ValueKind != JsonValueKind.Object)
+                    return result;
+
+                var objects = new List<TabularNamedObject>();
+                objects.AddRange(model.Tables.Where(t => !t.IsHidden));
+                objects.AddRange(model.AllMeasures.Where(x => !x.IsHidden));
+                objects.AddRange(model.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber));
+
+                foreach (var obj in objects)
+                {
+                    JsonElement entity = default;
+                    var found = false;
+                    foreach (var candidate in entities.EnumerateObject())
+                    {
+                        if (!BindingMatches(candidate.Value, obj)) continue;
+                        entity = candidate.Value;
+                        found = true;
+                        break;
+                    }
+                    if (!found || !entity.TryGetProperty("Terms", out var terms) || terms.ValueKind != JsonValueKind.Array)
+                        continue;
+
+                    string primary = null;
+                    var bestWeight = double.MinValue;
+                    foreach (var termObject in terms.EnumerateArray())
+                    {
+                        if (termObject.ValueKind != JsonValueKind.Object) continue;
+                        foreach (var term in termObject.EnumerateObject())
+                        {
+                            if (term.Value.ValueKind != JsonValueKind.Object) continue;
+                            var state = term.Value.TryGetProperty("State", out var stateNode) && stateNode.ValueKind == JsonValueKind.String
+                                ? stateNode.GetString() : "Authored";
+                            if (!string.Equals(state, "Authored", StringComparison.OrdinalIgnoreCase)) continue;
+                            var weight = term.Value.TryGetProperty("Weight", out var weightNode) && weightNode.TryGetDouble(out var parsed)
+                                ? parsed : 1.0;
+                            if (primary == null || weight > bestWeight)
+                            {
+                                primary = term.Name;
+                                bestWeight = weight;
+                            }
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(primary)) result.Add((obj, primary.Trim()));
+                }
+            }
+            catch (JsonException)
+            {
+                // Culture.Content is TOM-validated on write. If an external edit still leaves malformed JSON, the
+                // existing fail-loud Prep-for-AI advisory owns it; a collision rule has no trustworthy population.
+            }
+            return result;
+        }
+
+        private static bool BindingMatches(JsonElement entity, TabularNamedObject obj)
+        {
+            JsonElement binding;
+            if (!entity.TryGetProperty("Binding", out binding))
+            {
+                if (!entity.TryGetProperty("Definition", out var definition)
+                    || !definition.TryGetProperty("Binding", out binding)) return false;
+            }
+            if (binding.ValueKind != JsonValueKind.Object
+                || !binding.TryGetProperty("ConceptualEntity", out var tableNode)
+                || tableNode.ValueKind != JsonValueKind.String) return false;
+
+            if (obj is Table table)
+                return string.Equals(tableNode.GetString(), table.Name, StringComparison.Ordinal)
+                    && !binding.TryGetProperty("ConceptualProperty", out _);
+
+            if (obj is ITabularTableObject tableObject)
+                return string.Equals(tableNode.GetString(), tableObject.Table?.Name, StringComparison.Ordinal)
+                    && binding.TryGetProperty("ConceptualProperty", out var propertyNode)
+                    && propertyNode.ValueKind == JsonValueKind.String
+                    && string.Equals(propertyNode.GetString(), obj.Name, StringComparison.Ordinal);
+
+            return false;
         }
 
         // ---- DAX best-practice shared helpers (see docs/dax-best-practice-rules.md §3) ----------------------
@@ -524,9 +678,26 @@ namespace Semanticus.Analysis
         private static readonly Regex UrlColumnName = new Regex(
             @"(?i)(\burl\b|url$|\buri\b|image\s*url|photo\s*url|web\s*link|hyperlink)", RegexOptions.Compiled);
 
+        // Barcode is a first-class Power BI Data Category. Require the barcode token at the end (optionally followed
+        // by an identifier/value suffix) so a business metric such as "Barcode Adoption" is not auto-classified.
+        private static readonly Regex BarcodeColumnName = new Regex(
+            @"(?i)(^|[^a-z0-9])(bar\s*code|barcode)(\s*(id|value|number|no|text))?$", RegexOptions.Compiled);
+
+        // These are communication/network fields, not geographic addresses. Keep them out of the CAT-GEO SafeFix.
+        private static readonly Regex NonGeoAddressName = new Regex(
+            @"(?i)(e-?mail|web|ip)[\s_\-]*address", RegexOptions.Compiled);
+
         // Whether a URL column's name reads as an IMAGE link (→ ImageUrl data category) vs a plain web link (→ WebUrl).
         private static bool ImpliesImageUrl(string name) =>
             !string.IsNullOrEmpty(name) && Regex.IsMatch(name, @"(?i)(image|photo|picture|thumbnail|logo|icon)");
+
+        private static string LinkCategory(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            if (BarcodeColumnName.IsMatch(name)) return "Barcode";
+            if (!UrlColumnName.IsMatch(name)) return null;
+            return ImpliesImageUrl(name) ? "ImageUrl" : "WebUrl";
+        }
 
         // Drill-down candidate detection for REL-HIERARCHY-MISSING (name/GeoCategory based — no live data needed).
         private static int GeoColumnCount(Table t) =>
@@ -668,8 +839,22 @@ namespace Semanticus.Analysis
                 x => $"Measure [{x.Name}] is not human-readable (acronym/code/no spaces)."));
 
             rules.Add(new ObjectRule<Column>("NAME-COLUMN", "Cryptic visible column name", ReadinessCategory.Naming, Severity.Medium, RuleKind.LlmJudgment, FixKind.AiContent,
-                m => m.AllColumns, x => !x.IsHidden && x.Type != ColumnType.RowNumber, x => IsCrypticName(x.Name),
+                m => m.AllColumns,
+                x => !x.IsHidden && x.Type != ColumnType.RowNumber
+                    && (x.Table is CalculationGroupTable || IsCrypticName(x.Name) || !IdentifierShapedColumnName.IsMatch(x.Name ?? "")),
+                x => IsCrypticName(x.Name),
                 x => $"Column [{x.Table?.Name}].[{x.Name}] is not human-readable."));
+
+            // A bare "Code" / "Key" / "Number" column forces a user or assistant to guess what it identifies. The
+            // candidate population also contains clean compound names ("Product Code"), so this is a normal scored
+            // rule rather than a presence-only penalty. NAME-COLUMN excludes these non-cryptic candidates, partitioning
+            // the visible-column population instead of counting them twice. The user's assistant authors the rename.
+            rules.Add(new ObjectRule<Column>("NAME-COLUMN-ID", "Bare ID/code column name", ReadinessCategory.Naming, Severity.Medium, RuleKind.Deterministic, FixKind.AiContent,
+                m => m.AllColumns,
+                x => !x.IsHidden && x.Type != ColumnType.RowNumber && !(x.Table is CalculationGroupTable)
+                    && !IsCrypticName(x.Name) && IdentifierShapedColumnName.IsMatch(x.Name ?? ""),
+                x => BareIdentifierColumnName.IsMatch((x.Name ?? "").Trim()),
+                x => $"Column [{x.Table?.Name}].[{x.Name}] is named only '{x.Name?.Trim()}'; rename it to say what the identifier represents."));
 
             // Tables are named in every NL question Copilot grounds ("sales by region"), so a cryptic table name
             // (dim_/fact_/tbl_ prefix, camelCase, an unknown all-caps code) hurts as much as a cryptic field. Same
@@ -770,8 +955,20 @@ namespace Semanticus.Analysis
                 {
                     if ((m.Database?.CompatibilityLevel ?? 0) < 1465) return new RuleEvaluation { Applicable = 0 }; // linguistic schema needs CL>=1465
                     var ev = new RuleEvaluation { Applicable = 1 };
-                    var has = m.Cultures.Any(c => c.ContentType == ContentType.Json && !string.IsNullOrEmpty(c.Content));
+                    var has = m.Cultures.Any(c => !string.IsNullOrWhiteSpace(c.Content));
                     if (!has) ev.Violations.Add(rule.NewFinding(m, m.Name, "This model has no Q&A synonyms set up. Synonyms help users' everyday words reach the right field when those words don't match the field name. Enable Q&A and add synonyms (Copilot and Q&A use the same model)."));
+                    return ev;
+                }));
+
+            // The synonym writer only accepts JSON LSDL. An older XML linguistic schema is present, not missing, but
+            // it cannot be patched safely through the current adapter. Presence design: only XML cultures apply.
+            rules.Add(new ModelRule("SYN-LSDL-XML", "Legacy XML linguistic schema cannot be patched safely", ReadinessCategory.Synonyms, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var xml = m.Cultures.Where(c => c.ContentType == ContentType.Xml && !string.IsNullOrWhiteSpace(c.Content)).ToList();
+                    var ev = new RuleEvaluation { Applicable = xml.Count };
+                    foreach (var culture in xml)
+                        ev.Violations.Add(rule.NewFinding(culture, culture.Name, $"Culture '{culture.Name}' uses the legacy XML linguistic schema. Semanticus cannot patch its synonyms safely; export or upgrade it to JSON LSDL before editing synonyms."));
                     return ev;
                 }));
 
@@ -791,16 +988,43 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
-            // SYN-COLLIDE ("make the primary synonym unique") is DEFERRED. A naive "flag any term mapping to >1 field"
-            // (mirroring NAME-DUP) was prototyped and probed on a real curated model: it produced 74 false positives
-            // and dropped a GRADE-A model's Synonyms score 100→83. The collisions are NOT real ambiguity — they are
-            // (1) qualifier/modifier terms that legitimately recur across a measure family (ytd→37, var→31, act→15,
-            // bud, lytd) and (2) Power BI's auto-Generated / auto-Suggested thesaurus synonyms (epoch, outgrowth,
-            // entertainment — State="Generated"/"Suggested", never user-authored). A correct rule must (a) parse the
-            // LSDL Terms for State/Weight and restrict to USER-AUTHORED terms, and (b) compare only each field's
-            // PRIMARY (highest-weight) term — neither of which SynonymHelper.GetSynonyms exposes (it returns a
-            // comma-joined string with no State). That needs LSDL Term-level parsing + entity→TOM resolution: a
-            // separate, larger piece. Do NOT ship the naive version.
+            // Table names are part of every natural-language path ("sales by region"), but SYN-FIELD intentionally
+            // owns only columns and measures. Keep tables separate so the Applicable denominator remains the exact
+            // population evaluated here. Calculation-group tables are structural rather than business entities.
+            rules.Add(new ModelRule("SYN-TABLE", "Visible business table has no synonyms", ReadinessCategory.Synonyms, Severity.Medium, RuleKind.LlmGenerate, FixKind.AiContent,
+                (m, rule) =>
+                {
+                    if ((m.Database?.CompatibilityLevel ?? 0) < 1465) return new RuleEvaluation { Applicable = 0 };
+                    var culture = m.Cultures.FirstOrDefault(c => c.ContentType == ContentType.Json && !string.IsNullOrEmpty(c.Content));
+                    if (culture == null) return new RuleEvaluation { Applicable = 0 };
+                    var tables = m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)).ToList();
+                    var ev = new RuleEvaluation { Applicable = tables.Count };
+                    foreach (var table in tables)
+                        if (string.IsNullOrWhiteSpace(SynonymHelper.GetSynonyms(table, culture)))
+                            ev.Violations.Add(rule.NewFinding(table, table.Name, $"Table '{table.Name}' has no synonyms; users may use a different business name for it."));
+                    return ev;
+                }));
+
+            // Only the primary authored term participates. Generated/suggested synonyms and lower-weight family
+            // modifiers are deliberately excluded, closing the 74-false-positive failure of the naive prototype.
+            rules.Add(new ModelRule("SYN-COLLIDE", "Primary authored synonym is ambiguous", ReadinessCategory.Synonyms, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();
+                    foreach (var culture in m.Cultures.Where(c => c.ContentType == ContentType.Json && !string.IsNullOrWhiteSpace(c.Content)))
+                    {
+                        var primary = PrimaryAuthoredSynonyms(m, culture);
+                        ev.Applicable += primary.Count;
+                        foreach (var group in primary.GroupBy(x => x.Term, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
+                        {
+                            var names = group.Select(x => x.Object.Name).Distinct(StringComparer.Ordinal).ToArray();
+                            foreach (var item in group)
+                                ev.Violations.Add(rule.NewFinding(item.Object, item.Object.Name,
+                                    $"Primary authored synonym '{item.Term}' is assigned to {group.Count()} visible objects ({string.Join(", ", names)}). Give each object a unique primary synonym so Q&A restatements identify the intended field."));
+                        }
+                    }
+                    return ev;
+                }));
 
             // OLS is correct governance, not a readiness defect, but it deliberately narrows what Copilot/Q&A can
             // answer for restricted users. Surface that boundary once at model scope so an analyst doesn't mistake
@@ -888,11 +1112,21 @@ namespace Semanticus.Analysis
                 }));
 
             rules.Add(new ObjectRule<Measure>("FMT-MEASURE", "Measure has no format string", ReadinessCategory.Formatting, Severity.Medium, RuleKind.LlmGenerate, FixKind.AiContent,
-                m => m.AllMeasures, x => !x.IsHidden, x => string.IsNullOrEmpty(x.FormatString),
+                m => m.AllMeasures, x => !x.IsHidden, x => string.IsNullOrEmpty(x.FormatString) && string.IsNullOrEmpty(x.FormatStringExpression),
                 x => $"Measure [{x.Name}] has no format string."));
 
+            rules.Add(new ObjectRule<Column>("FMT-COLUMN", "Visible numeric/date column has no format string", ReadinessCategory.Formatting, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
+                m => m.AllColumns,
+                x => !x.IsHidden && x.Type != ColumnType.RowNumber && !(x.Table is CalculationGroupTable)
+                    && !x.IsKey && !x.UsedInRelationships.Any() && !IsNonAdditiveDimensionName(x.Name)
+                    && (IsNumeric(x) || x.DataType == DataType.DateTime),
+                x => string.IsNullOrWhiteSpace(x.FormatString),
+                x => $"Column [{x.Table?.Name}].[{x.Name}] has no model format string. Copilot uses column formats as grounding metadata; set a reviewed number or date format before exposing this field."));
+
             rules.Add(new ObjectRule<Column>("CAT-GEO", "Geographic column has no data category", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.SafeFix,
-                m => m.AllColumns, x => !x.IsHidden && string.IsNullOrEmpty(x.DataCategory), x => GeoCategory(x.Name) != null,
+                m => m.AllColumns,
+                x => !x.IsHidden && x.Type != ColumnType.RowNumber && GeoCategory(x.Name) != null,
+                x => string.IsNullOrEmpty(x.DataCategory),
                 x => $"Column [{x.Table?.Name}].[{x.Name}] looks geographic; set a Data Category."));
 
             // A visible column stored as Text whose NAME implies a date or a monetary/quantity number: Q&A/Copilot
@@ -914,13 +1148,13 @@ namespace Semanticus.Analysis
             // A visible column whose name marks it as a link / image URL but that has NO Data Category — Copilot uses
             // the Data Category (WebUrl / ImageUrl) as grounding metadata, and Power BI renders links/images from it.
             // Requires an explicit url/uri/link token (UrlColumnName) so binary "Photo" columns don't false-fire.
-            // Proposal (Claude/user picks WebUrl vs ImageUrl). applies-filter = the url-named, category-less visible
-            // columns (so Applicable = that population; dormant when none).
-            rules.Add(new ObjectRule<Column>("CAT-URL", "URL/image column has no data category", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
+            // Proposal (Claude/user picks WebUrl vs ImageUrl). Applicable = the visible link/image/barcode population,
+            // including clean categorized fields; models without one stay dormant.
+            rules.Add(new ObjectRule<Column>("CAT-URL", "URL/image/barcode column has no data category", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 m => m.AllColumns,
-                x => !x.IsHidden && x.Type != ColumnType.RowNumber && string.IsNullOrEmpty(x.DataCategory) && UrlColumnName.IsMatch(x.Name ?? ""),
-                x => true,
-                x => $"Column [{x.Table?.Name}].[{x.Name}] looks like a link/image URL but has no Data Category; set {(ImpliesImageUrl(x.Name) ? "ImageUrl" : "WebUrl")} so Copilot recognises it and Power BI renders it."));
+                x => !x.IsHidden && x.Type != ColumnType.RowNumber && LinkCategory(x.Name) != null,
+                x => string.IsNullOrEmpty(x.DataCategory),
+                x => $"Column [{x.Table?.Name}].[{x.Name}] looks like a {(LinkCategory(x.Name) == "Barcode" ? "barcode" : "link/image URL")} but has no Data Category; set {LinkCategory(x.Name)} so Copilot and Power BI interpret it correctly."));
 
             // ---- Relationships ------------------------------------------------------------------
             rules.Add(new ObjectRule<SingleColumnRelationship>("REL-BIDI", "Bidirectional cross-filter", ReadinessCategory.Relationships, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
@@ -1011,7 +1245,7 @@ namespace Semanticus.Analysis
                     var directLake = m.AllPartitions.Any(p => Effective(p) == ModeType.DirectLake);
                     var ev = new RuleEvaluation { Applicable = 0 };   // advisory only — never scores the category
                     if (directLake)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This is a Direct Lake / Lakehouse model; Power BI Q&A live-connect in Desktop does not support it (the Desktop tooling can't index it). Author and validate Prep-for-AI / Q&A in the Fabric service instead."));
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This is a Direct Lake / Lakehouse model; Power BI Desktop Q&A live-connect and Q&A setup linguistic teaching do not support it. Author and validate Prep-for-AI and Q&A in the Fabric service instead."));
                     return ev;
                 }));
 
@@ -1245,12 +1479,29 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
-            // ---- Formatting: chronological sort -------------------------------------------------
-            rules.Add(new ObjectRule<Column>("FMT-SORTBY", "Month/weekday text column has no Sort By Column", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
-                m => m.AllColumns,
-                x => !x.IsHidden && x.Type != ColumnType.RowNumber && x.DataType == DataType.String && MonthOrWeekday.IsMatch(x.Name ?? string.Empty),
-                x => x.SortByColumn == null,
-                x => $"Column [{x.Table?.Name}].[{x.Name}] looks like a month/weekday label but has no Sort By Column; Q&A/Copilot will sort it alphabetically."));
+            // ---- Formatting: logical sort -------------------------------------------------------
+            // Known month/weekday labels always need chronological sorting. Other text labels apply only when the
+            // table exposes one explicit numeric companion (Priority + Priority Sort, Month Name + Month Number).
+            // This is a ModelRule because companion-column changes are cross-object inputs; using ObjectRule here
+            // would let an incremental rescan carry a stale label verdict when only the companion changed.
+            rules.Add(new ModelRule("FMT-SORTBY", "Ordered text column has no Sort By Column", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var pop = m.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber && c.DataType == DataType.String)
+                        .Select(c => new { Column = c, Companion = SortCompanion(c) })
+                        .Where(x => MonthOrWeekday.IsMatch(x.Column.Name ?? string.Empty) || x.Companion != null)
+                        .ToList();
+                    var ev = new RuleEvaluation { Applicable = pop.Count };
+                    foreach (var x in pop.Where(x => x.Column.SortByColumn == null))
+                    {
+                        var reason = x.Companion == null
+                            ? "it is a month/weekday label and will sort alphabetically"
+                            : $"the table has numeric order column [{x.Companion.Name}]";
+                        ev.Violations.Add(rule.NewFinding(x.Column, x.Column.Name,
+                            $"Column [{x.Column.Table?.Name}].[{x.Column.Name}] has no Sort By Column; {reason}. Set the intended logical order so Q&A/Copilot does not present an alphabetical sequence."));
+                    }
+                    return ev;
+                }));
 
             // ---- DataAgentConfig: implicit measures ---------------------------------------------
             // A visible numeric column that auto-aggregates (and isn't a key/relationship endpoint) is an
@@ -1390,21 +1641,22 @@ namespace Semanticus.Analysis
                 }));
 
             // ---- Relationships: disconnected table ----------------------------------------------
-            // Only meaningful once the model has relationships (else it's a flat/parameter model). Exclude tables
-            // that are disconnected BY DESIGN: field parameters (marked by a ParameterMetadata extended property;
-            // they drive selection via SELECTEDVALUE) and measure/parameter holders with no visible data columns.
-            rules.Add(new ModelRule("REL-DISCONNECTED", "Visible dimension table participates in no relationship", ReadinessCategory.Relationships, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
+            // A single visible business table needs no join, so that population is dormant. With two or more business
+            // tables, however, a table with no relationship cannot participate in cross-table natural-language
+            // questions. Exclude tables disconnected BY DESIGN: field parameters (ParameterMetadata; they drive
+            // selection via SELECTEDVALUE) and measure/parameter holders with no visible data columns.
+            rules.Add(new ModelRule("REL-DISCONNECTED", "Visible business table participates in no relationship", ReadinessCategory.Relationships, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
-                    if (m.Relationships.Count == 0) return new RuleEvaluation { Applicable = 0 };
-                    var connected = m.Relationships.OfType<SingleColumnRelationship>()
-                        .SelectMany(r => new[] { r.FromTable, r.ToTable }).Where(t => t != null).ToHashSet();
                     bool IsFieldParameter(Table t) => t.Columns.Any(c => c.HasExtendedProperty("ParameterMetadata"));
                     var pop = m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable) && !IsFieldParameter(t)
                         && t.Columns.Any(c => !c.IsHidden && c.Type != ColumnType.RowNumber)).ToList();
+                    if (pop.Count < 2) return new RuleEvaluation { Applicable = 0 };
+                    var connected = m.Relationships.OfType<SingleColumnRelationship>()
+                        .SelectMany(r => new[] { r.FromTable, r.ToTable }).Where(t => t != null).ToHashSet();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
                     foreach (var t in pop.Where(t => !connected.Contains(t)))
-                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' has visible fields but no relationship; data agents/Copilot can't join it to the rest of the model. If it's an intentional disconnected/parameter table, ignore."));
+                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' has visible fields but no relationship; data agents and Copilot cannot join it to the other business tables. If it is intentionally disconnected, review and waive this finding."));
                     return ev;
                 }));
 
@@ -1571,8 +1823,9 @@ namespace Semanticus.Analysis
                     ReadinessCategory.CopilotLimits, Severity.High, RuleKind.Dmv, FixKind.Proposal,
                     (m, rule) =>
                     {
-                        var ev = new RuleEvaluation { Applicable = 1 };
-                        long total = Indexed(m).Sum(Card);
+                        var indexed = Indexed(m).ToList();
+                        var ev = new RuleEvaluation { Applicable = indexed.Count == 0 ? 0 : 1 };
+                        long total = indexed.Sum(Card);
                         if (total > ReadinessLiveStats.QnaUniqueValueCeiling)
                             ev.Violations.Add(rule.NewFinding(m, m.Name,
                                 $"~{total:N0} indexed unique text values across visible columns exceed the Q&A index ceiling of {ReadinessLiveStats.QnaUniqueValueCeiling:N0}; Q&A/Copilot drop values and lose accuracy. Hide or exclude the high-cardinality text columns."));

@@ -226,6 +226,134 @@ namespace Semanticus.Tests
             Assert.False(live2.Annotations.Contains("Semanticus_VerifiedEdits"));
         }
 
+        [Fact]
+        public void Model_annotations_and_table_detail_rows_metadata_reach_live_and_are_claimed()   // #135
+        {
+            var src = NewModel();
+            src.Annotations.Add(new TOM.Annotation { Name = "Owner", Value = "Finance" });
+            src.Tables["Sales"].Annotations.Add(new TOM.Annotation { Name = "ToolHint", Value = "keep" });
+            src.Tables["Sales"].DefaultDetailRowsDefinition = new TOM.DetailRowsDefinition { Expression = "SELECTCOLUMNS ( Sales, \"Amount\", Sales[Amount] )" };
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Equal(2, rep.Metadata);   // one model shell + one table shell
+            Assert.Equal("Finance", live.Annotations["Owner"].Value);
+            Assert.Equal("keep", live.Tables["Sales"].Annotations["ToolHint"].Value);
+            Assert.Equal(src.Tables["Sales"].DefaultDetailRowsDefinition.Expression, live.Tables["Sales"].DefaultDetailRowsDefinition.Expression);
+            Assert.Contains("model", rep.SyncedRefs);
+            Assert.Contains("table:Sales", rep.SyncedRefs);
+        }
+
+        [Fact]
+        public void Calc_group_selection_expressions_reach_live()   // #135
+        {
+            var src = CalcModel(0, ("YTD", "SELECTEDMEASURE ()", 0, null));
+            src.Database.CompatibilityLevel = 1605;
+            src.Tables["TI"].CalculationGroup.NoSelectionExpression = new TOM.CalculationGroupExpression
+            {
+                Expression = "SELECTEDMEASURE ()",
+                FormatStringDefinition = new TOM.FormatStringDefinition { Expression = "\"0.0%\"" }
+            };
+            src.Tables["TI"].CalculationGroup.MultipleOrEmptySelectionExpression = new TOM.CalculationGroupExpression { Expression = "BLANK ()" };
+            var live = CalcModel(0, ("YTD", "SELECTEDMEASURE ()", 0, null));
+            live.Database.CompatibilityLevel = 1605;
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Equal(1, rep.Metadata);
+            Assert.Equal("SELECTEDMEASURE ()", live.Tables["TI"].CalculationGroup.NoSelectionExpression.Expression);
+            Assert.Equal("\"0.0%\"", live.Tables["TI"].CalculationGroup.NoSelectionExpression.FormatStringDefinition.Expression);
+            Assert.Equal("BLANK ()", live.Tables["TI"].CalculationGroup.MultipleOrEmptySelectionExpression.Expression);
+            Assert.Contains("table:TI", rep.SyncedRefs);
+        }
+
+        [Fact]
+        public void Unsupported_table_shell_metadata_is_named_and_the_ref_is_withheld()   // #135
+        {
+            var src = NewModel(); src.Tables["Sales"].IsPrivate = true;
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Contains(rep.Unmatched, x => x.StartsWith("table:Sales") && x.Contains("table-level metadata"));
+            Assert.DoesNotContain("table:Sales", rep.SyncedRefs);
+            Assert.False(live.Tables["Sales"].IsPrivate);
+        }
+
+        [Fact]
+        public void Child_annotations_and_table_data_category_reach_live_and_are_claimed()   // #135
+        {
+            var src = NewModel();
+            src.Tables["Sales"].DataCategory = "Fact";
+            src.Tables["Sales"].Columns["Amount"].Annotations.Add(new TOM.Annotation { Name = "ColumnHint", Value = "currency" });
+            src.Tables["Sales"].Measures["Total"].Annotations.Add(new TOM.Annotation { Name = "MeasureHint", Value = "trusted" });
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Equal(1, rep.DataCategories);
+            Assert.Equal(2, rep.Metadata);
+            Assert.Equal("Fact", live.Tables["Sales"].DataCategory);
+            Assert.Equal("currency", live.Tables["Sales"].Columns["Amount"].Annotations["ColumnHint"].Value);
+            Assert.Equal("trusted", live.Tables["Sales"].Measures["Total"].Annotations["MeasureHint"].Value);
+            Assert.Contains("table:Sales", rep.SyncedRefs);
+            Assert.Contains("column:Sales/Amount", rep.SyncedRefs);
+            Assert.Contains("measure:Sales/Total", rep.SyncedRefs);
+            Assert.Empty(rep.Unmatched);
+        }
+
+        [Fact]
+        public void Unsupported_column_metadata_is_named_and_the_ref_is_withheld()   // #135
+        {
+            var src = NewModel(); src.Tables["Sales"].Columns["Amount"].IsKey = true;
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Contains(rep.Unmatched, x => x.StartsWith("column:Sales/Amount") && x.Contains("column metadata"));
+            Assert.DoesNotContain("column:Sales/Amount", rep.SyncedRefs);
+            Assert.False(live.Tables["Sales"].Columns["Amount"].IsKey);
+        }
+
+        [Fact]
+        public void New_child_annotations_are_carried_before_create_is_claimed()   // #135
+        {
+            var src = NewModel();
+            var column = new TOM.CalculatedColumn { Name = "Tax", Expression = "Sales[Amount] * 0.1", LineageTag = "tag-tax" };
+            column.Annotations.Add(new TOM.Annotation { Name = "ColumnHint", Value = "derived" });
+            src.Tables["Sales"].Columns.Add(column);
+            var measure = new TOM.Measure { Name = "Average", Expression = "AVERAGE ( Sales[Amount] )", LineageTag = "tag-average" };
+            measure.Annotations.Add(new TOM.Annotation { Name = "MeasureHint", Value = "reviewed" });
+            src.Tables["Sales"].Measures.Add(measure);
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Equal("derived", live.Tables["Sales"].Columns["Tax"].Annotations["ColumnHint"].Value);
+            Assert.Equal("reviewed", live.Tables["Sales"].Measures["Average"].Annotations["MeasureHint"].Value);
+            Assert.Contains("column:Sales/Tax", rep.SyncedRefs);
+            Assert.Contains("measure:Sales/Average", rep.SyncedRefs);
+            Assert.Empty(rep.Unmatched);
+        }
+
+        [Fact]
+        public void New_child_with_unsupported_metadata_is_not_partially_created_or_claimed()   // #135
+        {
+            var src = NewModel();
+            src.Tables["Sales"].Columns.Add(new TOM.CalculatedColumn
+            {
+                Name = "KeyCopy", Expression = "Sales[Amount]", IsKey = true, LineageTag = "tag-key-copy"
+            });
+            var live = NewModel();
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Null(live.Tables["Sales"].Columns.Find("KeyCopy"));
+            Assert.Contains(rep.Unmatched, x => x.StartsWith("column:Sales/KeyCopy") && x.Contains("cannot create"));
+            Assert.DoesNotContain("column:Sales/KeyCopy", rep.SyncedRefs);
+        }
+
         // ================================================================================================
         // #124 finding 2 — SyncModels walked columns/measures/partitions ONLY, so a calc-group table's ITEMS and its
         // Precedence never reached live: a calc-item create/update was merged locally but DROPPED by the push

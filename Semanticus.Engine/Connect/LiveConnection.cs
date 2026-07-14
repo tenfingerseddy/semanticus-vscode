@@ -19,6 +19,10 @@ namespace Semanticus.Engine
         private readonly Adomd.AdomdConnection _conn;
         private readonly string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
         private readonly ModelDispatcher _queryThread = new ModelDispatcher();
+        // A session-scoped trace sees every query on this XMLA session. Keep the trace setup, warm-up, real query
+        // and teardown in one exclusive lane with ordinary ExecuteAsync calls so another UI/MCP request cannot
+        // contaminate its timings, plan or evaluation log. Per connection, not global: unrelated models stay live.
+        private readonly System.Threading.SemaphoreSlim _queryOperationGate = new System.Threading.SemaphoreSlim(1, 1);
 
         public string Kind { get; }
         public string DataSource { get; }
@@ -93,7 +97,19 @@ namespace Semanticus.Engine
             new LiveConnection(kind, dataSource, new Adomd.AdomdConnection(), "") { Database = database };
 
         public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds) =>
+            RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds));
+
+        // DaxTrace already owns the exclusive lane while it warms and runs the captured query. Re-entering through
+        // ExecuteAsync would deadlock, so trace code uses this narrow bypass. It still preserves ADOMD thread affinity.
+        internal Task<ResultSet> ExecuteWithinExclusiveAsync(string query, int maxRows, int commandTimeoutSeconds) =>
             _queryThread.RunAsync(() => Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds));
+
+        internal async Task<T> RunExclusiveAsync<T>(Func<Task<T>> operation)
+        {
+            await _queryOperationGate.WaitAsync().ConfigureAwait(false);
+            try { return await operation().ConfigureAwait(false); }
+            finally { _queryOperationGate.Release(); }
+        }
 
         private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds)
         {

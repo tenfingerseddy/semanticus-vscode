@@ -395,9 +395,9 @@ namespace Semanticus.Engine
 
         // --- Connections: one registry, doing double duty as the agent-permissions target registry ---
         Task<ModelConnectionRecord[]> ListConnectionsAsync();
-        Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "human");
-        Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "human");
-        Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "human");
+        Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent");
+        Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent");
+        Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent");
         Task<ModelConnectionRecord> LabelConnectionAsync(string id, string label, string origin = "agent");
         Task<ModelConnectionRecord> SetConnectionWorkingFolderAsync(string id, string folder);
         Task<bool> ForgetConnectionAsync(string id, string origin = "agent");

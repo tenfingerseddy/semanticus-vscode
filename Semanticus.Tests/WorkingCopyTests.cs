@@ -192,5 +192,27 @@ namespace Semanticus.Tests
             Assert.Equal(record.Id, linked.PublishConnectionId);
             Assert.True(File.Exists(snapshot)); // cleanup is restricted to the engine-owned snapshot root
         }
+
+        [Fact]
+        public async Task Shared_default_refuses_interactive_working_copy_fallback_as_agent()
+        {
+            var record = ConnectionRegistry.Remember(
+                "xmla", "powerbi://example/default-origin", "Published", "Published", null, "azcli");
+            using var engine = new LocalEngine(new SessionManager());
+            var modes = new System.Collections.Generic.List<string>();
+            engine.WorkspaceTokenExportForTests = mode =>
+            {
+                modes.Add(mode);
+                throw new InvalidOperationException(
+                    "Authentication failed for all authenticators. Technical Details: RootActivityId: 00000000-0000-0000-0000-000000000000");
+            };
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.PrepareWorkingCopyAsync(record.Id, Path.Combine(_root, "models"), commit: true));
+
+            Assert.Contains("Not signed in", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ask the user", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { "azcli" }, modes);
+        }
     }
 }

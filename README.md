@@ -9,16 +9,17 @@ client selected and operated by the user.
 
 ## Release status
 
-Semanticus 1.0.0 is the first public Windows 11 x64 release. Its platform-specific VSIX bundles the engine and is
-accepted only when the exact commit passes the Ubuntu, Windows and runnable-VSIX CI gates. Tenant-backed and
-clean-machine acceptance cannot be replaced by a local build and must be completed against the artifact that is
-published.
+Semanticus 1.0.1 corrects the Marketplace listing and provides five platform-specific packages. Every accepted
+VSIX bundles its engine and is produced only on a matching GitHub Actions runner that extracts and executes that
+engine. Tenant-backed and clean-machine acceptance cannot be replaced by a local build and must be completed
+against the artifact that is published.
 
-## Install on Windows
+## Install
 
-Download `semanticus-win32-x64-1.0.0.vsix` from the GitHub release, then in VS Code open **Extensions**, choose
-**Views and More Actions**, select **Install from VSIX**, and reload the window. Semanticus includes its .NET engine,
-so users of the packaged extension do not need to install a separate .NET runtime.
+Install Semanticus from the VS Code Marketplace, which selects the package for the current host. For a manual
+install, choose the matching 1.0.1 VSIX, then in VS Code open **Extensions**, choose **Views and More Actions**,
+select **Install from VSIX**, and reload the window. Semanticus includes its .NET engine, so users of an accepted
+package do not need to install a separate .NET runtime.
 
 ## Architecture
 
@@ -33,15 +34,18 @@ AI Assistant ---------------------- MCP / stdio -------------+      single-write
 Both doors call the same engine contracts. A successful change broadcasts `model/didChange`, carries its origin,
 and participates in the shared undo history.
 
-## Supported platforms for 1.0
+## Supported platforms for 1.0.1
 
-| Platform | 1.0 status | Scope |
+| Platform | 1.0.1 status | Scope |
 |---|---|---|
-| Windows 11 x64 | Supported release platform | Offline file models, Power BI Desktop discovery, local and remote XMLA, local M preview, VS Code UI and MCP |
-| Ubuntu 24.04 x64 | Source and CI coverage only | CI proves build, tests and offline engine journeys; there is no supported 1.0 VSIX claim |
-| macOS | Not supported in 1.0 | Build artifacts may exist, but there is no accepted clean-machine product journey |
+| Windows 11 x64 | Supported release package | Offline file models, Power BI Desktop discovery, local and remote XMLA, local M preview, VS Code UI and MCP |
+| Windows 11 ARM64 | Supported release package | Offline file models, remote XMLA and Fabric journeys, VS Code UI and MCP |
+| Ubuntu 24.04 x64 | Supported release package | Offline file models, remote XMLA and Fabric journeys, VS Code UI and MCP |
+| macOS Intel | Supported release package | Offline file models, remote XMLA and Fabric journeys, VS Code UI and MCP |
+| macOS Apple Silicon | Supported release package | Offline file models, remote XMLA and Fabric journeys, VS Code UI and MCP |
 
 Remote XMLA and Fabric features require a compatible tenant, capacity, permissions and credentials.
+Power BI Desktop discovery, local XMLA and local M preview remain Windows 11 x64 only.
 
 ## Frozen 1.0 surface
 
@@ -54,8 +58,9 @@ Remote XMLA and Fabric features require a compatible tenant, capacity, permissio
 - Workflows, Change Plans, Data Agent schema authoring, DaxLib and multi-model compare/copy.
 - Dry-run-first deployment and Fabric discovery surfaces within the documented boundary.
 
-Cloud report discovery, Fabric ALM writes beyond dry-run, Data Agent publishing, role impersonation and automatic
-classic-calendar migration are deferred. Unsupported metadata must fail closed without damaging the source model.
+Cloud report discovery is supported behind consent. Fabric ALM writes and Data Agent publishing preview as a dry
+run and write only on explicit confirmation. Role impersonation and automatic classic-calendar migration remain
+deferred. Unsupported metadata must fail closed without damaging the source model.
 
 ## Build from a clean clone
 

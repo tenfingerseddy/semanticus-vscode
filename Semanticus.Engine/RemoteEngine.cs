@@ -131,9 +131,9 @@ namespace Semanticus.Engine
         public Task<SaveResult> SaveAsync(string path, string format) => _rpc.InvokeAsync<SaveResult>("save", path, format);
         public Task<SessionInfo> SessionInfoAsync() => _rpc.InvokeAsync<SessionInfo>("sessionInfo");
         public Task<ConnectionContext> ConnectionContextAsync() => _rpc.InvokeAsync<ConnectionContext>("connectionContext");
-        public Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "human") => _rpc.InvokeAsync<ModelConnectionRecord>("rememberXmlaConnection", endpoint, database, modelName, authMode, origin);
-        public Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "human") => _rpc.InvokeAsync<WorkingCopyResult>("prepareWorkingCopy", connectionId, parentFolder, commit, queryConnectionId, publishConnectionId, origin);
-        public Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "human") => _rpc.InvokeAsync<ConnectionContext>("setPublishDestination", connectionId, origin);
+        public Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent") => _rpc.InvokeAsync<ModelConnectionRecord>("rememberXmlaConnection", endpoint, database, modelName, authMode, origin);
+        public Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent") => _rpc.InvokeAsync<WorkingCopyResult>("prepareWorkingCopy", connectionId, parentFolder, commit, queryConnectionId, publishConnectionId, origin);
+        public Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent") => _rpc.InvokeAsync<ConnectionContext>("setPublishDestination", connectionId, origin);
         public Task<Entitlement.EntitlementInfo> GetEntitlementAsync() => _rpc.InvokeAsync<Entitlement.EntitlementInfo>("getEntitlement");
         public Task<VerifiedModeState> GetVerifiedModeAsync() => _rpc.InvokeAsync<VerifiedModeState>("getVerifiedMode");
         public Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin) => _rpc.InvokeAsync<VerifiedModeState>("setVerifiedMode", on, origin);

@@ -15,7 +15,10 @@ Design invariants:
 - **Never lose a sale.** Mint + KV record always happen; delivery is best-effort with status recorded.
   Without a `RESEND_API_KEY` the Worker still works — tokens queue as `pending-delivery` on `/pending`
   for manual sending (the launch-week mode).
-- **Idempotent.** Paddle retries webhooks; duplicate transaction ids are acknowledged and skipped.
+- **Idempotent, but self-healing.** Paddle retries webhooks; a duplicate of a *delivered* sale is
+  acknowledged and skipped. A duplicate of an **undelivered** sale re-runs completion (resolve the email,
+  mint if missing, deliver if now possible) — so the Paddle dashboard's "replay" button doubles as the
+  manual recovery tool.
 - **Proven compatible.** `node selftest.mjs` round-trips tokens against the real .NET verifier
   (`Semanticus.License verify`) in both directions and proves tampering fails. Run it after touching
   `mint.mjs` or the engine's `LicenseVerifier`.
@@ -31,7 +34,9 @@ From this directory (`tools/fulfillment/worker/`):
    URL = `<worker URL>/paddle`, type Webhook, events = **transaction.completed** only. Save, then copy the
    destination's **secret key** (`pdl_ntfset_…`).
 5. **Paddle API key:** Developer Tools → Authentication → API keys → create one (read access to Customers
-   is all it's used for).
+   is all it's used for). The webhook payload carries only a `customer_id` — the buyer's email comes from
+   this lookup, unless the checkout passes `customData: { email }` (which then wins; today the site's
+   overlay checkout does not collect an email before opening, so the lookup is the production path).
 6. **Secrets** (each command prompts for a paste — values never touch a file or shell history):
    ```
    npx wrangler secret put PADDLE_WEBHOOK_SECRET
@@ -54,7 +59,16 @@ From this directory (`tools/fulfillment/worker/`):
 
 - **A sale arrives:** buyer gets the token email automatically; the owner address gets a BCC.
 - **Something looks off:** `GET /pending` (Bearer `ADMIN_KEY`) lists every record not marked `delivered` —
-  including `mint-failed` (with the error) and `pending-delivery` (with the ready-to-send token).
+  including `mint-failed` (with the error) and `pending-delivery` (with the ready-to-send token). Keep the
+  key itself out of shell history/transcripts (e.g. in `~/.semanticus/fulfillment-admin.key` and
+  `curl -H "Authorization: Bearer $(cat ~/.semanticus/fulfillment-admin.key)" <worker URL>/pending`).
+- **Watching it live:** `npx wrangler tail` from this directory. Every terminal branch logs one line —
+  `paddle: fulfilling` / `re-fulfilling` / `duplicate` / `ignored` / `rejected — <reason>`, then
+  `fulfill: recorded <key> <status>` — so a silent 200 always has an explanation. Ids only; tokens, keys,
+  and email addresses are never logged.
+- **Recovering a stuck sale:** Paddle dashboard → the notification → **Replay**. A replay of an
+  undelivered record re-resolves the email, re-mints if the identity improved, and re-attempts delivery;
+  a replay of a delivered record is a no-op (`duplicate`).
 - **Renewals:** each renewal fires its own `transaction.completed` → a fresh token is emailed. The engine's
   14-day grace window covers payment-retry lag around the boundary.
 - **Key rotation:** mint a new keypair (`Semanticus.License keygen`), ship the new public key in an engine
@@ -68,3 +82,21 @@ From this directory (`tools/fulfillment/worker/`):
 - `selftest.mjs` — cross-language proof vs the .NET verifier; `SEMANTICUS_MINT_CONFIG=Verify node selftest.mjs`
   on a dev box where Release bins are locked.
 - `wrangler.toml` — bindings + public config; secrets are never in the repo.
+
+## Troubleshooting (field notes, 2026-07-14)
+
+- **Webhook returns 200 but "nothing happens":** check KV first — `npx wrangler kv key list
+  --namespace-id <id> --remote`. A 200 with no fulfillment logs usually means the record ALREADY exists
+  and the request ended at the duplicate check (or, before the 404 hardening, a mistyped path was being
+  ACKed by the catch-all route). It is not a routing or observability failure.
+- **`email: null` on records:** the Customers API lookup failed; the record's `error` field now says why
+  (e.g. `customer lookup HTTP 403`). A 403 with a known-good key is almost always a corrupted secret —
+  interactive `wrangler secret put` pastes can pick up stray whitespace; re-put the secret by piping the
+  exact value. The Worker also `trim()`s every secret defensively.
+- **Local debugging:** put the secrets in `.dev.vars` (git-ignored — NEVER commit), `npx wrangler dev`,
+  and POST a signed payload: `Paddle-Signature: ts=<unix now>;h1=<hex HMAC-SHA256(secret, "<ts>:<raw body>")>`.
+  The replay window is 300 s, so the `ts` must be fresh.
+- **Token compatibility:** any change to `mint.mjs` or the engine verifier → `node selftest.mjs`
+  (round-trips against the real .NET `Semanticus.License verify`). A minted token can also be checked
+  one-off: `dotnet run --project ../../../Semanticus.License -c Release -- verify --pub <embedded public
+  key> --token <token>`.

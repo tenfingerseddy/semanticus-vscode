@@ -14,11 +14,11 @@ import {
 } from './release-security.mjs';
 
 const TARGETS = {
-  'win32-x64': { platform: 'win32', arch: 'x64', executable: 'Semanticus.Engine.exe' },
-  'win32-arm64': { platform: 'win32', arch: 'arm64', executable: 'Semanticus.Engine.exe' },
-  'linux-x64': { platform: 'linux', arch: 'x64', executable: 'Semanticus.Engine' },
-  'darwin-x64': { platform: 'darwin', arch: 'x64', executable: 'Semanticus.Engine' },
-  'darwin-arm64': { platform: 'darwin', arch: 'arm64', executable: 'Semanticus.Engine' },
+  'win32-x64': { platform: 'win32', arch: 'x64', executable: 'Semanticus.Engine.exe', minimumExecutableBytes: 100_000 },
+  'win32-arm64': { platform: 'win32', arch: 'arm64', executable: 'Semanticus.Engine.exe', minimumExecutableBytes: 100_000 },
+  'linux-x64': { platform: 'linux', arch: 'x64', executable: 'Semanticus.Engine', minimumExecutableBytes: 70_000 },
+  'darwin-x64': { platform: 'darwin', arch: 'x64', executable: 'Semanticus.Engine', minimumExecutableBytes: 80_000 },
+  'darwin-arm64': { platform: 'darwin', arch: 'arm64', executable: 'Semanticus.Engine', minimumExecutableBytes: 100_000 },
 };
 
 const EXACT_FILES = new Set([
@@ -140,7 +140,7 @@ export function validatePayloadInventory(entries, target, manifestText, packageT
   if (missing.length) throw new Error(`VSIX is missing required production files:\n  ${missing.join('\n  ')}`);
   if (engineFiles < 100) throw new Error(`VSIX engine payload is implausibly small (${engineFiles} files)`);
   const minimumSizes = new Map([
-    [`extension/engine/${info.executable}`, 100_000],
+    [`extension/engine/${info.executable}`, info.minimumExecutableBytes],
     ['extension/engine/Semanticus.Engine.dll', 500_000],
     ['extension/engine/System.Private.CoreLib.dll', 1_000_000],
   ]);

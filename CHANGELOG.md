@@ -4,9 +4,77 @@ All notable changes to Semanticus are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 > This file is the project's running **ship-log** — the chronological record of what landed, when, and
-> with what verification.
+> with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
+> the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
 ## [Unreleased]
+
+### Fixed: Shared connection operations fail closed to agent attribution
+
+Remembering a connection, preparing a working copy and setting a publish destination now default omitted or blank
+shared-engine origins to agent attribution. The UI boundary remains human and the MCP boundary remains agent. This
+also prevents an origin-less working-copy request from entering interactive authentication fallback.
+
+### Fixed: Model compare container metadata
+
+Model compare now includes authored model, table and calculation-group container metadata instead of comparing
+only their child objects. Supported changes round-trip through selective apply and live push. Live push also carries
+table data categories and measure/column annotations. Metadata that a path cannot carry is reported and withheld
+from the synchronized set, preventing a false equal or false synchronized result.
+
+### Fixed: Concurrent DAX trace isolation
+
+Server timings, query plans, and EVALUATEANDLOG captures now own a per-connection query lane from trace setup
+through teardown. Ordinary UI or AI Assistant queries on that XMLA session wait for the capture, preventing
+their events from being mixed into another request's evidence while unrelated model connections remain
+independent.
+
+### Fixed: Docs relationship diagrams and workspace
+
+Documentation relationship diagrams now lay out connected components before tiling isolated tables, preserve
+their routed relationship edges, and never magnify a narrow graph into giant cards. The shared renderer fixes
+both the live preview and exported HTML. The Docs authoring surface now uses the full Studio workspace instead
+of the centered report-width cap.
+
+### Added: Coverage-oracle freshness is gated by CI
+
+CI now has a dedicated coverage-oracle job that fails when the committed public-surface inventory no longer
+matches tracked source. An auto-discovered extension contract prevents the job or its check command from being
+removed silently.
+
+### Fixed: Cloud report listing fails before sign-in on invalid input
+
+Published-report listing now rejects a missing workspace id before attempting authentication. Direct MCP and UI
+door regression coverage proves the failure is independent of ambient sign-in state and leaves the shared model
+session, revision, activity stream and change broadcast untouched. This closes the supported-operation reference
+floor: every supported MCP operation now has at least one tracked test-source reference.
+
+### Fixed: Fabric spec generation fails before sign-in on invalid input
+
+The Fabric SQL spec generator now rejects a missing endpoint, missing database or unsupported storage mode before
+attempting authentication. Public-door regression coverage proves these failures preserve the current spec and emit
+no false success activity or change broadcast.
+
+### Added: Public Primer write contract
+
+Direct regression coverage now proves that the Free MCP and UI doors write the same model-scoped Primer,
+attribute the activity correctly, leave the semantic model revision untouched, and preserve the last valid file
+when malformed Markdown is refused.
+
+## [1.0.1] - 2026-07-14
+
+### Fixed: Marketplace listing and repository links
+
+Corrected the public limitation text to match the shipped product: cloud report discovery is supported behind
+consent, while Fabric Git and Data Agent writes preview as a dry run and write only on explicit confirmation.
+Repository, homepage and issue links now point to `tenfingerseddy/semanticus-vscode`.
+
+### Added: Five matching-host platform packages
+
+Added target-specific packages for Windows x64, Windows ARM64, Linux x64, macOS Intel and macOS Apple Silicon.
+Each package is built on its matching GitHub Actions runner, then its bundled engine is extracted and executed
+before the artifact is accepted. The aggregate release gate verifies all five SHA-256 digests and their runner,
+commit and Actions-run evidence before producing the upload bundle.
 
 ## [1.0.0] - 2026-07-14
 

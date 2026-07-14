@@ -95,10 +95,10 @@ namespace Semanticus.Engine
 
     /// <summary>
     /// Profiles a DAX query by running it with an AS trace attached (QueryEnd + VertiPaqSEQueryEnd +
-    /// cache-match), correlating events by ApplicationName = "Semanticus". Trace ops run on a single
-    /// dedicated thread (AMO is not thread-safe); events arrive on AMO's callback thread into a locked
-    /// list. Degrades gracefully (TraceAvailable=false + wall-clock total) if the instance refuses a
-    /// trace (e.g. a non-admin XMLA endpoint) instead of throwing.
+    /// cache-match), correlating events to the live session. Each capture owns that connection's exclusive
+    /// query lane from trace setup through teardown, so neither the other driver nor an ordinary query can
+    /// contaminate its evidence. AMO work runs on one dedicated thread; callbacks write into locked collections.
+    /// Degrades gracefully (TraceAvailable=false + wall-clock total) if the instance refuses a trace.
     /// </summary>
     public static class DaxTrace
     {
@@ -108,7 +108,7 @@ namespace Semanticus.Engine
         {
             if (live == null) return Task.FromResult(new ServerTimings { Error = "Not connected." });
             if (string.IsNullOrWhiteSpace(query)) return Task.FromResult(new ServerTimings { Error = "Empty query." });
-            return Task.Run(() => Profile(live, query));
+            return live.RunExclusiveAsync(() => Task.Run(() => Profile(live, query)));
         }
 
         private static ServerTimings Profile(LiveConnection live, string query)
@@ -159,7 +159,7 @@ namespace Semanticus.Engine
             {
                 // Trace couldn't start (permissions / platform). Fall back to a plain timed run.
                 Cleanup(server, trace, traceUp);
-                var rs0 = live.ExecuteAsync(query, 1, 120).GetAwaiter().GetResult();
+                var rs0 = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult();
                 return new ServerTimings
                 {
                     TotalMs = rs0.ElapsedMs,
@@ -183,7 +183,7 @@ namespace Semanticus.Engine
             ResultSet rs;
             try
             {
-                rs = live.ExecuteAsync(query, 1, 120).GetAwaiter().GetResult();
+                rs = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult();
                 sw.Stop();
                 gotQueryEnd.Wait(TimeSpan.FromSeconds(6)); // let trailing trace events (esp. QueryEnd) flush
                 Thread.Sleep(150);
@@ -301,7 +301,7 @@ namespace Semanticus.Engine
             var sw = Stopwatch.StartNew();
             while (sw.Elapsed < TimeSpan.FromSeconds(8))
             {
-                try { live.ExecuteAsync("EVALUATE { 1 }", 1, 30).GetAwaiter().GetResult(); } catch { }
+                try { live.ExecuteWithinExclusiveAsync("EVALUATE { 1 }", 1, 30).GetAwaiter().GetResult(); } catch { }
                 if (anySeen.Wait(TimeSpan.FromMilliseconds(1500)))
                 {
                     sw.Stop();
@@ -335,7 +335,7 @@ namespace Semanticus.Engine
         {
             if (live == null) return Task.FromResult(new EvalLogResult { Error = "Not connected." });
             if (string.IsNullOrWhiteSpace(query)) return Task.FromResult(new EvalLogResult { Error = "Empty query." });
-            return Task.Run(() => EvaluateAndLog(live, query, maxRows <= 0 ? 1000 : maxRows));
+            return live.RunExclusiveAsync(() => Task.Run(() => EvaluateAndLog(live, query, maxRows <= 0 ? 1000 : maxRows)));
         }
 
         private static EvalLogResult EvaluateAndLog(LiveConnection live, string query, int maxRows)
@@ -380,7 +380,7 @@ namespace Semanticus.Engine
             catch (Exception ex)
             {
                 Cleanup(server, trace, traceUp);
-                var rsf = live.ExecuteAsync(query, maxRows, 120).GetAwaiter().GetResult();
+                var rsf = live.ExecuteWithinExclusiveAsync(query, maxRows, 120).GetAwaiter().GetResult();
                 return new EvalLogResult
                 {
                     TraceAvailable = false,
@@ -401,7 +401,7 @@ namespace Semanticus.Engine
             ResultSet rs;
             try
             {
-                rs = live.ExecuteAsync(query, maxRows, 180).GetAwaiter().GetResult();
+                rs = live.ExecuteWithinExclusiveAsync(query, maxRows, 180).GetAwaiter().GetResult();
                 gotQueryEnd.Wait(TimeSpan.FromSeconds(6));
                 Thread.Sleep(200);
             }
@@ -509,7 +509,7 @@ namespace Semanticus.Engine
         {
             if (live == null) return Task.FromResult(new QueryPlanResult { Error = "Not connected." });
             if (string.IsNullOrWhiteSpace(query)) return Task.FromResult(new QueryPlanResult { Error = "Empty query." });
-            return Task.Run(() => CapturePlan(live, query));
+            return live.RunExclusiveAsync(() => Task.Run(() => CapturePlan(live, query)));
         }
 
         private static QueryPlanResult CapturePlan(LiveConnection live, string query)
@@ -552,7 +552,7 @@ namespace Semanticus.Engine
             catch (Exception ex)
             {
                 Cleanup(server, trace, traceUp);
-                var rs0 = live.ExecuteAsync(query, 1, 120).GetAwaiter().GetResult();
+                var rs0 = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult();
                 return new QueryPlanResult
                 {
                     TraceAvailable = false, TotalMs = rs0.ElapsedMs, RowCount = rs0.RowCount,
@@ -569,7 +569,7 @@ namespace Semanticus.Engine
 
             var sw = Stopwatch.StartNew();
             ResultSet rs;
-            try { rs = live.ExecuteAsync(query, 1, 120).GetAwaiter().GetResult(); sw.Stop(); gotQueryEnd.Wait(TimeSpan.FromSeconds(6)); Thread.Sleep(150); }
+            try { rs = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult(); sw.Stop(); gotQueryEnd.Wait(TimeSpan.FromSeconds(6)); Thread.Sleep(150); }
             finally { Cleanup(server, trace, traceUp); }
 
             if (!string.IsNullOrEmpty(rs.Error)) return new QueryPlanResult { Error = rs.Error, TraceAvailable = true };

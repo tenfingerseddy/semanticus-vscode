@@ -11,6 +11,15 @@ permissions:
   contents: read
 
 jobs:
+  coverage-oracle:
+    name: coverage oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the generated public-surface inventory to match tracked source
+        shell: pwsh
+        run: ./tools/coverage-oracle.ps1 -Check
+
   build-and-smoke:
     name: build + smokes (${{ matrix.os }})
     strategy:
@@ -78,8 +87,22 @@ jobs:
           FABRIC_TENANT: ${{ secrets.FABRIC_TENANT }}
 
   vsix:
-    name: package extension (.vsix, unsigned)
-    runs-on: windows-latest
+    name: package + execute (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            runner: windows-latest
+          - target: win32-arm64
+            runner: windows-11-arm
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,11 +122,40 @@ jobs:
       - name: Install extension dependencies from the lockfile
         working-directory: Semanticus.VSCode
         run: npm ci --no-fund --no-audit
-      - name: Package and verify the Windows x64 production VSIX
+      - name: Package, extract, and execute the production VSIX engine
         working-directory: Semanticus.VSCode
-        run: npm run package:win
+        run: npm run package -- ${{ matrix.target }}
+        env:
+          SEMANTICUS_REQUIRE_HOST_EXECUTION: '1'
+          SEMANTICUS_RUNNER_LABEL: ${{ matrix.runner }}
       - uses: actions/upload-artifact@v4
         with:
-          name: semanticus-win32-x64-vsix
-          path: Semanticus.VSCode/dist/semanticus-win32-x64-*.vsix
+          name: semanticus-${{ matrix.target }}-vsix
+          path: |
+            Semanticus.VSCode/dist/semanticus-${{ matrix.target }}-*.vsix
+            Semanticus.VSCode/dist/semanticus-${{ matrix.target }}-*.evidence.json
+          if-no-files-found: error
+
+  vsix-manifest:
+    name: package extension (.vsix, unsigned)
+    needs: vsix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: semanticus-*-vsix
+          path: Semanticus.VSCode/dist
+          merge-multiple: true
+      - name: Require five matching-host execution records and matching SHA-256 digests
+        run: node Semanticus.VSCode/scripts/verify-vsix-matrix.mjs Semanticus.VSCode/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semanticus-1.0.1-platform-vsix
+          path: |
+            Semanticus.VSCode/dist/*.vsix
+            Semanticus.VSCode/dist/*.evidence.json
           if-no-files-found: error

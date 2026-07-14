@@ -2,7 +2,7 @@
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
   "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your AI Assistant co-edits the same live model.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -432,6 +432,7 @@
     "vscode-jsonrpc": "^8.2.0"
   },
   "devDependencies": {
+    "@dagrejs/dagre": "^1.1.8",
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.2.1",

@@ -770,6 +770,128 @@ namespace Semanticus.Tests
         }
 
         // ============================================================================================
+        // #135: table/model/calc-group CONTAINER properties were outside the collection walker. These
+        // pins prove detection AND the only safe success contract: Diff → Apply → re-Diff is EQUAL.
+        // ============================================================================================
+        [Fact]
+        public void Detail_rows_definition_is_a_table_update_that_round_trips()   // #135
+        {
+            var left = new TOM.Model(); var lt = Table(left, "Sales", "t-s");
+            lt.DefaultDetailRowsDefinition = new TOM.DetailRowsDefinition { Expression = "SELECTCOLUMNS ( Sales, \"Amount\", Sales[Amount] )" };
+            var right = new TOM.Model(); Table(right, "Sales", "t-s");
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var update = Assert.Single(diff.Items, i => i.ObjectType == "Table" && i.Action == "Update");
+            Assert.Contains("defaultDetailRowsDefinition", update.LeftText);
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
+
+            Assert.Contains(update.Ref, outcome.Applied);
+            Assert.Empty(outcome.Failed);
+            Assert.Equal(lt.DefaultDetailRowsDefinition.Expression, right.Tables["Sales"].DefaultDetailRowsDefinition.Expression);
+            Assert.Empty(ModelCompare.Diff(left, right, "src", "tgt").Items);
+        }
+
+        [Fact]
+        public void Table_and_model_annotations_are_visible_and_round_trip_but_audit_annotations_are_ignored()   // #135
+        {
+            var left = new TOM.Model(); var lt = Table(left, "Sales", "t-s");
+            left.Annotations.Add(new TOM.Annotation { Name = "Owner", Value = "Finance" });
+            left.Annotations.Add(new TOM.Annotation { Name = "Semanticus_VerifiedEdits", Value = "left-chain" });
+            left.Annotations.Add(new TOM.Annotation { Name = "TabularEditor_SerializeOptions", Value = "left-tool" });
+            lt.Annotations.Add(new TOM.Annotation { Name = "ToolHint", Value = "keep" });
+            var right = new TOM.Model(); Table(right, "Sales", "t-s");
+            right.Annotations.Add(new TOM.Annotation { Name = "Semanticus_VerifiedEdits", Value = "right-chain" });
+            right.Annotations.Add(new TOM.Annotation { Name = "TabularEditor_SerializeOptions", Value = "right-tool" });
+            right.Annotations.Add(new TOM.Annotation { Name = "Stale", Value = "remove" });
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var model = Assert.Single(diff.Items, i => i.ObjectType == "Model");
+            var table = Assert.Single(diff.Items, i => i.ObjectType == "Table");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { model.Ref, table.Ref });
+
+            Assert.Empty(outcome.Failed);
+            Assert.Equal("Finance", right.Annotations["Owner"].Value);
+            Assert.Equal("right-chain", right.Annotations["Semanticus_VerifiedEdits"].Value);   // audit is ride-along, not diff/apply state
+            Assert.Equal("right-tool", right.Annotations["TabularEditor_SerializeOptions"].Value);
+            Assert.False(right.Annotations.Contains("Stale"));
+            Assert.Equal("keep", right.Tables["Sales"].Annotations["ToolHint"].Value);
+            Assert.Empty(ModelCompare.Diff(left, right, "src", "tgt").Items);
+        }
+
+        [Fact]
+        public void Calc_group_selection_expressions_are_visible_and_round_trip()   // #135
+        {
+            var left = new TOM.Model(); var lt = CalcGroup(left, "TI", "t-ti"); CalcItem(lt, "YTD", "SELECTEDMEASURE ()");
+            lt.CalculationGroup.NoSelectionExpression = new TOM.CalculationGroupExpression
+            {
+                Expression = "SELECTEDMEASURE ()",
+                FormatStringDefinition = new TOM.FormatStringDefinition { Expression = "\"0.0%\"" }
+            };
+            lt.CalculationGroup.MultipleOrEmptySelectionExpression = new TOM.CalculationGroupExpression { Expression = "BLANK ()" };
+            var right = new TOM.Model(); var rt = CalcGroup(right, "TI", "t-ti"); CalcItem(rt, "YTD", "SELECTEDMEASURE ()");
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var update = Assert.Single(diff.Items, i => i.ObjectType == "Table");
+            Assert.Contains("noSelectionExpression", update.LeftText);
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
+
+            Assert.Empty(outcome.Failed);
+            Assert.Equal("SELECTEDMEASURE ()", rt.CalculationGroup.NoSelectionExpression.Expression);
+            Assert.Equal("\"0.0%\"", rt.CalculationGroup.NoSelectionExpression.FormatStringDefinition.Expression);
+            Assert.Equal("BLANK ()", rt.CalculationGroup.MultipleOrEmptySelectionExpression.Expression);
+            Assert.Empty(ModelCompare.Diff(left, right, "src", "tgt").Items);
+        }
+
+        [Fact]
+        public void Unsupported_model_shell_metadata_is_refused_before_mutation()   // #135
+        {
+            var left = new TOM.Model(); var right = new TOM.Model();
+            var property = typeof(TOM.Model).GetProperty("DisableAutoExists");
+            Assert.NotNull(property); Assert.True(property.CanWrite);
+            var originalTargetValue = property.GetValue(right);
+            property.SetValue(left, 1);
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var update = Assert.Single(diff.Items, i => i.ObjectType == "Model");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
+
+            Assert.Empty(outcome.Applied);
+            Assert.Contains(outcome.Failed, f => f.Ref == update.Ref && f.Reason.Contains("cannot copy yet"));
+            Assert.Equal(originalTargetValue, property.GetValue(right));
+            Assert.Single(ModelCompare.Diff(left, right, "src", "tgt").Items, i => i.ObjectType == "Model");
+        }
+
+        [Fact]
+        public void Container_property_catalog_is_pinned_so_a_TOM_bump_cannot_silently_expand_the_shell()   // #135
+        {
+            static string[] Props(Type t) => t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                .Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+            Assert.Equal(new[] {
+                "AlternateSourcePrecedence", "Annotations", "CalculationGroup", "Calendars", "ChangedProperties", "Columns",
+                "DataCategory", "DefaultDetailRowsDefinition", "Description", "DirectLakeIndexingBehavior", "ExcludedArtifacts",
+                "ExcludeFromAutomaticAggregations", "ExcludeFromModelRefresh", "ExtendedProperties", "Hierarchies", "IsHidden",
+                "IsPrivate", "IsRemoved", "LineageTag", "Measures", "Model", "ModifiedTime", "Name", "ObjectType", "Parent",
+                "Partitions", "RefreshPolicy", "Sets", "ShowAsVariationsOnly", "SourceLineageTag", "StructureModifiedTime", "SystemManaged"
+            }.OrderBy(n => n, StringComparer.Ordinal), Props(typeof(TOM.Table)));
+            Assert.Equal(new[] {
+                "AnalyticsAIMetadata", "Annotations", "AutomaticAggregationOptions", "BindingInfoCollection", "Collation", "Culture",
+                "Cultures", "DataAccessOptions", "Database", "DataSourceDefaultMaxConnections", "DataSources",
+                "DataSourceVariablesOverrideBehavior", "DefaultDataView", "DefaultDirectLakeIndexingBehavior", "DefaultMeasure",
+                "DefaultMode", "DefaultPowerBIDataSourceVersion", "Description", "DirectLakeBehavior", "DisableAutoExists",
+                "DiscourageCompositeModels", "DiscourageImplicitMeasures", "DiscourageReportMeasures", "ExcludedArtifacts",
+                "Expressions", "ExtendedProperties", "ForceUniqueNames", "Functions", "HasLocalChanges", "IsRemoved", "MAttributes",
+                "MaxParallelismPerQuery", "MaxParallelismPerRefresh", "MetadataAccessPolicy", "Model", "ModifiedTime", "Name",
+                "ObjectType", "Parent", "Perspectives", "QueryGroups", "Relationships", "Roles", "SelectionExpressionBehavior",
+                "Server", "SourceQueryCulture", "StorageLocation", "StructureModifiedTime", "Tables", "ValueFilterBehavior"
+            }.OrderBy(n => n, StringComparer.Ordinal), Props(typeof(TOM.Model)));
+            Assert.Equal(new[] {
+                "Annotations", "CalculationItems", "Description", "IsRemoved", "Model", "ModifiedTime",
+                "MultipleOrEmptySelectionExpression", "NoSelectionExpression", "ObjectType", "Parent", "Precedence", "Table"
+            }.OrderBy(n => n, StringComparer.Ordinal), Props(typeof(TOM.CalculationGroup)));
+        }
+
+        // ============================================================================================
         // #120 — CloneNamed used raw TOM .Clone(), which copies the LineageTag verbatim; adding the clone into a
         // collection that ALREADY holds that tag on a DIFFERENT object throws ArgumentException (tags are unique
         // per-collection). The fix clears the clone's tag ON AN ACTUAL COLLISION only (fresh identity) so the add

@@ -43,6 +43,7 @@ namespace Semanticus.Tests
             await engine.SetMeasureFormatAsync(m1, "#,0.00", "human");
             await engine.SetDescriptionAsync("table:Sales", "One row per sales transaction.", "human");
             await engine.SetDescriptionAsync("column:Sales/Amount", "The transaction amount in dollars.", "human");
+            await engine.SetObjectPropertyAsync("column:Sales/Amount", "FormatString", "#,0.00", "human");
             return (engine, sm, m1);
         }
 

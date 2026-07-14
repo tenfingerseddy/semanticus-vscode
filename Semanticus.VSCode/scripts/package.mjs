@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { verifyVsix } from './verify-vsix.mjs';
+import { writeVsixEvidence } from './verify-vsix-matrix.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const extRoot = path.resolve(scriptDir, '..');
@@ -36,6 +37,7 @@ const TARGETS = {
 };
 
 const version = JSON.parse(fs.readFileSync(path.join(extRoot, 'package.json'), 'utf8')).version;
+const requireHostExecution = process.env.SEMANTICUS_REQUIRE_HOST_EXECUTION === '1';
 
 function run(cmd, args, opts = {}) {
   console.log(`\n> ${cmd} ${args.join(' ')}`);
@@ -86,13 +88,26 @@ async function packageTarget(target, vsce) {
   pruneNonProductRuntimeBinaries();
 
   const outFile = path.join(distDir, `semanticus-${target}-${version}.vsix`);
+  const evidenceFile = outFile.replace(/\.vsix$/i, '.evidence.json');
   fs.mkdirSync(distDir, { recursive: true });
+  fs.rmSync(outFile, { force: true });
+  fs.rmSync(evidenceFile, { force: true });
   run(process.execPath, [vsce, 'package', '--target', target, '-o', outFile]);
 
   const verified = await verifyVsix(outFile, target);
   console.log(
     `  payload verified: ${verified.entries} entries, ${verified.engineFiles} engine files; ` +
     `extracted engine executed: ${verified.hostExecuted}`);
+  console.log(`  engine-extracted-and-executed: ${verified.hostExecuted}`);
+  if (requireHostExecution && !verified.hostExecuted) {
+    throw new Error(`Release packaging for ${target} requires execution on ${target}, but this host is ${process.platform}-${process.arch}`);
+  }
+  if (requireHostExecution) {
+    const written = writeVsixEvidence(outFile, { target, rid, version, verification: verified });
+    console.log(`  sha256: ${written.evidence.sha256}`);
+    console.log(`  runner: ${written.evidence.runner.label}`);
+    console.log(`  run: ${written.evidence.runUrl}`);
+  }
 
   const sizeMb = (fs.statSync(outFile).size / (1024 * 1024)).toFixed(1);
   console.log(`\n  -> ${outFile}  (${sizeMb} MB)`);

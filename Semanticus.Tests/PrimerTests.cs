@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -57,6 +58,68 @@ namespace Semanticus.Tests
                 Assert.False(other.Exists);
                 Assert.NotEqual(saved.FilePath, other.FilePath);
                 Assert.DoesNotContain("Contoso-specific context", other.Markdown);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public async Task Set_model_primer_public_doors_share_the_Free_sidecar_write_and_fail_atomically()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-primer-public-doors", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var model = Path.Combine(dir, "Model.bim");
+            File.Copy(TestModels.FindBim(), model);
+            try
+            {
+                using var sessions = new SessionManager();
+                using var engine = new LocalEngine(sessions, new Fake(false));
+                var rpc = new EngineRpcTarget(engine);
+                await engine.OpenAsync(model);
+                var revision = sessions.Current.Revision;
+                var activities = new List<ActivityEvent>();
+                var modelChanges = 0;
+                sessions.Bus.Activity += activities.Add;
+                sessions.Bus.Changed += _ => modelChanges++;
+
+                var agentMarkdown = PrimerContract.Template("Public Primer")
+                    .Replace("_Add what people and the AI Assistant should know._", "Agent-reviewed context")
+                    .Replace("\n", "\r\n");
+                var agentSaved = await McpTools.SetModelPrimer(engine, agentMarkdown);
+
+                Assert.True(agentSaved.Exists);
+                Assert.Equal(agentMarkdown.Replace("\r\n", "\n"), agentSaved.Markdown);
+                Assert.Equal(agentSaved.Markdown, await File.ReadAllTextAsync(agentSaved.FilePath));
+                var agentActivity = Assert.Single(activities);
+                Assert.Equal("set_model_primer", agentActivity.Kind);
+                Assert.Equal("agent", agentActivity.Origin);
+                Assert.Equal(sessions.Current.Id, agentActivity.Target);
+                Assert.True(agentActivity.Ok);
+                Assert.Equal(revision, sessions.Current.Revision);
+                Assert.Equal(0, modelChanges);
+
+                activities.Clear();
+                var humanMarkdown = agentSaved.Markdown.Replace("Agent-reviewed context", "Human-reviewed context");
+                var humanSaved = await rpc.setPrimer(humanMarkdown);
+
+                Assert.Equal(humanMarkdown, humanSaved.Markdown);
+                var humanActivity = Assert.Single(activities);
+                Assert.Equal("set_model_primer", humanActivity.Kind);
+                Assert.Equal("human", humanActivity.Origin);
+                Assert.Equal(sessions.Current.Id, humanActivity.Target);
+                Assert.True(humanActivity.Ok);
+                Assert.Equal(revision, sessions.Current.Revision);
+                Assert.Equal(0, modelChanges);
+
+                activities.Clear();
+                var beforeFailure = await File.ReadAllTextAsync(humanSaved.FilePath);
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => McpTools.SetModelPrimer(engine, "# Broken Primer\n\n## Overview\n"));
+
+                Assert.Contains("exactly these six sections", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(beforeFailure, await File.ReadAllTextAsync(humanSaved.FilePath));
+                Assert.Empty(activities);
+                Assert.Equal(revision, sessions.Current.Revision);
+                Assert.Equal(0, modelChanges);
             }
             finally { Directory.Delete(dir, true); }
         }

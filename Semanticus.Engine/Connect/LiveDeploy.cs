@@ -366,8 +366,27 @@ namespace Semanticus.Engine
             // table ref), right before rep.SyncedRefs is built.
             var heldRefs = new HashSet<string>(StringComparer.Ordinal);
             var calcTablesAdded = new List<string>();   // new calc tables to Calculate-recalc after the metadata save
-            int desc = 0, ren = 0, vis = 0, cat = 0, fmt = 0, fold = 0, expr = 0, sum = 0, cult = 0, part = 0, nexpr = 0, added = 0, calc = 0;
+            int desc = 0, ren = 0, vis = 0, cat = 0, fmt = 0, fold = 0, expr = 0, sum = 0, cult = 0, part = 0, nexpr = 0, added = 0, calc = 0, metadata = 0;
             var renames = new List<(TOM.NamedMetadataObject obj, string oldName, string newName, Func<string, TOM.NamedMetadataObject> findSibling, string id)>();
+
+            // Model-container metadata is a first-class diff item now (#135). Arbitrary non-audit annotations have
+            // a safe live carrier; any other model-shell difference is named and withheld instead of silently lost.
+            var sourceModelState = ModelCompare.LiveModelState(src);
+            var liveModelState = ModelCompare.LiveModelState(live);
+            if (!JsonSemanticEqual(sourceModelState.Residual, liveModelState.Residual))
+            {
+                unmatched.Add("model (carries authored model-level metadata this live push cannot sync; deploy via TMDL/XMLA)");
+                heldRefs.Add("model");
+            }
+            if (!JsonSemanticEqual(sourceModelState.Supplement, liveModelState.Supplement))
+            {
+                try
+                {
+                    if (apply) ModelCompare.CopyLiveModelSupplement(src, live);
+                    metadata++; changes.Add("metadata model"); syncedRefs.Add("model");
+                }
+                catch (Exception ex) { unmatched.Add("model (metadata was not applied: " + ex.Message + ")"); heldRefs.Add("model"); }
+            }
 
             var liveTablesByTag = ByTag(live.Tables.Cast<TOM.Table>(), t => t.LineageTag);
             var matchedTables = new HashSet<TOM.Table>();   // by REFERENCE — survives a rename (don't key on mutable Name)
@@ -385,16 +404,26 @@ namespace Semanticus.Engine
                     var only = st.Partitions.Count == 1 ? st.Partitions[0] : null;
                     if (only?.Source is TOM.CalculatedPartitionSource ccs)
                     {
+                        var tableRef = AlmRef.Top("table", st.Name);
+                        var nt = new TOM.Table { Name = st.Name };
+                        if (SupportsLineage(live) && !string.IsNullOrEmpty(st.LineageTag)) nt.LineageTag = st.LineageTag;
+                        nt.Description = st.Description; nt.IsHidden = st.IsHidden; nt.DataCategory = st.DataCategory;
+                        nt.Partitions.Add(new TOM.Partition { Name = only.Name, Source = new TOM.CalculatedPartitionSource { Expression = ccs.Expression } });
+                        ModelCompare.CopyLiveTableSupplement(st, nt);
+                        var newTableSourceState = ModelCompare.LiveTableState(st);
+                        var newTableState = ModelCompare.LiveTableState(nt);
+                        if (!JsonSemanticEqual(newTableSourceState.Residual, newTableState.Residual)
+                            || !RefreshPolicyEqual(st.RefreshPolicy, nt.RefreshPolicy))
+                        {
+                            unmatched.Add(tableRef + " (carries authored table metadata this live push cannot create; deploy via TMDL/XMLA)");
+                            heldRefs.Add(tableRef);
+                            continue;
+                        }
                         if (apply)
                         {
-                            var nt = new TOM.Table { Name = st.Name };
-                            if (SupportsLineage(live) && !string.IsNullOrEmpty(st.LineageTag)) nt.LineageTag = st.LineageTag;   // rename-safe on later deploys (skipped below CL 1540 — see SupportsLineage)
-                            if (!string.IsNullOrEmpty(st.Description)) nt.Description = st.Description;
-                            if (st.IsHidden) nt.IsHidden = true;
-                            nt.Partitions.Add(new TOM.Partition { Name = only.Name, Source = new TOM.CalculatedPartitionSource { Expression = ccs.Expression } });
                             live.Tables.Add(nt); matchedTables.Add(nt);   // created — keep it out of the live-only sweep
                         }
-                        added++; calcTablesAdded.Add(st.Name); changes.Add("add calcTable:" + st.Name); syncedRefs.Add(AlmRef.Top("table", st.Name));
+                        added++; calcTablesAdded.Add(st.Name); changes.Add("add calcTable:" + st.Name); syncedRefs.Add(tableRef);
                     }
                     else
                         unmatched.Add(AlmRef.Top("table", st.Name) + $" (new {(only == null ? "table" : "data")} table — not deployable here; add via TMDL/XMLA)");
@@ -409,7 +438,29 @@ namespace Semanticus.Engine
                 PlanRename(st.Name, lt, n => live.Tables.Find(n), tid, renames);
                 SetStr(st.Description, () => lt.Description, v => lt.Description = v, apply, ref desc, "description " + tid, changes);
                 SetBool(st.IsHidden, () => lt.IsHidden, v => lt.IsHidden = v, apply, ref vis, "visibility " + tid, changes);
+                SetStr(st.DataCategory, () => lt.DataCategory, v => lt.DataCategory = v, apply, ref cat, "dataCategory " + tid, changes);
                 if (changes.Count > tChanges) syncedRefs.Add(AlmRef.Top("table", st.Name));
+
+                // The table shell covers detail rows, annotations and calc-group selection expressions in addition
+                // to the long-standing display props. Carry the safe supplement; explicitly report/withhold every
+                // residual property so a selective push cannot reconcile a partly-carried table as fully applied.
+                var sourceTableRef = AlmRef.Top("table", st.Name);
+                var sourceTableState = ModelCompare.LiveTableState(st);
+                var liveTableState = ModelCompare.LiveTableState(lt);
+                if (!JsonSemanticEqual(sourceTableState.Residual, liveTableState.Residual))
+                {
+                    unmatched.Add(sourceTableRef + " (carries authored table-level metadata this live push cannot sync; deploy via TMDL/XMLA)");
+                    heldRefs.Add(sourceTableRef);
+                }
+                if (!JsonSemanticEqual(sourceTableState.Supplement, liveTableState.Supplement))
+                {
+                    try
+                    {
+                        if (apply) ModelCompare.CopyLiveTableSupplement(st, lt);
+                        metadata++; changes.Add("metadata " + tid); syncedRefs.Add(sourceTableRef);
+                    }
+                    catch (Exception ex) { unmatched.Add(sourceTableRef + " (metadata was not applied: " + ex.Message + ")"); heldRefs.Add(sourceTableRef); }
+                }
 
                 var liveColsByTag = ByTag(lt.Columns.Cast<TOM.Column>(), c => c.LineageTag);
                 var matchedCols = new HashSet<TOM.Column>();
@@ -425,19 +476,22 @@ namespace Semanticus.Engine
                         // needs a source/M binding we don't have here — report it (add it via TMDL/XMLA instead).
                         if (sc is TOM.CalculatedColumn scNew)
                         {
-                            if (apply)
+                            var newColumnRef = AlmRef.Child("column", st.Name, sc.Name);
+                            var ncc = new TOM.CalculatedColumn { Name = sc.Name, Expression = scNew.Expression };
+                            if (SupportsLineage(live) && !string.IsNullOrEmpty(sc.LineageTag)) ncc.LineageTag = sc.LineageTag;
+                            ncc.Description = sc.Description; ncc.IsHidden = sc.IsHidden; ncc.DataCategory = sc.DataCategory;
+                            ncc.FormatString = sc.FormatString; ncc.DisplayFolder = sc.DisplayFolder; ncc.SummarizeBy = sc.SummarizeBy;
+                            ModelCompare.CopyLiveColumnSupplement(sc, ncc);
+                            var newColumnSourceState = ModelCompare.LiveColumnState(sc);
+                            var newColumnState = ModelCompare.LiveColumnState(ncc);
+                            if (!JsonSemanticEqual(newColumnSourceState.Residual, newColumnState.Residual))
                             {
-                                var ncc = new TOM.CalculatedColumn { Name = sc.Name, Expression = scNew.Expression };
-                                if (SupportsLineage(live) && !string.IsNullOrEmpty(sc.LineageTag)) ncc.LineageTag = sc.LineageTag;
-                                if (!string.IsNullOrEmpty(sc.Description)) ncc.Description = sc.Description;
-                                if (sc.IsHidden) ncc.IsHidden = true;
-                                if (!string.IsNullOrEmpty(sc.DataCategory)) ncc.DataCategory = sc.DataCategory;
-                                if (!string.IsNullOrEmpty(sc.FormatString)) ncc.FormatString = sc.FormatString;
-                                if (!string.IsNullOrEmpty(sc.DisplayFolder)) ncc.DisplayFolder = sc.DisplayFolder;
-                                ncc.SummarizeBy = sc.SummarizeBy;
-                                lt.Columns.Add(ncc); matchedCols.Add(ncc);
+                                unmatched.Add(newColumnRef + " (carries authored column metadata this live push cannot create; deploy via TMDL/XMLA)");
+                                heldRefs.Add(newColumnRef);
+                                continue;
                             }
-                            added++; changes.Add($"add calcColumn:{lt.Name}/{sc.Name}"); syncedRefs.Add(AlmRef.Child("column", st.Name, sc.Name));
+                            if (apply) { lt.Columns.Add(ncc); matchedCols.Add(ncc); }
+                            added++; changes.Add($"add calcColumn:{lt.Name}/{sc.Name}"); syncedRefs.Add(newColumnRef);
                         }
                         else unmatched.Add(AlmRef.Child("column", lt.Name, sc.Name) + " (new data column — not deployable here; add via TMDL/XMLA)");
                         continue;
@@ -457,7 +511,24 @@ namespace Semanticus.Engine
                         if (lc is TOM.CalculatedColumn lcc) SetExpr(scc.Expression, () => lcc.Expression, v => lcc.Expression = v, apply, ref expr, "expression " + id, changes);
                         else unmatched.Add($"expression-type-mismatch {id} (session CalculatedColumn, live {lc.GetType().Name} — DAX not deployed)");
                     }
-                    if (changes.Count > cChanges) syncedRefs.Add(AlmRef.Child("column", st.Name, sc.Name));
+                    var columnRef = AlmRef.Child("column", st.Name, sc.Name);
+                    var sourceColumnState = ModelCompare.LiveColumnState(sc);
+                    var liveColumnState = ModelCompare.LiveColumnState(lc);
+                    if (!JsonSemanticEqual(sourceColumnState.Supplement, liveColumnState.Supplement))
+                    {
+                        try
+                        {
+                            if (apply) ModelCompare.CopyLiveColumnSupplement(sc, lc);
+                            metadata++; changes.Add("metadata " + id);
+                        }
+                        catch (Exception ex) { unmatched.Add(columnRef + " (metadata was not applied: " + ex.Message + ")"); heldRefs.Add(columnRef); }
+                    }
+                    if (!JsonSemanticEqual(sourceColumnState.Residual, liveColumnState.Residual))
+                    {
+                        unmatched.Add(columnRef + " (carries authored column metadata this live push cannot sync; deploy via TMDL/XMLA)");
+                        heldRefs.Add(columnRef);
+                    }
+                    if (changes.Count > cChanges) syncedRefs.Add(columnRef);
                 }
 
                 var liveMeasByTag = ByTag(lt.Measures.Cast<TOM.Measure>(), m => m.LineageTag);
@@ -470,17 +541,22 @@ namespace Semanticus.Engine
                     if (lm == null)
                     {
                         // NEW measure → ADD it to the matched live table (carries the property set we sync on updates).
-                        if (apply)
+                        var newMeasureRef = AlmRef.Child("measure", st.Name, sm.Name);
+                        var nm = new TOM.Measure { Name = sm.Name, Expression = sm.Expression };
+                        if (SupportsLineage(live) && !string.IsNullOrEmpty(sm.LineageTag)) nm.LineageTag = sm.LineageTag;
+                        nm.Description = sm.Description; nm.IsHidden = sm.IsHidden; nm.FormatString = sm.FormatString;
+                        nm.DisplayFolder = sm.DisplayFolder;
+                        ModelCompare.CopyLiveMeasureSupplement(sm, nm);
+                        var newMeasureSourceState = ModelCompare.LiveMeasureState(sm);
+                        var newMeasureState = ModelCompare.LiveMeasureState(nm);
+                        if (!JsonSemanticEqual(newMeasureSourceState.Residual, newMeasureState.Residual))
                         {
-                            var nm = new TOM.Measure { Name = sm.Name, Expression = sm.Expression };
-                            if (SupportsLineage(live) && !string.IsNullOrEmpty(sm.LineageTag)) nm.LineageTag = sm.LineageTag;
-                            if (!string.IsNullOrEmpty(sm.Description)) nm.Description = sm.Description;
-                            if (sm.IsHidden) nm.IsHidden = true;
-                            if (!string.IsNullOrEmpty(sm.FormatString)) nm.FormatString = sm.FormatString;
-                            if (!string.IsNullOrEmpty(sm.DisplayFolder)) nm.DisplayFolder = sm.DisplayFolder;
-                            lt.Measures.Add(nm); matchedMeas.Add(nm);   // matchedMeas so the live-only pass doesn't re-flag it
+                            unmatched.Add(newMeasureRef + " (carries authored measure metadata this live push cannot create; deploy via TMDL/XMLA)");
+                            heldRefs.Add(newMeasureRef);
+                            continue;
                         }
-                        added++; changes.Add($"add measure:{lt.Name}/{sm.Name}"); syncedRefs.Add(AlmRef.Child("measure", st.Name, sm.Name));
+                        if (apply) { lt.Measures.Add(nm); matchedMeas.Add(nm); }
+                        added++; changes.Add($"add measure:{lt.Name}/{sm.Name}"); syncedRefs.Add(newMeasureRef);
                         continue;
                     }
                     matchedMeas.Add(lm);
@@ -492,7 +568,24 @@ namespace Semanticus.Engine
                     SetStr(sm.FormatString, () => lm.FormatString, v => lm.FormatString = v, apply, ref fmt, "format " + id, changes);
                     SetStr(sm.DisplayFolder, () => lm.DisplayFolder, v => lm.DisplayFolder = v, apply, ref fold, "folder " + id, changes);
                     SetExpr(sm.Expression, () => lm.Expression, v => lm.Expression = v, apply, ref expr, "expression " + id, changes);
-                    if (changes.Count > mChanges) syncedRefs.Add(AlmRef.Child("measure", st.Name, sm.Name));
+                    var measureRef = AlmRef.Child("measure", st.Name, sm.Name);
+                    var sourceMeasureState = ModelCompare.LiveMeasureState(sm);
+                    var liveMeasureState = ModelCompare.LiveMeasureState(lm);
+                    if (!JsonSemanticEqual(sourceMeasureState.Supplement, liveMeasureState.Supplement))
+                    {
+                        try
+                        {
+                            if (apply) ModelCompare.CopyLiveMeasureSupplement(sm, lm);
+                            metadata++; changes.Add("metadata " + id);
+                        }
+                        catch (Exception ex) { unmatched.Add(measureRef + " (metadata was not applied: " + ex.Message + ")"); heldRefs.Add(measureRef); }
+                    }
+                    if (!JsonSemanticEqual(sourceMeasureState.Residual, liveMeasureState.Residual))
+                    {
+                        unmatched.Add(measureRef + " (carries authored measure metadata this live push cannot sync; deploy via TMDL/XMLA)");
+                        heldRefs.Add(measureRef);
+                    }
+                    if (changes.Count > mChanges) syncedRefs.Add(measureRef);
                 }
 
                 // Partitions: the source EXPRESSION (M / calc-table DAX / legacy query) is metadata and syncs on
@@ -751,8 +844,9 @@ namespace Semanticus.Engine
             rep.Descriptions = desc; rep.Renames = ren; rep.Visibility = vis; rep.DataCategories = cat;
             rep.Formats = fmt; rep.Folders = fold; rep.Expressions = expr; rep.SummarizeBy = sum; rep.Cultures = cult;
             rep.Partitions = part; rep.NamedExpressions = nexpr; rep.CalcGroup = calc;
+            rep.Metadata = metadata;
             rep.Added = added;
-            rep.TotalChanges = desc + ren + vis + cat + fmt + fold + expr + sum + cult + part + nexpr + added + calc;
+            rep.TotalChanges = desc + ren + vis + cat + fmt + fold + expr + sum + cult + part + nexpr + added + calc + metadata;
             rep.Changes = changes.Take(80).ToArray();
             rep.Unmatched = unmatched.ToArray();
             rep.LiveOnly = liveOnly.ToArray();

@@ -18,9 +18,6 @@ _session-recovery.md
 
 # Per-developer editor cosmetics (Peacock colors, etc.)
 .vscode/
-!Semanticus.VSCode/.vscode/
-!Semanticus.VSCode/.vscode/launch.json
-!Semanticus.VSCode/.vscode/tasks.json
 
 # license issuance private key (never commit)
 .secrets/
@@ -31,8 +28,9 @@ _session-recovery.md
 # Stray .daxpkg blobs saved during manual DaxLib testing (tests use in-memory bytes)
 daxpkg.bin
 
-# wrangler local state (fulfillment worker deploys)
+# wrangler local state (fulfillment worker deploys) + local dev secrets for `wrangler dev`
 .wrangler/
+.dev.vars
 
 # readiness-corpus local clones
 tools/readiness-corpus/work/
