@@ -11,8 +11,9 @@ namespace Semanticus.Engine
     {
         internal Func<ModelConnectionRecord, Task> WorkingCopyConnectForTests;
 
-        public async Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "human")
+        public async Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent")
         {
+            origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
             var session = _sessions.Require();
             var publish = ConnectionRegistry.Find(connectionId)
                 ?? throw new InvalidOperationException("The selected publish connection no longer exists. Choose it again.");
@@ -40,15 +41,16 @@ namespace Semanticus.Engine
             ConnectionRegistry.SetWorkingCopy(source.Id, workingFolder, publish.Id);
             await PublishActivityAsync(new ActivityEvent
             {
-                Kind = "set_publish_destination", Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
+                Kind = "set_publish_destination", Origin = origin,
                 Label = $"Linked {modelName} to publish destination {publish.ModelName ?? publish.Database}",
                 Target = publish.Id, Ok = true
             });
             return await ConnectionContextAsync();
         }
 
-        public async Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "human")
+        public async Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent")
         {
+            origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
             var sourceRecord = ConnectionRegistry.Find(connectionId);
             var result = WorkingCopyPlanner.Plan(sourceRecord, parentFolder);
             var queryRecord = string.IsNullOrWhiteSpace(queryConnectionId) ? sourceRecord : ConnectionRegistry.Find(queryConnectionId)

@@ -36,14 +36,17 @@
     <EmbeddedResource Include="format-templates.json" />
   </ItemGroup>
 
-  <!-- The Model Interview failure-to-fix map is catalog data, embedded so it cannot drift from the binary. -->
+  <!-- The Model Interview failure→fix map: the SINGLE source of truth stays beside the readiness catalog
+       (docs/interview-fix-map.json — it is catalog data, not code) and is embedded via a link so the binary
+       can never drift from the docs copy. Same fail-loud load pattern as format-templates.json. -->
   <ItemGroup>
-    <EmbeddedResource Include="Catalog\interview-fix-map.json" Link="interview-fix-map.json" />
+    <EmbeddedResource Include="..\docs\interview-fix-map.json" Link="interview-fix-map.json" />
   </ItemGroup>
 
-  <!-- The built-in hard-question pack is embedded catalog data like the fix map above. -->
+  <!-- The built-in hard-question pack (Model Interview seeds): catalog data like the fix map above — the
+       single source of truth stays in docs/, embedded via a link so binary and docs can never drift. -->
   <ItemGroup>
-    <EmbeddedResource Include="Catalog\interview-hard-pack.json" Link="interview-hard-pack.json" />
+    <EmbeddedResource Include="..\docs\interview-hard-pack.json" Link="interview-hard-pack.json" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -116,6 +118,44 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Connection_sidecar_shared_defaults_fail_closed_as_agent_while_the_ui_boundary_stays_human()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var activities = new List<ActivityEvent>();
+            sessions.Bus.Activity += activities.Add;
+
+            var remembered = await engine.RememberXmlaConnectionAsync(
+                "powerbi://example/shared-default", "Sales", "Sales model", "azcli");
+            var rememberActivity = Assert.Single(activities);
+            Assert.Equal("remember_xmla_connection", rememberActivity.Kind);
+            Assert.Equal("agent", rememberActivity.Origin);
+
+            activities.Clear();
+            await engine.OpenAsync(TestModels.FindBim());
+            await engine.SetPublishDestinationAsync(remembered.Id, origin: " ");
+            var publishActivity = Assert.Single(activities);
+            Assert.Equal("set_publish_destination", publishActivity.Kind);
+            Assert.Equal("agent", publishActivity.Origin);
+
+            foreach (var method in new[]
+            {
+                nameof(IEngine.RememberXmlaConnectionAsync),
+                nameof(IEngine.PrepareWorkingCopyAsync),
+                nameof(IEngine.SetPublishDestinationAsync),
+            })
+            {
+                AssertOriginDefault(typeof(IEngine), method, "agent");
+                AssertOriginDefault(typeof(LocalEngine), method, "agent");
+                AssertOriginDefault(typeof(RemoteEngine), method, "agent");
+            }
+
+            AssertOriginDefault(typeof(EngineRpcTarget), "rememberXmlaConnection", "human");
+            AssertOriginDefault(typeof(EngineRpcTarget), "prepareWorkingCopy", "human");
+            AssertOriginDefault(typeof(EngineRpcTarget), "setPublishDestination", "human");
+        }
+
+        [Fact]
         public async Task Forget_public_doors_report_success_missing_and_governance_refusal_without_model_changes()
         {
             using var sessions = new SessionManager();
@@ -159,6 +199,14 @@ namespace Semanticus.Tests
         {
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(value));
             return document.RootElement.Clone();
+        }
+
+        private static void AssertOriginDefault(Type type, string method, string expected)
+        {
+            var origin = type.GetMethod(method, BindingFlags.Instance | BindingFlags.Public)!
+                .GetParameters().Single(parameter => parameter.Name == "origin");
+            Assert.True(origin.HasDefaultValue);
+            Assert.Equal(expected, origin.DefaultValue);
         }
 
         private static void AssertActivity(ActivityEvent activity, string origin, bool ok, string target)

@@ -11,6 +11,7 @@ CalendarTests.cs
 CertifiedBaselineTests.cs
 ChangePlanDeleteTests.cs
 CloudReportLineageTests.cs
+CloudReportPublicDoorTests.cs
 CompareAuthFallbackTests.cs
 ConnectionContextTests.cs
 ConnectionPublicDoorTests.cs
@@ -22,6 +23,7 @@ DataAgentTests.cs
 DaxLibTests.cs
 DaxLintTests.cs
 DaxScanTests.cs
+DaxTraceIsolationTests.cs
 DeployFeatureTests.cs
 DeployLiveRedOverrideTests.cs
 DisplayFolderTests.cs
@@ -37,6 +39,7 @@ EvidenceLibraryTests.cs
 EvidenceTests.cs
 ExperienceLogTests.cs
 ExplainValueTests.cs
+FabricSpecPublicDoorTests.cs
 FieldParameterTests.cs
 FormatTemplatesTests.cs
 FreeMcpSurfaceTests.cs
@@ -70,6 +73,12 @@ PublicMetadataWriteMcpTests.cs
 PublicReadMcpTests.cs
 ReadinessCatalogBatch1Tests.cs
 ReadinessCatalogBatch2Tests.cs
+ReadinessCatalogBatch3Tests.cs
+ReadinessCatalogBatch4Tests.cs
+ReadinessCatalogBatch5Tests.cs
+ReadinessCatalogCompletionBatch4Tests.cs
+ReadinessCatalogCompletionBatch5Tests.cs
+ReadinessCatalogCompletionBatch6Tests.cs
 ReadinessCatalogContractTests.cs
 ReadinessCopyTests.cs
 ReadinessRefsParityTests.cs

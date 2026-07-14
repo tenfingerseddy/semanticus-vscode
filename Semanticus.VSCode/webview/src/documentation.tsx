@@ -135,11 +135,11 @@ export function DocumentationView() {
     });
   }
 
-  if (loading && !dto) return <div className="sem-centered-page p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model documentation…</div>;
-  if (err && !dto) return <div className="sem-centered-page p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
+  if (loading && !dto) return <div className="h-full w-full flex items-center justify-center p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model documentation…</div>;
+  if (err && !dto) return <div className="h-full w-full flex items-center justify-center p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
 
   return (
-    <div className="sem-centered-page h-full flex min-h-0 text-[12px]">
+    <div className="h-full w-full flex min-h-0 text-[12px]">
       {/* LEFT — inclusions + branding */}
       <aside className="w-[260px] shrink-0 overflow-auto border-r p-3 flex flex-col gap-4" style={{ borderColor: 'var(--sem-border)' }}>
         <Section title="Include">

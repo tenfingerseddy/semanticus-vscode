@@ -325,11 +325,55 @@ assert.throws(
   /unapproved-engine-endpoint/,
   'the OPC placeholder exception is scoped to its owning runtime assembly',
 );
-assert.doesNotThrow(() => assertReleaseContentSafe(
+for (const msalRuntime of [
   'extension/engine/msalruntime.dll',
-  Buffer.from('https://login.'),
+  'extension/engine/msalruntime_arm64.dll',
+  'extension/engine/libmsalruntime.so',
+  'extension/engine/msalruntime.dylib',
+  'extension/engine/msalruntime_arm64.dylib',
+]) {
+  assert.doesNotThrow(() => assertReleaseContentSafe(
+    msalRuntime,
+    Buffer.from('https://login.'),
+    { engineBoundary: true, engineSource: true, engineBinary: true },
+  ), msalRuntime);
+}
+const macMsalRuntime = Buffer.alloc(7_009_171);
+const passwordPersistenceSelector = ['password', 'persistence', ''].join(':');
+const passwordTestSinkSelector = ['password', 'jsTestData', 'eventSink', ''].join(':');
+macMsalRuntime.write(passwordPersistenceSelector, 3_497_291, 'ascii');
+macMsalRuntime.write(passwordTestSinkSelector, 3_567_414, 'ascii');
+macMsalRuntime.write(passwordTestSinkSelector, 7_009_141, 'ascii');
+assert.doesNotThrow(() => assertReleaseContentSafe(
+  'extension/engine/msalruntime.dylib',
+  macMsalRuntime,
   { engineBoundary: true, engineSource: true, engineBinary: true },
 ));
+macMsalRuntime.write(`client_secret=${'S'.repeat(24)}`, 128, 'ascii');
+assert.throws(
+  () => assertReleaseContentSafe(
+    'extension/engine/msalruntime.dylib',
+    macMsalRuntime,
+    { engineBoundary: true, engineSource: true, engineBinary: true },
+  ),
+  /hardcoded-generic-secret/,
+  'the exact native-symbol exception must not hide a real secret elsewhere in the binary',
+);
+const splitNativeStrings = Buffer.concat([
+  Buffer.from('password:', 'ascii'),
+  Buffer.alloc(16),
+  Buffer.from('someLongNativeSymbol', 'ascii'),
+]);
+assert.equal(
+  releaseContentFinding(splitNativeStrings, { engineBoundary: true, engineSource: true, engineBinary: true }),
+  null,
+  'separate native string-table entries must not combine into a synthetic credential assignment',
+);
+assert.equal(
+  releaseContentFinding(['password:', 'someLongSecretValue'].join('\n')),
+  'hardcoded-generic-secret',
+  'a real multiline source assignment remains detected',
+);
 assert.throws(
   () => assertReleaseContentSafe(
     'extension/engine/Other.dll',
@@ -448,6 +492,21 @@ assert.equal(
   }),
   null,
   'an exact hash-pinned inert binary range is excluded',
+);
+const mismatchedInertContainer = Buffer.concat([
+  Buffer.from('prefix\0'),
+  inertDictionary,
+  Buffer.from('\0suffix'),
+]);
+assert.equal(
+  releaseContentFinding(mismatchedInertContainer, {
+    engineBoundary: true,
+    engineSource: true,
+    engineBinary: true,
+    binaryIgnoredRanges: [inertRange],
+  }),
+  'unapproved-engine-endpoint',
+  'an inert range with different bytes is not excluded',
 );
 assert.equal(
   releaseContentFinding(Buffer.concat([inertContainer, Buffer.from('\0https://other-provider.corp/v1')]), {

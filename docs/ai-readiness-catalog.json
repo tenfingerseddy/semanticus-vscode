@@ -3,9 +3,10 @@
     "rawRequirements": 199,
     "distinct": 194,
     "confirmed": 192,
-    "covered": 35,
-    "partial": 62,
-    "missing": 102
+    "covered": 62,
+    "partial": 50,
+    "missing": 87,
+    "residualNonGoals": 138
   },
   "requirements": {
     "hardGate": [
@@ -2121,18 +2122,18 @@
     {
       "title": "Human-readable, business-friendly names for tables, columns, and measures",
       "status": "partial",
-      "ourRuleId": "NAME-MEASURE, NAME-COLUMN",
-      "notes": "NAME-MEASURE and NAME-COLUMN cover measures and visible columns via the shared IsCrypticName regex (underscores, camelCase boundaries, ALL-CAPS runs, ID$/Key$/Cd$ suffixes, tbl/dim/fact prefixes), Kind=LlmJudgment, Fix=AiContent. Two gaps: (1) NO table-name rule exists — tables are scoped only for DESC-TABLE, never for cryptic naming, even though the requirement explicitly says 'tables, columns, and measures' and the plan's Naming table lists Table in the cryptic-name scope. (2) The regex is the only signal; it catches structural crypticness but not business-friendliness judgment (e.g. 'Amt1' or a real-word-but-wrong name), and it can't distinguish legit acronyms (ROI, YTD, KPI) from bad ones — the LlmJudgment kind is declared but the regex is what actually fires. Fix path is correct (rename_object).",
+      "ourRuleId": "NAME-MEASURE, NAME-COLUMN, NAME-TABLE",
+      "notes": "NAME-MEASURE, NAME-COLUMN and NAME-TABLE cover the three named object types with the shared structural-crypticness detector. The remaining question, whether an otherwise tidy name is genuinely business-friendly and accurate, is business judgment and is pinned in residualBuckets.judgment rather than guessed by another name heuristic.",
       "proposedRuleId": "NAME-TABLE",
-      "proposedCheck": "Add ObjectRule<Table> 'NAME-TABLE' in ReadinessCategory.Naming, scope m.Tables, applies !IsHidden, violates IsCrypticName(Name); Kind=LlmJudgment (regex pre-filter, the user's Claude confirms to spare legit acronyms), Fix=AiContent gated through rename_object (TOM rename auto-rewrites DAX/relationship refs, review-gated). The existing IsCrypticName regex already matches the dim/fact/tbl prefixes typical of cryptic table names."
+      "proposedCheck": "Implemented as NAME-TABLE. Do not promote the broad row to covered: semantic accuracy and business-friendliness remain a documented judgment non-goal."
     },
     {
       "title": "Unambiguous, self-explanatory column names (no bare IDs/codes)",
       "status": "partial",
-      "ourRuleId": "NAME-COLUMN",
-      "notes": "NAME-COLUMN's IsCrypticName regex includes ID$, Key$, Cd$ suffix anchors and the camelCase boundary, so 'ProdID', 'CustNo'-style camelCase, and 'XxxKey' are flagged on visible columns. But it is a pure structural heuristic: a bare 'ProdID' is caught, yet a tidy-but-meaningless name like 'Code', 'No', 'Num', or a self-explanatory-looking-but-ambiguous 'Number' is not, and 'CustNo' specifically (No suffix) is NOT in the regex alternation. The requirement is a copilot-specific judgment about whether a column needs lookup to interpret — that is genuinely AI-content/judgment, not fully reducible to the current regex.",
+      "ourRuleId": "NAME-COLUMN, NAME-COLUMN-ID",
+      "notes": "NAME-COLUMN covers structurally cryptic ID/key/code shapes. NAME-COLUMN-ID adds an exact deterministic population for identifier-shaped names and flags only bare Id/Identifier/Key/Code/Number/Num/No, while a compound name such as Product Code is a clean applicable case. Whether any other well-formed name is self-explanatory still requires business judgment, so the row remains partial and is pinned in residualBuckets.judgment.",
       "proposedRuleId": "NAME-COLUMN-ID",
-      "proposedCheck": "Either (a) extend the IsCrypticName regex to add bare-code tokens (No$|Num$|Code$|^Cd$) — deterministic pre-filter — or (b) add a dedicated LlmJudgment rule NAME-COLUMN-ID scoped to visible columns whose name regex-matches an id/code shape, where the user's Claude judges 'does this name require an external lookup to understand?' and proposes a self-explanatory rename. Fix=AiContent via rename_object; alternatively fall back to set_description/set_synonyms when rename is unsafe."
+      "proposedCheck": "Implemented as deterministic NAME-COLUMN-ID with FixKind.AiContent. The engine identifies the precise defect; the user's assistant authors the replacement name."
     },
     {
       "title": "Measure names should reflect their calculation and purpose",
@@ -2160,19 +2161,19 @@
     },
     {
       "title": "Use calculation group column descriptions to list calculation items",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No readiness rule touches calculation groups or calculation items. The readiness ruleset never scopes CalculationGroup/CalculationItem (only Bpa.cs resolves those scopes, for structural BPA, not readiness). The plan explicitly lists this rule ('Calc-group items not in description') but it was never implemented. Calculation items are invisible to Copilot's metadata grounding, so listing them in the calc-group column description is the documented workaround — currently entirely uncovered.",
-      "proposedRuleId": "DESC-CALCGROUP",
-      "proposedCheck": "Add ObjectRule over calculation-group columns (model.CalculationGroups -> their column) 'DESC-CALCGROUP': violates when Description is empty OR does not contain every CalculationItem name (deterministic detect via string.Contains over the item names). Kind=LlmGenerate/Fix=AiContent: the user's Claude enumerates the calc-item names into a ≤200-char description, applied via set_description. Category Descriptions, Severity Medium. Detection is deterministic; only the front-loaded ≤200-char wording is AI-generated."
+      "status": "covered",
+      "ourRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS",
+      "notes": "DAC-CALC-GROUP owns an undocumented calculation group. Once a group or its column is documented, DESC-CALCGROUP-ITEMS deterministically checks that every calculation-item name is mentioned as a whole token. The rules are mutually exclusive per group, keep Applicable at the calculation-group population they actually evaluate, and route the wording fix to AiContent.",
+      "proposedRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS",
+      "proposedCheck": "Implemented and pinned by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Description grounding is truncated at 200 characters",
-      "status": "partial",
-      "ourRuleId": "DESC-LONG",
-      "notes": "DESC-LONG deterministically flags descriptions over 200 chars, but ONLY on measures (scope m.AllMeasures). Tables and columns have the identical 200-char truncation behavior and are completely unchecked — a 400-char column or table description passes silently. So the rule is correct in mechanism but under-scoped to one of the three object types that DESC-MEASURE/TABLE/COLUMN otherwise treat uniformly.",
-      "proposedRuleId": "DESC-LONG-TABLE, DESC-LONG-COLUMN",
-      "proposedCheck": "Add two parallel deterministic ObjectRules: DESC-LONG-COLUMN (scope m.AllColumns, applies !IsHidden && Type!=RowNumber && description non-empty, violates Description.Length>200) and DESC-LONG-TABLE (scope m.Tables, same). Kind=Deterministic detect, Fix=AiContent (the user's Claude rewrites front-loaded into the first 200 chars) via set_description. Same FixKind.AiContent as today's DESC-LONG."
+      "status": "covered",
+      "ourRuleId": "DESC-LONG, DESC-LONG-OBJECT",
+      "notes": "DESC-LONG covers visible measures. DESC-LONG-OBJECT covers visible tables and columns, excluding calculation-group objects owned by the dedicated calculation-group rules. Both deterministically enforce the 200-character grounding limit and use AiContent only for the rewrite.",
+      "proposedRuleId": "DESC-LONG, DESC-LONG-OBJECT",
+      "proposedCheck": "Implemented and pinned across measure, table, column, clean and dormant cases by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Hide columns and measures not meant for consumption",
@@ -2208,11 +2209,11 @@
     },
     {
       "title": "Create explicit measures instead of relying on implicit measures",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE",
       "proposedRuleId": "MEAS-IMPLICIT",
-      "proposedCheck": "Deterministic predicate over columns. Scope = visible numeric data columns (DataType Int64/Double/Decimal) that are NOT relationship endpoints / keys and whose SummarizeBy != None — i.e. a column that will auto-aggregate when dragged, with no explicit measure shielding it. Detection: column.SummarizeBy != None && numeric && !IsKey && !relationshipEndpoint && Type != RowNumber. Two-part fix: (1) SafeFix set SummarizeBy=None via set_summarize_by (deterministic), and (2) AiContent — the user's Claude scaffolds an explicit DAX measure (SUM/AVERAGE) via create_measure. Category Measures (new) or Formatting. Note FMT-SUMMARIZE already handles the narrow key/relationship-endpoint sub-case for SummarizeBy=None, but it deliberately excludes ordinary fact-amount columns, which is precisely the implicit-measure population this rule targets.",
-      "notes": "Partial-adjacent but effectively missing: FMT-SUMMARIZE only nulls SummarizeBy on key/relationship columns, NOT on business numeric columns, so the implicit-measure reliance the doc warns about is undetected. set_summarize_by and create_measure both exist, so the fix path is ready; only the detection rule is absent."
+      "proposedCheck": "Implemented as DAC-IMPLICIT-MEASURE over visible numeric non-key/non-endpoint columns that auto-aggregate. The finding is Proposal-only because the explicit DAX measure needs reviewed business intent.",
+      "notes": "DAC-IMPLICIT-MEASURE owns the additive implicit-measure population; SUMMARIZE-DIMENSION separately owns canonical non-additive numeric columns so it never suggests a nonsensical explicit Total Year measure."
     },
     {
       "title": "Provide predefined measures and KPIs users commonly request",
@@ -2241,58 +2242,58 @@
     {
       "title": "Define clear relationships with correct cardinality and active/inactive state",
       "status": "partial",
-      "ourRuleId": "REL-BIDI",
-      "proposedRuleId": "REL-M2M / REL-INACTIVE-ROLEPLAY",
-      "proposedCheck": "REL-BIDI (exists, deterministic, Proposal) covers ONLY cross-filter direction. Gaps: (a) many-to-many cardinality — deterministic predicate FromCardinality==Many && ToCardinality==Many, Fix=Proposal flag-only (structural, set_relationship_crossfilter can't fix cardinality so no SafeFix); (b) role-playing relationships that should be inactive — detect multiple relationship paths between the same two tables with >1 active, deterministic, Fix=Proposal. Both belong in Relationships. Note set_relationship_crossfilter exists but only toggles direction, not cardinality or active-state, so a set_relationship_active capability would be needed for the inactive fix.",
-      "notes": "Partial: REL-BIDI handles the bidirectional-crossfilter slice but the catalog item is broader (cardinality + active/inactive + role-playing). No rule reads FromCardinality/ToCardinality or IsActive in the readiness layer (grep confirms neither appears in Semanticus.Analysis readiness rules). MCP fix surface is also incomplete (no active-state toggle)."
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-INACTIVE",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-INACTIVE",
+      "proposedCheck": "Implemented deterministic checks cover bidirectional filtering, many-to-many cardinality and inactive paths. No automatic structural edit is offered.",
+      "notes": "The observable relationship states are covered by REL-BIDI, REL-M2M and REL-INACTIVE. The row remains partial because deciding which cardinality or active path is correct depends on business meaning; that remainder is pinned in residualBuckets.judgment."
     },
     {
       "title": "Use a star schema with clear fact and dimension tables",
       "status": "partial",
-      "ourRuleId": "REL-SNOWFLAKE, REL-DISCONNECTED, REL-M2M",
-      "proposedRuleId": "REL-STAR-SHAPE (residual: flat/pivoted/semantic classification)",
-      "proposedCheck": "Mostly non-deterministic (catalog deterministic:false). Deterministic heuristics the engine can compute: classify each table as fact vs dimension (fact = high row count / many relationship FROM edges / numeric-heavy; dim = referenced TO side), detect snowflaking (dim-to-dim chains), detect wide/flat denormalized tables (single table with many low-cardinality descriptive columns AND numeric columns and no relationships). Then an LlmJudgment/Proposal pass drafts a remodel plan. Fix = Proposal only (never silent — structural). Category Relationships. Severity Medium. This pairs with the change-plan engine (propose_plan/apply_plan exist) rather than a single-property MCP fix.",
-      "notes": "Partial: REL-SNOWFLAKE deterministically detects intermediate one-side/many-side chains; REL-DISCONNECTED and REL-M2M cover two other structural anti-patterns. Flat/pivoted models and semantic fact/dimension classification still need a reviewed heuristic, so this is not covered."
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedCheck": "Implemented for observable graph anti-patterns. The semantic star/flat classification is an explicit judgment non-goal, not a queued heuristic rule.",
+      "notes": "REL-BIDI, REL-M2M, REL-SNOWFLAKE and REL-DISCONNECTED cover high-confidence structural anti-patterns. Flat/pivoted classification and whether a table is semantically a fact or dimension require business judgment, so the row remains partial and is pinned in residualBuckets.judgment."
     },
     {
       "title": "Poor star-schema design produces poor Copilot results",
       "status": "partial",
-      "ourRuleId": "REL-SNOWFLAKE, REL-DISCONNECTED, REL-M2M",
-      "proposedRuleId": "REL-STAR-SHAPE (residual: flat/pivoted/semantic classification)",
-      "proposedCheck": "Same rule as REL-STAR-SHAPE above — this catalog item is the Copilot-framed restatement of the star-schema best practice. No separate rule needed; the star-shape heuristic + Proposal fix covers both. If we want a distinct signal, add a coarse model-level grade contribution: count tables with zero relationships (disconnected) and bidirectional/many-to-many edges as a composite 'modeling-hygiene' subscore feeding Relationships. Fix=Proposal via propose_plan.",
-      "notes": "Partial, same residual as the star-schema item: the engine now catches snowflake/bridge chains, disconnected tables and many-to-many edges, but does not pretend those signals classify every non-star design."
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedCheck": "Implemented for observable graph anti-patterns. Do not add a composite duplicate score or a guessed semantic classifier.",
+      "notes": "The engine catches bidirectional paths, many-to-many edges, snowflake/bridge chains and disconnected tables. It does not pretend those signals classify every non-star design; the semantic remainder is pinned in residualBuckets.judgment."
     },
     {
       "title": "Establish logical hierarchies for drill-down",
-      "status": "missing",
-      "ourRuleId": "",
-      "proposedRuleId": "REL-HIERARCHY-MISSING",
-      "proposedCheck": "Deterministic candidate detection + Proposal fix. Detection: a dimension table that has obvious drill columns but no TOM Hierarchy defined — e.g. a date table (DataCategory='Time') with Year/Quarter/Month/Day columns and AllHierarchies count 0, or a geo table with Country/State/City columns (we already have GeoCategory() to recognize geo columns) and no hierarchy. model.AllHierarchies is available (Bpa.cs already references it). Fix = Proposal (create a hierarchy) — no current MCP tool builds hierarchies, so a create_hierarchy tool would be needed. Category Relationships, Severity Info/Medium.",
-      "notes": "No coverage. No readiness rule inspects AllHierarchies (only the structural BPA layer touches Hierarchy). We have the building blocks (DATE-MARK finds date tables, GeoCategory() finds geo columns) but no rule that detects the absence of a drill-down hierarchy, and no create_hierarchy MCP fix."
+      "status": "partial",
+      "ourRuleId": "REL-HIERARCHY-MISSING, REL-HIERARCHY-SINGLE-LEVEL",
+      "proposedRuleId": "REL-HIERARCHY-MISSING, REL-HIERARCHY-SINGLE-LEVEL",
+      "proposedCheck": "Implemented deterministic checks find obvious date/geography drill candidates with no hierarchy and hierarchies that contain only one level.",
+      "notes": "Date/geography hierarchy absence and single-level stubs are observable and covered. Which additional business attributes form a logical drill path is subjective, so the row remains partial and is pinned in residualBuckets.judgment."
     },
     {
       "title": "Apply correct and consistent data types",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "FMT-DATATYPE",
       "proposedRuleId": "FMT-DATATYPE",
-      "proposedCheck": "Deterministic predicate. Detection: name/semantic vs DataType mismatch — numeric-looking column name (Amount/Price/Qty/Total/Sales) with DataType==String; date-looking name (Date/Day) with DataType==String; an ID/Key column with DataType==Double. Predicate over m.AllColumns comparing a name-class heuristic to column.DataType. Fix = Proposal only (a type change can fail refresh / alter downstream DAX), flag-only; no safe auto-fix and no current MCP tool sets DataType. Category Formatting. Severity High (the catalog marks it deterministic:true and it can break calculations).",
-      "notes": "No coverage in the readiness layer. The structural BpaDefaultRules.cs touches DataType for the formatstring rule, but nothing in ReadinessRules.cs evaluates type correctness/consistency, and there's no MCP tool to change a column's data type. Deterministic to detect; risky to auto-fix (Proposal)."
+      "proposedCheck": "Implemented and pinned by ReadinessCatalogBatch4Tests.",
+      "notes": "FMT-DATATYPE deterministically finds visible, non-key Text columns whose names tightly imply a date, time, amount, quantity, price, cost, total, count, number, rate or percentage. It stays dormant when no such mismatch exists and remains a Proposal because changing a data type can break refresh or downstream DAX."
     },
     {
       "title": "Format strings are used as grounding metadata",
-      "status": "partial",
-      "ourRuleId": "FMT-MEASURE",
+      "status": "covered",
+      "ourRuleId": "FMT-MEASURE, FMT-COLUMN",
       "proposedRuleId": "FMT-COLUMN",
-      "proposedCheck": "FMT-MEASURE (exists, deterministic detect / AiContent fix via set_measure_format) covers measures only. The catalog item says format strings on measures AND columns are grounding metadata. Gap = numeric/date COLUMNS with no FormatString. New rule FMT-COLUMN: scope visible numeric/date data columns where string.IsNullOrEmpty(FormatString); deterministic detect; Fix = SafeFix from a catalog default (#,0 / 0.0% / Short Date) for unambiguous cases, AiContent for ambiguous units. set_measure_format exists for measures; a set_column_format (or extending set_data_category-style column metadata tool) would be needed for columns. Category Formatting.",
-      "notes": "Partial: measures are covered (FMT-MEASURE + coverage KPI measuresWithFormat), columns are not. The catalog explicitly includes columns. Detection is deterministic; the only missing piece is a column-format MCP fix tool."
+      "proposedCheck": "Implemented. FMT-MEASURE evaluates visible measures and accepts either a static FormatString or a dynamic FormatStringExpression. FMT-COLUMN evaluates visible business numeric/date columns, excluding keys, relationship endpoints, non-additive identifiers, row-number columns and calculation-group columns. Missing formats are deterministic Proposal findings because the correct unit/precision is a business choice.",
+      "notes": "Covered by FMT-MEASURE and FMT-COLUMN. Applicable is the exact visible business measure/column population, so models without relevant objects keep the rule dormant."
     },
     {
       "title": "Data category is used as grounding metadata",
-      "status": "partial",
-      "ourRuleId": "CAT-GEO",
-      "proposedRuleId": "CAT-URL-IMAGE",
-      "proposedCheck": "CAT-GEO (exists, deterministic detect via GeoCategory(), SafeFix via set_data_category) covers geographic categories (City/Country/State/Postal/etc.) and maps them automatically. Gap vs the catalog's broader 'set data categories on columns': non-geo categories — WebUrl, ImageUrl, Barcode. New rule CAT-URL-IMAGE: name regex (Url/Link/Image/Photo/Thumbnail/Barcode) + empty DataCategory; deterministic detect; SafeFix via the existing set_data_category tool (same fix path as CAT-GEO). Category Formatting, Severity Info. Also CAT-GEO is Severity.Info — arguably under-weighted given the catalog calls data category Copilot grounding metadata (best-practice), but coverage of the geo case itself is solid.",
-      "notes": "Partial but strong: the geographic case is fully covered (detect + automatic SafeFix via set_data_category, the named MCP tool). Only non-geo data categories (WebUrl/ImageUrl/Barcode) are uncovered, and the fix tool already exists, so closing the gap is just an extra detection pattern."
+      "status": "covered",
+      "ourRuleId": "CAT-GEO, CAT-URL",
+      "proposedRuleId": "CAT-URL",
+      "proposedCheck": "Implemented. CAT-GEO covers City, Country, Continent, County, State/Province, Postal Code, Latitude, Longitude, Address and Place. CAT-URL covers WebUrl, ImageUrl and Barcode candidates. Both use exact candidate populations, and the existing metadata writer applies reviewed categories.",
+      "notes": "Covered by CAT-GEO and CAT-URL. Boundary-aware Address, Place and Barcode matching avoids business phrases such as Addressable Market, Workplace Satisfaction and Barcode Adoption."
     },
     {
       "title": "Mark a date table so Copilot filters time correctly",
@@ -2304,11 +2305,11 @@
     },
     {
       "title": "Disambiguate multiple date fields",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No rule counts date columns or detects multiple competing date fields (Order/Ship/Due Date, FY Quarter). DATE-MARK only checks that one date table exists; it never inspects how many Date/DateTime columns are visible/in-Q&A, and there is no concept of 'default date field' or Verified Answers / AI instructions in the engine to disambiguate them. No GeoCategory-style helper for dates either.",
-      "proposedRuleId": "DATE-MULTI",
-      "proposedCheck": "ModelRule DATE-MULTI (category Formatting per catalog), RuleKind.LlmGenerate, FixKind.AiContent. Deterministic predicate: count visible columns whose DataType is DateTime (or name matches Date/Quarter/FY) across the model; flag when >1 such date field is exposed to Q&A and no AI-instruction line designates a default. Fix is content-shaped: either (a) exclude all but one from Q&A — but no include_in_qna MCP tool exists today, so this depends on the proposed QNA-EXCLUDE rule + tool, or (b) write an AI-instruction line ('Use Order Date by default unless the question says shipping/due') which depends on the proposed set_ai_instructions tool. Until those tools exist this is generate-ready-to-paste only."
+      "status": "covered",
+      "ourRuleId": "DATE-AMBIGUOUS",
+      "notes": "DATE-AMBIGUOUS deterministically detects visible business tables with multiple event-date columns, excludes marked date tables and start/end validity ranges, and proposes the existing mark_date_table, set_column_hidden, or set_ai_instructions routes. It stays dormant when no table has an observable date ambiguity.",
+      "proposedRuleId": "DATE-AMBIGUOUS",
+      "proposedCheck": "Implemented as DATE-AMBIGUOUS (ModelRule, FixKind.Proposal). Applicable is the exact population of visible non-date-table business tables with two or more observable event-date columns; no such table means Applicable=0."
     },
     {
       "title": "Maintain standardized values within columns",
@@ -2344,11 +2345,11 @@
     },
     {
       "title": "Enable Power BI Q&A on the model (prerequisite for Prep data for AI)",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
-      "notes": "SYN-SCHEMA detects the same underlying condition (no JSON linguistic culture => Q&A effectively off) and the enable_qna MCP tool seeds it, so the detect+fix plumbing exists. BUT it is mis-categorized for this requirement: the catalog puts this in DataAgentConfig as a HARD-GATE (Q&A off => all Prep-for-AI tabs disabled), whereas SYN-SCHEMA lives in Synonyms with Severity.High and is NOT wired as a gate. The two soft gates in ReadinessAnalyzer.cs are only LIMIT-SCALE and DESC-MEASURE>50%; there is no Q&A-disabled gate, and the plan's own design (cap at C when no linguistic schema) is not implemented. So coverage of the condition exists; coverage as the documented hard prerequisite does not.",
-      "proposedRuleId": "DAC-QNA-GATE",
-      "proposedCheck": "Add DataAgentConfig rule DAC-QNA-ENABLED (Deterministic, Severity.Critical, FixKind.SafeFix via enable_qna) reusing SYN-SCHEMA's predicate (no JSON culture/Content), AND wire it as a gate in ReadinessAnalyzer.Analyze alongside LIMIT-SCALE: if Q&A is off, cap overall (e.g. at C/F) and add a GatedBy entry, because every other DataAgentConfig requirement (AI schema, AI instructions, verified answers) is downstream of it. This finally gives the 0.08-weight DataAgentConfig category a real rule and activates its currently-inert weight."
+      "status": "covered",
+      "ourRuleId": "DAC-QNA-DISABLED",
+      "notes": "DAC-QNA-DISABLED reads definition.pbism settings.qnaEnabled, reports an explicit false value in DataAgentConfig, and stays dormant when that file-backed switch is unavailable. Q&A is a prerequisite for Prep-for-AI, but it is not an overall-grade gate because disabling it does not block every AI consumer; the observed violation already docks the DataAgentConfig category.",
+      "proposedRuleId": "DAC-QNA-DISABLED",
+      "proposedCheck": "Implemented as DAC-QNA-DISABLED. It reads definition.pbism settings.qnaEnabled, uses Applicable=1 only when that switch is observable, and reports false without adding a combined-grade gate."
     },
     {
       "title": "Define an AI data schema (focused subset of fields)",
@@ -2368,19 +2369,19 @@
     },
     {
       "title": "Add AI instructions for business context, terminology, and analysis rules",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No AI-instructions concept in the engine: no rule reads/writes an AI-instructions block, and there is no set_ai_instructions MCP tool (confirmed against the full McpTools.cs tool list). This is the headline DataAgentConfig gap the README/PLAN explicitly defer to Wave 2 ('undocumented storage'). It is also where ambiguous-date defaults (DATE-MULTI) and term definitions would land.",
+      "status": "covered",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS",
+      "notes": "DAC-AI-INSTRUCTIONS reads model-level LSDL CustomInstructions through PrepForAiReader and deterministically checks presence. The content fix is handed to the user's assistant through AiContent; the engine does not run inference.",
       "proposedRuleId": "DAC-INSTRUCTIONS",
-      "proposedCheck": "DataAgentConfig rule DAC-INSTRUCTIONS, RuleKind.LlmGenerate, FixKind.AiContent. Detect: the Prep-for-AI AI-instructions store is empty/whitespace (deterministic presence check). Fix: Claude drafts grouped, focused sections (Terminology e.g. 'top performer', which measure maps to which term, default groupings, date-field default) and writes via a NEW set_ai_instructions MCP tool that APPENDS into a delimited Semanticus-managed section (never overwrite human text), enforcing the 10k cap. Until the storage is reverse-engineered, generate-ready-to-paste."
+      "proposedCheck": "Implemented as DAC-AI-INSTRUCTIONS. PrepForAiReader reads LSDL CustomInstructions; the rule is dormant without a readable legacy linguistic schema and stands down for the unparsed new Copilot Tooling Format. AiContent routes drafting to the user's assistant."
     },
     {
       "title": "AI instructions are limited to 10,000 characters",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "Catalog hard-gate, deterministic:true. The engine never stores or reads AI instructions, so it cannot measure their length against the 10,000-char cap. (Contrast with DESC-LONG, which DOES enforce the analogous 200-char description cap deterministically — the pattern exists, just not for AI instructions.) No such validator and no AI-instructions store today.",
+      "status": "covered",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS-LEN",
+      "notes": "DAC-AI-INSTRUCTIONS-LEN deterministically measures readable LSDL CustomInstructions and flags content over 10,000 characters. It stays dormant when no instructions exist and uses AiContent only for the condensation fix.",
       "proposedRuleId": "DAC-INSTRUCTIONS-LEN",
-      "proposedCheck": "DataAgentConfig rule DAC-INSTRUCTIONS-LEN, RuleKind.Deterministic, FixKind.Proposal, Severity.Critical (hard-gate). Predicate: length(AI-instructions text) > 10000 (mirror DESC-LONG's Description.Length>200 implementation exactly). Fix is content-shaped (LLM condenses) so Proposal/AiContent, applied through the same proposed set_ai_instructions tool which should also reject >10k at write time as a validator. Trivially deterministic once the AI-instructions store from DAC-INSTRUCTIONS exists."
+      "proposedCheck": "Implemented as DAC-AI-INSTRUCTIONS-LEN with FixKind.AiContent. The rule is not wired as an overall-grade hard gate; that product decision remains separate from deterministic detection."
     },
     {
       "title": "Create verified answers for common or ambiguous questions",
@@ -2417,18 +2418,18 @@
     {
       "title": "Reduce model complexity and remove bloat",
       "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
+      "ourRuleId": "LIMIT-SCALE, SCALE-HICARD-COLUMN, REL-DISCONNECTED, DAC-FIELD-PARAM-COMPLEXITY, MEAS-DUP-EXPR",
       "proposedRuleId": "SCALE-BLOAT",
-      "proposedCheck": "LIMIT-SCALE (CopilotLimits, Critical, deterministic) only catches HARD ceiling breaches (>500 tables, >10000 cols, >5000 measures, >2000 rels, >1000 cols/table, >256-char names) that literally disable Copilot — it is a binary gate, not a 'reduce noise' signal. It does NOT detect the soft bloat the requirement targets: unused/unnecessary columns, disconnected/field-parameter tables, currency-conversion patterns, high-cardinality columns, or redundant measures. Proposed: (1) a deterministic DISCONNECTED-TABLE rule (table with zero relationships, excluding marked date/param tables) — fix is a Proposal (review before deleting); (2) a DMV-backed HIGH-CARDINALITY / UNUSED-COLUMN rule using DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS + DISCOVER_CALC_DEPENDENCY (column never referenced by a visible measure/relationship + very high distinct count) — fix Proposal: hide or remove. These belong in a Scale/CopilotLimits category. The plan's E-table 'Disconnected table' and G-table 'Indexing limit' rules cover this but are unbuilt (Wave 2, needs live DMV).",
-      "notes": "Hard-gate ceiling is covered (LIMIT-SCALE); the soft 'remove bloat / reduce noise' dimension is missing. Needs a disconnected-table deterministic rule (buildable offline now) plus DMV cardinality rules (Wave 2). Mostly Proposal fixes — deletion is never silent."
+      "proposedCheck": "Implemented deterministic signals cover hard scale ceilings, live high-cardinality text columns, disconnected business tables, field-parameter complexity and duplicate measures. The row stays partial because deciding that an object is unnecessary or that a currency-conversion design is too complex requires usage evidence and business judgment.",
+      "notes": "Batch 6 reconciled the observable complexity and bloat signals. Full semantic unused-object classification remains a judgment non-goal; deletion is never inferred from counts alone."
     },
     {
       "title": "Optimize the model for performance / use BPA and Memory Analyzer",
       "status": "partial",
-      "ourRuleId": "FMT-SUMMARIZE",
+      "ourRuleId": "FMT-SUMMARIZE, SCALE-HICARD-COLUMN, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS",
       "proposedRuleId": "SCALE-DMV-PERF",
-      "proposedCheck": "Two separate angles. (a) BPA: Semanticus HAS a full structural Best Practice Analyzer (Bpa.cs) running alongside the readiness ruleset, so the 'run BPA' half is genuinely covered as a product capability — but it is OUTSIDE the readiness scorecard and not surfaced as readiness findings. FMT-SUMMARIZE (deterministic) partially covers one BPA-style perf/correctness issue (key/relationship columns summarizing implicitly). (b) Memory Analyzer / data-type + high-cardinality + inefficient-DAX detection is MISSING — these require live DMVs (DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS, column stats) per ai-readiness-plan.md, and the two planned 'dmv' rules (indexing limit, implicit-measure stats) are unbuilt Wave-2. Proposed: a deterministic INCONSISTENT-DATATYPE rule (numeric-looking column name with DataType==String -> Proposal flag, per plan D-table) buildable now, plus DMV cardinality rules in Wave 2. Fix: mostly Proposal/advisory; set_column_metadata could fix some data-type/summarize cases.",
-      "notes": "BPA exists as a capability (Bpa.cs) but is not wired into readiness scoring; FMT-SUMMARIZE covers a sliver. Memory-Analyzer-style perf/cardinality detection is missing and needs the unbuilt live-DMV foundation. Could surface BPA perf findings into the readiness Scale/Formatting category."
+      "proposedCheck": "The readiness scorecard now surfaces incorrect summarization, live high-cardinality text and four deterministic inefficient-DAX patterns. Semanticus also ships the separate BPA and live VPAX/performance tools. The row remains partial because running Microsoft's external Memory Analyzer and deciding which objects to remove are workflow and judgment concerns, not model-state predicates.",
+      "notes": "Batch 6 records the deterministic readiness findings without pretending that use of an external analysis product is a scored model property. The external-tool workflow is an out-of-band non-goal."
     },
     {
       "title": "Define security roles (RLS) for sensitive data",
@@ -2448,19 +2449,19 @@
     },
     {
       "title": "Add synonyms to tables and columns",
-      "status": "partial",
-      "ourRuleId": "SYN-FIELD",
+      "status": "covered",
+      "ourRuleId": "SYN-FIELD, SYN-TABLE",
       "proposedRuleId": "SYN-TABLE",
-      "proposedCheck": "SYN-FIELD (Synonyms, LlmGenerate->AiContent) flags visible MEASURES and COLUMNS lacking synonyms, and SYN-SCHEMA flags the model having no linguistic schema at all; set_synonyms + enable_qna MCP tools implement the fix loop. Gap: SYN-FIELD's population is m.AllMeasures + m.AllColumns only — it does NOT include TABLES, yet the requirement explicitly says 'for every table AND column'. Proposed SYN-TABLE: same ModelRule pattern, scope = m.Tables.Where(!IsHidden), violation = SynonymHelper.GetSynonyms(table, culture) is blank -> finding; fix via set_synonyms (which already accepts a table ref per McpTools.cs). LlmGenerate/AiContent. Also note both SYN rules require CompatibilityLevel>=1465 (correctly gated) and return Applicable=0 below that.",
-      "notes": "Columns + measures covered (SYN-FIELD) with the full enable_qna->set_synonyms loop; tables are omitted from the synonym-coverage population. Small, easy, offline fix: add a table-scoped synonym rule."
+      "proposedCheck": "Implemented as SYN-FIELD plus SYN-TABLE. Both read JSON LSDL through SynonymHelper, stay dormant below compatibility level 1465 or without a readable schema, and route authored terms through set_synonyms.",
+      "notes": "SYN-FIELD covers visible columns and measures; SYN-TABLE covers visible business tables and excludes calculation groups. Both stay dormant without readable JSON LSDL or at compatibility levels below 1465, and both hand the AiContent fix to the user's assistant through set_synonyms."
     },
     {
       "title": "Make the primary synonym unique to avoid ambiguity",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "SYN-COLLIDE",
       "proposedRuleId": "SYN-COLLIDE",
-      "proposedCheck": "Not modeled — this is the one DETERMINISTIC Synonyms requirement and we have nothing for it. SYN-FIELD only checks presence/absence of synonyms, never cross-object collisions, and NAME-DUP only checks duplicate field NAMES (not synonyms). Detection (deterministic, ModelRule like NAME-DUP): for the chosen culture, call SynonymHelper.GetSynonyms on every visible measure/column/table, split the comma-joined terms, group terms case-insensitively, and flag any term assigned to >1 distinct object -> finding ('synonym \"revenue\" maps to both [Sales].[Amount] and [Budget].[Revenue] — make the primary synonym unique'). Reuses the exact NAME-DUP GroupBy/HashSet pattern. Fix path: FixKind.Proposal (AiContent-assisted) — the user's Claude proposes a disambiguating primary term, applied via set_synonyms. Pure offline, buildable now.",
-      "notes": "Deterministic (requirement.deterministic=true), entirely buildable offline today by parsing existing GetSynonyms output, mirrors the existing NAME-DUP implementation. Currently zero coverage. High-value, low-effort Synonyms gap."
+      "proposedCheck": "Implemented. SYN-COLLIDE parses JSON LSDL terms and compares only the highest-weight user-authored primary synonym for each visible table, column and measure in each culture. It excludes Generated, Suggested and Deleted terms plus lower-weight alternatives, then reports every object sharing a primary term.",
+      "notes": "Covered by SYN-COLLIDE with a deterministic Proposal fix. The State/Weight-aware population avoids the false positives produced by grouping every generated thesaurus term."
     },
     {
       "title": "Approve high-value suggested synonyms; remove wrong ones",
@@ -2521,10 +2522,10 @@
     {
       "title": "Treat the linguistic schema as a first-class, exportable asset",
       "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
+      "ourRuleId": "SYN-SCHEMA, SYN-LSDL-XML",
       "proposedRuleId": "SYN-LSDL-XML",
-      "notes": "Partial. We treat the LSDL as a managed JSON blob: SYN-SCHEMA detects 'no linguistic schema', enable_qna seeds it, and SetSynonyms writes State=Authored Terms into Culture.LinguisticMetadata.Content -- which is exactly the export/edit/re-import asset MS describes, and our preview shows a JSON diff of the blob. What is missing: (1) we only read/write JSON LSDL and never detect/handle ContentType==Xml (older models) -- SynonymHelper only handles JSON, so an XML schema silently fails the patch; (2) we do not honor 'State: Generated' vs 'Deleted' lifecycle for *non-synonym* content; (3) no export/import-yaml round-trip as a reusable cross-model artifact.",
-      "proposedCheck": "Add a deterministic rule SYN-LSDL-XML: predicate Culture.LinguisticMetadata.ContentType == Xml -> finding 'refuse-to-patch / upgrade to JSON' (the plan's section C already calls this out, it is just unimplemented). Fix: deterministic upgrade-or-warn; no LLM. Also surface export/import of the .lsdl.yaml as a Proposal-level action. The Generated/Deleted-state handling is already partly right for synonyms (we author non-Generated terms) but should be generalized when the phrasing-writer lands."
+      "notes": "Partial. SYN-SCHEMA accepts either JSON or legacy XML as a real schema, and SYN-LSDL-XML now surfaces every XML culture with a fail-loud upgrade/export proposal instead of falsely reporting the schema missing. JSON LSDL remains managed through enable_qna and set_synonyms. The unpublished new Copilot Tooling Format plus non-synonym Generated/Deleted lifecycle and reusable import/export remain in residualBuckets.deferred-schema.",
+      "proposedCheck": "SYN-LSDL-XML is implemented as deterministic detection with Applicable equal to the XML-culture population. It deliberately does not rewrite legacy XML or guess the unpublished new tooling schema."
     },
     {
       "title": "Name tables and columns to accurately reflect their content",
@@ -2536,27 +2537,27 @@
     },
     {
       "title": "List calculation item names in the calculation group description",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "DESC-CALCGROUP-ITEMS",
       "proposedRuleId": "DESC-CALCGROUP-ITEMS",
-      "notes": "Not covered. There is NO calculation-group rule in the readiness ruleset -- CalculationGroup/CalculationItem appear only in the structural BPA scope resolver (Bpa.cs), not in ReadinessRules.cs. DESC-COLUMN/DESC-TABLE do not special-case the calculation-group column, so a calc group with items but no item list in its description scores fine. The plan (section B) lists this rule but it is unimplemented. MS says calc items are absent from model metadata, so the names must live in the calc-group column description (first 200 chars).",
-      "proposedCheck": "Deterministic detection + AiContent fix. Predicate (deterministic, catalog deterministic:true): for each CalculationGroup, take its calculation-group column; violation if Description is empty OR does NOT contain every CalculationItems[].Name. Detect via model.CalculationGroups.SelectMany(CalculationItems) (the scope already exists in Bpa.cs). Fix: the user's Claude enumerates the item names into a <=200-char description (front-loaded) and writes via set_description (existing MCP tool). Low-cost, high-value addition that needs only a new rule -- the writer already exists."
+      "notes": "DESC-CALCGROUP-ITEMS deterministically checks that every calculation-item name appears as a whole token in the group or group-column description. It takes over only after documentation exists, so it is mutually exclusive with DAC-CALC-GROUP.",
+      "proposedCheck": "Implemented with AiContent for the description rewrite and exact calculation-group applicability."
     },
     {
       "title": "Add missing relationships so tables can be joined",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "REL-DISCONNECTED",
       "proposedRuleId": "REL-DISCONNECTED",
-      "notes": "We have NO rule that detects unrelated/disconnected tables. Our only Relationships-category rules are REL-BIDI (flags bidirectional cross-filter) and DATE-MARK (no marked date table). Neither checks whether a non-parameter table participates in any relationship, so 'Orders and Customers are unrelated' is invisible to the score. This is the single most important deterministic gap in the Relationships category.",
-      "proposedCheck": "Deterministic ModelRule (FixKind.Proposal). Predicate: enumerate m.Tables, exclude calculated/parameter tables (e.g. ExcludeFromModelRefresh or single-column 'what-if' tables) and the date table; flag any table where no SingleColumnRelationship references it as FromTable or ToTable (0 relationships). Population N = candidate fact/dim tables, V = those with zero relationships. Fix is a Proposal (structural — adding a relationship needs a verified key pair), surfaced to the user's Claude to draft a CREATE RELATIONSHIP plan via the change-plan engine; there is currently no create_relationship MCP tool, so this needs a new propose-only relationship tool or a plan item. Severity High."
+      "notes": "REL-DISCONNECTED deterministically evaluates visible business tables once at least two are present, excludes calculation groups, field parameters and measure-only holders, and flags each table with no relationship. A valid single-table model stays dormant. The structural fix remains a reviewed Proposal because selecting the key pair requires author intent.",
+      "proposedCheck": "Implemented as REL-DISCONNECTED (ModelRule, FixKind.Proposal). Applicable is the exact visible business-table population when a join is relevant; a single-table model uses Applicable=0."
     },
     {
       "title": "Denormalize to eliminate inactive relationships Q&A cannot use",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "REL-INACTIVE",
       "proposedRuleId": "REL-INACTIVE-ROLEPLAY",
-      "notes": "No rule inspects SingleColumnRelationship.IsActive. Q&A can only traverse active relationships, so role-playing dimensions (e.g. SourceCityID and DestCityID both to Cities, one inactive) silently lose a query path. We do not flag inactive relationships at all.",
-      "proposedCheck": "Hybrid: deterministic detect + Proposal/AI fix. Deterministic predicate: flag relationships where IsActive == false, especially when multiple relationships share the same ToTable (the inactive one is the unusable role-play path). The DETECTION is deterministic (IsActive flag, grouped by table pair); the FIX is non-deterministic (Proposal/AI-content) because the remediation is to denormalize the role-specific column into the fact table — a structural change the user's Claude drafts as a plan. No single MCP tool fixes this; route to the change-plan engine. Severity Medium. Category Relationships."
+      "notes": "REL-INACTIVE deterministically evaluates exactly the inactive relationship population and explains that Q&A and Copilot cannot traverse it. Active-only models stay dormant.",
+      "proposedCheck": "Implemented as a Proposal because denormalizing or otherwise exposing the role is structural and requires reviewed author intent."
     },
     {
       "title": "Normalize so each concept is exactly one model object",
@@ -2569,10 +2570,10 @@
     {
       "title": "Follow star-schema design for natural-language consumption",
       "status": "partial",
-      "ourRuleId": "REL-BIDI",
-      "proposedRuleId": "REL-SCHEMA-SHAPE",
-      "notes": "Partially covered indirectly: REL-BIDI penalizes bidirectional cross-filter (an anti-star signal) and DATE-MARK requires a date dimension. But we have no rule that evaluates overall schema SHAPE — no detection of snowflake chains (dim->dim->fact), many-to-many relationships (FromCardinality==Many && ToCardinality==Many), or fact-vs-dimension delineation. A model can be a snowflake/flat blob and still score well on our Relationships category.",
-      "proposedCheck": "Two pieces. (1) Deterministic sub-rule REL-M2M: flag SingleColumnRelationship where both cardinalities are Many (RuleKind.Deterministic, FixKind.Proposal) — cheap, high-value, missing today. (2) AI/heuristic REL-SCHEMA-SHAPE: build the relationship graph, classify each table as fact (many-side hub) vs dimension (one-side), detect snowflake chains and bridge tables; the user's Claude adjudicates and drafts a flatten/denormalize plan. Detection of M2M is deterministic; full star adjudication is AI-content/Proposal. No single MCP fix tool — Proposal via change-plan engine. Severity Medium/High. Category Relationships."
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "notes": "REL-BIDI, REL-M2M, REL-SNOWFLAKE and REL-DISCONNECTED cover the observable relationship-graph anti-patterns. Full fact/dimension delineation and flat/pivoted interpretation remain business judgment and are pinned in residualBuckets.judgment.",
+      "proposedCheck": "Implemented for observable graph anti-patterns. Full star adjudication remains a judgment non-goal because the model does not declare semantic fact/dimension intent."
     },
     {
       "title": "Hide or exclude fields that shouldn't answer natural-language questions",
@@ -2593,42 +2594,42 @@
     {
       "title": "Set Summarization to Don't summarize for non-additive numeric columns",
       "status": "partial",
-      "ourRuleId": "FMT-SUMMARIZE",
+      "ourRuleId": "FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
       "proposedRuleId": "FMT-SUMMARIZE-SEMANTIC",
-      "notes": "FMT-SUMMARIZE exists and is a deterministic SafeFix (set_summarize_by None), but its SCOPE is too narrow: population is only key/relationship-endpoint columns (c.IsKey || relationship endpoints). It does NOT catch Year, Month, Day, Age, or other non-additive numeric columns that are not keys/endpoints — exactly the canonical Microsoft examples ('total sales by year' returning a sum of years). So the requirement is only half-covered.",
-      "proposedCheck": "Extend the existing FMT-SUMMARIZE population (or add FMT-SUMMARIZE-SEMANTIC) with a deterministic predicate: numeric column (Int64/Decimal/Double) where DataCategory!=geo and SummarizeBy not in {None} AND (name regex matches \\b(year|month|day|qtr|quarter|week|age|rank|order|sequence|pin|zip|postal)\\b OR column IsKey OR is a relationship endpoint OR has a SortByColumn pointing to it). Deterministic detect, SafeFix via set_summarize_by=None. Keep the strict key-only set as auto-safe and gate the name-heuristic matches behind a confirm to avoid demoting legit additive metrics. Severity Medium. Category Formatting."
+      "notes": "FMT-SUMMARIZE owns keys and relationship endpoints. SUMMARIZE-DIMENSION owns visible numeric columns whose canonical metadata makes non-additivity deterministic: year/month/quarter/week/day, age, rank/order/sort/sequence, latitude/longitude, PIN/postal/ZIP and identifier suffixes. Both safely set SummarizeBy=None and keep their populations disjoint from DAC-IMPLICIT-MEASURE. The row remains partial because arbitrary business columns can be non-additive without exposing that semantic in model metadata.",
+      "proposedCheck": "The deterministic metadata slice is implemented. Full semantic classification needs business judgment, so the catalog does not promote this row to covered."
     },
     {
       "title": "Fix incorrect data types (dates/numbers imported as strings)",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "FMT-DATATYPE",
       "proposedRuleId": "FMT-DATATYPE",
-      "notes": "No rule inspects Column.DataType. We never detect date/number columns stored as String, which Q&A and Copilot will not interpret as dates/numbers. This is a deterministic gap (the requirement is deterministic:true) and there is no MCP tool to change a column data type either.",
-      "proposedCheck": "Deterministic ObjectRule<Column> (FixKind.Proposal — type changes can fail refresh, so not a silent SafeFix). Predicate: DataType == DataType.String AND ( name regex \\b(date|day|month|year|time|amount|qty|quantity|price|cost|sales|total|count|number|num|rate|pct|percent)\\b OR a live data sample via run_dax/preview_table shows values parse as dates/numbers ). Detection deterministic on DataType + name; optional live-sample confirmation upgrades confidence. Fix is a Proposal: there is no set_data_type MCP tool today, so add one (or route through the change-plan engine), and warn that a refresh is required. Severity High. Category Formatting."
+      "notes": "FMT-DATATYPE checks the metadata mismatch directly: a visible, non-key column is stored as Text while its name tightly implies a date or numeric value. The rule is deterministic and proposal-only; the engine does not silently change a refresh-sensitive type.",
+      "proposedCheck": "Implemented and pinned by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Set a Data Category for each date and geography column",
       "status": "partial",
       "ourRuleId": "CAT-GEO",
       "proposedRuleId": "CAT-DATE / CAT-GEO-EXTEND",
-      "notes": "CAT-GEO covers the GEOGRAPHY half: it deterministically flags columns whose name matches City/Country/Continent/County/State/Province/Postal/Zip and that lack a DataCategory, with a SafeFix via set_data_category. But it MISSES the DATE/TIME half of the requirement entirely (GeoCategory() returns null for date-named columns), and it has no Web URL / Image URL / Lat-Long coverage even though set_data_category already accepts WebUrl/ImageUrl. So the requirement is half-covered.",
-      "proposedCheck": "Extend GeoCategory()/add CAT-DATE: deterministic predicate — column with DataType Date/DateTime (or name regex \\b(date|datetime|timestamp)\\b) that lives in the marked date table OR is a relationship date key but has no DataCategory; and add Latitude/Longitude/Url/Image name mappings. SafeFix via existing set_data_category (and mark_date_table for the table-level date marking). Detection deterministic; the requirement's deterministic:false reflects 'which geo level' ambiguity, so keep an AI-confirm for borderline names (e.g. 'Region'). Severity Info/Medium. Category Formatting."
+      "notes": "CAT-GEO deterministically covers City, Country, Continent, County, State/Province, Postal Code, Latitude, Longitude, Address and Place; CAT-URL separately covers URL, image and barcode candidates. The row remains partial because Power BI has no general Date data-category value and deciding the intended temporal role of an arbitrary date column is semantic judgment.",
+      "proposedCheck": "The observable geography slice is implemented with an exact candidate population and safe metadata fix. The residual date-role claim is a judgment non-goal rather than a reason to invent a CAT-DATE value or add an always-pass rule."
     },
     {
       "title": "Set Sort By Column so natural-language sorting is logical",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "covered",
+      "ourRuleId": "FMT-SORTBY",
       "proposedRuleId": "FMT-SORTBY",
-      "notes": "No rule checks Column.SortByColumn even though the MCP tool set_sort_by_column already exists. So we can FIX it but never DETECT it. Month-name-sorted-alphabetically and Hat-Size-XS-to-XL cases are invisible to the score. Deterministic by spec.",
-      "proposedCheck": "Deterministic ObjectRule<Column> (FixKind.SafeFix). Predicate: a visible text/string column whose name matches an ordered-category pattern (\\b(month|weekday|day name|quarter|size|priority|severity|grade|tier|level)\\b) OR any text column that has SortByColumn == null AND a companion numeric column exists on the same table with a matching name (e.g. 'Month Name' + 'Month Number', 'Hat Size' + 'Hat Size Sort'). Auto-pair the companion; SafeFix via set_sort_by_column. Where the companion is ambiguous, downgrade to AI-confirm. Severity Info/best-practice. Category Formatting."
+      "notes": "FMT-SORTBY deterministically evaluates visible text month/weekday labels and text labels with exactly one matching numeric order companion on the same table, such as Month Name + Month Number or Priority + Priority Sort. It remains a Proposal so an author confirms the intended business order; ambiguous companions do not fire.",
+      "proposedCheck": "Implemented as a cross-object ModelRule and pinned across violation, clean and dormant cases by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Linguistic metadata feeds Copilot - the model linguistic schema is grounding data",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
+      "status": "covered",
+      "ourRuleId": "SYN-SCHEMA, SYN-FIELD, SYN-TABLE",
       "proposedRuleId": "(covered by Synonyms category; DataAgentConfig should NOT duplicate it)",
-      "notes": "This requirement is catalog-categorized DataAgentConfig, but our REAL coverage of it lives in the Synonyms category: SYN-SCHEMA (no linguistic schema at all -> enable_qna) and SYN-FIELD (visible field has no synonyms -> set_synonyms), both gated on CompatibilityLevel>=1465. So the linguistic-schema-as-grounding intent IS substantively covered, just filed under Synonyms rather than DataAgentConfig. The mapping mismatch is why DataAgentConfig looks empty.",
-      "proposedCheck": "No new detection rule needed for the linguistic-schema intent — SYN-SCHEMA + SYN-FIELD already detect and fix it (enable_qna, set_synonyms). The fix here is taxonomy/weighting: either (a) accept that this requirement maps onto the Synonyms category, or (b) keep DataAgentConfig reserved for the genuinely-data-agent-specific Prep-for-AI artifacts (AI instructions, AI data schema, verified answers) listed below. Do NOT add a redundant DataAgentConfig synonyms rule. Per-consumer reweighting (Data-Agent profile up-weights Synonyms+Descriptions) is the right lever."
+      "notes": "SYN-SCHEMA detects an absent linguistic schema; SYN-FIELD and SYN-TABLE measure synonym coverage across visible fields and business tables. This grounding belongs in the Synonyms category rather than being duplicated in DataAgentConfig.",
+      "proposedCheck": "Implemented by SYN-SCHEMA, SYN-FIELD and SYN-TABLE in the Synonyms category. DataAgentConfig remains reserved for Prep-for-AI artifacts rather than duplicating linguistic scoring."
     },
     {
       "title": "Create Verified Answers for common questions",
@@ -2640,11 +2641,11 @@
     },
     {
       "title": "Add AI Instructions to encode business vocabulary and synonyms",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "This is the core of the DataAgentConfig category, which has weight (0.08) but ZERO rules, so it contributes nothing to the score (the analyzer only counts categories where HasRules==true into catWsum). We have NO concept of a model-level AI-Instructions / Prep-for-AI text store. SYN-SCHEMA/SYN-FIELD cover per-field LSDL synonyms but NOT a free-text business-context/term-mapping instructions block ('Leads/Deals = the Opportunity table', 'use [Net Revenue] for revenue'). docs/PLAN.md and the plan already flag this as Wave-2 'undocumented storage; generate-only until reverse-engineered'.",
-      "proposedRuleId": "DAC-INSTRUCTIONS",
-      "proposedCheck": "Hybrid Proposal + AiContent. Deterministic detect: model has no Semanticus-managed AI-instructions section (empty/absent Prep-for-AI store in the LSDL/model metadata, capability-detected). Detection degrades to 'present?' boolean; quality of the prose is AI-content/LlmJudgment. Fix path: AiContent — the user's Claude drafts grouped sections (Terminology, table->business-term mappings, which-measure-for-which-concept, date logic) capped at 10,000 chars; applied via a NEW MCP tool set_ai_instructions(culture, instructions, append?) writing the delimited managed Prep-for-AI block (storage must be reverse-engineered + round-trip-verified first, hence Proposal-gated until then). No existing MCP tool writes this today."
+      "status": "covered",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS, DAC-GLOSSARY-GAP",
+      "notes": "PrepForAiReader reads model-level LSDL CustomInstructions. DAC-AI-INSTRUCTIONS deterministically detects an empty block, while DAC-GLOSSARY-GAP detects visible field-name codes not defined in the instructions. Both use FixKind.AiContent: the engine does not infer content; the user's assistant drafts it and set_ai_instructions validates and writes it.",
+      "proposedRuleId": "DAC-AI-INSTRUCTIONS, DAC-GLOSSARY-GAP",
+      "proposedCheck": "Implemented using readable LSDL CustomInstructions. DAC-AI-INSTRUCTIONS checks presence; DAC-GLOSSARY-GAP checks undefined field-name codes; set_ai_instructions is the validated writer and AiContent keeps authorship outside the engine."
     },
     {
       "title": "Simplify the data schema for AI (remove ambiguous/unused fields)",
@@ -2665,10 +2666,10 @@
     {
       "title": "Limit model complexity for reliable natural-language answers",
       "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE (CopilotLimits, Critical, hard-gate to D) covers the absolute Copilot ceilings (>500 tables, >10k cols, >5k measures, >2k rels, >1k cols/table, >256-char names) — that is the hard 'disables Copilot' end. REL-BIDI flags bidirectional relationships (one 'ambiguous relationship' source). But the softer 'reduce complexity' guidance is mostly MISSING: no detection of unused tables/fields/measures, no disconnected-table check, no currency-conversion or disconnected field-parameter-table patterns, no many-to-many flag. This requirement maps to category Scale (we fold that into CopilotLimits).",
+      "ourRuleId": "LIMIT-SCALE, REL-DISCONNECTED, DAC-FIELD-PARAM-COMPLEXITY",
+      "notes": "LIMIT-SCALE covers the documented hard ceilings, REL-DISCONNECTED finds isolated business tables, and DAC-FIELD-PARAM-COMPLEXITY surfaces field-parameter complexity. The row remains partial because unused-object intent, acceptable currency-conversion complexity and overall reliability are business judgments.",
       "proposedRuleId": "SCALE-UNUSED / SCALE-DISCONNECTED / SCALE-FIELDPARAM",
-      "proposedCheck": "SCALE-UNUSED (CopilotLimits/Scale, Deterministic->Proposal): tables/columns/measures with zero relationships AND not referenced by any visible measure/dependency -> Proposal (removal is structural, no safe auto-fix; could downgrade to set_column_hidden). SCALE-DISCONNECTED (Deterministic->Proposal): table with 0 relationships excluding known field-parameter tables. SCALE-FIELDPARAM (Deterministic->Proposal/AiContent): detect disconnected field-parameter tables (NAMEOF-based parameter pattern) and currency-conversion patterns and warn; fixes are Proposal-only / add an AI-instruction caveat. No MCP delete tool exists; remediation is review + hide."
+      "proposedCheck": "The deterministic metadata slice is implemented. Do not infer unused objects or an unreliable business design from names and counts; those remaining decisions belong to review and model interviewing."
     },
     {
       "title": "Scope the agent to a single domain / use case",
@@ -2680,11 +2681,11 @@
     },
     {
       "title": "Minimize data source scope; limit to 25 or fewer tables",
-      "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE counts tables but its threshold is the Copilot ceiling (>500), NOT the data-agent best-practice limit of 25 tables/source. So a 60-table model passes LIMIT-SCALE clean yet violates this data-agent requirement. The requirement is deterministic:true and category Scale, so it is a natural, cheap rule we simply don't have at the right threshold. 'Only necessary columns' overlaps with the schema-simplification rules above.",
-      "proposedRuleId": "SCALE-DATAAGENT-TABLES",
-      "proposedCheck": "CopilotLimits/Scale, Deterministic. Predicate: model.Tables.Count(t => !t.IsHidden) > 25 (count tables exposed to the agent; could also count tables in the AI data-schema include-set once DAC-AISCHEMA exists). Severity Medium for data-agent profile, not a hard gate. Fix: Proposal/advisory — recommend trimming to <=25 via set_column_hidden/AI-schema exclusion or splitting the source; no destructive auto-fix. Profile-aware: only weighted in the Data-Agent profile."
+      "status": "covered",
+      "ourRuleId": "LIMIT-DATAAGENT-TABLES",
+      "notes": "LIMIT-DATAAGENT-TABLES deterministically counts visible non-calculation-group tables and surfaces a proposal when the model exposes more than 25. The selected-table state of a deployed data agent is out of band, so the model count is explicitly an advisory proxy with Applicable=0; it never inflates or docks the score.",
+      "proposedRuleId": "LIMIT-DATAAGENT-TABLES",
+      "proposedCheck": "Implemented and pinned below/above the threshold plus advisory dormancy by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Cap total data sources per agent at five",
@@ -2841,10 +2842,10 @@
     {
       "title": "Use a star schema, not flat/denormalized/pivoted tables",
       "status": "partial",
-      "ourRuleId": "REL-BIDI",
-      "proposedRuleId": "REL-STAR-SCHEMA",
-      "proposedCheck": "We only have adjacent Relationships-category rules: REL-BIDI (bidirectional cross-filter) and DATE-MARK (no date table). Neither detects flat/denormalized/wide/pivoted tables, so the core requirement is uncovered. Propose REL-STAR-SCHEMA (RuleKind.LlmJudgment, FixKind.Proposal) detected via the relationship graph already exposed by get_model_graph: flag tables with 0 relationships (disconnected), wide tables that are both a fact and a dimension, or wide non-key tables with no inbound relationships as denormalization candidates; the LLM judges pivoted/wide shape and drafts an unpivot/split plan. Structural, so Proposal only - no auto-fix MCP tool; surfaced for human review. Optionally split into REL-DISCONNECTED (deterministic: tables with 0 relationships, FixKind.Proposal) which is a pure predicate.",
-      "notes": "REL-BIDI and DATE-MARK exist in the Relationships category but address different problems. There is NO star-schema / denormalization / disconnected-table / many-to-many rule in the readiness set or the BPA default rules. Star-schema judgment is inherently LLM/Proposal."
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedCheck": "Implemented for observable graph anti-patterns. Flat/denormalized/pivoted intent remains a judgment non-goal and structural remediation stays Proposal-only.",
+      "notes": "The relationship graph now has deterministic checks for bidirectional, many-to-many, snowflake/bridge and disconnected structures. Classifying a wide table as intentionally flat, denormalized or pivoted still needs business judgment, so the row remains partial and is pinned in residualBuckets.judgment."
     },
     {
       "title": "Exclude helper/intermediate and duplicate/overlapping measures from the AI schema",
@@ -2856,11 +2857,11 @@
     },
     {
       "title": "Use explicit measures and correct default summarization, not implicit measures",
-      "status": "partial",
-      "ourRuleId": "FMT-SUMMARIZE",
+      "status": "covered",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
       "proposedRuleId": "FMT-IMPLICIT-MEASURE",
-      "proposedCheck": "FMT-SUMMARIZE covers HALF the requirement correctly and deterministically: it flags key/relationship-endpoint columns whose SummarizeBy != None and fixes via set_summarize_by (SafeFix, also in apply_safe_fixes). What is missing is the implicit-measure reliance half: a numeric, VISIBLE, non-key fact column with SummarizeBy != None and no explicit measure covering it (users will drag it and get unpredictable implicit aggregations). Propose FMT-IMPLICIT-MEASURE (Formatting): deterministic detect = numeric visible column, SummarizeBy != None, not a relationship endpoint/key, no explicit measure referencing it; fix = set SummarizeBy=None via set_summarize_by AND the user's Claude scaffolds an explicit measure via create_measure (AiContent). FMT-SUMMARIZE deliberately scopes only to key/endpoint columns, so plain fact columns escape it today.",
-      "notes": "Correct-default-summarization on keys = covered by FMT-SUMMARIZE (SafeFix, set_summarize_by). The 'avoid implicit measures / create explicit measures' half is uncovered. create_measure exists, so the fix path is mostly in place once the detection rule is added."
+      "proposedCheck": "Implemented as a disjoint partition: FMT-SUMMARIZE owns keys/endpoints, SUMMARIZE-DIMENSION owns canonical non-additive numeric dimensions, and DAC-IMPLICIT-MEASURE owns the remaining visible numeric columns that auto-aggregate.",
+      "notes": "Together the three deterministic rules evaluate the visible numeric surface without cross-category double-counting. Safe metadata fixes set non-additive/key columns to None; additive implicit measures use Proposal because an explicit DAX measure needs reviewed business intent."
     },
     {
       "title": "Avoid conflicting instructions vs verified answers",
@@ -2881,10 +2882,10 @@
     {
       "title": "Optimize the semantic model for performance / remove bloat",
       "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
+      "ourRuleId": "LIMIT-SCALE, SCALE-HICARD-COLUMN, FMT-SUMMARIZE, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS",
       "proposedRuleId": "SCALE-HIGH-CARDINALITY",
-      "proposedCheck": "LIMIT-SCALE (CopilotLimits, Critical, hard gate to <=D) covers the hard ceilings only: >500 tables, >10000 columns, >5000 measures, >2000 relationships, >1000 cols/table, >256-char names. It does NOT cover the 'remove bloat / high-cardinality / unnecessary columns / inefficient DAX / wrong data types' optimization the requirement asks for. We DO have live-connection tooling for this (vpaq_scan = VertiPaq sizes/biggest columns, benchmark_dax, profile_dax) but no RULE consumes it. Propose SCALE-HIGH-CARDINALITY (RuleKind.Dmv, FixKind.Proposal): via run_dmv/DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS or vpaq_scan, flag the highest-cardinality non-business text columns and unused/oversized columns; fix = set_column_hidden or a drop proposal. Degrade gracefully to N==0 when no live connection (offline TMDL can't see cardinality). Note the category mismatch: this is bloat, not a hard Copilot gate, so it belongs in a Scale/CopilotLimits soft rule, not the gating LIMIT-SCALE.",
-      "notes": "Hard scale ceilings = covered by LIMIT-SCALE. Soft 'remove bloat / high-cardinality / Memory Analyzer' optimization = uncovered as a rule, though vpaq_scan/benchmark_dax/profile_dax exist on the live connection to power it. This is the planned Wave-2 'indexing limit' DMV rule that was never built."
+      "proposedCheck": "Implemented readiness signals cover hard ceilings, live high-cardinality text, incorrect summarization and four deterministic inefficient-DAX patterns. Live cardinality stays dormant when no measurement exists. The row remains partial because unnecessary-object selection and exhaustive performance optimization require workload evidence and judgment.",
+      "notes": "Batch 6 replaces the stale claim that no live cardinality rule exists. Semanticus detects objective risk signals but does not treat performance optimization as complete model-state proof."
     },
     {
       "title": "Verify the generated DAX in each test response",
@@ -2968,41 +2969,41 @@
     },
     {
       "title": "Q&A must be enabled for Copilot data questions",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
-      "notes": "SYN-SCHEMA (category Synonyms, High) fires when the model has no JSON linguistic schema/culture content and tells the user to 'enable Q&A and add synonyms', and the enable_qna MCP tool seeds the linguistic culture. But this is a proxy: it detects 'no linguistic/synonym metadata', not the model's actual Q&A-enabled flag. A model can have Q&A disabled while still having (or lacking) linguistic content, and vice-versa, so SYN-SCHEMA does not cleanly map to the documented hard-gate. It is also gated on CompatibilityLevel>=1465 (returns Applicable=0 below that), and it lives in Synonyms, not the DataAgentConfig/CopilotLimits bucket the catalog wants. So the requirement is only indirectly covered.",
-      "proposedRuleId": "QNA-DISABLED",
-      "proposedCheck": "Deterministic where the flag is readable. Detection: read the model's Q&A-enabled state. In TOM this is exposed via Model.DefaultPowerBIDataSourceVersion / the disableAutoExists & QnA-related model properties, or for service models via the 'Q&A' setting; where TOM lacks a direct property, query it live (run_dmv against $SYSTEM model metadata, or a workspace setting via REST). Fail (hard-gate, category DataAgentConfig) when Q&A is explicitly disabled. Fix: the existing enable_qna MCP tool (seeds linguistic metadata / flips the flag). This should be a distinct DataAgentConfig rule rather than overloading SYN-SCHEMA, so the gate reflects the actual Q&A switch, not synonym presence."
+      "status": "covered",
+      "ourRuleId": "DAC-QNA-DISABLED",
+      "notes": "DAC-QNA-DISABLED reads the actual file-backed qnaEnabled switch instead of treating linguistic-schema presence as a proxy. An explicit false value is a DataAgentConfig violation; an unavailable switch is dormant rather than assumed enabled.",
+      "proposedRuleId": "DAC-QNA-DISABLED",
+      "proposedCheck": "Implemented as DAC-QNA-DISABLED against definition.pbism settings.qnaEnabled. The rule is dormant when the actual switch is unavailable and does not substitute linguistic-schema presence as a proxy."
     },
     {
       "title": "DirectQuery / Direct Lake models require manual Q&A enablement",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No storage-mode detection anywhere. A grep for StorageMode/DirectQuery/DirectLake/Partition Mode across the engine and analysis projects returns nothing in the analysis path; Partition.Mode is never read. So the engine cannot tell Import from DirectQuery/Direct Lake and therefore cannot apply the 'Q&A is NOT on by default for these — verify it is explicitly enabled' check. SYN-SCHEMA is storage-mode-agnostic.",
-      "proposedRuleId": "QNA-DQ-DIRECTLAKE",
-      "proposedCheck": "Deterministic on model metadata. Detection: inspect each table's partition source mode via TOM (Table.Partitions[].Mode == ModeType.DirectQuery / DirectLake, or Model default mode); when any table is DirectQuery or Direct Lake AND the Q&A-enabled flag (see QNA-DISABLED) is not explicitly set, raise a High DataAgentConfig finding ('DirectQuery/Direct Lake detected — Q&A must be enabled manually; it is not on by default'). Fix: enable_qna MCP tool. Pairs with QNA-DISABLED: storage mode raises the bar from 'on by default' to 'must be explicit'."
+      "status": "covered",
+      "ourRuleId": "DAC-QNA-STORAGE, DAC-QNA-DISABLED",
+      "notes": "DAC-QNA-STORAGE inspects effective partition modes and surfaces a non-scoring verification advisory for DirectQuery/Direct Lake only when the on-disk Q&A switch cannot be read. When definition.pbism is readable, DAC-QNA-DISABLED evaluates the actual qnaEnabled value instead, so the two rules never double-flag the same model.",
+      "proposedRuleId": "DAC-QNA-STORAGE, DAC-QNA-DISABLED",
+      "proposedCheck": "Implemented and pinned across Import dormancy, unknown Direct Lake, and enabled DirectQuery states by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Q&A index hard limit: first 1,000 model entities only",
-      "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE (CopilotLimits, Critical, hard gate -> caps overall at 60/D) counts tables, total columns, total measures, relationships, per-table columns and name length, but its thresholds are the Copilot model-scale ceilings (e.g. >10000 cols, >5000 measures), NOT the Q&A-index 1,000-entity (tables+fields) limit. So the relevant ceiling exists conceptually in the same category but the specific 1,000-indexable-entities count is not computed and never warns at/near 1,000. The catalog marks this 'recommended' (warn), whereas LIMIT-SCALE only models the much higher hard ceilings.",
+      "status": "covered",
+      "ourRuleId": "LIMIT-QNA-INDEX",
+      "notes": "LIMIT-QNA-INDEX deterministically counts visible tables, columns and measures in the Q&A-indexable surface, stays dormant below the documented threshold, and surfaces a Proposal above 1,000 entities.",
       "proposedRuleId": "LIMIT-QNA-INDEX-ENTITIES",
-      "proposedCheck": "Deterministic. Detection: indexableEntities = count of visible tables + visible columns (excluding RowNumber) + visible measures (the Q&A-indexed surface); warn (Medium) at >=900 approaching the ceiling and High at >1000, message naming how many entities will be dropped from the index. Add as a new CopilotLimits rule (recommended/warn, not a hard cap). Fix path: not a single MCP tool — remediation is to hide non-business entities (set_column_hidden) to pull the indexable count under 1,000; surface as Proposal guidance plus apply_safe_fixes-style hide suggestions."
+      "proposedCheck": "Implemented as LIMIT-QNA-INDEX. It is not an overall-grade hard gate because entities beyond the ceiling are a degraded index surface rather than proof that every AI use is blocked."
     },
     {
       "title": "Q&A index hard limit: 5 million unique values",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No cardinality/unique-value analysis in the readiness ruleset. LIMIT-SCALE counts object metadata only, never distinct values. The plan doc anticipated a DMV-based 'indexing limit' rule (DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS / >5,000,000 distinct text values) but it is not implemented in ReadinessRules.cs.",
+      "status": "covered",
+      "ourRuleId": "SCALE-QNA-INDEX",
+      "notes": "SCALE-QNA-INDEX is a live Dmv ModelRule that sums measured cardinality only across visible string columns and flags totals above 5,000,000. It now uses Applicable=0 when no indexed-column statistics are available, so a failed or unavailable live measurement cannot create an always-pass CopilotLimits rule.",
       "proposedRuleId": "LIMIT-QNA-UNIQUE-VALUES",
-      "proposedCheck": "Deterministic but live-only (DMV/data, RuleKind.Dmv). Detection: sum indexed unique text values across indexable columns using a live connection — run_dmv against $SYSTEM column statistics / DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS, or run_dax with COUNTROWS(DISTINCT(...)) per text column — and warn as the total approaches 5,000,000. Degrade gracefully to 'not evaluated / Applicable=0' when offline (no skew to the score), as the plan's dmv-rule contract requires. Category Scale/CopilotLimits, recommended. Fix: hide/lower-cardinality high-card text columns (set_column_hidden); Proposal guidance, no one-click fix."
+      "proposedCheck": "Implemented as SCALE-QNA-INDEX. The offline scan omits live rules; an empty live-stat set also keeps this rule dormant."
     },
     {
       "title": "Q&A indexes only text values under 100 characters",
       "status": "missing",
       "ourRuleId": "",
-      "notes": "Not modeled. No rule inspects column value lengths. Note the existing DESC-LONG rule checks DESCRIPTION length (>200 chars on measures), which is unrelated — this requirement is about the length of DATA values in text columns, which the engine never samples.",
+      "notes": "Still open after completion batch 6. This requirement concerns maximum DATA-value length, not metadata description length. The readiness-only lane cannot supply the needed statistic; it requires a new live Engine query and a ReadinessLiveStats field.",
       "proposedRuleId": "QNA-LONGTEXT-UNINDEXED",
       "proposedCheck": "Deterministic but live-only (RuleKind.Dmv, best-practice/Info). Detection: for visible string columns, sample via run_dax (e.g. MAXX over LEN of distinct values, or EVALUATE TOPN of long values) and flag columns whose typical/text values are >=100 chars as 'not value-matchable by Copilot/Q&A'. Offline -> Applicable=0 (not evaluated). Category Scale, best-practice. Fix is advisory (these columns won't be matched by value lookups); optionally set_column_hidden if the column is noise. No deterministic auto-fix."
     },
@@ -3024,27 +3025,27 @@
     },
     {
       "title": "Direct Lake / Lakehouse models not supported by Q&A live connect (Desktop)",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "We have no model-mode/storage-mode detection anywhere in Semanticus.Analysis. LIMIT-SCALE (CopilotLimits) only counts tables/columns/measures/relationships/name length; it never inspects Partition.Mode. SYN-SCHEMA gates on CompatibilityLevel>=1465 but never on storage mode. Nothing warns that a Direct Lake / Lakehouse live-connect target cannot be indexed by Desktop Q&A tooling.",
+      "status": "covered",
+      "ourRuleId": "MODE-DIRECTLAKE-QNA",
+      "notes": "MODE-DIRECTLAKE-QNA deterministically inspects effective partition storage mode and surfaces a Direct Lake routing advisory. Applicable remains 0 because mode context is not a model-quality pass or failure.",
       "proposedRuleId": "MODE-DIRECTLAKE-QNA",
-      "proposedCheck": "Deterministic predicate over TOM: model is Direct Lake if any Partition.Mode == ModeType.DirectLake (or Model.DefaultMode == DirectLake). Scope = Model; Applicable=1; violate when a Direct Lake / Lakehouse partition exists. Category Synonyms or CopilotLimits. Severity Info/advisory (it is a context warning, not a fixable model defect — FixKind.None). No MCP tool fixes it; the remediation message tells the user Desktop Q&A cannot index this model and to author Prep-for-AI in the service. This is the same mode-detection primitive needed by three other requirements below, so build a shared ModelMode helper (Import/DirectQuery/DirectLake/Composite) once."
+      "proposedCheck": "Implemented as MODE-DIRECTLAKE-QNA with FixKind.None and service-authoring guidance."
     },
     {
       "title": "Q&A setup (linguistic teaching) only for Import and DirectQuery",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
-      "notes": "SYN-SCHEMA (line 162) and SYN-FIELD (line 172) drive synonym/linguistic remediation and gate on CompatibilityLevel>=1465, but they do NOT gate on storage mode. They will happily fire 'add synonyms' findings on a Direct Lake / Lakehouse model where Desktop Q&A linguistic teaching is unsupported, so the recommended fix may be unactionable in Desktop. enable_qna/set_synonyms MCP tools exist and write LSDL, but we never tell the user the teaching surface is mode-limited.",
+      "status": "covered",
+      "ourRuleId": "MODE-DIRECTLAKE-QNA, CFG-PREP-MODE",
+      "notes": "MODE-DIRECTLAKE-QNA deterministically detects effective Direct Lake partition mode and explicitly says that Desktop Q&A setup linguistic teaching is unavailable. CFG-PREP-MODE routes Prep-for-AI authoring for the same model to the Fabric service. Both are non-scoring advisories with Applicable=0, so mode context never inflates or docks the grade.",
       "proposedRuleId": "SYN-MODE-LIMIT",
-      "proposedCheck": "Deterministic predicate: reuse the shared ModelMode helper; when mode is not Import and not DirectQuery (i.e. Direct Lake / Lakehouse / other), downgrade SYN-SCHEMA/SYN-FIELD from actionable to advisory and emit a note that linguistic teaching cannot be authored from Desktop for this mode. Cleanest implementation: add an applicability guard to the existing SYN rules (return Applicable=0 or attach an advisory) rather than a wholly separate rule, plus one MODE-aware finding. Fix path: enable_qna/set_synonyms still work when applied in the service; message routes the user there."
+      "proposedCheck": "Implemented by the existing storage-mode advisories rather than a duplicate Synonyms rule. Import and DirectQuery remain clean; Direct Lake is routed to service authoring."
     },
     {
       "title": "Prep-for-AI authoring in Desktop limited to Import/DirectQuery/Composite",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "DataAgentConfig category exists with weight 0.08 (ReadinessAnalyzer.cs) but has ZERO rules, so it never contributes to the score (it is dropped by the catEvals.Count>0 guard). We have no Prep-for-AI store reader, no AI-instructions/AI-data-schema/verified-answer detection, and no mode detection. Nothing knows that Direct Lake Prep-for-AI authoring must happen in the service, not Desktop.",
+      "status": "covered",
+      "ourRuleId": "CFG-PREP-MODE",
+      "notes": "CFG-PREP-MODE deterministically detects Direct Lake and routes AI data schema, verified answers and AI instructions authoring to the Fabric service. It is a non-scoring advisory with Applicable=0.",
       "proposedRuleId": "CFG-PREP-MODE",
-      "proposedCheck": "Deterministic predicate: ModelMode helper; if mode is Direct Lake (or any non-Import/DirectQuery/Composite-local), and the workbench is about to author Prep-for-AI content, emit an advisory that Prep-for-AI (AI data schema, verified answers, AI instructions) must be authored in the Fabric service for this model, not Desktop. Category DataAgentConfig. FixKind.Proposal/None (informational routing, not auto-fixable). This is one of the DataAgentConfig rules the empty category should contain (see CFG-AI-INSTRUCTIONS / CFG-AI-SCHEMA / CFG-VERIFIED-ANSWERS below)."
+      "proposedCheck": "Implemented as CFG-PREP-MODE; Import and DirectQuery models remain clean and dormant."
     },
     {
       "title": "OLS not supported by Q&A for AAS / on-prem SSAS-hosted models",
@@ -3081,18 +3082,18 @@
     {
       "title": "Model bloat (excess tables/columns/measures) degrades accuracy",
       "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE (line 242) is a HARD-CEILING gate (>500 tables, >10000 cols, >5000 measures, >2000 rels, >1000 cols/table, >256-char names) that caps the grade at D when Copilot is literally disabled. That is the absolute-limit half. The requirement here is the softer 'unused/excessive OBJECTS create noise even below the ceiling' — we have NO unused-object / trim-to-scope detection. We also have no AI-data-schema scoping mechanism (the recommended remediation) because DataAgentConfig is empty.",
+      "ourRuleId": "LIMIT-SCALE, SCALE-HICARD-COLUMN, REL-DISCONNECTED, DAC-FIELD-PARAM-COMPLEXITY, MEAS-DUP-EXPR",
+      "notes": "Hard ceilings, live high-cardinality text, disconnected business tables, field-parameter complexity and duplicate measures are observable bloat signals. The row remains partial because whether a below-limit object is unused or unnecessary is a workload and business judgment.",
       "proposedRuleId": "SCALE-UNUSED-OBJECTS",
-      "proposedCheck": "Non-deterministic/DMV (requirement deterministic:false). Candidate detection is deterministic from metadata (columns referenced by no measure/relationship/hierarchy/sort-by; tables with zero relationships excluding parameter tables) but TRUE unused-ness needs live usage stats (DISCOVER_CALC_DEPENDENCY for dependency closure; query/refresh stats are not in TOM), so it is a Wave-2 DMV-assisted rule. Category Scale (new) or CopilotLimits, Severity recommended. Fix path: rather than delete (risky), recommend EXCLUDING the noise from the AI data schema via a future set_ai_data_schema MCP tool — i.e. scope, do not trim. On offline scan, emit the deterministic candidate list as Proposal-only."
+      "proposedCheck": "The deterministic candidate signals are implemented. Full unused-object classification stays a judgment non-goal because metadata cannot prove workload usage or business value, and the analyzer must never recommend deletion from a count heuristic."
     },
     {
       "title": "High-cardinality columns and inefficient DAX flagged as model problems",
-      "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE covers gross object counts but NOT cardinality, data types, or DAX efficiency. The structural BPA layer (Bpa.cs / BpaDefaultRules.cs, surfaced via bpa_scan) carries general performance/data-type/DAX best-practice rules, but those are the separate non-AI BPA ruleset, not the AI-readiness scorecard — so high-cardinality and inefficient-DAX are not represented as AI-readiness findings. The plan envisions a DMV 'Indexing limit' rule (>1000 text cols / >5M distinct text values) but it is unimplemented.",
-      "proposedRuleId": "SCALE-CARDINALITY",
-      "proposedCheck": "DMV / non-deterministic (deterministic:false). Cardinality needs live column stats — DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS or TOPN distinct counts via ADOMD — so it is a Wave-2 live rule; degrade to Applicable=0 offline. Predicate: flag visible high-cardinality text columns above a threshold (e.g. >5M distinct text values, or >1000 text columns) and surface inefficient-DAX/incorrect-data-type signals (the latter can ride on the existing BPA performance rules cross-referenced into the readiness scorecard). Category Scale/CopilotLimits, Severity recommended. Fix path: hide highest-cardinality non-business text columns (needs the missing set_column_metadata isHidden tool) or exclude from AI data schema; data-type fixes are Proposal-only."
+      "status": "covered",
+      "ourRuleId": "SCALE-HICARD-COLUMN, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS",
+      "notes": "SCALE-HICARD-COLUMN deterministically flags measured visible text columns above its high-cardinality threshold and stays dormant without live evidence. Four token-path DAX rules surface representative inefficient or unreliable DAX patterns without matching comments, strings or names.",
+      "proposedRuleId": "SCALE-HICARD-COLUMN, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS",
+      "proposedCheck": "Implemented. Coverage means the two named problem families are represented by deterministic findings; it does not claim exhaustive workload tuning or substitute for the separate BPA and Memory Analyzer workflows."
     },
     {
       "title": "Duplicate/overlapping measures create ambiguity",
@@ -3112,59 +3113,59 @@
     },
     {
       "title": "Implicit measures and wrong default summarization degrade results",
-      "status": "partial",
-      "ourRuleId": "FMT-SUMMARIZE",
-      "notes": "FMT-SUMMARIZE covers ONLY the key/relationship-endpoint slice: its population is m.AllColumns.Where(IsKey || endpoints.Contains(c)) and it flags SummarizeBy != None/Default. That catches keys/FKs that wrongly aggregate, but it does NOT cover (a) implicit-measure reliance — an ordinary numeric fact column left with SummarizeBy=Sum and no explicit measure covering it, nor (b) wrong-default direction (e.g. a Year/Latitude column that should be None but isn't a relationship endpoint). The plan (section F 'Wrong SummarizeBy on key/year/geo' and section H 'Implicit-measure reliance') asks for both; only the key/endpoint half shipped.",
+      "status": "covered",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
+      "notes": "The visible numeric surface is partitioned deterministically: FMT-SUMMARIZE evaluates key/relationship columns, SUMMARIZE-DIMENSION evaluates canonical non-additive dimensions, and DAC-IMPLICIT-MEASURE evaluates the remaining auto-aggregating numeric fields. A column belongs to exactly one population, so the score does not double-count the same defect.",
       "proposedRuleId": "FMT-IMPLICIT (and FMT-SUMMARIZE-NUMERIC for the year/geo non-endpoint names)",
-      "proposedCheck": "Deterministic. FMT-IMPLICIT: scope = numeric DataColumns that are visible, not a relationship endpoint, not IsKey, with SummarizeBy != None, AND no explicit Measure references the column (offline: scan measure DAX text for [Column]/Table[Column]; better via run_dmv DISCOVER_CALC_DEPENDENCY). Violation = numeric column auto-aggregates with no explicit measure → implicit-measure reliance. Fix = set_summarize_by(None) as a SafeFix where a covering measure exists; where none exists, downgrade to Proposal/AiContent that scaffolds an explicit DAX measure via create_measure. FMT-SUMMARIZE-NUMERIC: extend the deterministic name set the plan lists (Year, Month, Latitude, Longitude) so non-endpoint dimension keys also get SummarizeBy=None via set_summarize_by (SafeFix)."
+      "proposedCheck": "Implemented by DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE and SUMMARIZE-DIMENSION with violation, clean and dormant tests for every population."
     },
     {
       "title": "Non-star-schema / flat denormalized models hurt DAX generation",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "We have REL-BIDI (bidirectional cross-filter) and DATE-MARK, but nothing assesses star-schema shape: no disconnected-table rule, no many-to-many rule, no flat/denormalized/wide-table heuristic, no fact/dimension delineation. The plan section D lists 'Not a star schema', 'Disconnected table', and 'Many-to-many' as proposals — none implemented. Relationships category currently scores almost entirely off REL-BIDI + DATE-MARK.",
-      "proposedRuleId": "REL-STAR (plus REL-DISCONNECTED, REL-M2M as deterministic companions)",
-      "proposedCheck": "Mostly deterministic structure analysis (the judgment part is LLM/Proposal). REL-DISCONNECTED: tables with 0 relationships excluding known parameter/disconnected-by-design tables → Proposal. REL-M2M: SingleColumnRelationship with FromCardinality==Many && ToCardinality==Many → Proposal. REL-STAR: build the relationship graph, classify each table as fact (many-side hub, mostly numeric measures) vs dimension (one-side), and flag wide denormalized tables (high column count carrying both keys and descriptive attributes from would-be dimensions) → heuristic + LLM adjudication, FixKind=Proposal (never silent; structural). No safe auto-fix — these are advisory. No single MCP tool fixes it; remediation is a Proposal/change-plan that the user's Claude drafts (split tables / normalize), applied via the change-plan engine."
+      "status": "partial",
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "notes": "The deterministic graph slice is implemented: bidirectional, many-to-many, snowflake/bridge and disconnected structures are findings. Flat/denormalized intent is not declared in model metadata, so that remainder is pinned in residualBuckets.judgment.",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedCheck": "Implemented for observable graph anti-patterns. The semantic flat/denormalized classification remains a judgment non-goal; no guessed REL-STAR rule is queued."
     },
     {
       "title": "Ambiguous multiple date columns confuse Copilot",
-      "status": "partial",
-      "ourRuleId": "DATE-MARK",
-      "notes": "DATE-MARK only checks that SOME table is marked DataCategory='Time'. It does nothing about the ambiguity case the requirement targets: a model that HAS a marked date table but also has several date columns (Order/Ship/Due Date, calendar vs fiscal) with multiple relationships to the date table and no stated default. There is no multiple-active/inactive-date-field detector and no AI-instructions line to declare the default date. Also note: once a date table is marked, DATE-MARK passes cleanly while real ambiguity remains.",
+      "status": "covered",
+      "ourRuleId": "DATE-AMBIGUOUS",
+      "notes": "DATE-AMBIGUOUS deterministically flags a visible non-date table with multiple event DateTime columns while excluding marked date tables and Start/End or Effective/Expiry validity ranges. The fix remains a reviewed Proposal because choosing the intended default date is business intent.",
       "proposedRuleId": "DATE-AMBIGUOUS",
-      "proposedCheck": "Deterministic detection, AI-content fix. Deterministic predicate: count date/datetime columns across fact tables and count relationships (active + inactive) into the marked date table; flag when (>1 datetime column on a fact) OR (>1 relationship from one fact to the date table, i.e. role-playing Order/Ship/Due) AND no default is stated. The 'state the default' fix lives in the AI-instructions store, which we don't write yet — so today the only available remediation is descriptions/synonyms via set_description (weak). Real fix path = set_ai_instructions (a DataAgentConfig tool that does NOT exist yet) to add 'Default date = Order Date' plus optionally a Verified Answer. FixKind=AiContent (user's Claude writes the instruction line); becomes fully fixable only when the DataAgentConfig write layer exists."
+      "proposedCheck": "Implemented as DATE-AMBIGUOUS with exact table-level applicability and validity-range precision guards."
     },
     {
       "title": "Descriptions truncated after first 200 characters for Copilot grounding",
-      "status": "partial",
-      "ourRuleId": "DESC-LONG",
-      "notes": "DESC-LONG deterministically flags Description.Length > 200, but ONLY on Measures (scope m.AllMeasures). The 200-char truncation applies equally to Table and Column descriptions used for grounding, and we have no DESC-LONG equivalent for those. So tables/columns with bloated descriptions silently pass. Also DESC-LONG measures raw .Length; it does not 'front-load' (it can't detect whether meaning is in the first 200 — that's a judgment, fine to leave as a rewrite hint).",
-      "proposedRuleId": "DESC-LONG-TABLE, DESC-LONG-COLUMN (or generalize DESC-LONG to a shared predicate over all describable objects)",
-      "proposedCheck": "Deterministic (Description.Length > 200) over Table and Column scopes, mirroring DESC-LONG. Cleanest implementation: refactor DESC-LONG into one predicate applied to measures+tables+columns. Fix = AiContent: the user's Claude rewrites a front-loaded <=200-char description applied via set_description (which already documents the <=200 guidance). Severity Medium, same as the measure variant."
+      "status": "covered",
+      "ourRuleId": "DESC-LONG, DESC-LONG-OBJECT",
+      "notes": "DESC-LONG covers visible measures and DESC-LONG-OBJECT covers visible tables and columns. Both deterministically flag descriptions over 200 characters, remain dormant on undocumented models, and route the front-loaded rewrite to the user's assistant through AiContent.",
+      "proposedRuleId": "DESC-LONG, DESC-LONG-OBJECT",
+      "proposedCheck": "Implemented and pinned across all three object types by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Calculation items are absent from metadata; use group description",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No rule references CalculationGroup or CalculationItem anywhere in the analysis assembly (confirmed by grep; the only hit is a CalculationItemCollectionEditor shim in Semanticus.Core/Compat/Shims.cs, unrelated to readiness). The plan (section B, 'Calc-group items not in description') specifies this rule but it is unimplemented. Because Copilot never sees calc items, the group column's description must enumerate them, and we check nothing.",
-      "proposedRuleId": "DESC-CALCGROUP",
-      "proposedCheck": "Deterministic. Scope = the calculation group's column; violation = Description is empty OR does not contain every CalculationItem.Name (string.Contains per item) within the first 200 chars. This is deterministic to DETECT but the remediation content is AiContent: the user's Claude writes a <=200-char description enumerating + briefly explaining each item, applied via set_description on the calc-group column. Category: file under Descriptions (per plan) or DataAgentConfig. Severity Medium. Requires the TOM wrapper to expose CalculationGroup/Items, which is not currently surfaced in the readiness scope — a prerequisite."
+      "status": "covered",
+      "ourRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS",
+      "notes": "DAC-CALC-GROUP flags a calculation group with no table/column description. DESC-CALCGROUP-ITEMS takes over once documentation exists and checks every item name as a whole token. The mutually exclusive populations prevent one calculation group from being counted twice.",
+      "proposedRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS",
+      "proposedCheck": "Implemented and pinned across missing, incomplete, complete and dormant states by ReadinessCatalogBatch4Tests."
     },
     {
       "title": "Calculation groups degrade Copilot DAX generation",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "Same underlying gap as the previous item, framed as a presence-of-calc-groups Copilot risk. We have no detection that calculation groups even exist in the model, let alone whether their descriptions enumerate items. This is the 'flag the risk' sibling of DESC-CALCGROUP.",
+      "status": "covered",
+      "ourRuleId": "DAC-CALC-GROUP",
+      "notes": "DAC-CALC-GROUP deterministically detects calculation groups with no table or group-column description. Once documentation exists, DESC-CALCGROUP-ITEMS owns completeness, so the same group is not counted twice.",
       "proposedRuleId": "LIMIT-CALCGROUP (or fold into DESC-CALCGROUP as the same finding)",
-      "proposedCheck": "Deterministic detection: model contains >=1 CalculationGroup whose column description fails the item-enumeration check (reuse DESC-CALCGROUP predicate). Strength best-practice → Severity Info/Medium, Copilot-only weighting. Best implemented as one rule with two outcomes rather than two rules: detect calc groups, and if any lack item-enumerating descriptions, surface a Copilot-risk finding. Fix path identical: set_description on the group column (AiContent). No separate MCP tool needed."
+      "proposedCheck": "Implemented as the mutually exclusive DAC-CALC-GROUP and DESC-CALCGROUP-ITEMS pair."
     },
     {
       "title": "Model complexity (field params, disconnected tables, currency conversion) reduces reliability",
       "status": "partial",
-      "ourRuleId": "LIMIT-SCALE",
-      "notes": "LIMIT-SCALE covers HARD scale ceilings only (tables>500, cols>10000, measures>5000, rels>2000, per-table cols>1000, names>256) and acts as a critical gate capping overall at D. It does NOT model graded complexity: field parameters / disconnected tables, currency-conversion patterns, dependency depth, or a 'results not consistently correct → advise not to use Copilot' soft score. The requirement is a risk SCORE, not a binary ceiling.",
+      "ourRuleId": "LIMIT-SCALE, REL-DISCONNECTED, DAC-FIELD-PARAM-COMPLEXITY",
+      "notes": "LIMIT-SCALE covers hard ceilings, REL-DISCONNECTED finds isolated business tables, and DAC-FIELD-PARAM-COMPLEXITY identifies field-parameter models. Currency-conversion intent, dependency-depth tolerance and an overall reliability verdict remain semantic judgment.",
       "proposedRuleId": "LIMIT-COMPLEXITY",
-      "proposedCheck": "Deterministic composite score (not a hard gate). Signals: count of disconnected tables (0-relationship, incl. field-parameter tables detected via the field-parameter annotation/2-col Name+Value+Order shape), presence of currency-conversion patterns (multiple currency columns + a rate table), high measure-dependency depth, and total field count. Combine into a 0..100 complexity sub-signal feeding the Copilot profile; above a threshold emit an advisory 'Copilot results may be unreliable on this model'. FixKind=None (advisory) — there is no MCP fix; it informs the user. Lives in CopilotLimits (or the proposed complexity facet of DataAgentConfig). Field-parameter / disconnected detection is shared with REL-DISCONNECTED."
+      "proposedCheck": "The objective metadata signals are implemented. Do not synthesize a composite reliability score from arbitrary heuristics; the remaining currency-conversion and acceptable-complexity decisions belong to model review and interview evidence."
     },
     {
       "title": "Linguistic modeling / synonyms required for good Copilot results",
@@ -3186,7 +3187,7 @@
       "title": "Missing values cause Copilot to fabricate / hallucinate",
       "status": "missing",
       "ourRuleId": "",
-      "notes": "No rule touches data-quality / completeness. Every existing rule is metadata-only (names, descriptions, synonyms, format, visibility, relationships, scale). This is a data-quality signal about NULL/blank values in the data, not in metadata, so none of DESC-*, NAME-*, FMT-*, VIS-FK, LIMIT-SCALE come close. It requires the live connection (run_dax/run_dmv) which we have, but no rule consumes it for completeness. Belongs in DataAgentConfig (the empty category).",
+      "notes": "Still open after completion batch 6. This is a live data-quality signal about NULL/blank values, not model metadata. The readiness-only lane cannot supply it; it requires a new live Engine query and per-column null/blank statistics.",
       "proposedRuleId": "DAC-COMPLETENESS",
       "proposedCheck": "DMV/live rule (RuleKind.Dmv, FixKind.Proposal). For each visible column in the AI-schema scope, run a live DAX probe: COUNTROWS(FILTER(ISBLANK(col))) / COUNTROWS(table); flag columns whose null-fraction exceeds a threshold (e.g. >5%). Deterministic predicate once stats are fetched, but degrade to N==0/not-evaluated when offline (same graceful-degrade contract the plan specifies for dmv rules). Fix is advisory/Proposal only — Semanticus does not edit data; surface 'remove/handle missing rows upstream' guidance. No MCP write tool fixes this (it is an ETL fix, not a model-metadata fix); could optionally draft an AI-instructions caveat once set_ai_instructions exists."
     },
@@ -3240,11 +3241,11 @@
     },
     {
       "title": "Prep for AI requires Q&A enabled (preview gate)",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
-      "notes": "PARTIAL. SYN-SCHEMA already deterministically detects 'no linguistic schema' (no JSON culture content) and enable_qna seeds it — that IS the Q&A-enablement signal, and it is exactly the gate the Prep-for-AI path depends on. What's missing: SYN-SCHEMA lives in the Synonyms category and is framed as a synonyms problem, not as a HARD GATE on the (nonexistent) Prep-for-AI / Approved-for-Copilot path. Today nothing couples Q&A-enabled to DataAgentConfig, and there is no DataAgentConfig content to gate. The detection predicate exists; the gating wiring does not.",
-      "proposedRuleId": "DAC-QNA-GATE",
-      "proposedCheck": "Reuse SYN-SCHEMA's existing deterministic predicate (any culture with ContentType==Json and non-empty Content) but consume it as a GATE in ReadinessAnalyzer: if Q&A is not enabled, cap/zero the DataAgentConfig subscore and surface 'Prep-for-AI features require Q&A enabled' first — analogous to the existing LIMIT-SCALE and DESC-MEASURE gates in ReadinessAnalyzer.Analyze. Fix = existing enable_qna MCP tool. No new detection needed; needs the gate wiring + the DataAgentConfig rules it gates to exist."
+      "status": "covered",
+      "ourRuleId": "DAC-QNA-DISABLED",
+      "notes": "DAC-QNA-DISABLED is scoped to DataAgentConfig and evaluates the actual qnaEnabled switch when the PBIP source is readable. It reports the Prep-for-AI prerequisite directly and stays dormant when the switch cannot be observed.",
+      "proposedRuleId": "DAC-QNA-DISABLED",
+      "proposedCheck": "Implemented as a DataAgentConfig rule over the actual qnaEnabled switch. The rule activates only when that switch is readable; no cross-consumer overall-grade cap is added."
     },
     {
       "title": "Copilot cannot do forecasting, anomaly detection, or key influencers",
@@ -3328,11 +3329,11 @@
     },
     {
       "title": "Configure verified answers for common / important questions",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "No VerifiedAnswers category in the ReadinessCategory enum, no rule, no storage. The catalog assigns this to a VerifiedAnswers category we do not have. Verified-answer storage is part of the deferred Prep-for-AI layer.",
+      "status": "covered",
+      "ourRuleId": "DAC-VERIFIED-ANSWERS",
+      "notes": "DAC-VERIFIED-ANSWERS uses PrepForAiReader to count file-based verified-answer definitions beside the model. It stays dormant when the storage capability is unavailable and surfaces a Proposal when Q&A is enabled but no verified answer exists.",
       "proposedRuleId": "VA-NONE",
-      "proposedCheck": "Deterministic-detect (count==0) + AiContent/Proposal-fix. Requires a new VerifiedAnswers category (and weight) added to ReadinessCategory and ReadinessAnalyzer.Weights. Detect: model is Q&A-enabled / 'approved for Copilot' but the verified-answers store has zero entries. Applicable=1 when Q&A is on, else 0. Fix path: the user's Claude expands top questions into trigger phrases + a visual spec; a future set_verified_answer MCP tool (does not exist yet) writes them, with validation deferred to the rules below. Until the storage is reverse-engineered (Wave 2), generate-ready-to-paste / Proposal only."
+      "proposedCheck": "Implemented as DAC-VERIFIED-ANSWERS in DataAgentConfig. Entry-level hidden-field, filter and trigger validation remains in the partial-schema residual bucket."
     },
     {
       "title": "Verified answers must not reference hidden fields",
@@ -3368,11 +3369,11 @@
     },
     {
       "title": "Add AI instructions in Prep for AI (not at data-agent level for semantic models)",
-      "status": "missing",
-      "ourRuleId": "",
-      "notes": "DataAgentConfig category has weight 0.08 but zero rules; no AI-instructions storage is read or written, and README/PLAN defer it (Wave 2). This is the second core thing DataAgentConfig should contain. The non-obvious MS truth (the DAX tool reads ONLY Prep-for-AI instructions, ignoring data-agent-level instructions) is documented in the plan but not enforced.",
-      "proposedRuleId": "DAC-AI-INSTRUCTIONS-EMPTY",
-      "proposedCheck": "Deterministic-detect (presence/empty, <=10,000 char cap) + AiContent-generate. DataAgentConfig, recommended. Detect: model is Q&A/Copilot-approved (reuse the linguistic-culture probe) but the Prep-for-AI AI-instructions store is empty. Applicable=1 when Q&A on, else 0. Fix path: the user's Claude drafts grouped sections (Terminology, Metric preferences, Default groupings, Data-source routing); a future set_ai_instructions(culture, instructions, append=true) MCP tool writes into a delimited Semanticus-managed section (append, never overwrite human content). The rule's message must warn against putting model-specific guidance at the data-agent level (it is ignored for semantic-model querying). Until storage is reverse-engineered, generate-ready-to-paste only. Together with DAC-AI-SCHEMA-MISSING and DAC-SCHEMA-DEP-CLOSURE these three are precisely what the empty DataAgentConfig category should hold."
+      "status": "covered",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS",
+      "notes": "DAC-AI-INSTRUCTIONS reads Prep-for-AI CustomInstructions from the model's LSDL, becomes applicable only with a readable legacy linguistic schema, and flags an empty block. The AiContent fix is authored by the user's assistant and applied through set_ai_instructions; no engine inference is involved.",
+      "proposedRuleId": "DAC-AI-INSTRUCTIONS",
+      "proposedCheck": "Implemented as DAC-AI-INSTRUCTIONS over LSDL CustomInstructions. It stays dormant without a readable legacy linguistic schema, stands down for the unparsed Copilot Tooling Format, and routes drafting through set_ai_instructions with FixKind.AiContent."
     },
     {
       "title": "Keep AI instructions focused; avoid conflicting/complex instructions",
@@ -3384,11 +3385,11 @@
     },
     {
       "title": "Enable Power BI Q&A as a prerequisite for all Prep-for-AI features",
-      "status": "partial",
-      "ourRuleId": "SYN-SCHEMA",
-      "proposedRuleId": "DAC-QNA-GATE",
-      "proposedCheck": "Deterministic, and it should become a GATE rather than just a finding. SYN-SCHEMA already detects the exact condition (no JSON linguistic schema on any culture, CL>=1465) and enable_qna fixes it. What's missing is the gating semantics: the requirement says Q&A is a hard prerequisite that disables the AI data schema / verified answers / AI instructions tabs. Our engine has gates for LIMIT-SCALE (cap 60) and DESC-MEASURE>50% (cap 69) but NO gate for missing linguistic schema, even though the plan (ai-readiness-plan.md soft gate: 'no linguistic schema -> cap at C') called for one. Proposed: promote the SYN-SCHEMA violation into a soft gate in ReadinessAnalyzer (cap overall at ~C/70 and add to GatedBy), and/or surface a DataAgentConfig-scoped DAC-QNA-GATE that reports 'Prep-for-AI features disabled until Q&A is enabled.' Fix: enable_qna.",
-      "notes": "The deterministic detection and the enable_qna fix already exist (SYN-SCHEMA, Synonyms category). Partial because the documented GATING/prerequisite behavior is not implemented: the planned 'no linguistic schema -> cap at C' soft gate was never wired into ReadinessAnalyzer.Analyze (only the scale and undescribed-measures gates are). So we detect it but don't treat it as the hard prerequisite the requirement describes."
+      "status": "covered",
+      "ourRuleId": "DAC-QNA-DISABLED",
+      "proposedRuleId": "DAC-QNA-DISABLED",
+      "proposedCheck": "Implemented as DAC-QNA-DISABLED. An observed false switch docks DataAgentConfig and explains the Prep-for-AI prerequisite; an unknown switch remains dormant, with no combined-grade cap.",
+      "notes": "DAC-QNA-DISABLED detects the real file-backed Q&A switch in DataAgentConfig and reports that all Prep-for-AI features depend on it. No combined-grade cap is added: Q&A being disabled blocks Prep-for-AI but does not block every AI consumer, so the violation affects its applicable category rather than redefining every scorecard."
     },
     {
       "title": "Mark the model 'Approved for Copilot'",
@@ -3400,19 +3401,19 @@
     },
     {
       "title": "Use a star schema; avoid flat/denormalized/pivoted tables",
-      "status": "missing",
-      "ourRuleId": "",
-      "proposedRuleId": "REL-STAR-SCHEMA",
-      "proposedCheck": "Proposal (structural), with a deterministic heuristic pre-filter. We have REL-BIDI and DATE-MARK in the Relationships category but nothing detecting flat/denormalized/pivoted/wide tables or absence of fact/dimension structure. Proposed REL-STAR-SCHEMA: deterministic heuristics flag (a) disconnected tables (0 relationships, excluding parameter tables), (b) very wide tables (column count above a threshold) suggesting denormalization, (c) repeated/pivoted column-name patterns (e.g. Jan/Feb/Mar or Year2021/Year2022), and (d) a table that is both a relationship 'from' and 'to' hub vs leaf imbalance indicating no clear star. Mark FixKind.Proposal — never silent; the user's Claude drafts a normalization plan. No single MCP tool fixes schema shape (it's a remodel), so this is review-only via the change-plan engine.",
-      "notes": "Missing. The plan's section D listed 'Not a star schema' and 'Disconnected table' as proposal rules but neither is implemented. This is genuinely structural — there is no MCP remediation tool (rename/set_* don't reshape the schema), so it can only ever be a Proposal surfaced to the human + Claude, not an auto-fix."
+      "status": "partial",
+      "ourRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedRuleId": "REL-BIDI, REL-M2M, REL-SNOWFLAKE, REL-DISCONNECTED",
+      "proposedCheck": "Implemented for observable graph anti-patterns. Wide/pivoted interpretation remains a judgment non-goal and structural remediation stays Proposal-only.",
+      "notes": "The deterministic graph slice is implemented by REL-BIDI, REL-M2M, REL-SNOWFLAKE and REL-DISCONNECTED. Whether a wide table should be remodeled is subjective and structural, so the row remains partial and is pinned in residualBuckets.judgment."
     },
     {
       "title": "Create explicit measures and set correct default summarization; avoid implicit measures",
-      "status": "partial",
-      "ourRuleId": "FMT-SUMMARIZE",
-      "proposedRuleId": "FMT-IMPLICIT-MEASURE",
-      "proposedCheck": "Mixed: deterministic detection + Proposal/AiContent fix. FMT-SUMMARIZE today scopes ONLY to key/relationship-endpoint columns (c.IsKey || relationship endpoints) and flags SummarizeBy != None — i.e. it forces aggregation OFF for keys. The requirement is the broader inverse: every numeric NON-key column that users query implicitly should instead be backed by an explicit measure (and have a deliberate SummarizeBy). Proposed FMT-IMPLICIT-MEASURE (catalog category Measures; in our enum this maps to Formatting since there is no Measures category): scope = visible numeric data columns NOT key/endpoint, SummarizeBy != None, with no explicit measure already aggregating that column (dependency check). Deterministic to detect; fix is FixKind.Proposal/AiContent — the user's Claude scaffolds an explicit DAX measure via update_measure, optionally set_measure_format. Note the catalog's 'Measures' category does not exist in ReadinessCategory; either add it or file under Formatting.",
-      "notes": "Partially covered. FMT-SUMMARIZE handles only the 'keys must not aggregate' half and is narrowly scoped to relationship/key columns. The 'avoid implicit measures on business numerics -> create explicit measures' half is missing, and it needs a dependency check (is this column already covered by a measure?) plus measure scaffolding via update_measure. Also note: the catalog tags this 'Measures', a category we don't have."
+      "status": "covered",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
+      "proposedRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
+      "proposedCheck": "Implemented as three disjoint deterministic populations: additive implicit numerics, keys/relationship endpoints, and canonical non-additive numeric dimensions. Violation, clean and dormant cases pin each population.",
+      "notes": "DAC-IMPLICIT-MEASURE detects visible additive numerics that still rely on implicit aggregation; FMT-SUMMARIZE owns keys and relationship endpoints; SUMMARIZE-DIMENSION owns canonical non-additive numeric dimensions. Their populations are partitioned so each applicable column is evaluated for the right remediation without double-counting."
     },
     {
       "title": "Disambiguate multiple date fields with verified answers / AI instructions",
@@ -3432,11 +3433,11 @@
     },
     {
       "title": "Optimize model performance / remove bloat before AI use",
-      "status": "missing",
-      "ourRuleId": "",
+      "status": "partial",
+      "ourRuleId": "LIMIT-SCALE, SCALE-HICARD-COLUMN, REL-DISCONNECTED, DAC-FIELD-PARAM-COMPLEXITY, MEAS-DUP-EXPR, FMT-SUMMARIZE, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS",
       "proposedRuleId": "SCALE-BLOAT-CARDINALITY",
-      "proposedCheck": "DMV-backed (needs live stats) + Proposal. LIMIT-SCALE only checks hard Copilot ceilings (>500 tables, >10000 cols, etc.) as a critical GATE — it does not address bloat/high-cardinality/unused-object noise. The catalog tags this 'Scale', a category we don't have (closest is CopilotLimits). Proposed SCALE-BLOAT-CARDINALITY (Kind.Dmv): via DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS / column distinct-count, flag high-cardinality non-business text columns and (via DISCOVER_CALC_DEPENDENCY / no relationship + no measure references) unused columns/measures. Degrade gracefully to not-evaluated when offline (per the plan's DMV pattern). Fix: hide or exclude-from-AI-schema the highest-cardinality noise columns (set IsHidden via a column-metadata tool), or Proposal to remove unused objects. Requires the Wave-2 live ADOMD/DMV foundation, which isn't wired into the analyzer yet.",
-      "notes": "Missing as a readiness rule. Note Semanticus has a separate structural BPA ruleset (BpaDefaultRules.cs) that may cover some bloat, but the AI-readiness scorecard has no bloat/cardinality rule. It is inherently DMV/live and the analyzer currently runs purely over offline TOM metadata, so this is a Wave-2 item. Also tagged 'Scale', a category not in our enum."
+      "proposedCheck": "The readiness scorecard now combines hard ceilings, live high-cardinality text, disconnected and field-parameter complexity, duplicate measures, incorrect summarization and four deterministic DAX anti-patterns. It remains partial because proving an object is unused or a model is fully optimized needs workload evidence and business judgment.",
+      "notes": "Batch 6 moves this row from missing to partial. Live cardinality remains dormant without measurements, and no deletion or full-optimization claim is inferred from model metadata."
     },
     {
       "title": "Limit data-agent table scope to 25 or fewer tables per source",
@@ -3444,7 +3445,7 @@
       "ourRuleId": "",
       "proposedRuleId": "DAC-TABLE-SCOPE-25",
       "proposedCheck": "Deterministic, data-agent-specific. Distinct from LIMIT-SCALE's 500-table Copilot ceiling — this is a 25-table-per-source data-agent recommendation. No rule exists; this is core to the empty DataAgentConfig category. Detection needs the data-agent's selected-table count per source, which is a Fabric data-agent-item config NOT present in the semantic-model TOM. Proposed DAC-TABLE-SCOPE-25: if a data-agent source selection is reachable (Fabric REST/Git), flag selected-tables > 25; absent that integration, a proxy is to flag a semantic model whose visible/in-AI-schema table count exceeds 25 as 'too broad for a single data-agent source.' Fix: Proposal/advisory (narrow the selection or split sources) — no MCP tool sets data-agent selection today. Deterministic count comparison once the source list is available.",
-      "notes": "Missing. A clear DataAgentConfig deterministic rule. The blocker is data residency: the 25-table selection lives in the Fabric data-agent item, not the model Semanticus edits, so we need a Fabric-REST/Git read path (none exists). A model-table-count proxy is the offline approximation."
+      "notes": "Out-of-band non-goal for the model analyzer. The exact selected-table count lives in the deployed Fabric data-agent source, not semantic-model metadata. LIMIT-DATAAGENT-TABLES remains an explicitly non-scoring proxy for a broad visible model, but the catalog no longer calls that proxy full coverage of per-source selection."
     },
     {
       "title": "A data agent supports at most five data sources",
@@ -3653,10 +3654,6 @@
       "ourRuleId": "LIMIT-QNA-INDEX"
     },
     {
-      "title": "Limit data-agent table scope to 25 or fewer tables per source",
-      "ourRuleId": "LIMIT-DATAAGENT-TABLES"
-    },
-    {
       "title": "Ambiguous multiple date columns confuse Copilot",
       "ourRuleId": "DATE-AMBIGUOUS"
     },
@@ -3699,6 +3696,118 @@
     {
       "title": "Create explicit measures instead of relying on implicit measures",
       "ourRuleId": "DAC-IMPLICIT-MEASURE"
+    },
+    {
+      "title": "Make the primary synonym unique to avoid ambiguity",
+      "ourRuleId": "SYN-COLLIDE"
+    },
+    {
+      "title": "Format strings are used as grounding metadata",
+      "ourRuleId": "FMT-MEASURE, FMT-COLUMN"
+    },
+    {
+      "title": "Data category is used as grounding metadata",
+      "ourRuleId": "CAT-GEO, CAT-URL"
+    },
+    {
+      "title": "DirectQuery / Direct Lake models require manual Q&A enablement",
+      "ourRuleId": "DAC-QNA-STORAGE, DAC-QNA-DISABLED"
+    },
+    {
+      "title": "Calculation items are absent from metadata; use group description",
+      "ourRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS"
+    },
+    {
+      "title": "Use calculation group column descriptions to list calculation items",
+      "ourRuleId": "DAC-CALC-GROUP, DESC-CALCGROUP-ITEMS"
+    },
+    {
+      "title": "Apply correct and consistent data types",
+      "ourRuleId": "FMT-DATATYPE"
+    },
+    {
+      "title": "Fix incorrect data types (dates/numbers imported as strings)",
+      "ourRuleId": "FMT-DATATYPE"
+    },
+    {
+      "title": "Description grounding is truncated at 200 characters",
+      "ourRuleId": "DESC-LONG, DESC-LONG-OBJECT"
+    },
+    {
+      "title": "Descriptions truncated after first 200 characters for Copilot grounding",
+      "ourRuleId": "DESC-LONG, DESC-LONG-OBJECT"
+    },
+    {
+      "title": "Minimize data source scope; limit to 25 or fewer tables",
+      "ourRuleId": "LIMIT-DATAAGENT-TABLES"
+    },
+    {
+      "title": "Set Sort By Column so natural-language sorting is logical",
+      "ourRuleId": "FMT-SORTBY"
+    },
+    {
+      "title": "Add missing relationships so tables can be joined",
+      "ourRuleId": "REL-DISCONNECTED"
+    },
+    {
+      "title": "Q&A index hard limit: 5 million unique values",
+      "ourRuleId": "SCALE-QNA-INDEX"
+    },
+    {
+      "title": "Q&A setup (linguistic teaching) only for Import and DirectQuery",
+      "ourRuleId": "MODE-DIRECTLAKE-QNA, CFG-PREP-MODE"
+    },
+    {
+      "title": "Implicit measures and wrong default summarization degrade results",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION"
+    },
+    {
+      "title": "Use explicit measures and correct default summarization, not implicit measures",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION"
+    },
+    {
+      "title": "Disambiguate multiple date fields",
+      "ourRuleId": "DATE-AMBIGUOUS"
+    },
+    {
+      "title": "Enable Power BI Q&A on the model (prerequisite for Prep data for AI)",
+      "ourRuleId": "DAC-QNA-DISABLED"
+    },
+    {
+      "title": "Q&A must be enabled for Copilot data questions",
+      "ourRuleId": "DAC-QNA-DISABLED"
+    },
+    {
+      "title": "Prep for AI requires Q&A enabled (preview gate)",
+      "ourRuleId": "DAC-QNA-DISABLED"
+    },
+    {
+      "title": "Enable Power BI Q&A as a prerequisite for all Prep-for-AI features",
+      "ourRuleId": "DAC-QNA-DISABLED"
+    },
+    {
+      "title": "Linguistic metadata feeds Copilot - the model linguistic schema is grounding data",
+      "ourRuleId": "SYN-SCHEMA, SYN-FIELD, SYN-TABLE"
+    },
+    {
+      "title": "Add synonyms to tables and columns",
+      "ourRuleId": "SYN-FIELD, SYN-TABLE"
+    },
+    {
+      "title": "Add AI Instructions to encode business vocabulary and synonyms",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS, DAC-GLOSSARY-GAP"
+    },
+    {
+      "title": "Add AI instructions in Prep for AI (not at data-agent level for semantic models)",
+      "ourRuleId": "DAC-AI-INSTRUCTIONS"
+    },
+    {
+      "title": "Create explicit measures and set correct default summarization; avoid implicit measures",
+      "ourRuleId": "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION"
+    },
+    {
+      "title": "High-cardinality columns and inefficient DAX flagged as model problems",
+      "ourRuleId": "SCALE-HICARD-COLUMN, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS"
     }
   ],
   "evalSuiteDesign": {
@@ -3761,13 +3870,164 @@
       "apply_plan runEvalAfter parameter on ApplyPlanReport"
     ]
   },
+  "residualBuckets": {
+    "deferred-schema": [
+      "Define linguistic relationships (phrasings / verbs)",
+      "Set a row label for each dimension table",
+      "Use Teach Q&A to define adjective filter conditions",
+      "Add custom phrasings to define new terms, resolve ambiguity, and improve restatements",
+      "Add Name phrasings for tables of named entities",
+      "Set Row label to identify the display column of a table",
+      "Add or edit verb/preposition phrasings for relationships",
+      "Treat the linguistic schema as a first-class, exportable asset",
+      "Use Teach Q&A to define unrecognized noun synonyms",
+      "Linguistic modeling / synonyms required for good Copilot results"
+    ],
+    "partial-schema": [
+      "Verified answers require non-hidden referenced fields",
+      "Exclude helper / intermediate measures from the AI data schema",
+      "Define an AI data schema (focused subset of fields)",
+      "Include dependent objects when defining the AI data schema",
+      "Create verified answers for common or ambiguous questions",
+      "Update verified answers when referenced objects are renamed",
+      "Simplify the data schema for AI (remove ambiguous/unused fields)",
+      "Configure an AI data schema (Prep for AI) and mirror its table selection in the agent",
+      "Create Verified Answers for common/complex semantic-model questions",
+      "Verified answer config: 5-7 trigger questions, up to 3 filters, no hidden fields",
+      "Exclude helper/intermediate and duplicate/overlapping measures from the AI schema",
+      "Verified answers fail on hidden columns",
+      "Helper/intermediate measures should be excluded from AI scope",
+      "AI data schema should scope to relevant tables/columns/measures",
+      "Verified answers: 5-7 trigger questions and up to 3 filters",
+      "Create Verified Answers for common questions",
+      "Configure AI data schema in Prep for AI (scope the model to the relevant subset)",
+      "Include dependent objects when scoping the AI data schema",
+      "Verified answers must not reference hidden fields",
+      "Verified answer trigger-phrase count and limits",
+      "Re-save verified answers after renaming referenced objects",
+      "Add descriptions to objects included in the AI data schema",
+      "Disambiguate multiple date fields with verified answers / AI instructions",
+      "Remove redundant fields (e.g. extra date/FK columns) from Q&A"
+    ],
+    "out-of-band": [
+      "Mark the model as Approved for Copilot when ready",
+      "Tag / endorse models that are ready for Copilot",
+      "Mark the model Approved for Copilot and set item descriptions",
+      "Cap total data sources per agent at five",
+      "Write detailed agent instructions: role, behavior, tone, sources, fallback",
+      "Write detailed data source instructions (purpose, columns, joins, value formats)",
+      "Provide example queries (few-shot) for complex/representative logic",
+      "Example queries retrieved via vector similarity (top ~3-4)",
+      "Example queries require a question plus valid query; each must pass schema validation",
+      "Example queries NOT supported for semantic models or ontologies",
+      "Validate and de-conflict example queries with the SDK",
+      "Semantic models: DAX tool uses ONLY Prep for AI + metadata, ignores agent instructions",
+      "Evaluate and iterate against ground-truth Q&A pairs",
+      "Use source control / deployment pipelines for agent configs",
+      "Paid capacity F2+ or P1+ required",
+      "Trial SKUs and free SKUs not supported",
+      "Capacity must be in a supported region",
+      "Cross-geo Azure OpenAI tenant setting required outside US/EU boundary",
+      "Tenant admin Copilot setting must be enabled",
+      "Sovereign clouds not supported",
+      "DirectQuery Q&A index refreshes at most once per day",
+      "Prompt limit of 10,000 characters per prompt",
+      "OLS not supported by Q&A for AAS / on-prem SSAS-hosted models",
+      "Copilot cannot validate RLS in Test-as-role",
+      "Data Agent ignores agent-level instructions for DAX; use Prep for AI",
+      "Mark model 'Approved for Copilot' to remove friction treatment",
+      "Mark the model 'Approved for Copilot'",
+      "Copilot cannot do forecasting, anomaly detection, or key influencers",
+      "English-only for Copilot data questions",
+      "Live-connect from Pro/PPU still needs F64 Copilot workspace",
+      "Live-connection hides measure DAX and hidden/private objects from Copilot",
+      "Capacity scale-up takes up to 24 hours to enable Copilot",
+      "Copilot cannot be scoped to specific workloads/experiences",
+      "A data agent supports at most five data sources",
+      "Sample question/query example pairs are NOT supported for semantic models",
+      "Evaluate the data agent against ground-truth Q&A pairs with the Python SDK",
+      "RLS and CLS still apply through a data agent; only Read permission is needed",
+      "RLS/OLS data is not fully protected in verified answers (preview caveat)",
+      "Data agent enforces read-only access and Microsoft Purview governance",
+      "Data agent responses are capped at 25 rows x 25 columns (English-only)",
+      "Use Git integration and deployment pipelines for data-agent and Prep-for-AI ALM",
+      "Generate / align a Fabric IQ ontology from the semantic model for shared business vocabulary",
+      "Data agent and source workspace capacities must be co-located (region) and F2+/P1+",
+      "Limit data-agent table scope to 25 or fewer tables per source",
+      "Optimize the model for performance / use BPA and Memory Analyzer",
+      "Verify the generated DAX in each test response",
+      "Verify and inspect generated DAX during testing"
+    ],
+    "report-boundary": [
+      "Give report visuals descriptive titles (visual metadata is grounding)",
+      "Give report visuals descriptive titles (semantic-model grounding)",
+      "Report visuals need descriptive titles for grounding",
+      "Verified answers must not use report-level measures or unsupported visuals",
+      "Prepare report visuals with descriptive titles (visual metadata grounds NL2DAX)"
+    ],
+    "judgment": [
+      "Measure names should reflect their calculation and purpose",
+      "Consolidate or differentiate duplicate / overlapping measures",
+      "Descriptions help disambiguate similarly named fields",
+      "Hide or rename columns not intended for Copilot to prevent wrong-field answers",
+      "Provide predefined measures and KPIs users commonly request",
+      "Standardized, clear calculation logic for measures",
+      "Maintain standardized values within columns",
+      "Define security roles (RLS) for sensitive data",
+      "Approve high-value suggested synonyms; remove wrong ones",
+      "Name tables and columns to accurately reflect their content",
+      "Normalize so each concept is exactly one model object",
+      "Hide or exclude fields that shouldn't answer natural-language questions",
+      "Mark private/hidden objects to control Copilot grounding",
+      "Scope the agent to a single domain / use case",
+      "State what to do, not just what to avoid",
+      "Define business terms, abbreviations, and synonyms in instructions",
+      "Use leading words / syntax fragments to nudge query generation",
+      "Keep instructions concise, focused, and current",
+      "Example query quality: Clarity, Relatedness, Mapping all positive",
+      "Add query comments and avoid overlapping/contradicting examples",
+      "Avoid conflicting instructions vs verified answers",
+      "Define agent scope before selecting objects (scope-first workflow)",
+      "Duplicate/overlapping measures create ambiguity",
+      "Meet 7 of 8 data-evaluation criteria, including Consistency",
+      "AI instructions must avoid conflicting/overly complex guidance",
+      "Keep AI instructions focused; avoid conflicting/complex instructions",
+      "Build specialized, narrowly-scoped domain agents",
+      "Define business terms, abbreviations, and synonyms at the right level",
+      "Add semantic-model AI instructions in Prep for AI (terminology, metric/date/source preferences)",
+      "Hide columns and measures not meant for consumption",
+      "Hidden/private fields and tables are excluded from Copilot grounding",
+      "Mark grounding-irrelevant tables as private",
+      "Human-readable, business-friendly names for tables, columns, and measures",
+      "Unambiguous, self-explanatory column names (no bare IDs/codes)",
+      "Define clear relationships with correct cardinality and active/inactive state",
+      "Use a star schema with clear fact and dimension tables",
+      "Poor star-schema design produces poor Copilot results",
+      "Establish logical hierarchies for drill-down",
+      "Follow star-schema design for natural-language consumption",
+      "Use a star schema, not flat/denormalized/pivoted tables",
+      "Non-star-schema / flat denormalized models hurt DAX generation",
+      "Use a star schema; avoid flat/denormalized/pivoted tables",
+      "Mark a date table so Copilot filters time correctly",
+      "Reduce model complexity and remove bloat",
+      "Set Summarization to Don't summarize for non-additive numeric columns",
+      "Set a Data Category for each date and geography column",
+      "Limit model complexity for reliable natural-language answers",
+      "Optimize the semantic model for performance / remove bloat",
+      "Model bloat (excess tables/columns/measures) degrades accuracy",
+      "Model complexity (field params, disconnected tables, currency conversion) reduces reliability",
+      "Comments and quoted strings in DAX are not used by Copilot",
+      "Optimize model performance / remove bloat before AI use"
+    ]
+  },
   "launchReadiness": {
-    "assessedAt": "2026-07-12",
+    "assessedAt": "2026-07-14",
     "verdict": "enough-for-1.0",
-    "offlineBuiltInRules": 76,
+    "offlineBuiltInRules": 81,
     "liveBuiltInRules": 2,
     "closedCriticRuleIds": [
       "FMT-SORTBY",
+      "FMT-SUMMARIZE",
       "VIS-HELPER",
       "MEAS-DUP-EXPR",
       "DAC-AI-DATA-SCHEMA",
@@ -3783,9 +4043,17 @@
       "DAC-PERSPECTIVE-NOT-SCOPE",
       "LIMIT-QNA-INDEX",
       "SCALE-HICARD-COLUMN",
-      "SCALE-QNA-INDEX"
+      "SCALE-QNA-INDEX",
+      "REL-DISCONNECTED",
+      "MODE-DIRECTLAKE-QNA",
+      "CFG-PREP-MODE",
+      "SYN-COLLIDE",
+      "NAME-COLUMN-ID",
+      "SYN-TABLE",
+      "SYN-LSDL-XML",
+      "FMT-COLUMN"
     ],
-    "exitRule": "The 199 requirement rows are a research ledger, not a release burn-down. Stop adding rules when the high-value deterministic/model-visible signals are covered and the remaining items require unavailable service/report state, unpublished storage, live data, or subjective judgment. Resume only for a concrete validation failure or a newly observable authoritative schema."
+    "exitRule": "The 199 requirement rows remain a research ledger. The historical 1.0 cutoff is preserved, while the next-release completion lane may add high-quality deterministic model-visible rules in partitioned batches. Rows assigned to residualBuckets are documented non-goals until their named boundary changes."
   },
   "criticMissed": [
     {
@@ -3814,7 +4082,7 @@
       "why": "These cannot be determined safely from names or object counts. They are suited to the Model Interview, workflows and human review, not deterministic scoring rules."
     }
   ],
-  "criticVerdict": "Enough for 1.0. Semanticus now ships 76 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI Q&A/schema/instructions/verified answers, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Q&A scale/cardinality limits. The remaining catalog rows are deliberately non-blocking because they depend on unpublished linguistic storage, service/report state, live execution, or subjective business judgment. Move to launch preparation; reopen catalog work only for a concrete validation failure or a newly observable authoritative schema.",
+  "criticVerdict": "Enough for 1.0. Semanticus ships 81 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI Q&A/schema/instructions/verified answers, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Q&A scale/cardinality limits. The next-release completion ledger records 62 covered, 50 partial and 87 missing rows. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for the Q&A index and null/blank profiling.",
   "rejected": [
     {
       "title": "Harmful/problematic phrases in metadata break Copilot entirely",

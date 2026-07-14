@@ -4,9 +4,9 @@ Semanticus brings semantic-model authoring, analysis and proof into one VS Code 
 Properties and Studio yourself, then let your own AI Assistant work through MCP against the same live session. Every
 change is attributed, broadcast and placed on one undo timeline.
 
-Semanticus 1.0.0 is the first Windows 11 x64 release. The platform-specific package bundles its engine and every
-published artifact must pass the Ubuntu, Windows and runnable-VSIX CI gates plus the documented human acceptance
-checks.
+Semanticus 1.0.1 corrects the Marketplace listing and adds matching-host packages for five operating-system and
+architecture targets. Every package bundles its engine and is published only after that engine is extracted and
+executed on the matching CI runner, plus the documented human acceptance checks.
 
 ![AI-readiness scorecard](https://semanticus.com.au/assets/readiness.png)
 
@@ -34,15 +34,18 @@ checks.
 
 ## Supported platforms
 
-| Platform | 1.0 status | What is supported |
+| Platform | 1.0.1 status | What is supported |
 |---|---|---|
-| Windows 11 x64 | Supported release platform | VS Code extension, bundled engine, offline files, Power BI Desktop discovery, local M preview and supported XMLA journeys |
-| Ubuntu 24.04 x64 | Source and CI coverage only | Build, tests and offline engine journeys are CI-covered; there is no supported 1.0 VSIX claim |
-| macOS | Not supported in 1.0 | No accepted clean-machine product journey |
+| Windows 11 x64 | Supported release package | VS Code extension, bundled engine, offline files, Power BI Desktop discovery, local M preview and supported XMLA journeys |
+| Windows 11 ARM64 | Supported release package | VS Code extension, bundled engine, offline files and supported remote XMLA and Fabric journeys |
+| Ubuntu 24.04 x64 | Supported release package | VS Code extension, bundled engine, offline files and supported remote XMLA and Fabric journeys |
+| macOS Intel | Supported release package | VS Code extension, bundled engine, offline files and supported remote XMLA and Fabric journeys |
+| macOS Apple Silicon | Supported release package | VS Code extension, bundled engine, offline files and supported remote XMLA and Fabric journeys |
 
 The production package is platform-specific and bundles its engine. Users of an accepted package do not need a
 separate .NET runtime. Remote XMLA and Fabric features still require a compatible tenant, capacity, permissions and
 credentials.
+Power BI Desktop discovery, local XMLA and local M preview remain Windows 11 x64 only.
 
 ## AI-native by design
 
@@ -71,7 +74,7 @@ implement checkout, billing, cancellation or license minting.
 4. Open Studio for readiness, diagrams, lineage, Tests, workflows and deployment preparation.
 5. Optionally run **Semanticus: Connect AI Assistant** for dual-drive work through MCP.
 
-## Known 1.0 limitations
+## Known limitations
 
 - Power BI Desktop discovery and local M preview are Windows-only.
 - Modern calendar metadata requires compatibility level 1701 or later. Older models keep the classic Date-table

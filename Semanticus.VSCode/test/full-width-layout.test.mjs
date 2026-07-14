@@ -20,13 +20,13 @@ assert.match(styles, /--sem-page-max:\s*1420px/, 'the shared report/review measu
 assert.match(styles, /\.sem-centered-page\s*\{[\s\S]*?max-width:\s*var\(--sem-page-max\)[\s\S]*?margin-inline:\s*auto/, 'the centered report modifier must own max width + centering');
 assert.equal((app.match(/sem-centered-page/g) ?? []).length, 2, 'AI Readiness and Statistics must be centered');
 assert.equal((tests.match(/sem-centered-page/g) ?? []).length, 2, 'Tests and Evidence must be centered');
-for (const [name, source] of Object.entries({ BPA: bpa, Permissions: permissions, 'Edit History': history, Search: search, 'Change Plan': optimize, Docs: docs }))
+for (const [name, source] of Object.entries({ BPA: bpa, Permissions: permissions, 'Edit History': history, Search: search, 'Change Plan': optimize }))
   assert.match(source, /sem-centered-page/, `${name} must use the centered report/review measure`);
 
 for (const [name, file] of Object.entries({
   'M Code': 'webview/src/mcode.tsx', Diagram: 'webview/src/diagram.tsx', Lineage: 'webview/src/lineage.tsx',
   Data: 'webview/src/datapreview.tsx', 'DAX Lab': 'webview/src/daxlab.tsx', 'Model Spec': 'webview/src/spec.tsx',
-  Workflows: 'webview/src/workflows.tsx', 'Data Agent': 'webview/src/dataagent.tsx',
+  Workflows: 'webview/src/workflows.tsx', 'Data Agent': 'webview/src/dataagent.tsx', Docs: 'webview/src/documentation.tsx',
 })) assert.doesNotMatch(read(file), /sem-centered-page/, `${name} must remain a full-width workbench/canvas`);
 
 assert.doesNotMatch(mcode, /pqLane|setLane\(|>Incremental Refresh<|>M query</, 'M Code must not split query and refresh into separate lanes');

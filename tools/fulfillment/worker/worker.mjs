@@ -5,8 +5,13 @@
 //
 // Resilience over cleverness: the mint + KV record ALWAYS happen; delivery is best-effort with the record
 // keeping status, and GET /pending (admin) lists anything a human still needs to send. Duplicate webhook
-// deliveries are idempotent by transaction id. The signing key exists only as a Worker secret — this code
-// never logs or returns it, and the engine itself still holds only the public key (golden rule #1).
+// deliveries are idempotent by transaction id — but a duplicate of an UNDELIVERED sale re-runs completion
+// (fill the email, mint if missing, deliver if possible), so Paddle's "replay" button doubles as the
+// recovery tool. The signing key exists only as a Worker secret — this code never logs or returns it, and
+// the engine itself still holds only the public key (golden rule #1).
+//
+// Observability: every terminal branch logs one line (ids only — never tokens, keys, or email addresses),
+// so `wrangler tail` always shows WHY a request ended where it did.
 //
 // Bindings/config (wrangler.toml + `wrangler secret put`):
 //   KV       FULFILL_KV             — sale records: txn:<paddle transaction id> → JSON
@@ -18,7 +23,7 @@
 //   secret   RESEND_API_KEY         — optional; without it, mints queue as pending-delivery
 //   secret   ADMIN_KEY              — bearer for GET /pending
 
-import { mintToken } from './mint.mjs';
+import { mintToken, b64urlDecode } from './mint.mjs';
 
 const REPLAY_WINDOW_SECONDS = 300;   // generous: Paddle suggests ~5s, but retries + clock skew make that brittle
 const FULFILL_EVENTS = new Set(['transaction.completed']);   // the money event — fires on first purchase AND renewals
@@ -26,9 +31,14 @@ const FULFILL_EVENTS = new Set(['transaction.completed']);   // the money event 
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
-        if (request.method === 'POST' && url.pathname === '/paddle') return handlePaddle(request, env, ctx);
-        if (request.method === 'GET' && url.pathname === '/pending') return handlePending(request, env);
-        return new Response('semanticus fulfillment', { status: 200 });
+        const path = url.pathname.replace(/\/+$/, '') || '/';   // '/paddle/' must not fall through to a 200 ACK
+        if (path === '/paddle' && request.method === 'POST') return handlePaddle(request, env, ctx);
+        if (path === '/pending' && request.method === 'GET') return handlePending(request, env);
+        if (path === '/' && request.method === 'GET') return new Response('semanticus fulfillment', { status: 200 });
+        // Anything else is a misconfiguration — fail LOUD (a webhook pointed at a wrong path must not get a
+        // 2xx, or Paddle marks it delivered and the sale silently vanishes).
+        console.warn('unmatched route', request.method, url.pathname);
+        return new Response('not found', { status: 404 });
     },
 };
 
@@ -36,28 +46,45 @@ export default {
 
 async function handlePaddle(request, env, ctx) {
     const rawBody = await request.text();   // signature is over the RAW bytes — never re-serialize
-    if (!(await verifyPaddleSignature(request.headers.get('Paddle-Signature'), rawBody, env.PADDLE_WEBHOOK_SECRET))) {
+    const sigError = await verifyPaddleSignature(request.headers.get('Paddle-Signature'), rawBody, env.PADDLE_WEBHOOK_SECRET);
+    if (sigError) {
+        console.warn('paddle: rejected —', sigError);
         return new Response('bad signature', { status: 401 });
     }
 
     let evt;
     try { evt = JSON.parse(rawBody); } catch { return new Response('bad json', { status: 400 }); }
-    if (!FULFILL_EVENTS.has(evt.event_type)) return new Response('ignored', { status: 200 });
+    if (!FULFILL_EVENTS.has(evt.event_type)) {
+        console.log('paddle: ignored event', evt.event_type, evt.event_id);
+        return new Response('ignored', { status: 200 });
+    }
 
     const data = evt.data || {};
     const txnId = data.id || evt.event_id;
     const kvKey = 'txn:' + txnId;
 
-    // Idempotency: Paddle retries until it sees a 2xx, and can deliver twice regardless.
-    if (await env.FULFILL_KV.get(kvKey)) return new Response('duplicate', { status: 200 });
+    // Idempotency: Paddle retries until it sees a 2xx, and can deliver twice regardless. A fully delivered
+    // sale is ACKed and skipped; an UNDELIVERED one re-runs completion so a replay heals it.
+    let existing = null;
+    const stored = await env.FULFILL_KV.get(kvKey);
+    if (stored) {
+        try { existing = JSON.parse(stored); } catch { /* corrupt record — refulfill from scratch */ }
+        if (existing && (existing.status === 'delivered' || existing.status === 'resolved')) {
+            console.log('paddle: duplicate (already ' + existing.status + ')', txnId);
+            return new Response('duplicate', { status: 200 });
+        }
+        console.log('paddle: re-fulfilling undelivered txn', txnId, 'status', existing?.status);
+    } else {
+        console.log('paddle: fulfilling', txnId, 'customer', data.customer_id);
+    }
 
     // ACK fast; fulfill after responding so Paddle's 10s timeout never triggers a retry storm.
-    ctx.waitUntil(fulfill(env, kvKey, txnId, data));
+    ctx.waitUntil(fulfill(env, kvKey, txnId, data, existing));
     return new Response('ok', { status: 200 });
 }
 
-async function fulfill(env, kvKey, txnId, data) {
-    const record = {
+async function fulfill(env, kvKey, txnId, data, existing = null) {
+    const record = existing || {
         txnId,
         at: new Date().toISOString(),
         customerId: data.customer_id || null,
@@ -65,17 +92,35 @@ async function fulfill(env, kvKey, txnId, data) {
         status: 'minting',
         error: null,
     };
+    record.error = null;
     try {
-        record.email = data.custom_data?.email || await lookupCustomerEmail(env, data.customer_id);
-        record.period = derivePeriod(env, data);
+        if (!record.email) {
+            // custom_data wins when the checkout supplies it; the Customers API is the fallback. A failed
+            // lookup is RECORDED, not swallowed — a null email with no explanation is undebuggable.
+            const looked = data.custom_data?.email
+                ? { email: data.custom_data.email, note: null }
+                : await lookupCustomerEmail(env, data.customer_id);
+            record.email = looked.email;
+            if (!looked.email && looked.note) {
+                record.error = looked.note;
+                console.warn('fulfill: no buyer email —', looked.note, txnId);
+            }
+        }
+        record.period = record.period || derivePeriod(env, data);
 
-        const now = Math.floor(Date.now() / 1000);
-        record.token = await mintToken(env.SEMANTICUS_SIGNING_KEY, {
-            sub: record.email || `paddle:${data.customer_id || txnId}`,
-            tier: 'pro',
-            iat: now,
-            exp: record.period.expUnix,
-        });
+        // Mint when there is no token yet, or when a better identity arrived (e.g. the first pass fell back
+        // to paddle:<customer_id> and a replay has since resolved the real email). Old tokens stay valid —
+        // re-minting an undelivered sale never strands a buyer.
+        const wantSub = record.email || `paddle:${data.customer_id || txnId}`;
+        if (!record.token || tokenSub(record.token) !== wantSub) {
+            const now = Math.floor(Date.now() / 1000);
+            record.token = await mintToken(env.SEMANTICUS_SIGNING_KEY, {
+                sub: wantSub,
+                tier: 'pro',
+                iat: now,
+                exp: record.period.expUnix,
+            });
+        }
         record.status = 'minted';
 
         if (env.RESEND_API_KEY && record.email) {
@@ -87,30 +132,41 @@ async function fulfill(env, kvKey, txnId, data) {
     } catch (e) {
         record.error = String(e?.message || e);
         record.status = record.token ? 'pending-delivery' : 'mint-failed';
+        console.error('fulfill: error', txnId, record.error);
     }
     // The record is the safety net — write it whatever happened. (KV put last so a crash before this point
     // leaves the txn unrecorded and Paddle's retry re-runs the whole fulfillment.)
     await env.FULFILL_KV.put(kvKey, JSON.stringify(record));
+    console.log('fulfill: recorded', kvKey, record.status, 'email', record.email ? 'yes' : 'no', 'token', record.token ? 'yes' : 'no');
+}
+
+// The sub claim of a minted token (payload is base64url JSON before the dot); null if unreadable.
+function tokenSub(token) {
+    try { return JSON.parse(new TextDecoder().decode(b64urlDecode(token.split('.')[0]))).sub ?? null; }
+    catch { return null; }
 }
 
 // --- Signature verification (Paddle Billing: "ts=<unix>;h1=<hex>" over `<ts>:<rawBody>`) -----------------
 
+// Returns null when valid, else a short reason string (logged, never sent to the caller).
 async function verifyPaddleSignature(header, rawBody, secret) {
-    if (!header || !secret) return false;
+    if (!secret) return 'PADDLE_WEBHOOK_SECRET not set';
+    if (!header) return 'missing Paddle-Signature header';
     const parts = Object.fromEntries(header.split(';').map(kv => {
         const j = kv.indexOf('=');
         return j < 0 ? [kv.trim(), ''] : [kv.slice(0, j).trim(), kv.slice(j + 1).trim()];
     }));
-    if (!parts.ts || !parts.h1) return false;
+    if (!parts.ts || !parts.h1) return 'malformed Paddle-Signature header';
 
     const age = Math.abs(Math.floor(Date.now() / 1000) - parseInt(parts.ts, 10));
-    if (!Number.isFinite(age) || age > REPLAY_WINDOW_SECONDS) return false;
+    if (!Number.isFinite(age) || age > REPLAY_WINDOW_SECONDS) return `stale timestamp (age ${age}s)`;
 
-    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+    // trim(): an interactively pasted secret can pick up stray whitespace; the correct value is unaffected.
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret.trim()),
         { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(parts.ts + ':' + rawBody)));
     const expected = [...mac].map(b => b.toString(16).padStart(2, '0')).join('');
-    return timingSafeEqualHex(expected, parts.h1.toLowerCase());
+    return timingSafeEqualHex(expected, parts.h1.toLowerCase()) ? null : 'HMAC mismatch';
 }
 
 function timingSafeEqualHex(a, b) {
@@ -123,12 +179,14 @@ function timingSafeEqualHex(a, b) {
 // --- Fulfillment inputs ----------------------------------------------------------------------------------
 
 async function lookupCustomerEmail(env, customerId) {
-    if (!customerId || !env.PADDLE_API_KEY) return null;
+    if (!customerId) return { email: null, note: 'transaction carries no customer_id' };
+    if (!env.PADDLE_API_KEY) return { email: null, note: 'PADDLE_API_KEY not set' };
     const res = await fetch(`https://api.paddle.com/customers/${customerId}`, {
-        headers: { Authorization: `Bearer ${env.PADDLE_API_KEY}` },
+        headers: { Authorization: `Bearer ${env.PADDLE_API_KEY.trim()}` },
     });
-    if (!res.ok) return null;
-    return (await res.json())?.data?.email || null;
+    if (!res.ok) return { email: null, note: `customer lookup HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` };
+    const email = (await res.json())?.data?.email || null;
+    return { email, note: email ? null : 'customer record has no email' };
 }
 
 // Token expiry, most-authoritative first: the transaction's own billing period end; else the known price id
@@ -164,7 +222,7 @@ async function deliver(env, record) {
     };
     const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${env.RESEND_API_KEY.trim()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -200,7 +258,7 @@ function deliveryText(token, periodLabel) {
 
 async function handlePending(request, env) {
     const auth = request.headers.get('Authorization') || '';
-    if (!env.ADMIN_KEY || !timingSafeEqualHex(auth, 'Bearer ' + env.ADMIN_KEY)) {
+    if (!env.ADMIN_KEY || !timingSafeEqualHex(auth, 'Bearer ' + env.ADMIN_KEY.trim())) {
         return new Response('unauthorized', { status: 401 });
     }
     const out = [];

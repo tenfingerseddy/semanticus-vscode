@@ -91,6 +91,14 @@ namespace Semanticus.Engine
         {
             var items = new List<ModelDiffItem>();
 
+            // Compare the MODEL container itself, not just its child collections. The old walker started at Tables,
+            // so an authored model property (culture/collation/default mode/custom annotations/etc.) could change
+            // while the diff still said EQUAL. ModelShell removes only the collections walked below and runtime/audit
+            // noise; everything else remains visible, including properties a future TOM version adds.
+            var leftModelShell = ModelShell(left); var rightModelShell = ModelShell(right);
+            if (!JsonSemanticEqual(leftModelShell, rightModelShell))
+                items.Add(Mk("model", "Model", left.Name ?? "Model", null, "Update", leftModelShell, rightModelShell, false));
+
             var rtList = right.Tables.Cast<TOM.Table>().ToList();
             var rightTablesByTag = ByTag(rtList, t => t.LineageTag);
             var dupTableTags = DuplicateTags(rtList, t => t.LineageTag);
@@ -124,13 +132,13 @@ namespace Semanticus.Engine
                     items.Add(Mk(AlmRef.Top("table", lt.Name), "Table", lt.Name, null, "Create", Ser(lt), null, false)); continue;
                 }
                 matchedRT.Add(rt);
-                // A matched table Updates on its own props (name/hidden/dataCategory/description) AND its calc-group
-                // Precedence and its RefreshPolicy — the last two used to be INVISIBLE here (issue #124), so a policy or
-                // precedence change produced no diff at all. TableProps carries both into the before/after text.
-                if (lt.Name != rt.Name || Ne(lt.Description, rt.Description) || lt.IsHidden != rt.IsHidden || Ne(lt.DataCategory, rt.DataCategory)
-                    || CalcPrecedence(lt) != CalcPrecedence(rt)
-                    || !RefreshPolicyEqual(lt, rt))
-                    items.Add(Target(Mk(AlmRef.Top("table", lt.Name), "Table", lt.Name, null, "Update", TableProps(lt), TableProps(rt), false), rt.LineageTag, rt.Name, null, null));
+                // Equality is the normalized TABLE SHELL, not a hand-maintained display allowlist. Child collections
+                // are removed because they are walked independently below; the remaining shell includes detail rows,
+                // annotations, extended properties, table flags, RefreshPolicy and the calc-group shell (without its
+                // items). This closes the false-EQUAL class and automatically exposes new TOM properties after a bump.
+                var leftTableShell = TableShell(lt); var rightTableShell = TableShell(rt);
+                if (!JsonSemanticEqual(leftTableShell, rightTableShell))
+                    items.Add(Target(Mk(AlmRef.Top("table", lt.Name), "Table", lt.Name, null, "Update", TableDisplay(lt, leftTableShell), TableDisplay(rt, rightTableShell), false), rt.LineageTag, rt.Name, null, null));
                 CompareCollection(lt.Columns.Cast<TOM.Column>().Where(NotRowNumber), rt.Columns.Cast<TOM.Column>().Where(NotRowNumber), c => c.Name, c => c.LineageTag, "Column", lt.Name, rt.Name, rt.LineageTag, items, false);
                 CompareCollection(lt.Measures.Cast<TOM.Measure>(), rt.Measures.Cast<TOM.Measure>(), m => m.Name, m => m.LineageTag, "Measure", lt.Name, rt.Name, rt.LineageTag, items, false);
                 // Calculation-group partitions are runtime plumbing TOMWrapper materializes when an otherwise
@@ -339,6 +347,14 @@ namespace Semanticus.Engine
         {
             switch (it.ObjectType)
             {
+                case "Model":
+                    // Preflight BEFORE mutating: shell serialization deliberately detects every authored property,
+                    // but this carrier supports a bounded set. If an unsupported residual differs, refuse the whole
+                    // item honestly instead of half-applying it and reporting success.
+                    if (!JsonSemanticEqual(UnsupportedModelShell(left), UnsupportedModelShell(right)))
+                        throw new InvalidOperationException("the model carries authored shell metadata this apply path cannot copy yet; deploy the model through TMDL/XMLA instead");
+                    CopyModelShell(left, right);
+                    return true;
                 case "Table":
                     // A top-level TABLE's own name is it.Name; it.Table (the OWNING-table field) is null for a table, so
                     // the source lookup MUST key on it.Name — left.Tables.Find(it.Table) is Find(null), which THROWS
@@ -369,6 +385,8 @@ namespace Semanticus.Engine
                     // creates to fail against a table that still has no calc group.) The user recreates the table.
                     if ((ltT.CalculationGroup == null) != (rtT.CalculationGroup == null))
                         throw new InvalidOperationException($"table '{rtT.Name}' changed kind (plain table ↔ calculation group) — recreate it rather than updating it in place");
+                    if (!JsonSemanticEqual(UnsupportedTableShell(ltT), UnsupportedTableShell(rtT)))
+                        throw new InvalidOperationException($"table '{rtT.Name}' carries authored shell metadata this apply path cannot copy yet; deploy it through TMDL/XMLA instead");
                     rtT.Description = ltT.Description; rtT.IsHidden = ltT.IsHidden; rtT.DataCategory = ltT.DataCategory;
                     if (rtT.Name != ltT.Name) rtT.Name = ltT.Name;
                     // Precedence (calc-group evaluation order) and RefreshPolicy (incremental refresh) are authored table
@@ -376,8 +394,23 @@ namespace Semanticus.Engine
                     // so Apply claimed success while the change silently vanished. Copy both. RefreshPolicy.Clone() is
                     // lossless (raw TOM, AMO 19.114) and detaches the policy from the source table; null clears it.
                     if (ltT.CalculationGroup != null && rtT.CalculationGroup != null)
+                    {
                         rtT.CalculationGroup.Precedence = ltT.CalculationGroup.Precedence;
+                        rtT.CalculationGroup.Description = ltT.CalculationGroup.Description;
+                        rtT.CalculationGroup.NoSelectionExpression = ltT.CalculationGroup.NoSelectionExpression == null ? null : (TOM.CalculationGroupExpression)ltT.CalculationGroup.NoSelectionExpression.Clone();
+                        rtT.CalculationGroup.MultipleOrEmptySelectionExpression = ltT.CalculationGroup.MultipleOrEmptySelectionExpression == null ? null : (TOM.CalculationGroupExpression)ltT.CalculationGroup.MultipleOrEmptySelectionExpression.Clone();
+                        CopyAnnotations(ltT.CalculationGroup.Annotations.Cast<TOM.Annotation>(), rtT.CalculationGroup.Annotations);
+                    }
                     rtT.RefreshPolicy = ltT.RefreshPolicy == null ? null : (TOM.RefreshPolicy)ltT.RefreshPolicy.Clone();
+                    rtT.DefaultDetailRowsDefinition = ltT.DefaultDetailRowsDefinition == null ? null : (TOM.DetailRowsDefinition)ltT.DefaultDetailRowsDefinition.Clone();
+                    rtT.IsPrivate = ltT.IsPrivate;
+                    rtT.ShowAsVariationsOnly = ltT.ShowAsVariationsOnly;
+                    rtT.ExcludeFromModelRefresh = ltT.ExcludeFromModelRefresh;
+                    rtT.ExcludeFromAutomaticAggregations = ltT.ExcludeFromAutomaticAggregations;
+                    rtT.AlternateSourcePrecedence = ltT.AlternateSourcePrecedence;
+                    rtT.DirectLakeIndexingBehavior = ltT.DirectLakeIndexingBehavior;
+                    rtT.SourceLineageTag = ltT.SourceLineageTag;
+                    CopyAnnotations(ltT.Annotations.Cast<TOM.Annotation>(), rtT.Annotations);
                     return true;
                 case "Measure": return ApplyTableChild(left, right, it, t => t.Measures.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Measures.Add((TOM.Measure)o), (t, n) => { var x = t.Measures.Find(n); if (x != null) t.Measures.Remove(x); });
                 case "Column": return ApplyTableChild(left, right, it, t => t.Columns.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Columns.Add((TOM.Column)o), (t, n) => { var x = t.Columns.Find(n); if (x != null) t.Columns.Remove(x); });
@@ -622,16 +655,232 @@ namespace Semanticus.Engine
             // rather than removing it wholesale, so an authored annotation inside it still counts as a difference.
             if (o["attributeHierarchy"] is Newtonsoft.Json.Linq.JObject ah && !ah.HasValues) o.Remove("attributeHierarchy");
         }
+
+        // ---- normalized container shells ---------------------------------------------------------------
+        // Child collections are removed only when the walker above compares them independently. Everything else
+        // remains: this is intentionally future-facing, so a TOM bump may create a new Update (safe over-reporting)
+        // but can never leave a newly-authored property invisible (unsafe false-EQUAL).
+        private static string TableShell(TOM.Table table)
+        {
+            var root = ParseObject(Ser(table));
+            Remove(root, "columns", "measures", "partitions", "hierarchies", "lineageTag", "changedProperties");
+            if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
+                Remove(group, "calculationItems");
+            CanonicalizeNamedArrays(root);
+            return root.ToString(Newtonsoft.Json.Formatting.Indented);
+        }
+
+        private static string ModelShell(TOM.Model model)
+        {
+            var root = ParseObject(Ser(model));
+            Remove(root, "tables", "relationships", "roles", "perspectives", "cultures", "dataSources", "expressions");
+            // The accountable audit chain is a deploy ride-along, not semantic model behaviour. Comparing it would
+            // make an audit append recursively demand another deploy and would break compare-to-self.
+            RemoveAuditAnnotations(root);
+            CanonicalizeNamedArrays(root);
+            return root.ToString(Newtonsoft.Json.Formatting.Indented);
+        }
+
+        internal static string UnsupportedTableShell(TOM.Table table)
+        {
+            var root = ParseObject(TableShell(table));
+            Remove(root, "name", "description", "isHidden", "dataCategory", "refreshPolicy",
+                "defaultDetailRowsDefinition", "isPrivate", "showAsVariationsOnly", "excludeFromModelRefresh",
+                "excludeFromAutomaticAggregations", "alternateSourcePrecedence", "directLakeIndexingBehavior",
+                "sourceLineageTag", "annotations");
+            if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
+            {
+                Remove(group, "precedence", "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");
+                if (!group.HasValues) Remove(root, "calculationGroup");
+            }
+            return root.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        internal static string UnsupportedModelShell(TOM.Model model)
+        {
+            var root = ParseObject(ModelShell(model));
+            Remove(root, "name", "description", "culture", "collation", "defaultMode", "defaultDataView",
+                "defaultDirectLakeIndexingBehavior", "defaultPowerBIDataSourceVersion", "directLakeBehavior",
+                "discourageCompositeModels", "discourageImplicitMeasures",
+                "discourageReportMeasures", "forceUniqueNames", "mAttributes", "maxParallelismPerQuery",
+                "maxParallelismPerRefresh", "metadataAccessPolicy", "selectionExpressionBehavior",
+                "sourceQueryCulture", "storageLocation", "valueFilterBehavior", "dataSourceDefaultMaxConnections",
+                "dataSourceVariablesOverrideBehavior", "annotations");
+            return root.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static Newtonsoft.Json.Linq.JObject ParseObject(string json)
+            => Newtonsoft.Json.Linq.JObject.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+
+        private static Newtonsoft.Json.Linq.JToken Get(Newtonsoft.Json.Linq.JObject o, string name)
+            => o.Properties().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))?.Value;
+
+        private static void Remove(Newtonsoft.Json.Linq.JObject o, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var p = o.Properties().FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                p?.Remove();
+            }
+        }
+
+        private static void RemoveAuditAnnotations(Newtonsoft.Json.Linq.JObject root)
+        {
+            if (!(Get(root, "annotations") is Newtonsoft.Json.Linq.JArray annotations)) return;
+            foreach (var a in annotations.OfType<Newtonsoft.Json.Linq.JObject>().ToList())
+            {
+                var name = (string)Get(a, "name");
+                if (IsAuditAnnotation(name)) a.Remove();
+            }
+            if (!annotations.HasValues) Remove(root, "annotations");
+        }
+
+        private static void CanonicalizeNamedArrays(Newtonsoft.Json.Linq.JToken token)
+        {
+            if (token is Newtonsoft.Json.Linq.JObject obj)
+            {
+                foreach (var p in obj.Properties().ToList()) CanonicalizeNamedArrays(p.Value);
+                return;
+            }
+            if (!(token is Newtonsoft.Json.Linq.JArray arr)) return;
+            foreach (var child in arr.ToList()) CanonicalizeNamedArrays(child);
+            if (arr.All(x => x is Newtonsoft.Json.Linq.JObject && Get((Newtonsoft.Json.Linq.JObject)x, "name") != null))
+            {
+                var sorted = arr.OrderBy(x => (string)Get((Newtonsoft.Json.Linq.JObject)x, "name"), StringComparer.Ordinal).ToList();
+                arr.RemoveAll(); foreach (var child in sorted) arr.Add(child);
+            }
+        }
+
+        internal static (string Supplement, string Residual) LiveTableState(TOM.Table table)
+        {
+            var root = ParseObject(TableShell(table));
+            var selected = Select(root, "defaultDetailRowsDefinition", "annotations");
+            if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
+            {
+                var selectedGroup = Select(group, "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");
+                if (selectedGroup.HasValues) selected["calculationGroup"] = selectedGroup;
+            }
+            var residual = (Newtonsoft.Json.Linq.JObject)root.DeepClone();
+            Remove(residual, "name", "description", "isHidden", "dataCategory", "refreshPolicy", "defaultDetailRowsDefinition", "annotations");
+            if (Get(residual, "calculationGroup") is Newtonsoft.Json.Linq.JObject residualGroup)
+            {
+                Remove(residualGroup, "precedence", "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");
+                if (!residualGroup.HasValues) Remove(residual, "calculationGroup");
+            }
+            return (selected.ToString(Newtonsoft.Json.Formatting.None), residual.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        internal static (string Supplement, string Residual) LiveModelState(TOM.Model model)
+        {
+            var root = ParseObject(ModelShell(model));
+            var selected = Select(root, "annotations");
+            Remove(root, "annotations");
+            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        internal static (string Supplement, string Residual) LiveColumnState(TOM.Column column)
+        {
+            var root = ParseObject(Ser(column));
+            var selected = Select(root, "annotations");
+            Remove(root, "type", "name", "description", "isHidden", "dataCategory", "formatString",
+                "displayFolder", "summarizeBy", "expression", "lineageTag", "changedProperties", "annotations");
+            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        internal static (string Supplement, string Residual) LiveMeasureState(TOM.Measure measure)
+        {
+            var root = ParseObject(Ser(measure));
+            var selected = Select(root, "annotations");
+            Remove(root, "name", "description", "isHidden", "formatString", "displayFolder", "expression",
+                "lineageTag", "changedProperties", "annotations");
+            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        private static Newtonsoft.Json.Linq.JObject Select(Newtonsoft.Json.Linq.JObject source, params string[] names)
+        {
+            var result = new Newtonsoft.Json.Linq.JObject();
+            foreach (var name in names)
+            {
+                var p = source.Properties().FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (p != null) result[p.Name] = p.Value.DeepClone();
+            }
+            return result;
+        }
+
+        internal static void CopyModelShell(TOM.Model source, TOM.Model target)
+        {
+            target.Name = source.Name; target.Description = source.Description;
+            target.Culture = source.Culture; target.Collation = source.Collation;
+            target.DefaultMode = source.DefaultMode; target.DefaultDataView = source.DefaultDataView;
+            target.DefaultDirectLakeIndexingBehavior = source.DefaultDirectLakeIndexingBehavior;
+            target.DefaultPowerBIDataSourceVersion = source.DefaultPowerBIDataSourceVersion;
+            target.DirectLakeBehavior = source.DirectLakeBehavior;
+            target.DiscourageCompositeModels = source.DiscourageCompositeModels;
+            target.DiscourageImplicitMeasures = source.DiscourageImplicitMeasures;
+            target.DiscourageReportMeasures = source.DiscourageReportMeasures;
+            target.ForceUniqueNames = source.ForceUniqueNames; target.MAttributes = source.MAttributes;
+            target.MaxParallelismPerQuery = source.MaxParallelismPerQuery;
+            target.MaxParallelismPerRefresh = source.MaxParallelismPerRefresh;
+            target.MetadataAccessPolicy = source.MetadataAccessPolicy;
+            target.SelectionExpressionBehavior = source.SelectionExpressionBehavior;
+            target.SourceQueryCulture = source.SourceQueryCulture; target.StorageLocation = source.StorageLocation;
+            target.ValueFilterBehavior = source.ValueFilterBehavior;
+            target.DataSourceDefaultMaxConnections = source.DataSourceDefaultMaxConnections;
+            target.DataSourceVariablesOverrideBehavior = source.DataSourceVariablesOverrideBehavior;
+            CopyAnnotations(source.Annotations.Cast<TOM.Annotation>().Where(a => !IsAuditAnnotation(a?.Name)), target.Annotations,
+                preserve: a => IsAuditAnnotation(a?.Name));
+        }
+
+        internal static void CopyLiveTableSupplement(TOM.Table source, TOM.Table target)
+        {
+            target.DefaultDetailRowsDefinition = source.DefaultDetailRowsDefinition == null ? null : (TOM.DetailRowsDefinition)source.DefaultDetailRowsDefinition.Clone();
+            CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
+            if (source.CalculationGroup != null && target.CalculationGroup != null)
+            {
+                target.CalculationGroup.Description = source.CalculationGroup.Description;
+                target.CalculationGroup.NoSelectionExpression = source.CalculationGroup.NoSelectionExpression == null ? null : (TOM.CalculationGroupExpression)source.CalculationGroup.NoSelectionExpression.Clone();
+                target.CalculationGroup.MultipleOrEmptySelectionExpression = source.CalculationGroup.MultipleOrEmptySelectionExpression == null ? null : (TOM.CalculationGroupExpression)source.CalculationGroup.MultipleOrEmptySelectionExpression.Clone();
+                CopyAnnotations(source.CalculationGroup.Annotations.Cast<TOM.Annotation>(), target.CalculationGroup.Annotations);
+            }
+        }
+
+        internal static void CopyLiveModelSupplement(TOM.Model source, TOM.Model target)
+            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>().Where(a => !IsAuditAnnotation(a?.Name)), target.Annotations,
+                preserve: a => IsAuditAnnotation(a?.Name));
+
+        internal static void CopyLiveColumnSupplement(TOM.Column source, TOM.Column target)
+            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
+
+        internal static void CopyLiveMeasureSupplement(TOM.Measure source, TOM.Measure target)
+            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
+
+        private static bool IsAuditAnnotation(string name)
+            => name != null && (name.StartsWith("Semanticus_VerifiedEdits", StringComparison.Ordinal)
+                || name == "TabularEditor_SerializeOptions" || name == "__TEdtr");
+
+        // All TOM annotation collections expose the same named collection contract but use different concrete
+        // generic collection types (model/table/calc-group). Dynamic is deliberately confined to this tiny adapter;
+        // the values remain strongly-typed Annotation clones and the tests exercise every owner type.
+        private static void CopyAnnotations(IEnumerable<TOM.Annotation> source, dynamic target, Func<TOM.Annotation, bool> preserve = null)
+        {
+            var src = source.Where(a => a?.Name != null).ToDictionary(a => a.Name, StringComparer.Ordinal);
+            foreach (var existing in ((IEnumerable<TOM.Annotation>)target).ToList())
+                if (!src.ContainsKey(existing.Name) && !(preserve?.Invoke(existing) == true)) target.Remove(existing);
+            foreach (var annotation in src.Values)
+            {
+                if (target.Contains(annotation.Name)) target[annotation.Name].Value = annotation.Value;
+                else target.Add(new TOM.Annotation { Name = annotation.Name, Value = annotation.Value });
+            }
+        }
+
+        private static string TableDisplay(TOM.Table table, string shell) => TableProps(table) + Environment.NewLine + shell;
+
         private static string TableProps(TOM.Table t) => $"name={t.Name}; hidden={t.IsHidden}; dataCategory={t.DataCategory}; description={t.Description}"
             + $"; precedence={t.CalculationGroup?.Precedence.ToString() ?? "n/a"}; refreshPolicy={RefreshPolicyText(t) ?? "none"}";
 
-        // A calc-group table's evaluation Precedence (null for a plain table) — an authored property a matched-table diff
-        // must catch (issue #124). Compared as int? so both null-vs-value and value-vs-value register.
-        private static int? CalcPrecedence(TOM.Table t) => t.CalculationGroup?.Precedence;
-
         // Human-readable, order-stable text of a table's RefreshPolicy (null when absent) — the DISPLAY form ONLY,
-        // used as the before/after text in TableProps. Equality is decided by RefreshPolicyEqual (typed fields), NEVER
-        // by comparing this string: the two free-text fields (source/polling) are concatenated unescaped here, so
+        // used as the before/after text in TableProps. Equality is decided by the structured normalized table shell,
+        // NEVER by comparing this string: the two free-text fields (source/polling) are concatenated unescaped here, so
         // distinct policies can render identically — fine to SHOW, unsafe to COMPARE (issue #124, the unescaped-concat
         // trap). A non-Basic policy (rare) degrades to its type name.
         private static string RefreshPolicyText(TOM.Table t)
@@ -640,30 +889,6 @@ namespace Semanticus.Engine
             if (!(t.RefreshPolicy is TOM.BasicRefreshPolicy p)) return t.RefreshPolicy.GetType().Name;
             return $"mode={p.Mode};incPeriods={p.IncrementalPeriods};incGran={p.IncrementalGranularity};rollPeriods={p.RollingWindowPeriods};rollGran={p.RollingWindowGranularity};incOffset={p.IncrementalPeriodsOffset};source={p.SourceExpression};polling={p.PollingExpression}";
         }
-
-        // Typed field-by-field RefreshPolicy equality (issue #124). NOT a string compare of RefreshPolicyText: that
-        // concatenates SourceExpression + PollingExpression UNESCAPED, so ("x;polling=y","z") and ("x","y;polling=z")
-        // serialize to the SAME text — a false-EQUAL that silently drops a real incremental-refresh change (the
-        // project's known unescaped-concat trap — the Ref-identity root cause). Compare the fields directly so no
-        // embedded value can forge a boundary. Mirrors LiveDeploy.RefreshPolicyEqual (the live-push side); keep in step.
-        private static bool RefreshPolicyEqual(TOM.Table a, TOM.Table b)
-        {
-            var pa = a.RefreshPolicy; var pb = b.RefreshPolicy;
-            if (pa == null || pb == null) return pa == pb;
-            // A non-Basic policy is UNEQUAL even against the same subtype: we can't compare its fields, and equal-on-
-            // type-alone silently drops a real change (a false-EQUAL — the dangerous direction; a false-DIFF only costs
-            // a spurious Update). Unreachable in AMO 19.114 (RefreshPolicy is abstract w/ internal ctors and Basic is
-            // its ONLY subtype — reflected 2026-07-10, pinned by RefreshPolicy_subtype_catalog_is_pinned); this arms
-            // the moment a TOM bump ships a second subtype.
-            if (!(pa is TOM.BasicRefreshPolicy ba) || !(pb is TOM.BasicRefreshPolicy bb)) return false;
-            return ba.Mode == bb.Mode
-                && ba.IncrementalPeriods == bb.IncrementalPeriods && ba.IncrementalGranularity == bb.IncrementalGranularity
-                && ba.RollingWindowPeriods == bb.RollingWindowPeriods && ba.RollingWindowGranularity == bb.RollingWindowGranularity
-                && ba.IncrementalPeriodsOffset == bb.IncrementalPeriodsOffset
-                && string.Equals(ba.SourceExpression, bb.SourceExpression, StringComparison.Ordinal)
-                && string.Equals(ba.PollingExpression, bb.PollingExpression, StringComparison.Ordinal);
-        }
-        private static bool Ne(string a, string b) => !string.Equals(string.IsNullOrEmpty(a) ? null : a, string.IsNullOrEmpty(b) ? null : b, StringComparison.Ordinal);
 
         // Build a ref via the ONE ALM grammar (escaped components): table==null ⇒ top-level, else a table-qualified child.
         private static string RefFor(string kind, string table, string name)

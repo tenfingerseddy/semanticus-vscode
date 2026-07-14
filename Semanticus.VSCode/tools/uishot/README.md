@@ -25,6 +25,7 @@ node shot.mjs studio Diagram out.png  # explicit target + custom output
 node shot.mjs propgrid measure        # Properties grid scenario -> shots/propgrid-measure.png
 node shot.mjs all                     # EVERYTHING: every studio tab + Connections states + every propgrid scenario
 UISHOT_GRAPH=mini node shot.mjs Diagram   # focused 3-relationship graph (cardinality markers render large)
+UISHOT_GRAPH=docstress UISHOT_DOC_SECTION=diagram node shot.mjs Docs   # 34-table exported relationship diagram
 UISHOT_VE=broken node shot.mjs "Edit History"   # Verified-Edits audit trail with a TAMPERED (broken) hash chain
 UISHOT_PQ=incremental node shot.mjs "M Code"   # missing incremental-refresh prerequisites + repair actions
 ```

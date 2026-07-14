@@ -25,10 +25,10 @@
 
   <ItemGroup>
     <None Include="TestSources.txt" />
-    <None Include="TestData\mcp-surface-inventory.json"
+    <None Include="..\docs\mcp-surface-inventory.json"
           Link="mcp-surface-inventory.json"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Include="TestData\ai-readiness-catalog.json"
+    <None Include="..\docs\ai-readiness-catalog.json"
           Link="TestData\ai-readiness-catalog.json"
           CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\external\TabularEditor\TOMWrapperTest\TestData\AdventureWorks.bim"

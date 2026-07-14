@@ -606,8 +606,9 @@ namespace Semanticus.Engine
         public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List()
             .Where(r => !string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)).ToArray());
 
-        public async Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "human")
+        public async Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent")
         {
+            origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
             if (string.IsNullOrWhiteSpace(endpoint)) throw new ArgumentException("An XMLA endpoint is required.", nameof(endpoint));
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
             if (mode != "azcli" && mode != "interactive" && mode != "serviceprincipal")
@@ -616,7 +617,7 @@ namespace Semanticus.Engine
                 string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim(), authMode: mode);
             await PublishActivityAsync(new ActivityEvent
             {
-                Kind = "remember_xmla_connection", Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
+                Kind = "remember_xmla_connection", Origin = origin,
                 Label = $"Remembered XMLA connection {record.ModelName ?? record.Database ?? record.Endpoint}", Target = record.Id, Ok = true
             });
             return record;
@@ -3763,6 +3764,17 @@ namespace Semanticus.Engine
         // ---- autogenerate_spec_from_fabric: introspect a Fabric SQL endpoint (TDS) and propose a starter spec -----
         public async Task<SpecView> AutogenerateSpecFromFabricAsync(string server, string database, string authMode, string storageMode, string origin, string tenantId = null)
         {
+            if (string.IsNullOrWhiteSpace(server))
+                throw new ArgumentException("A Fabric SQL endpoint is required.");
+            if (string.IsNullOrWhiteSpace(database))
+                throw new ArgumentException("A Fabric warehouse or lakehouse database is required.");
+            server = server.Trim();
+            database = database.Trim();
+            storageMode = string.IsNullOrWhiteSpace(storageMode) ? "import" : storageMode.Trim();
+            if (!string.Equals(storageMode, "import", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(storageMode, "directLake", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Storage mode must be Import or Direct Lake.");
+
             var modeLabel = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim();
             // What "no explicit tenant" resolves to depends on the mode — only azcli defaults to the *az CLI's* tenant.
             var tenantLabel = string.IsNullOrWhiteSpace(tenantId) ? DefaultTenantLabel(modeLabel) : tenantId.Trim();
@@ -6545,6 +6557,8 @@ namespace Semanticus.Engine
         /// reportType, webUrl) so a caller can pick the ones that bind to the open model's dataset. Non-admin path.</summary>
         public async Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId)
         {
+            if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
+            workspaceId = workspaceId.Trim();
             try
             {
                 var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId).ConfigureAwait(false);

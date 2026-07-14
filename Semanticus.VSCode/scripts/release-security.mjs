@@ -157,6 +157,10 @@ const PACKAGED_BINARY_ENDPOINT_EXCEPTIONS = new Map([
   ['extension/engine/system.io.packaging.dll', new Set(['http://defaultcontainer/'])],
   // MSAL combines this incomplete cloud-authority prefix with a separately validated environment suffix.
   ['extension/engine/msalruntime.dll', new Set(['https://login.'])],
+  ['extension/engine/msalruntime_arm64.dll', new Set(['https://login.'])],
+  ['extension/engine/libmsalruntime.so', new Set(['https://login.'])],
+  ['extension/engine/msalruntime.dylib', new Set(['https://login.'])],
+  ['extension/engine/msalruntime_arm64.dylib', new Set(['https://login.'])],
   // MSAL managed-code sentinels/templates are completed or rejected before any network request.
   ['extension/engine/microsoft.identity.client.dll', new Set([
     'https://replyurlnotset',
@@ -179,19 +183,83 @@ const PACKAGED_BINARY_ENDPOINT_EXCEPTIONS = new Map([
   ['extension/engine/microsoft.analysisservices.adomdclient.dll', TOM_SERVICE_ENDPOINT_TEMPLATES],
 ]);
 
+const MSAL_MACOS_NATIVE_ENDPOINTS = [
+  'https://h',
+  'https://i',
+  'https://%@/%@',
+  'https://enterpriseregistration.%@/enrollmentserver/contract',
+  'https://%@/.well-known/webfinger',
+  'https://%@',
+  'https://%@/applebroker/%@',
+  'https://fakeurl.contoso.com',
+  'http://ocsp.apple.com/ocsp03-applerootca0.',
+  'http://crl.apple.com/root.crl0',
+  'https://www.apple.com/appleca/0',
+  'http://certs.apple.com/wwdrg3.der01',
+  'http://ocsp.apple.com/ocsp03-wwdrg3080',
+  'https://www.apple.com/certificateauthority/0',
+  'http://www.apple.com/dtds/propertylist-1.0.dtd',
+  'http://www.apple.com/appleca0',
+  'http://crl.apple.com/timestamp.crl0',
+];
+const hashPinnedEndpoints = (endpoints, sha256) => new Map(endpoints.map((endpoint) => [endpoint, sha256]));
+
 const PACKAGED_HASHED_BINARY_ENDPOINT_EXCEPTIONS = new Map([
   ['extension/engine/microsoft.identity.client.dll', new Map([
     ['http://169.254.169.254', 'd224cf0d1ad2692bf04f500de673440c03fdd44cdc6280ea51e04d6c924602fd'],
   ])],
+  ['extension/engine/msalruntime.dylib', hashPinnedEndpoints(
+    // These native templates and certificate strings must never move to the filename-only exception map.
+    MSAL_MACOS_NATIVE_ENDPOINTS,
+    '043d1828ea57a40dc6d1305f614127d76f0e34934d5e7946bea9121fc4611f92',
+  )],
+  ['extension/engine/msalruntime_arm64.dylib', hashPinnedEndpoints(
+    MSAL_MACOS_NATIVE_ENDPOINTS,
+    'e153096c96af1ff03bf3bb495213d8712d1394290650a2065dc68c66b08b5fc7',
+  )],
 ]);
 
+const DOTNET_BROTLI_DICTIONARY = Object.freeze({
+  length: 122784,
+  sha256: '20e42eb1b511c21806d4d227d07e5dd06877d8ce7b3a817f378f313653f35c70',
+  purpose: '.NET 8.0.28 Brotli static dictionary',
+});
+const brotliDictionaryAt = (offset) => ({ offset, ...DOTNET_BROTLI_DICTIONARY });
+const MSAL_NATIVE_PASSWORD_PERSISTENCE = Object.freeze({
+  length: 21,
+  sha256: 'a9d23cd4ce2f419524a8f554b9bd036bef7cef068ccff97d63ca69fca6818b05',
+  purpose: 'MSAL native Objective-C password persistence selector',
+});
+const MSAL_NATIVE_PASSWORD_TEST_SINK = Object.freeze({
+  length: 30,
+  sha256: '116973cfc1af90abaa9f3c3925c32d134ab365f12e1dea43879e707da912ab0e',
+  purpose: 'MSAL native Objective-C password test-sink selector',
+});
+const nativeSymbolAt = (offset, symbol) => ({ offset, ...symbol });
+
 const PACKAGED_BINARY_IGNORED_RANGES = new Map([
-  ['extension/engine/system.io.compression.native.dll', [{
-    offset: 345488,
-    length: 122784,
-    sha256: '20e42eb1b511c21806d4d227d07e5dd06877d8ce7b3a817f378f313653f35c70',
-    purpose: '.NET 8.0.28 Brotli static dictionary',
-  }]],
+  ['extension/engine/system.io.compression.native.dll', [
+    brotliDictionaryAt(345488), // Windows x64
+    brotliDictionaryAt(311824), // Windows ARM64
+  ]],
+  ['extension/engine/libsystem.io.compression.native.so', [
+    brotliDictionaryAt(7664), // Linux x64
+  ]],
+  ['extension/engine/libsystem.io.compression.native.dylib', [
+    brotliDictionaryAt(384800), // macOS Intel
+    brotliDictionaryAt(313640), // macOS Apple Silicon
+  ]],
+  ['extension/engine/msalruntime.dylib', [
+    nativeSymbolAt(3497291, MSAL_NATIVE_PASSWORD_PERSISTENCE),
+    nativeSymbolAt(3567414, MSAL_NATIVE_PASSWORD_TEST_SINK),
+    nativeSymbolAt(7009141, MSAL_NATIVE_PASSWORD_TEST_SINK),
+  ]],
+  ['extension/engine/msalruntime_arm64.dylib', [
+    nativeSymbolAt(3198025, MSAL_NATIVE_PASSWORD_PERSISTENCE),
+    nativeSymbolAt(3268148, MSAL_NATIVE_PASSWORD_TEST_SINK),
+    nativeSymbolAt(6523606, MSAL_NATIVE_PASSWORD_TEST_SINK),
+    nativeSymbolAt(6902442, MSAL_NATIVE_PASSWORD_PERSISTENCE),
+  ]],
 ]);
 
 function contentViews(content) {
@@ -251,14 +319,17 @@ function assignmentViews(content) {
     if (byte === 0 || byte < 9 || (byte > 13 && byte < 32)) controls++;
   }
   const latin = buffer.toString('latin1');
-  const ascii = (latin.match(/[\x20-\x7e]{8,}/g) ?? []).join('\n');
+  // Keep unrelated native string-table entries from forming a synthetic assignment across the join.
+  // The delimiter is non-whitespace and excluded from every unquoted secret-value rule.
+  const binaryRunBoundary = '\n<binary-run-boundary>\n';
+  const ascii = (latin.match(/[\x20-\x7e]{8,}/g) ?? []).join(binaryRunBoundary);
   const boundedUtf16Runs = (pattern) => [...latin.matchAll(pattern)]
     .filter((match) => {
       const next = buffer[match.index + match[0].length];
       return next === undefined || next < 0x20 || next > 0x7e;
     })
     .map((match) => match[0].replaceAll('\0', ''))
-    .join('\n');
+    .join(binaryRunBoundary);
   const utf16le = boundedUtf16Runs(/(?:[\x20-\x7e]\x00){8,}/g);
   const utf16be = boundedUtf16Runs(/(?:\x00[\x20-\x7e]){8,}/g);
   const extracted = [ascii, utf16le, utf16be];
@@ -343,17 +414,19 @@ export function releaseContentFinding(content, {
   binaryEndpointExceptions = new Set(),
   binaryIgnoredRanges = [],
 } = {}) {
-  const printable = assignmentViews(content);
-  return findRule(content, SECRET_TOKEN_RULES)
+  const scannableContent = engineBinary
+    ? withoutKnownInertBinaryRanges(content, binaryIgnoredRanges)
+    : content;
+  const printable = assignmentViews(scannableContent);
+  return findRule(scannableContent, SECRET_TOKEN_RULES)
     || findRuleInViews(printable, SECRET_TOKEN_RULES)
     || findRuleInViews(printable, SECRET_ASSIGNMENT_RULES)
     || (engineBoundary
-      ? findRule(content, ENGINE_INFERENCE_RULES) || findRuleInViews(printable, ENGINE_INFERENCE_RULES)
+      ? findRule(scannableContent, ENGINE_INFERENCE_RULES) || findRuleInViews(printable, ENGINE_INFERENCE_RULES)
       : null)
-    || (engineSource ? engineSourceEndpointFinding(content, {
+    || (engineSource ? engineSourceEndpointFinding(scannableContent, {
       tolerateBinaryFragments: engineBinary,
       binaryEndpointExceptions,
-      binaryIgnoredRanges,
     }) : null);
 }
 

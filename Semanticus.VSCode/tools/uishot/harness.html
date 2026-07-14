@@ -84,6 +84,30 @@
       ],
     };
 
+    // ?g=docstress → the Docs relationship renderer's failure shape from production acceptance: a medium connected
+    // graph plus enough isolated/measure tables to expose Dagre's narrow, magnified disconnected-node column.
+    const DOCSTRESS = (function () {
+      const related = [
+        tbl('Sales', { measures: 18, keyColumns: [] }), tbl('Inventory', { measures: 6, keyColumns: [] }),
+        tbl('Returns', { measures: 5, keyColumns: [] }), tbl('Date', { isDateTable: true }), tbl('Product'),
+        tbl('Customer'), tbl('Store'), tbl('Promotion'), tbl('Currency'), tbl('Geography'),
+        tbl('Product Category'), tbl('Warehouse'), tbl('Budget', { isCalculated: true, keyColumns: [] }),
+      ];
+      const isolated = Array.from({ length: 21 }, function (_, i) { return tbl('Standalone ' + (i + 1), { keyColumns: [] }); });
+      return {
+        tables: related.concat(isolated),
+        relationships: [
+          rel('Sales', 'Date'), rel('Sales', 'Product'), rel('Sales', 'Customer'), rel('Sales', 'Store'),
+          rel('Sales', 'Promotion'), rel('Sales', 'Currency'), rel('Sales', 'Budget'),
+          rel('Inventory', 'Date'), rel('Inventory', 'Product'), rel('Inventory', 'Store'),
+          rel('Inventory', 'Warehouse'), rel('Inventory', 'Currency'),
+          rel('Returns', 'Date'), rel('Returns', 'Product'), rel('Returns', 'Customer'), rel('Returns', 'Store'),
+          rel('Customer', 'Geography'), rel('Store', 'Geography'), rel('Product', 'Product Category'),
+          rel('Budget', 'Date'),
+        ],
+      };
+    }());
+
     // ?g=onerel → a single many→one relationship, rendered huge: to inspect the crow's-foot marker orientation.
     const ONEREL = { tables: [tbl('Sales', { measures: 12 }), tbl('Date', { isDateTable: true })], relationships: [rel('Sales', 'Date')] };
 
@@ -102,7 +126,7 @@
       ],
     };
 
-    const GRAPH = cfg.graph || (scenario === 'mini' ? MINI : null) || (scenario === 'galaxy' ? GALAXY : null) || (scenario === 'star' ? STAR : null) || (scenario === 'twofact' ? TWOFACT : null) || (scenario === 'onerel' ? ONEREL : null) || {
+    const GRAPH = cfg.graph || (scenario === 'mini' ? MINI : null) || (scenario === 'galaxy' ? GALAXY : null) || (scenario === 'star' ? STAR : null) || (scenario === 'docstress' ? DOCSTRESS : null) || (scenario === 'twofact' ? TWOFACT : null) || (scenario === 'onerel' ? ONEREL : null) || {
       tables: [
         tbl('Sales', { measures: 12, columns: 14, keyColumns: [], hasDescription: true }),
         tbl('Date', { isDateTable: true, columns: 16 }),

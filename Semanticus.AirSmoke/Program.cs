@@ -38,7 +38,8 @@ namespace Semanticus.AirSmoke
                 // Catalog batch 2 precision diagnostic: dump any firings of the new rules on AdventureWorks — every
                 // firing must be a GENUINE finding (false positives get tuned out before ship, per the batch-1 lesson).
                 var batch2Ids = new[] { "LIMIT-QNA-INDEX", "LIMIT-DATAAGENT-TABLES", "DATE-AMBIGUOUS",
-                    "REL-HIERARCHY-SINGLE-LEVEL", "NAME-HIERARCHY", "DAC-PERSPECTIVE-NOT-SCOPE", "DAC-FIELD-PARAM-COMPLEXITY" };
+                    "REL-HIERARCHY-SINGLE-LEVEL", "NAME-HIERARCHY", "DAC-PERSPECTIVE-NOT-SCOPE", "DAC-FIELD-PARAM-COMPLEXITY",
+                    "NAME-COLUMN-ID" };
                 foreach (var id in batch2Ids)
                     foreach (var f in c1.Findings.Where(x => x.RuleId == id))
                         Console.WriteLine($"[batch2] {id} -> {f.ObjectName}: {f.Message.Substring(0, Math.Min(100, f.Message.Length))}");
@@ -52,6 +53,16 @@ namespace Semanticus.AirSmoke
                 Check("LIMIT-DATAAGENT-TABLES: dormant on AdventureWorks (<= 25 visible tables)", !c1.Findings.Any(f => f.RuleId == "LIMIT-DATAAGENT-TABLES"));
                 Check("NAME-HIERARCHY / REL-HIERARCHY-SINGLE-LEVEL: dormant on AdventureWorks (clean multi-level hierarchies)",
                     !c1.Findings.Any(f => f.RuleId == "NAME-HIERARCHY" || f.RuleId == "REL-HIERARCHY-SINGLE-LEVEL"));
+                var batch5Ids = new[] { "NAME-TABLE", "NAME-COLUMN-ID", "REL-BIDI", "REL-M2M", "REL-SNOWFLAKE",
+                    "REL-DISCONNECTED", "REL-INACTIVE", "REL-HIERARCHY-MISSING", "REL-HIERARCHY-SINGLE-LEVEL" };
+                var registered = ReadinessRuleSet.Default().Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+                Check("catalog batch 5: all nine naming/relationship rules are registered", batch5Ids.All(registered.Contains));
+                var batch6OfflineIds = new[] { "LIMIT-SCALE", "REL-DISCONNECTED", "DAC-FIELD-PARAM-COMPLEXITY",
+                    "MEAS-DUP-EXPR", "FMT-SUMMARIZE", "BP-DAX-IFERROR", "BP-DAX-SUMMARIZE-EXT",
+                    "BP-DAX-BARE-TABLE-FILTER", "BP-DAX-VAR-ALIAS" };
+                var batch6LiveIds = ReadinessRuleSet.LiveRules(new ReadinessLiveStats()).Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+                Check("catalog batch 6: all ten performance/complexity rules are registered",
+                    batch6OfflineIds.All(registered.Contains) && batch6LiveIds.Contains("SCALE-HICARD-COLUMN"));
                 Check("scan: grade is assigned", !string.IsNullOrEmpty(c1.Grade));
                 Check("scan: findings produced", c1.Findings.Length > 0);
                 Check("scan: category scores in 0..100", c1.Categories.All(c => c.Score >= 0 && c.Score <= 100));
@@ -378,6 +389,13 @@ namespace Semanticus.AirSmoke
                         Console.WriteLine($"[i] set synonyms on {synTarget}; fieldsWithSynonyms now {(afterSyn.Coverage.TryGetValue("fieldsWithSynonyms", out var fs) ? fs : 0)}%");
                         Check("set_synonyms: that field no longer flagged", !afterSyn.Findings.Any(f => f.RuleId == "SYN-FIELD" && f.ObjectRef == synTarget));
                     }
+                    var tableSynTarget = afterQna.Findings.FirstOrDefault(f => f.RuleId == "SYN-TABLE")?.ObjectRef;
+                    if (tableSynTarget != null)
+                    {
+                        await engine.SetSynonymsAsync(tableSynTarget, new[] { "business records" }, null, "agent");
+                        var afterTableSyn = await engine.AiReadinessScanAsync();
+                        Check("set_synonyms: that table no longer flagged", !afterTableSyn.Findings.Any(f => f.RuleId == "SYN-TABLE" && f.ObjectRef == tableSynTarget));
+                    }
                 }
 
                 // ---- SYNONYMS round-trip on a MODERN model (CL >= 1465) -------------------------
@@ -420,6 +438,14 @@ namespace Semanticus.AirSmoke
                             var asn = await engine.AiReadinessScanAsync();
                             Console.WriteLine($"[i] modern: set synonyms on {t}");
                             Check("modern: set_synonyms clears that field's finding", !asn.Findings.Any(f => f.RuleId == "SYN-FIELD" && f.ObjectRef == t));
+                        }
+                        var tableTarget = aq.Findings.FirstOrDefault(f => f.RuleId == "SYN-TABLE")?.ObjectRef;
+                        Check("modern: SYN-TABLE finds a visible business table without synonyms", tableTarget != null);
+                        if (tableTarget != null)
+                        {
+                            await engine.SetSynonymsAsync(tableTarget, new[] { "business records" }, null, "agent");
+                            var tableScan = await engine.AiReadinessScanAsync();
+                            Check("modern: set_synonyms clears that table's finding", !tableScan.Findings.Any(f => f.RuleId == "SYN-TABLE" && f.ObjectRef == tableTarget));
                         }
 
                         // ---- AI DATA SCHEMA toggle round-trip (LSDL per-entity Visibility) ----
@@ -634,14 +660,18 @@ namespace Semanticus.AirSmoke
                         Check("DESC-CALCGROUP-ITEMS: a listed item with odd surrounding whitespace still clears (normalised)",
                             !g4.Findings.Any(f => f.RuleId == "DESC-CALCGROUP-ITEMS"));
                     }
-                    // (SYN-COLLIDE deferred — naive "any shared term" over-flags auto-generated synonyms on real
-                    //  models; see the rationale comment in ReadinessRules.cs. Needs LSDL State/Weight-aware parsing.)
-
                     // DAC-GLOSSARY-GAP: a code in a VISIBLE field name that the AI instructions don't define is flagged;
                     // defining it clears it; the rule is dormant when the model has no instructions at all.
                     await engine.OpenAsync(waveModel);
                     await engine.EnableQnaAsync(null, "agent");
                     var gp0 = await engine.AiReadinessScanAsync();
+                    var catalogBatch3 = new[] { "SYN-COLLIDE", "SYN-LSDL-XML", "FMT-COLUMN" };
+                    var shippedRuleIds = ReadinessRuleSet.Default().Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+                    Check("catalog batch 3: all new deterministic rules are registered", catalogBatch3.All(shippedRuleIds.Contains));
+                    Check("SYN-COLLIDE: generated/suggested recurring terms in the real fixture do not false-fire",
+                        !gp0.Findings.Any(f => f.RuleId == "SYN-COLLIDE"));
+                    Check("SYN-LSDL-XML: a JSON linguistic schema is not reported as legacy XML",
+                        !gp0.Findings.Any(f => f.RuleId == "SYN-LSDL-XML"));
                     Check("DAC-GLOSSARY-GAP: dormant when the model has no AI instructions (Applicable=0)",
                         !gp0.Findings.Any(f => f.RuleId == "DAC-GLOSSARY-GAP"));
                     var gTbl = (await engine.ListTreeAsync(null)).FirstOrDefault(x => x.Kind == "table" && !x.Ref.Contains("CalculationGroup"));
@@ -1924,6 +1954,22 @@ namespace Semanticus.AirSmoke
                             Check("live model: vertipaq_scan returns LIVE storage statistics (tables with stats, no error)", vpaq != null && vpaq.Error == null && (vpaq.Tables?.Length ?? 0) > 0);
                             var live = await engine.AiReadinessScanLiveAsync();
                             Check("live model: ai_readiness_scan_live runs the DMV-cardinality rules on the open live model (graded A–F)", live != null && !string.IsNullOrEmpty(live.Grade));
+
+                            // Start all three without awaiting so the same live XMLA session receives simultaneous
+                            // trace-bearing and ordinary query requests through independent public paths. The
+                            // per-connection lane must serialize them without deadlock or cross-captured evidence.
+                            var concurrentProfile = engine.ProfileDaxAsync("EVALUATE ROW(\"profile_sentinel\", 101)");
+                            var concurrentPlan = engine.CaptureQueryPlanAsync("EVALUATE ROW(\"plan_sentinel\", 202)");
+                            var concurrentPlain = engine.RunDaxAsync("EVALUATE ROW(\"ordinary_sentinel\", 303)", 10);
+                            await Task.WhenAll(concurrentProfile, concurrentPlan, concurrentPlain);
+                            Check("live model: concurrent profile, plan and ordinary query complete without trace contamination",
+                                string.IsNullOrEmpty(concurrentProfile.Result.Error)
+                                && string.IsNullOrEmpty(concurrentPlan.Result.Error)
+                                && string.IsNullOrEmpty(concurrentPlain.Result.Error)
+                                && concurrentProfile.Result.RowCount == 1
+                                && concurrentPlan.Result.RowCount == 1
+                                && concurrentPlain.Result.RowCount == 1
+                                && Convert.ToInt64(concurrentPlain.Result.Rows[0][0]) == 303);
 
                             // export_vpax on a LIVE session enriches the .vpax with real VertiPaq storage statistics
                             // (the primary value of a .vpax). Verify the Note + that the re-imported model carries stats.

@@ -1,7 +1,7 @@
 name: Publish
 
 # DORMANT until release: this only fires on a v* tag (none exists yet) or a manual dispatch, and it needs
-# a registered Marketplace publisher and the VSCE_PAT secret. Until then it never runs.
+# a registered Marketplace publisher + the VSCE_PAT secret (see RELEASE-CHECKLIST.md). Until then it never runs.
 on:
   push:
     tags: ['v*']
@@ -11,8 +11,23 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    runs-on: windows-latest
+  package:
+    name: package + execute (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            runner: windows-latest
+          - target: win32-arm64
+            runner: windows-11-arm
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,31 +42,62 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Install extension dependencies from the lockfile
+        working-directory: Semanticus.VSCode
+        run: npm ci --no-fund --no-audit
+      - name: Package, extract, and execute the production VSIX engine
+        working-directory: Semanticus.VSCode
+        run: npm run package -- ${{ matrix.target }}
+        env:
+          SEMANTICUS_REQUIRE_HOST_EXECUTION: '1'
+          SEMANTICUS_RUNNER_LABEL: ${{ matrix.runner }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semanticus-${{ matrix.target }}-vsix
+          path: |
+            Semanticus.VSCode/dist/semanticus-${{ matrix.target }}-*.vsix
+            Semanticus.VSCode/dist/semanticus-${{ matrix.target }}-*.evidence.json
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install the pinned Marketplace publisher
+        working-directory: Semanticus.VSCode
+        run: npm ci --no-fund --no-audit
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: semanticus-*-vsix
+          path: Semanticus.VSCode/dist
+          merge-multiple: true
+      - name: Require five matching-host execution records and matching SHA-256 digests
+        run: node Semanticus.VSCode/scripts/verify-vsix-matrix.mjs Semanticus.VSCode/dist
       - name: 'Guard: require the publisher secret'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VSCE_PAT)) {
-            Write-Error 'VSCE_PAT secret is not set. Register the Marketplace publisher and add its PAT as this repository secret.'
+            Write-Error 'VSCE_PAT secret is not set. Register the Marketplace publisher and add the PAT described in RELEASE-CHECKLIST.md.'
             exit 1
           }
-      - name: Test, package, and verify the Windows x64 extension
-        working-directory: Semanticus.VSCode
-        run: |
-          npm ci --no-fund --no-audit
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm test
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm run package:win
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish the verified VSIX to the VS Marketplace
         working-directory: Semanticus.VSCode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          $packages = @(Get-ChildItem -LiteralPath dist -Filter 'semanticus-win32-x64-*.vsix')
-          if ($packages.Count -ne 1) {
-            Write-Error "Expected exactly one verified Windows x64 VSIX, found $($packages.Count)."
-            exit 1
+          $expectedTargets = @('win32-x64', 'win32-arm64', 'linux-x64', 'darwin-x64', 'darwin-arm64')
+          $packages = @(Get-ChildItem -LiteralPath dist -Filter 'semanticus-*.vsix' -File)
+          foreach ($target in $expectedTargets) {
+            $matching = @($packages | Where-Object Name -like "semanticus-$target-*.vsix")
+            if ($matching.Count -ne 1) {
+              Write-Error "Expected exactly one verified $target VSIX, found $($matching.Count)."
+              exit 1
+            }
+            node node_modules/@vscode/vsce/vsce publish --packagePath "$($matching[0].FullName)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          node node_modules/@vscode/vsce/vsce publish --packagePath "$($packages[0].FullName)"

@@ -637,6 +637,7 @@ namespace Semanticus.Engine
         public int Partitions { get; set; }          // partition source expressions (M / calc-table DAX / legacy query)
         public int NamedExpressions { get; set; }    // shared M expressions / parameters
         public int CalcGroup { get; set; }           // calc-group Precedence + calc-item Ordinal changes — the calc-only props with no generic bucket (calc-item description/expression/format count under the generic buckets)
+        public int Metadata { get; set; }            // model/table/column/measure metadata (annotations, detail rows, calc-group selection expressions)
         public int Added { get; set; }               // NEW objects created on the live model (measures / calculated columns / calculated tables / named expressions / calculation items)
         public int Deleted { get; set; }             // objects REMOVED from the live model — ONLY the refs a caller explicitly named (selective push); never derived from absence
         public int TotalChanges { get; set; }

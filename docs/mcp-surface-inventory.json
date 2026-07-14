@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceHash": "ae219ac5e64184f30dcf58dc1f8566bd1a9e6a8eee2c121bef72c11903f23034",
+  "sourceHash": "a1bdf892b94e1aec98aad430e0156867230a6c542bba47539628c25b1d17171e",
   "sources": [
     "Semanticus.Engine/McpTools.cs",
     "Semanticus.Engine/McpTools.Evidence.cs",
@@ -18,8 +18,8 @@
     "engineMethods": 304,
     "studioDestinations": 22,
     "groupedStudioDestinations": 17,
-    "trackedEvidenceFiles": 160,
-    "operationsWithoutTrackedTestReference": 3,
+    "trackedEvidenceFiles": 172,
+    "operationsWithoutTrackedTestReference": 0,
     "unclassifiedOperations": 0
   },
   "studioDestinations": [
@@ -153,6 +153,7 @@
         "Semanticus.Tests/OrientationTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
         "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
         "Semanticus.Tests/WaiverTests.cs"
@@ -214,7 +215,8 @@
       "releaseClass": "supported",
       "risk": "high",
       "referenceEvidence": [
-        "Semanticus.AirSmoke/Program.cs"
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs"
       ]
     },
     {
@@ -301,7 +303,9 @@
       "family": "documentation-and-spec",
       "releaseClass": "supported",
       "risk": "critical",
-      "referenceEvidence": []
+      "referenceEvidence": [
+        "Semanticus.Tests/FabricSpecPublicDoorTests.cs"
+      ]
     },
     {
       "operation": "autogenerate_spec_from_model",
@@ -430,6 +434,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.AirSmoke/Program.cs",
         "Semanticus.McpSmoke/Program.cs"
       ]
     },
@@ -606,6 +611,7 @@
         "Semanticus.Tests/CalcGroupReadTests.cs",
         "Semanticus.Tests/DuplicateObjectTests.cs",
         "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
@@ -620,6 +626,7 @@
         "Semanticus.Tests/CalcGroupReadTests.cs",
         "Semanticus.Tests/DuplicateObjectTests.cs",
         "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
@@ -646,6 +653,12 @@
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch6Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
@@ -684,7 +697,9 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
-        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs"
+        "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs"
       ]
     },
     {
@@ -785,6 +800,10 @@
         "Semanticus.Tests/PublicReadMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch6Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessScopedScanTests.cs",
         "Semanticus.Tests/ReconcileMappingTests.cs",
@@ -819,6 +838,7 @@
         "Semanticus.Tests/CalcGroupReadTests.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CertifiedBaselineTests.cs",
+        "Semanticus.Tests/CloudReportPublicDoorTests.cs",
         "Semanticus.Tests/CustomRulesTests.cs",
         "Semanticus.Tests/DaxLibTests.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
@@ -838,6 +858,12 @@
         "Semanticus.Tests/PublicReadMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch6Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
@@ -892,6 +918,7 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
@@ -948,6 +975,12 @@
         "Semanticus.Tests/PublicReadMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch2Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch6Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
@@ -1214,7 +1247,10 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/AgentPolicyHardeningTests.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
-        "Semanticus.Tests/SessionLifecycleTests.cs"
+        "Semanticus.Tests/ReadinessCatalogBatch5Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogContractTests.cs",
+        "Semanticus.Tests/SessionLifecycleTests.cs",
+        "Semanticus.VSCode/test/docs-relationship.test.mjs"
       ]
     },
     {
@@ -1281,6 +1317,8 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/CustomRulesTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
         "Semanticus.Tests/ReadinessCopyTests.cs"
       ]
     },
@@ -1766,6 +1804,7 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ModelCompareTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
@@ -1796,6 +1835,7 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/FabricSpecPublicDoorTests.cs",
         "Semanticus.Tests/SpecCardinalityTests.cs"
       ]
     },
@@ -2299,7 +2339,9 @@
       "family": "lineage-and-impact",
       "releaseClass": "supported",
       "risk": "standard",
-      "referenceEvidence": []
+      "referenceEvidence": [
+        "Semanticus.Tests/CloudReportPublicDoorTests.cs"
+      ]
     },
     {
       "operation": "list_restore_points",
@@ -2585,6 +2627,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/WorkingCopyTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
       ]
@@ -2743,6 +2786,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.VSCode/test/navigation.test.mjs"
       ]
@@ -2787,6 +2831,7 @@
         "Semanticus.Tests/HealthDeltaTests.cs",
         "Semanticus.Tests/LayoutSidecarTests.cs",
         "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch5Tests.cs",
         "Semanticus.Tests/ReadinessCopyTests.cs",
         "Semanticus.Tests/ReadinessScopedScanTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
@@ -3054,6 +3099,7 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
         "Semanticus.Tests/ReadinessCopyTests.cs"
       ]
     },
@@ -3086,6 +3132,7 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
     },
@@ -3156,6 +3203,7 @@
         "Semanticus.Tests/HealthDeltaTests.cs",
         "Semanticus.Tests/PerspectiveTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs",
         "Semanticus.Tests/ReadinessScopedScanTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
         "Semanticus.Tests/SearchReplaceTests.cs",
@@ -3225,7 +3273,9 @@
       "family": "primer-and-learning",
       "releaseClass": "supported",
       "risk": "high",
-      "referenceEvidence": []
+      "referenceEvidence": [
+        "Semanticus.Tests/PrimerTests.cs"
+      ]
     },
     {
       "operation": "set_partition_m",
@@ -3291,6 +3341,7 @@
       "risk": "critical",
       "referenceEvidence": [
         "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.VSCode/test/navigation.test.mjs"
       ]
     },
@@ -3347,7 +3398,8 @@
       "releaseClass": "supported",
       "risk": "high",
       "referenceEvidence": [
-        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+        "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch4Tests.cs"
       ]
     },
     {
@@ -3357,6 +3409,7 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/FabricSpecPublicDoorTests.cs",
         "Semanticus.Tests/SpecCardinalityTests.cs",
         "Semanticus.VSCode/test/navigation.test.mjs"
       ]
@@ -3377,7 +3430,9 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
-        "Semanticus.RpcSmoke/Program.cs"
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ReadinessCatalogBatch3Tests.cs",
+        "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs"
       ]
     },
     {
