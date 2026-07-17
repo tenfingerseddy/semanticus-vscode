@@ -18,21 +18,26 @@ namespace Semanticus.Engine
     /// </summary>
     public sealed partial class LocalEngine
     {
-        private readonly System.Threading.SemaphoreSlim _workflowGate = new System.Threading.SemaphoreSlim(1, 1); // serialize run mutations across both doors
-        private readonly WorkflowRunStore _workflowRuns = new WorkflowRunStore();
         // §10.6 [D2]: the last readiness grade computed THIS session (set by AiReadinessScan*), so the
         // `model.readinessGrade` activation fact is lazy+cached and NEVER force-scanned on a menu/policy read.
         // null = never scanned ⇒ the term is "unknown" ⇒ grade comparisons are false (the rule stays dormant).
-        private volatile string _lastReadinessGrade;
-        // Start-of-run scan snapshots for the *_rescan/_clean verifies (keyed by runId; under _workflowGate).
-        private readonly Dictionary<string, WorkflowRunAux> _workflowAux = new Dictionary<string, WorkflowRunAux>(StringComparer.Ordinal);
+        private string CurrentReadinessGrade() => CurrentReadinessGrade(_sessions.CurrentContext);
 
-        private sealed class WorkflowRunAux
+        private static string CurrentReadinessGrade(SessionContext context)
         {
-            public HashSet<string> BpaKeys;            // RuleId|ObjectRef of ACTIVE violations at start (null = no bpa_clean gate)
-            public HashSet<string> ReadinessKeys;      // ditto for readiness findings
-            public double ReadinessOverall;
+            lock (context.ReadinessGate) return context.ReadinessGrade;
         }
+
+        private void SetReadinessGrade(SessionContext context, string grade, string operation)
+        {
+            lock (context.ReadinessGate)
+            {
+                EnsureContextCurrent(context, operation);
+                context.ReadinessGrade = grade;
+            }
+        }
+
+        internal int ActiveWorkflowRunsForTest => _sessions.CurrentContext.WorkflowRuns.ActiveRuns().Count();
 
         // ---- library ---------------------------------------------------------------------------
 
@@ -521,12 +526,13 @@ namespace Semanticus.Engine
 
         private async Task<PredicateFacts> GatherFactsAsync(IReadOnlyCollection<string> roots)
         {
+            var context = _sessions.CurrentContext;
             var f = new PredicateFacts();
             if (roots.Count == 0) return f;   // nothing referenced → gather nothing
 
-            if (roots.Contains("model") && _sessions.Current != null)
+            if (roots.Contains("model") && context.Session != null)
             {
-                var s = _sessions.Current;
+                var s = context.Session;
                 f.Model = await s.ReadAsync(m => new ModelFacts
                 {
                     TableCount = m.Tables.Count,
@@ -537,7 +543,7 @@ namespace Semanticus.Engine
                     StorageMode = DirectLakeInfo.IsModelDirectLake(m) ? "directlake" : m.DefaultMode.ToString().ToLowerInvariant(),
                     Fingerprint = KnowledgeStore.ComputeFingerprint(m).FingerprintKey,
                 });
-                f.Model.ReadinessGrade = _lastReadinessGrade;   // cached (D2) — may be null (unknown), never force-scanned
+                f.Model.ReadinessGrade = CurrentReadinessGrade(context);   // cached (D2) — may be null (unknown), never force-scanned
             }
             if (roots.Contains("connection"))
             {
@@ -556,12 +562,22 @@ namespace Semanticus.Engine
                 catch { f.Git = null; }
             }
             if (roots.Contains("session"))
+            {
+                await context.PlanGate.WaitAsync();
+                bool planLoaded;
+                try
+                {
+                    EnsureContextCurrent(context, "Workflow facts");
+                    planLoaded = context.Plans.Current != null;
+                }
+                finally { context.PlanGate.Release(); }
                 f.Session = new SessionFacts
                 {
                     Tier = _entitlement?.Info?.Tier ?? "free",
                     VerifiedMode = _verifiedMode ? "on" : "off",
-                    PlanLoaded = _plans.Current != null,
+                    PlanLoaded = planLoaded,
                 };
+            }
             if (roots.Contains("date"))
             {
                 var now = DateTime.UtcNow;
@@ -672,6 +688,7 @@ namespace Semanticus.Engine
         /// exemplars; a hard binding must not break admission replays).</summary>
         private async Task EnforceBindingAsync(string op, string origin)
         {
+            var context = _sessions.CurrentContext;
             // DryRunScope is AsyncLocal, set on the caller's thread before the op is invoked; read it synchronously
             // here (before this method's first await) so the rehearsal exemption never depends on async-flow to a
             // dispatcher thread — same contract as Session.MutateAsync's dry-run check.
@@ -699,17 +716,18 @@ namespace Semanticus.Engine
 
             // (A) STEP-scoped exemption: some active run of a required workflow must be AT a step performing THIS op.
             bool atPerformingStep = false;
-            await _workflowGate.WaitAsync();
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                foreach (var run in _workflowRuns.ActiveRuns())
+                EnsureContextCurrent(context, "Workflow policy");
+                foreach (var run in context.WorkflowRuns.ActiveRuns())
                 {
                     if (!binding.Require.Contains(run.Def.Name, StringComparer.Ordinal)) continue;
                     var step = run.CurrentStep;
                     if (step?.Ops != null && step.Ops.Contains(op, StringComparer.Ordinal)) { atPerformingStep = true; break; }
                 }
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
             if (atPerformingStep) return;
 
             var required = string.Join(", ", binding.Require.Select(n => $"'{n}'"));
@@ -872,8 +890,16 @@ namespace Semanticus.Engine
             var inputNames = allInputs.Select(i => i.Name).Where(n => !string.IsNullOrEmpty(n)).ToHashSet(StringComparer.Ordinal);
             var hasObjectRef = allInputs.Any(i => string.Equals(i.Type, "objectRef", StringComparison.Ordinal));
 
+            // SF7 — a running SAME-OR-PRIOR-STEP view of objectRef availability: expected_values resolves its target
+            // from answers accumulated up to the gated step, so an objectRef declared only on a LATER step could
+            // never be answered in time — flag that honestly instead of blessing it off the run-wide set.
+            var hasObjectRefSoFar = false;
+
             foreach (var step in def.Steps)
             {
+                hasObjectRefSoFar |= (step.Gate?.Inputs ?? Array.Empty<GateInput>())
+                    .Any(i => string.Equals(i.Type, "objectRef", StringComparison.Ordinal));
+
                 foreach (var op in step.Ops ?? Array.Empty<string>())
                     if (!catalog.Contains(op))
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} op '{op}' is not a known op." });
@@ -896,12 +922,18 @@ namespace Semanticus.Engine
                     if (!string.IsNullOrEmpty(v.Probe) && !inputNames.Contains(v.Probe))
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' probe references input '{v.Probe}', which no gate collects." });
 
-                    var needsTarget = v.Kind == "dax_probe" || v.Kind == "dax_equivalence" || v.Kind == "benchmark_delta"
+                    var needsTarget = v.Kind == "dax_probe" || v.Kind == "dax_equivalence" || v.Kind == "expected_values"
+                        || v.Kind == "benchmark_delta"
                         || v.Kind == "impact_assessment" || v.Kind == "baseline_exists"
                         || v.Kind == "plan_item_staged" || v.Kind == "plan_item_applied"
                         || (v.Kind == "bpa_clean" && string.Equals(v.Scope, "object", StringComparison.Ordinal));
-                    if (needsTarget && !hasObjectRef)
-                        findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' needs a target, but no input of type objectRef names the object to act on — the check can't run and would fail a hard gate." });
+                    // expected_values judges availability SAME-OR-PRIOR-STEP (its target must be answerable by the
+                    // time the gate runs — a later step's objectRef can't be); the other kinds keep the run-wide view.
+                    var targetAvailable = v.Kind == "expected_values" ? hasObjectRefSoFar : hasObjectRef;
+                    if (needsTarget && !targetAvailable)
+                        findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' needs a target, but no input of type objectRef names the object to act on"
+                            + (v.Kind == "expected_values" && hasObjectRef ? " on this or any prior step (a later step's objectRef cannot be answered in time)" : "")
+                            + " — the check can't run and would fail a hard gate." });
 
                     // equivalenceGrid is an optional convention: absent = grand-total-only (thin), not an error.
                     if (v.Kind == "dax_equivalence" && !inputNames.Contains("equivalenceGrid"))
@@ -1306,8 +1338,11 @@ namespace Semanticus.Engine
 
         // ---- run lifecycle ----------------------------------------------------------------------
 
+        internal Func<Task> WorkflowStartReadyForTest;
+
         public async Task<WorkflowRunView> StartWorkflowAsync(string name, string origin)
         {
+            var context = _sessions.CurrentContext;
             // §10.2/§10.12: a template is a recipe with blanks, not runnable — teach the instantiate path before
             // the generic not-found, but only when no workflow of this name exists (a real workflow always wins).
             if (!LoadWorkflowDefs().Any(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -1345,40 +1380,49 @@ namespace Semanticus.Engine
                 });
 
             // Start-of-run snapshots for diff-based verifies — taken BEFORE any step mutates the model.
+            var session = context.Session;
             var aux = new WorkflowRunAux();
             var kinds = def.Steps.Where(s => s.Gate != null).SelectMany(s => s.Gate.Verify).Select(v => v.Kind).ToHashSet(StringComparer.Ordinal);
-            if (kinds.Contains("bpa_clean") && _sessions.Current != null)
+            if (kinds.Contains("bpa_clean") && session != null)
                 aux.BpaKeys = (await BpaScanAsync()).Violations.Where(v => !v.Waived).Select(v => v.RuleId + "|" + v.ObjectRef).ToHashSet(StringComparer.Ordinal);
-            if (kinds.Contains("readiness_rescan") && _sessions.Current != null)
+            if (kinds.Contains("readiness_rescan") && session != null)
             {
                 var sc = await AiReadinessScanAsync();
                 aux.ReadinessKeys = sc.Findings.Where(f => !f.Waived).Select(f => f.RuleId + "|" + f.ObjectRef).ToHashSet(StringComparer.Ordinal);
                 aux.ReadinessOverall = sc.Overall;
             }
 
-            var session = _sessions.Current;
             var modelName = session == null ? null : await session.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
+            var hook = System.Threading.Interlocked.Exchange(ref WorkflowStartReadyForTest, null);
+            if (hook != null) await hook();
             WorkflowRunState run;
-            await _workflowGate.WaitAsync();
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                run = _workflowRuns.Start(def, settings, global);
+                EnsureContextCurrent(context, "Workflow start");
+                var live = context.Live;   // bind the identity current at registration; a benign reconnect is allowed
+                run = context.WorkflowRuns.Start(def, settings, global);
                 run.Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
-                run.ModelIdentity = PaneIdentity(session, _live);
+                run.ModelIdentity = PaneIdentity(session, live);
                 run.ModelName = modelName;
                 run.ModelFingerprint = session == null ? null : VitalsFingerprintFor(session);
                 run.SessionId = session?.Id;
-                _workflowAux[run.RunId] = aux;
-                return PublishWorkflowRun(run);
+                context.WorkflowAux[run.RunId] = aux;
+                return PublishWorkflowRun(context, run);
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
         }
 
         public async Task<WorkflowRunView> GetWorkflowRunAsync(string runId)
         {
-            await _workflowGate.WaitAsync();
-            try { return WorkflowRunner.BuildView(_workflowRuns.Require(runId)); }
-            finally { _workflowGate.Release(); }
+            var context = _sessions.CurrentContext;
+            await context.WorkflowGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, "Workflow run read");
+                return WorkflowRunner.BuildView(context.WorkflowRuns.Require(runId));
+            }
+            finally { context.WorkflowGate.Release(); }
         }
 
         /// <summary>Submit the run's current step. <paramref name="answersJson"/> is a JSON object:
@@ -1386,25 +1430,42 @@ namespace Semanticus.Engine
         /// {"declined": true, "reason": "..."}. The gate evaluator's rejection text steers the agent.</summary>
         public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin)
         {
+            var context = _sessions.CurrentContext;
             var answers = ParseAnswers(answersJson);
-            await _workflowGate.WaitAsync();
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                var run = _workflowRuns.Require(runId);
-                await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync);
-                return PublishWorkflowRun(run, origin);
+                EnsureContextCurrent(context, "Workflow step");
+                var run = context.WorkflowRuns.Require(runId);
+                // The step being submitted (for a witness-revision receipt's stepId) — captured BEFORE the submit
+                // advances the run.
+                var submittingStep = run.CurrentStep?.Id ?? stepId;
+                run.SubmissionOrigin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
+                try { await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync); }
+                finally
+                {
+                    // E3(a) — lock the witness on FIRST submission of any input that feeds a dax_equivalence probe, and
+                    // record a revision receipt on a later change. In `finally` so a re-submitted (hard-blocked) step's
+                    // changed witness is still captured; the run object is mutated in place either way.
+                    RecordWitnessLocks(run, submittingStep);
+                    run.SubmissionOrigin = null;
+                }
+                EnsureContextCurrent(context, "Workflow step");
+                return PublishWorkflowRun(context, run, origin);
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
         }
 
         public async Task<WorkflowRunView> SkipWorkflowStepAsync(string runId, string stepId, string reason, string origin)
         {
-            await _workflowGate.WaitAsync();
+            var context = _sessions.CurrentContext;
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                var run = _workflowRuns.Require(runId);
+                EnsureContextCurrent(context, "Workflow step");
+                var run = context.WorkflowRuns.Require(runId);
                 WorkflowRunner.SkipStep(run, stepId, reason);
-                var view = PublishWorkflowRun(run, origin);
+                var view = PublishWorkflowRun(context, run, origin);
                 await PublishActivityAsync(new ActivityEvent
                 {
                     Kind = "skip_workflow_step",
@@ -1416,34 +1477,38 @@ namespace Semanticus.Engine
                 });
                 return view;
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
         }
 
         public async Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin)
         {
-            await _workflowGate.WaitAsync();
+            var context = _sessions.CurrentContext;
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                var run = _workflowRuns.Require(runId);
+                EnsureContextCurrent(context, "Workflow abort");
+                var run = context.WorkflowRuns.Require(runId);
                 WorkflowRunner.Abort(run, reason);
-                return PublishWorkflowRun(run, origin);
+                return PublishWorkflowRun(context, run, origin);
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
         }
 
         public async Task<Semanticus.Engine.Evidence.EvidenceArtifact> ExportWorkflowEvidenceAsync(string runId)
         {
-            var session = _sessions.Current;
+            var context = _sessions.CurrentContext;
+            var session = context.Session;
             if (session == null)
                 return new Semanticus.Engine.Evidence.EvidenceArtifact { Error = "No open model. Open a model before exporting workflow evidence." };
             var modelName = await session.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
-            var modelIdentity = PaneIdentity(session, _live);
+            var modelIdentity = PaneIdentity(session, context.Live);
 
-            await _workflowGate.WaitAsync();
+            await context.WorkflowGate.WaitAsync();
             try
             {
+                EnsureContextCurrent(context, "Workflow evidence export");
                 WorkflowRunState run;
-                try { run = _workflowRuns.Require(runId); }
+                try { run = context.WorkflowRuns.Require(runId); }
                 catch (Exception ex) { return new Semanticus.Engine.Evidence.EvidenceArtifact { Note = ex.Message }; }
                 if (run.Status == "active")
                     return new Semanticus.Engine.Evidence.EvidenceArtifact { Note = "This workflow is still active. Finish or abort it before exporting its evidence." };
@@ -1454,19 +1519,19 @@ namespace Semanticus.Engine
                     return new Semanticus.Engine.Evidence.EvidenceArtifact { Note = "The workflow run belongs to a different model. Open its owning model before exporting the evidence." };
                 return Semanticus.Engine.Evidence.EvidenceArtifact.Seal(Semanticus.Engine.Evidence.WorkflowEvidenceRenderer.Build(run));
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
         }
 
         /// <summary>Broadcast the transition; a TERMINAL transition additionally publishes the full run
         /// record as an ActivityEvent so the ExperienceTee persists it (learning-loop §3.1 — the
-        /// answers/declines/evidence outlive the session). Called under _workflowGate.</summary>
-        private WorkflowRunView PublishWorkflowRun(WorkflowRunState run, string origin = null)
+        /// answers/declines/evidence outlive the session). Called under the captured context's workflow gate.</summary>
+        private WorkflowRunView PublishWorkflowRun(SessionContext context, WorkflowRunState run, string origin = null)
         {
             var view = WorkflowRunner.BuildView(run);
-            _sessions.Bus.PublishWorkflow(view);
+            if (ReferenceEquals(_sessions.CurrentContext, context)) _sessions.Bus.PublishWorkflow(view);
             if (run.Status != "active")
             {
-                _workflowAux.Remove(run.RunId);
+                context.WorkflowAux.Remove(run.RunId);
                 _ = PublishActivityAsync(new ActivityEvent
                 {
                     Kind = "workflow_run",
@@ -1505,6 +1570,76 @@ namespace Semanticus.Engine
             return answers;
         }
 
+        // ---- E3 receipts: witness lock + candidate-drift tracking ---------------------------------
+
+        /// <summary>SHA-256 of a DAX expression NORMALIZED (CRLF→LF, trimmed, runs of whitespace collapsed) so a
+        /// pure reformat is not read as a change. Used for the witness lock (E3a) and candidate-drift (E3b).</summary>
+        internal static string NormalizeDaxHash(string expr)
+        {
+            var norm = System.Text.RegularExpressions.Regex.Replace((expr ?? "").Replace("\r\n", "\n").Trim(), @"\s+", " ");
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(norm))).ToLowerInvariant();
+        }
+
+        /// <summary>E3(a) — for every input that feeds a dax_equivalence probe, lock its normalized-expression hash on
+        /// first sight and append a {beforeHash, afterHash, stepId, timestamp} receipt on any later change (never a
+        /// silent replace). Called under _workflowGate right after a submit; defensive (a receipt must never break a
+        /// submit).</summary>
+        private static void RecordWitnessLocks(WorkflowRunState run, string submittingStep)
+        {
+            try
+            {
+                var all = WorkflowRunner.AllAnswers(run);
+                var probes = run.Def.Steps
+                    .SelectMany(s => s.Gate?.Verify ?? Array.Empty<VerifySpec>())
+                    .Where(v => v.Kind == "dax_equivalence" && !string.IsNullOrWhiteSpace(v.Probe))
+                    .Select(v => v.Probe).Distinct(StringComparer.Ordinal);
+                foreach (var probe in probes)
+                {
+                    if (!all.TryGetValue(probe, out var a) || a == null || !a.Answered) continue;
+                    var h = NormalizeDaxHash(a.Value);
+                    if (!run.WitnessLocks.TryGetValue(probe, out var old)) { run.WitnessLocks[probe] = h; continue; }
+                    if (old == h) continue;
+                    run.WitnessRevisions.Add(new WitnessRevision
+                    {
+                        Probe = probe, BeforeHash = old, AfterHash = h,
+                        StepId = submittingStep, TimestampUtc = DateTime.UtcNow.ToString("o"),
+                    });
+                    run.WitnessLocks[probe] = h;
+                }
+            }
+            catch { /* receipt bookkeeping must never fail a submit */ }
+        }
+
+        /// <summary>E3(b) — after a measure write, record its new normalized-expression hash as the WORKFLOW-AUTHORED
+        /// hash for every active run whose CURRENT step declares this op (the step-scoped rule EnforceBindingAsync
+        /// uses). A later change while NO declaring step is current leaves the recorded hash stale ⇒ the equivalence
+        /// verify sees drift. Fully defensive: never throws into the measure-write path.</summary>
+        private async Task RecordWorkflowAuthoredMeasureAsync(string op, string measureRef, string expression)
+        {
+            try
+            {
+                var context = _sessions.CurrentContext;
+                if (context?.Session == null || string.IsNullOrWhiteSpace(measureRef)) return;
+                var canon = await context.Session.ReadAsync(m => ObjectRefs.Resolve(m, measureRef) is Measure mm ? ObjectRefs.For(mm) : null);
+                if (canon == null) return;   // not a measure — drift only tracks measures (the equivalence target)
+                var h = NormalizeDaxHash(expression);
+                await context.WorkflowGate.WaitAsync();
+                try
+                {
+                    foreach (var run in context.WorkflowRuns.ActiveRuns())
+                    {
+                        var step = run.CurrentStep;
+                        if (step?.Ops == null || !step.Ops.Contains(op, StringComparer.Ordinal)) continue;
+                        if (!context.WorkflowAux.TryGetValue(run.RunId, out var aux)) continue;
+                        (aux.AuthoredMeasureHashes ??= new Dictionary<string, string>(StringComparer.Ordinal))[canon] = h;
+                    }
+                }
+                finally { context.WorkflowGate.Release(); }
+            }
+            catch { /* drift bookkeeping must never break a measure write */ }
+        }
+
         // ---- verify executors (the engine-evaluated half of a gate — never self-graded) -----------
 
         /// <summary>Target-object convention: the run's LATEST answered input of type `objectRef`
@@ -1517,7 +1652,8 @@ namespace Semanticus.Engine
             switch (spec.Kind)
             {
                 case "dax_probe": return await WorkflowDaxProbeAsync(spec, run, answers);
-                case "dax_equivalence": return await WorkflowDaxEquivalenceAsync(spec, run, answers);
+                case "dax_equivalence": return await WorkflowDaxEquivalenceAsync(spec, step, run, answers);
+                case "expected_values": return await WorkflowExpectedValuesAsync(spec, step, run, answers);
                 case "bpa_clean": return await WorkflowBpaCleanAsync(spec, run, answers);
                 case "readiness_rescan": return await WorkflowReadinessRescanAsync(spec, run);
                 case "benchmark_delta": return await WorkflowBenchmarkDeltaAsync(spec, run, answers);
@@ -1612,10 +1748,11 @@ namespace Semanticus.Engine
             const string kind = "baseline_exists";
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var id) || !id.Answered || string.IsNullOrWhiteSpace(id.Value))
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' must carry the captureId returned by capture_baseline." };
+            var context = _sessions.CurrentContext;
             BaselineState baseline;
-            await _baselineGate.WaitAsync();
-            try { baseline = _baselines.Get(id.Value.Trim()); }
-            finally { _baselineGate.Release(); }
+            await context.BaselineGate.WaitAsync();
+            try { baseline = context.Baselines.Get(id.Value.Trim()); }
+            finally { context.BaselineGate.Release(); }
             if (baseline == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"capture '{id.Value}' is not held in this model session. Run capture_baseline, then record its captureId." };
             var target = LatestObjectRefAnswer(run, answers);
@@ -1688,10 +1825,11 @@ namespace Semanticus.Engine
             var kind = applied ? "plan_item_applied" : "plan_item_staged";
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var id) || !id.Answered || string.IsNullOrWhiteSpace(id.Value))
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' must carry the rename Change Plan item id." };
+            var context = _sessions.CurrentContext;
             ChangeItem item;
-            await _planGate.WaitAsync();
-            try { item = _plans.Current?.Find(id.Value.Trim())?.Clone(); }
-            finally { _planGate.Release(); }
+            await context.PlanGate.WaitAsync();
+            try { item = context.Plans.Current?.Find(id.Value.Trim())?.Clone(); }
+            finally { context.PlanGate.Release(); }
             if (item == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"plan item '{id.Value}' was not found. Stage the rename with add_plan_item, then record its id." };
             var target = LatestObjectRefAnswer(run, answers);
@@ -1766,6 +1904,7 @@ namespace Semanticus.Engine
         /// contexts + values (offline-safe file check); it does NOT claim they still hold (compare_baseline(label:…)).</summary>
         private async Task<VerifyResult> WorkflowBaselineCapturedAsync(VerifySpec spec, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
         {
+            await Task.CompletedTask.ConfigureAwait(false);   // keep the shared async verifier signature without scheduling work
             const string kind = "baseline_captured";
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var labelAns) || !labelAns.Answered || string.IsNullOrWhiteSpace(labelAns.Value))
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' must carry the LABEL the certified figures were captured under (capture_baseline with that label first, then record it here)." };
@@ -1922,42 +2061,711 @@ namespace Semanticus.Engine
             };
         }
 
-        /// <summary>Prove the target measure's CURRENT expression equivalent to the recorded original
-        /// (the `probe:` input holds the pre-rewrite DAX, captured at an earlier step). The matrix
-        /// comes from an answered `equivalenceGrid` input (comma-separated columns); absent = grand
-        /// total only, honestly disclosed as thin.</summary>
-        private async Task<VerifyResult> WorkflowDaxEquivalenceAsync(VerifySpec spec, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
+        /// <summary>Prove the target measure's CURRENT expression equivalent to the recorded witness/original
+        /// (the `probe:` input, captured at an earlier step). The matrix comes from an answered `equivalenceGrid`
+        /// input (comma-separated columns); an EMPTY effective grid is a grand-total-only comparison, which is not
+        /// a proof — the gate blocks it as `unavailable` (E2 fail-closed). The pinned/open shape partition comes
+        /// from the static pinnedShapes/openShapes keys unioned with the run-decided `openShapesFrom` input.</summary>
+        private async Task<VerifyResult> WorkflowDaxEquivalenceAsync(VerifySpec spec, WorkflowStep step, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
         {
             const string kind = "dax_equivalence";
-            if (_live == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline — no live connection, equivalence was NOT verified." };
+            // E2 — the mandatory-evidence verify: every applicable-but-no-evidence path is UNAVAILABLE (fail-closed,
+            // blocks a hard step), naming what was missing. Only a real divergence on a PINNED shape is `failed`.
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var original) || !original.Answered)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' must carry the ORIGINAL expression (recorded before the rewrite) to compare against." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the witness input '{spec.Probe}'", Detail = $"the probe input '{spec.Probe}' must carry the witness/original expression to compare against — it was not answered." };
             var target = LatestObjectRefAnswer(run, answers);
             if (target == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no answered objectRef-typed input names the rewritten measure." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure ref", Detail = "no answered objectRef-typed input names the measure under proof." };
 
             var s = _sessions.Require();
-            var current = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? mm.Expression : null);
+            var (current, canonRef) = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? (mm.Expression, ObjectRefs.For(mm)) : (null, null));
             if (current == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"'{target}' does not resolve to a measure on the current model." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure", Detail = $"'{target}' does not resolve to a measure on the current model." };
+
+            // E3(b) — CANDIDATE DRIFT: the target's current expression no longer matches the last workflow-authored
+            // write ⇒ someone changed it OUTSIDE the workflow, so the witness would be proven against an unattested
+            // candidate. Refuse as unavailable (a model read, checkable even offline — before the live check).
+            if (canonRef != null
+                && _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux)
+                && aux?.AuthoredMeasureHashes != null
+                && aux.AuthoredMeasureHashes.TryGetValue(canonRef, out var authored)
+                && authored != NormalizeDaxHash(current))
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable", Missing = "an unchanged candidate",
+                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one) — re-author it inside the workflow before proving equivalence, so the witness is checked against an attested candidate.",
+                };
+
+            if (_live == null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline — no live connection, so equivalence could not be proven (open_live/open_local and re-submit for real evidence)." };
 
             var grid = answers.TryGetValue("equivalenceGrid", out var g) && g.Answered
                 ? g.Value.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToArray()
                 : Array.Empty<string>();
-            var eq = await DaxBench.VerifyEquivalenceAsync(_live, original.Value, current, grid, Array.Empty<string>(), 100000);
-            if (!string.IsNullOrEmpty(eq.Error))
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "equivalence query failed: " + eq.Error };
-            var thin = grid.Length == 0 ? " (grand-total only — answer `equivalenceGrid` with group-by columns for a per-context proof)" : "";
+
+            // E1 ADDENDUM — resolve the per-run OPEN partition before spending a comparison. `openShapesFrom` binds
+            // a step input whose ANSWER lists the run-decided open shapes (the v5 seed cannot know the partition at
+            // authoring time — it comes from the requirement's context ledger). Answer validation is observable
+            // offline (benchmark_delta's pattern), so it sits before the live check; a bad id refuses fail-closed.
+            var effectiveGrid = DaxBench.NormalizeGroupBy(grid);   // THE effective-grid point — raw .Length reopens the whitespace bypass
+            var evaluatedIds = DaxBench.BuildComparisonShapes(grid).Select(sh => DaxBench.ShapeId(sh, effectiveGrid)).ToArray();
+            var openShapes = EquivalenceGate.ResolveOpenShapes(spec, answers, evaluatedIds, out var partitionError);
+            if (partitionError != null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a valid open-shape partition", Detail = partitionError };
+
+            // Blocker 3 — the PARTITION LOCK, taken at the first actually-run comparison (an offline submission
+            // returned above and locked nothing). A re-submission with a DIFFERENT effective open set gets a receipt
+            // + a blocking `unavailable`; the next submission evaluates fresh under the new locked partition. The
+            // key carries the verify's ORDINAL within the step (deterministic parse order), so two same-step
+            // same-probe verifies with different partitions can never deadlock on one shared lock.
+            var verifyIndex = step?.Gate?.Verify != null ? Array.IndexOf(step.Gate.Verify, spec) : -1;
+            if (verifyIndex < 0)
+                // Defensive: the spec must be one of the submitting step's own verify entries — a future refactor
+                // that copies/reallocates the spec array would silently collapse every verify onto one -1 lock key,
+                // resurrecting the shared-lock deadlock. Refuse loudly instead.
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable", Missing = "a stable verify identity",
+                    Detail = "internal error: this dax_equivalence spec is not among the submitting step's verify entries, so its partition lock cannot be keyed — report this; the spec array must not be copied between parse and execution.",
+                };
+            var partitionBlock = EquivalenceGate.RegisterPartition(run, step?.Id ?? run.CurrentStep?.Id, verifyIndex, spec.Probe, openShapes);
+            if (partitionBlock != null)
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable",
+                    Missing = "shape partition changed after evidence was seen — re-run the verify with the new partition on a fresh evaluation",
+                    Detail = partitionBlock,
+                };
+
+            // The answered objectRef names the measure under proof — spec it so the proof runs measure-faithfully
+            // against the target's REAL home table (see DaxQuerySpec; a Trusted=false spec degrades honestly and
+            // the evidence ladder turns that into a blocking 'unavailable' below, never a false 'passed').
+            var eqSpec = await BuildQuerySpecAsync(_live, target);
+            var eq = await DaxBench.VerifyEquivalenceAsync(_live, original.Value, current, grid, Array.Empty<string>(), 100000, eqSpec);
+
+            // E1/E2 — ONE evidence ladder (DaxBench.ClassifyEquivalenceEvidence) grades the comparison; the gate
+            // applies the pinned/open shape ledger on top: pinned mismatches FAIL, open mismatches are RECORDED,
+            // and every no-authoritative-evidence rung (error / degraded / degraded_mismatch / zero rows /
+            // truncated / thin) is a blocking `unavailable` with the fidelity caveat preserved.
+            var outcome = EquivalenceGate.Evaluate(eq, spec.PinnedShapes, openShapes, effectiveGrid.Length);
             return new VerifyResult
             {
                 Kind = kind,
-                Status = eq.AllMatch && !eq.Truncated ? "passed" : "failed",
-                Detail = eq.AllMatch && !eq.Truncated
-                    ? $"original and current expressions match across {eq.RowsCompared} context(s){thin}."
-                    : eq.Truncated
-                        ? $"comparison hit the row cap ({eq.RowsCompared} rows) — coverage incomplete, a match is not a proof."
-                        : $"{eq.MismatchCount}/{eq.RowsCompared} context(s) DIFFER — e.g. " + string.Join("; ", eq.Mismatches.Take(3).Select(m => $"{m.Context}: {m.ValueA} vs {m.ValueB}")),
+                Status = outcome.Status,
+                Missing = outcome.Missing,
+                Detail = outcome.Detail,
+                Shapes = outcome.Shapes,
+                MismatchCells = outcome.MismatchCells.Length == 0 ? null : outcome.MismatchCells,
+            };
+        }
+
+        // The verify-side query evaluation ceiling (seconds). A hard measure's anchor point query is SARGable and
+        // should be milliseconds; anything past this ceiling is a runaway (a bad predicate, a degenerate model) that
+        // must surface as `unavailable`, never hang or crash the run — see RunVerifyQueryAsync. The extra grace only
+        // guards a driver that ignores BOTH Cancel and CommandTimeout. One TOTAL budget bounds a whole expected_values
+        // verify across all its anchors. Internal overrides let tests exercise the ceiling in seconds, not minutes.
+        private const int VerifyQueryCeilingSecondsDefault = 30;
+        private const int VerifyPostCancelGraceSecondsDefault = 15;
+        private const int VerifyTotalBudgetSecondsDefault = 60;
+        internal int VerifyCeilingOverrideForTest;      // seconds; 0 = default
+        internal int VerifyGraceOverrideForTest;        // seconds; 0 = default
+        internal int VerifyBudgetOverrideForTest;       // seconds; 0 = default
+        private int VerifyQueryCeilingSeconds => VerifyCeilingOverrideForTest > 0 ? VerifyCeilingOverrideForTest : VerifyQueryCeilingSecondsDefault;
+        private int VerifyPostCancelGraceSeconds => VerifyGraceOverrideForTest > 0 ? VerifyGraceOverrideForTest : VerifyPostCancelGraceSecondsDefault;
+        private int VerifyTotalBudgetSeconds => VerifyBudgetOverrideForTest > 0 ? VerifyBudgetOverrideForTest : VerifyTotalBudgetSecondsDefault;
+
+        /// <summary>Why a verify query timed out — the consumer's message must not conflate the two: a LANE-WAIT
+        /// budget exhaustion (another query held the connection; nothing of ours ran) must never advise narrowing
+        /// the anchor, and a CEILING breach (our own command ran too long) must never blame the lane.</summary>
+        internal enum VerifyTimeoutCause { None, LaneWait, Ceiling }
+
+        /// <summary>Test seam for the start-vs-abandon race: invoked in the lane-wait timeout branch immediately
+        /// BEFORE the atomic abandon attempt, so a test can hold the branch until the queued command has started
+        /// and prove the CAS handoff lets exactly one side win. Null in production.</summary>
+        internal Action VerifyAbandonRaceHookForTest;
+
+        /// <summary>Test seam for the phase-2 continuation delay: invoked immediately after the monitor awaits the
+        /// command-start signal, so a test can hold the continuation past a clean post-deadline completion and prove
+        /// the verdict keys off the ABSOLUTE command-start deadline (armed in the lane lambda), never off a timer the
+        /// delayed continuation would arm. Null in production.</summary>
+        internal Action VerifyPhase2DelayHookForTest;
+
+        /// <summary>Test seam for the LANE-continuation delay — the mirror image: invoked in the lane lambda right
+        /// after the stamped execution returns, so a test can park that continuation ACROSS the deadline after an
+        /// ON-TIME completion and prove the verdict uses the synchronously-captured completion stamp (accepted), not
+        /// the continuation's resume time (which would falsely refuse it). Null in production.</summary>
+        internal Action VerifyLaneContinuationHookForTest;
+
+        /// <summary>Run a verify-side query with a HARD ceiling — the scoped hardening from the live incident: verify
+        /// execution must never crash, hang, or wedge the run. TWO PHASES over the serialized query lane:
+        /// PHASE 1 — LANE WAIT, charged to the caller's TOTAL BUDGET (<paramref name="deadlineUtc"/>) only, never the
+        ///     per-query ceiling: a verify QUEUED behind a healthy long query may exhaust the budget here, but it
+        ///     never owned a command, so it may NOT retire the connection (the lane owner is someone else's healthy
+        ///     work). An abandoned queued op bails out before spending the lane on a pointless query.
+        /// PHASE 2 — the command has STARTED (we own the lane): NOW the per-query clock runs, with the token =
+        ///     min(per-query ceiling, remaining budget) as the EXACT remaining TimeSpan (a 0.6s budget cancels at
+        ///     0.6s; a 1.9s budget is never falsely truncated to 1s) — only the ADOMD CommandTimeout, an integer
+        ///     property, rounds, and it rounds UP. Three layers bound it:
+        ///     (1) the ADOMD CommandTimeout bounds the server;
+        ///     (2) at the token a REAL cancellation fires (the registration invokes AdomdCommand.Cancel), the ADOMD
+        ///         call completes with a cancellation error, and the lane + lifetime lease are RELEASED — awaited to
+        ///         terminal completion, never abandoned. The verdict keys off ceiling EXPIRY alone: even a SUCCESS
+        ///         result landing during the post-cancel grace stays timed out (it was produced past the ceiling);
+        ///     (3) if the driver ignores BOTH (pathological), the grace expires and the connection is RETIRED —
+        ///         legal ONLY here, where our OWN command was started and ignored Cancel.
+        /// The queued→started/abandoned handoff is ONE atomic state machine (Interlocked.CompareExchange over
+        /// 0=queued | 1=started | 2=abandoned): the lambda may only execute by winning 0→1, the timeout branch may
+        /// only abandon by winning 0→2, and a lost abandon FALLS THROUGH to the normal started-path wait — exactly
+        /// one side wins, a command can never start after abandonment, and a started command is never left without
+        /// cancellation coverage.
+        /// Returns <c>TimedOut</c> (the caller surfaces one 'unavailable'), <c>Retired</c> (the caller tells the
+        /// user to reconnect), and the timeout <c>Cause</c> (LaneWait vs Ceiling — the caller's message must not
+        /// blame the anchor for a busy lane). A caught exception is folded, never rethrown into the run.
+        /// Deliberately confined to the verify executors — the interactive query doors keep their own timeouts.</summary>
+        internal async Task<(ResultSet Rs, bool TimedOut, bool Retired, VerifyTimeoutCause Cause)> RunVerifyQueryAsync(
+            string query, int maxRows, LiveConnection live, DateTime deadlineUtc)
+        {
+            if (live == null) return (ResultSet.FromError("Not connected."), false, false, VerifyTimeoutCause.None);
+            try
+            {
+                using var cts = new System.Threading.CancellationTokenSource();
+                var started = new TaskCompletionSource<DateTime>(TaskCreationOptions.RunContinuationsAsynchronously);   // carries the ABSOLUTE command-start deadline
+                var state = 0;   // 0=queued | 1=started | 2=abandoned — the ONE atomic handoff (see summary)
+
+                var exec = live.RunExclusiveAsync(async () =>
+                {
+                    // The lane is ours — but the command may only start by winning the queued→started transition.
+                    if (System.Threading.Interlocked.CompareExchange(ref state, 1, 0) != 0)
+                        return (Rs: ResultSet.FromError("verify abandoned while queued (budget exhausted before the lane freed)."), CompletedUtc: DateTime.MinValue);
+                    // The per-query token: the EXACT remaining budget, capped by the per-query ceiling — computed
+                    // at COMMAND start, so lane-wait time was charged to the budget, never to this token. ONE
+                    // captured startUtc anchors BOTH the token and the deadline (a second UtcNow read would
+                    // slightly extend a budget-limited deadline past the true budget).
+                    var startUtc = DateTime.UtcNow;
+                    var remaining = deadlineUtc - startUtc;
+                    if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+                    var ceiling = TimeSpan.FromSeconds(VerifyQueryCeilingSeconds);
+                    var token = remaining < ceiling ? remaining : ceiling;
+                    // ARM CANCELLATION HERE — inside the lane lambda, BEFORE signaling started and BEFORE launching
+                    // execution — anchored to the ABSOLUTE command-start deadline. Arming in the awaiting continuation
+                    // was the hole: a scheduler delay between the start signal and the continuation would arm a fresh
+                    // full-duration timer, silently shifting the deadline. A zero token cancels synchronously.
+                    var commandDeadlineUtc = startUtc + token;
+                    if (token <= TimeSpan.Zero) cts.Cancel(); else cts.CancelAfter(token);
+                    started.TrySetResult(commandDeadlineUtc);
+                    // Only the ADOMD CommandTimeout (an integer property) rounds — UP, floor 1s, so the server
+                    // bound is never tighter than the honest token (the token's cancellation stays authoritative).
+                    var commandTimeout = Math.Max(1, (int)Math.Ceiling(token.TotalSeconds));
+                    // The completion timestamp is captured SYNCHRONOUSLY on the execution-producing thread (inside
+                    // the stamped call's work body, immediately after the execute returns) — a timestamp taken after
+                    // THIS await would record the continuation's RESUME time (the dispatcher queues continuations
+                    // asynchronously), falsely refusing an on-time completion whose continuation got parked.
+                    var stamped = await live.ExecuteWithinExclusiveStampedAsync(query, maxRows, commandTimeout, cts.Token);
+                    VerifyLaneContinuationHookForTest?.Invoke();   // test seam: park THIS continuation past the deadline
+                    return stamped;
+                });
+
+                // PHASE 1 — wait for lane ownership, bounded by the remaining TOTAL budget only.
+                var budgetLeft = deadlineUtc - DateTime.UtcNow;
+                if (budgetLeft <= TimeSpan.Zero) budgetLeft = TimeSpan.FromMilliseconds(1);
+                await Task.WhenAny(started.Task, exec, Task.Delay(budgetLeft));
+                if (!started.Task.IsCompleted)
+                {
+                    if (exec.IsCompleted)
+                        return ((await exec).Rs, false, false, VerifyTimeoutCause.None);   // completed without starting (lease refused)
+                    VerifyAbandonRaceHookForTest?.Invoke();
+                    if (System.Threading.Interlocked.CompareExchange(ref state, 2, 0) == 0)
+                    {
+                        _ = exec.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                        // NO retirement: we never owned a command — the lane's current owner is healthy work.
+                        return (new ResultSet { Error = "the total verify budget was exhausted waiting for the query lane" }, true, false, VerifyTimeoutCause.LaneWait);
+                    }
+                    // Lost the abandon race: the command started concurrently — fall through to the normal
+                    // started-path wait (the token below keeps it under cancellation coverage).
+                }
+
+                // PHASE 2 — command started: cancellation is ALREADY ARMED (inside the lane lambda, anchored to the
+                // absolute command-start deadline). This continuation never arms a timer of its own — it only derives
+                // its GRACE WAIT from that absolute deadline, so a scheduler delay here can neither extend the
+                // deadline nor grant a late result a fresh window.
+                var commandDeadline = await started.Task;
+                VerifyPhase2DelayHookForTest?.Invoke();
+                var graceLeft = commandDeadline.AddSeconds(VerifyPostCancelGraceSeconds) - DateTime.UtcNow;
+                if (graceLeft < TimeSpan.Zero) graceLeft = TimeSpan.Zero;
+                var done = await Task.WhenAny(exec, Task.Delay(graceLeft));
+                if (done != exec && !exec.IsCompleted)
+                {
+                    // Cancel + CommandTimeout both ignored on OUR OWN command — retirement is legal; observe the
+                    // abandoned task's eventual fault so it never surfaces as unobserved.
+                    RetireWedgedVerifyConnection(live);
+                    _ = exec.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                    return (new ResultSet { Error = "query exceeded the evaluation ceiling" }, true, true, VerifyTimeoutCause.Ceiling);
+                }
+                var (rs, completedUtc) = await exec;   // terminal completion — the lane is released; the stamp is the
+                                                       // TRUE finish time, taken on the producing thread (see lambda)
+                // The verdict keys off the ABSOLUTE deadline alone: a result (even a clean one) whose command
+                // FINISHED at/after the command-start deadline was produced past the ceiling and stays timed out —
+                // however delayed any continuation ran. A command that finished BEFORE the deadline is accepted
+                // even if the cancel timer fired or a continuation was parked past the deadline afterwards. The
+                // command terminated either way, so no retirement.
+                if (completedUtc >= commandDeadline)
+                    return (new ResultSet { Error = "query exceeded the evaluation ceiling", ElapsedMs = rs.ElapsedMs }, true, false, VerifyTimeoutCause.Ceiling);
+                // An ADOMD command-timeout/cancellation error is a ceiling breach too, not a DAX-authoring bug.
+                if (!string.IsNullOrEmpty(rs.Error) && LooksLikeQueryTimeout(rs.Error))
+                    return (new ResultSet { Error = "query exceeded the evaluation ceiling", ElapsedMs = rs.ElapsedMs }, true, false, VerifyTimeoutCause.Ceiling);
+                return (rs, false, false, VerifyTimeoutCause.None);
+            }
+            catch (Exception ex)
+            {
+                // A verify query must NEVER crash the run — fold any stray throw into the unavailable path.
+                return (new ResultSet { Error = "query exceeded the evaluation ceiling (" + ex.Message + ")" }, true, false, VerifyTimeoutCause.Ceiling);
+            }
+        }
+
+        /// <summary>Retire a live connection whose query ignored both Cancel and CommandTimeout: swap it out (only
+        /// if it is STILL the attached one — never drop a newer connection) and dispose it. LiveConnection.Dispose
+        /// is retire-and-defer (the lifetime lease), so the actual teardown waits for the wedged op to unwind; the
+        /// point is that _live no longer routes to the wedged lane. Best-effort — never throws into the run.</summary>
+        private void RetireWedgedVerifyConnection(LiveConnection wedged)
+        {
+            try
+            {
+                var (_, displaced) = SwapLive(null, NewLiveIntent(), () => ReferenceEquals(_sessions.CurrentContext.Live, wedged));
+                SafeDispose(displaced);
+            }
+            catch { /* retiring is best-effort; the ceiling result already decided the verify outcome */ }
+        }
+
+        private static bool LooksLikeQueryTimeout(string error) =>
+            error.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0
+            || error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+            || error.IndexOf("cancel", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private sealed class PendingAnchorRevision
+        {
+            public AnchorGate.Anchor Accepted { get; set; }
+            public AnchorGate.Anchor Proposed { get; set; }
+        }
+
+        private static (AnswerValue Answer, string StepId) FirstAnsweredAnchor(WorkflowRunState run, string input)
+        {
+            for (var i = 0; i < run.Results.Length; i++)
+                if (run.Results[i].Answers.TryGetValue(input, out var answer) && answer.Answered)
+                    return (answer, run.Results[i].StepId);
+            return (null, null);
+        }
+
+        private static VerifyResult PrepareAnchorRevision(string kind, WorkflowRunState run, string anchorsInput,
+            AnchorGate.Anchor[] proposed, out AnchorRunLock runLock, out List<PendingAnchorRevision> changes)
+        {
+            changes = new List<PendingAnchorRevision>();
+            if (!run.RunAnchorLocks.TryGetValue(anchorsInput, out runLock))
+            {
+                // Capture the FIRST answered declaration, not the accumulated latest-wins value. In the stock flow
+                // this is Step 2, so a Step 3 revision can never establish itself as the initial lock.
+                var first = FirstAnsweredAnchor(run, anchorsInput);
+                if (first.Answer == null)
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the initial locked anchor set", Detail = $"no answered declaration of '{anchorsInput}' was available to establish the run-level anchor lock." };
+                var initial = AnchorGate.Parse(first.Answer.Value, out var initialError);
+                if (initialError != null)
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a well-formed initial anchor set", Detail = "the run's first anchor declaration is invalid: " + initialError };
+                if (initial.Length == 0)
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "at least one initial anchor", Detail = "the run's first anchor declaration is empty; it cannot establish an enforceable lock." };
+                var initialHash = AnchorGate.CanonicalHash(initial);
+                runLock = new AnchorRunLock
+                {
+                    AnchorsInput = anchorsInput,
+                    InitialHash = initialHash,
+                    CurrentHash = initialHash,
+                    StepId = first.StepId,
+                    CurrentAnchors = initial,
+                };
+                run.RunAnchorLocks[anchorsInput] = runLock;
+            }
+
+            var proposedHash = AnchorGate.CanonicalHash(proposed);
+            if (string.Equals(runLock.CurrentHash, proposedHash, StringComparison.Ordinal))
+                return null; // unchanged or inherited, including an inherited prior receipt
+
+            bool TryIndex(AnchorGate.Anchor[] anchors, string which, out Dictionary<string, AnchorGate.Anchor> index, out VerifyResult error)
+            {
+                index = new Dictionary<string, AnchorGate.Anchor>(StringComparer.Ordinal);
+                error = null;
+                foreach (var anchor in anchors)
+                {
+                    var key = AnchorGate.CanonicalContextKey(anchor);
+                    if (!index.TryAdd(key, anchor))
+                    {
+                        error = new VerifyResult
+                        {
+                            Kind = kind, Status = "unavailable", Missing = "one anchor per context",
+                            Detail = $"the {which} anchor set repeats context [{anchor.ContextLabel}]; a revision must map each accepted context to exactly one corrected expectation.",
+                        };
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (!TryIndex(runLock.CurrentAnchors, "accepted", out var acceptedByContext, out var indexError)) return indexError;
+            if (!TryIndex(proposed, "proposed", out var proposedByContext, out indexError)) return indexError;
+            if (acceptedByContext.Count != proposedByContext.Count
+                || acceptedByContext.Keys.Any(k => !proposedByContext.ContainsKey(k)))
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable", Missing = "an expectation-only anchor revision",
+                    Detail = "an anchor revision may correct expected values only; it may not add, remove, or replace locked contexts. Start a new workflow run to change context coverage.",
+                };
+
+            foreach (var pair in proposedByContext)
+            {
+                var accepted = acceptedByContext[pair.Key];
+                var candidate = pair.Value;
+                if (string.Equals(AnchorGate.ExpectationKey(accepted), AnchorGate.ExpectationKey(candidate), StringComparison.Ordinal))
+                    continue;
+                if (candidate.OriginalExpect == null || candidate.CorrectedExpect == null || string.IsNullOrWhiteSpace(candidate.ExtractQuery))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a complete live receipt for changed anchor [{candidate.ContextLabel}]",
+                        Detail = $"anchor [{candidate.ContextLabel}] changed from {accepted.ExpectLabel} to {candidate.ExpectLabel}, but its JSON does not carry all required receipt fields: originalExpect, correctedExpect, extractQuery. Bare corrected JSON is refused.",
+                    };
+                if (!string.Equals(AnchorGate.ExpectationKey(candidate.OriginalExpect), AnchorGate.ExpectationKey(accepted), StringComparison.Ordinal))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"an honest originalExpect for changed anchor [{candidate.ContextLabel}]",
+                        Detail = $"anchor [{candidate.ContextLabel}] declares originalExpect {candidate.OriginalExpect.Label}, but the currently accepted value is {accepted.ExpectLabel}.",
+                    };
+                if (!string.Equals(AnchorGate.ExpectationKey(candidate.CorrectedExpect), AnchorGate.ExpectationKey(candidate), StringComparison.Ordinal))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a correctedExpect matching expect for changed anchor [{candidate.ContextLabel}]",
+                        Detail = $"anchor [{candidate.ContextLabel}] declares correctedExpect {candidate.CorrectedExpect.Label}, but expect is {candidate.ExpectLabel}.",
+                    };
+                if (!DaxQueryClassifier.IsRowReturning(candidate.ExtractQuery))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a row-returning extractQuery for changed anchor [{candidate.ContextLabel}]",
+                        Detail = $"anchor [{candidate.ContextLabel}] uses a scalar or constant extractQuery. The receipt must be a row-returning grouped or raw-row DAX extract, not EVALUATE ROW(...) or a table constructor.",
+                    };
+                changes.Add(new PendingAnchorRevision { Accepted = accepted, Proposed = candidate });
+            }
+
+            if (changes.Count == 0)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a deterministic anchor revision delta", Detail = "the anchor fingerprint changed but no changed expectation could be identified; start a new workflow run." };
+            return null;
+        }
+
+        private static string AnchorReceiptResultHash(ResultSet result)
+        {
+            string Cell(object value)
+            {
+                if (value == null) return "blank:";
+                var formatted = value is IFormattable f
+                    ? f.ToString(null, System.Globalization.CultureInfo.InvariantCulture)
+                    : value.ToString();
+                return value.GetType().FullName + ":" + formatted;
+            }
+            var canonical = JsonSerializer.Serialize(new
+            {
+                columns = (result.Columns ?? Array.Empty<ColumnDef>()).Select(c => new { c.Name, c.Type }).ToArray(),
+                rows = (result.Rows ?? Array.Empty<object[]>()).Select(r => (r ?? Array.Empty<object>()).Select(Cell).ToArray()).ToArray(),
+                result.RowCount,
+                result.Truncated,
+            });
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        }
+
+        private async Task<VerifyResult> ExecuteAndAcceptAnchorRevisionAsync(string kind, WorkflowRunState run,
+            WorkflowStep step, AnchorRunLock runLock, AnchorGate.Anchor[] proposed, List<PendingAnchorRevision> changes,
+            LiveConnection live)
+        {
+            if (changes == null || changes.Count == 0) return null;
+            if (live == null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection for anchor-revision receipts", Detail = "the anchor set changed, but its extractQuery receipts cannot be executed while offline. Connect live and re-submit." };
+
+            var deadlineUtc = DateTime.UtcNow.AddSeconds(VerifyTotalBudgetSeconds);
+            var evidence = new List<AnchorRevisionChange>();
+            foreach (var change in changes)
+            {
+                if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a stable connection for anchor-revision receipts", Detail = "the live connection changed before all anchor-revision extractQuery receipts completed; no revision was accepted." };
+                // extractQuery is deliberately row-returning, so it must cross the exact QueryData policy boundary
+                // used by run_dax. A workflow answer cannot become a side door around agent read permissions.
+                var policy = GuardAgent(AgentCapability.QueryData, live.DataSource, live.Database,
+                    string.IsNullOrWhiteSpace(run.SubmissionOrigin) ? run.Origin : run.SubmissionOrigin,
+                    isCommit: true,
+                    summary: $"run an anchor-revision extract query against {(string.IsNullOrEmpty(live.Database) ? live.DataSource : live.Database + " on " + live.DataSource)}",
+                    approvalId: out var approvalId, intentBasis: "querydata", consumeGrant: false);
+                if (policy != null)
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"permission to run extractQuery for changed anchor [{change.Proposed.ContextLabel}]",
+                        Detail = $"anchor [{change.Proposed.ContextLabel}] revision was refused before extractQuery ran: {policy}"
+                            + (string.IsNullOrWhiteSpace(approvalId) ? "" : " Approval: " + approvalId),
+                    };
+                var (rs, timedOut, retired, cause) = await RunVerifyQueryAsync(change.Proposed.ExtractQuery, 2000, live, deadlineUtc);
+                if (timedOut)
+                {
+                    var why = cause == VerifyTimeoutCause.LaneWait
+                        ? "the total receipt budget expired while waiting for the live query lane"
+                        : "extractQuery exceeded the receipt evaluation ceiling";
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a completed extractQuery receipt for changed anchor [{change.Proposed.ContextLabel}]",
+                        Detail = $"anchor [{change.Proposed.ContextLabel}] revision was refused because {why}."
+                            + (retired ? " The connection was retired; reconnect before re-submitting." : ""),
+                    };
+                }
+                if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a stable connection for anchor-revision receipts", Detail = "the live connection changed while an anchor-revision extractQuery ran; its result was not trusted and no revision was accepted." };
+                if (!string.IsNullOrEmpty(rs.Error))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a successful extractQuery receipt for changed anchor [{change.Proposed.ContextLabel}]",
+                        Detail = $"anchor [{change.Proposed.ContextLabel}] revision was refused because extractQuery failed: {rs.Error}",
+                    };
+                var returnedRows = rs.Rows?.Length ?? 0;
+                if (rs.RowCount <= 0 || returnedRows <= 0)
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = $"a row-returning extractQuery receipt for changed anchor [{change.Proposed.ContextLabel}]",
+                        Detail = $"anchor [{change.Proposed.ContextLabel}] revision was refused because extractQuery returned no rows.",
+                    };
+                evidence.Add(new AnchorRevisionChange
+                {
+                    Context = change.Proposed.ContextLabel,
+                    OriginalExpect = change.Accepted.ExpectLabel,
+                    CorrectedExpect = change.Proposed.ExpectLabel,
+                    ExtractQuery = change.Proposed.ExtractQuery,
+                    ExtractRowCount = rs.RowCount,
+                    ExtractTruncated = rs.Truncated,
+                    ExtractResultHash = AnchorReceiptResultHash(rs),
+                });
+            }
+
+            var before = runLock.CurrentHash;
+            var after = AnchorGate.CanonicalHash(proposed);
+            run.AnchorRevisions.Add(new AnchorRevision
+            {
+                Key = runLock.AnchorsInput,
+                AnchorsInput = runLock.AnchorsInput,
+                BeforeHash = before,
+                AfterHash = after,
+                StepId = step?.Id ?? run.CurrentStep?.Id,
+                TimestampUtc = DateTime.UtcNow.ToString("o"),
+                Changes = evidence.ToArray(),
+            });
+            runLock.CurrentHash = after;
+            runLock.CurrentAnchors = proposed;
+            return null;
+        }
+
+        /// <summary>Prove the target measure reproduces a set of LOCKED ANCHORS — {context, expect} value assertions
+        /// the workflow author committed to (the enforcement half of the anchor-based verification design). Anchors
+        /// ride a text input (the `anchors:` binding); each is evaluated as a SARGable point query against the target
+        /// measure in the measure-faithful DEFINE shape, its actual compared to the expected value at the gold-style
+        /// tolerance. Every applicable-but-no-evidence path is `unavailable` (fail-closed, blocks a hard step) naming
+        /// what was missing; only a real value divergence is `failed`. The anchor set locks at first evaluation with a
+        /// revision receipt on change (the anti-laundering mirror of the equivalence partition lock).</summary>
+        private async Task<VerifyResult> WorkflowExpectedValuesAsync(VerifySpec spec, WorkflowStep step, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
+        {
+            const string kind = "expected_values";
+            // 1. The anchors input must be answered (its answer carries the locked anchor JSON).
+            if (string.IsNullOrWhiteSpace(spec.Anchors) || !answers.TryGetValue(spec.Anchors, out var anchorAns) || !anchorAns.Answered)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the anchors input '{spec.Anchors}'", Detail = $"the anchors input '{spec.Anchors}' must carry the locked anchor set (a fenced JSON array of {{context, expect}}) — it was not answered." };
+
+            // 2. Parse the anchors DEFENSIVELY AND STRICTLY — malformed JSON, an unknown/duplicate property, a
+            // non-column-ref context key (the injection boundary), a lost value type, or a breached cap (MaxAnchors /
+            // MaxContextPairs) is `unavailable`, naming the defect (never guessed).
+            // If this step declares the anchors input as optional and omits it on a RETRY, inherit the run lock's
+            // current accepted set. WorkflowRunner replaces a failed step's answer map on re-submit, so accumulated
+            // answers alone would otherwise fall back to Step 2 and falsely look like a revision back to the baseline.
+            var omittedCurrentRevisionInput = run.RunAnchorLocks.TryGetValue(spec.Anchors, out var inheritedRunLock)
+                && (step?.Gate?.Inputs ?? Array.Empty<GateInput>()).Any(i => i.Name == spec.Anchors && i.Required == "optional")
+                && !run.Results[run.StepIndex].Answers.ContainsKey(spec.Anchors);
+            string parseError = null;
+            var anchors = omittedCurrentRevisionInput
+                ? inheritedRunLock.CurrentAnchors
+                : AnchorGate.Parse(anchorAns.Value, out parseError);
+            if (!omittedCurrentRevisionInput && parseError != null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a well-formed anchor set", Detail = parseError };
+            if (anchors.Length == 0)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "at least one anchor", Detail = "the anchor set is empty — author at least one {context, expect} anchor the measure must reproduce, then re-submit." };
+
+            // 2b. RUN-LEVEL LOCK + REVISION PLAN. The first answered declaration is captured before latest-wins can
+            // shadow it. An unchanged/inherited set needs no receipt; a changed set must preserve contexts and carry
+            // mechanically consistent receipt fields for each changed expectation.
+            var revisionError = PrepareAnchorRevision(kind, run, spec.Anchors, anchors, out var runAnchorLock, out var pendingRevision);
+            if (revisionError != null) return revisionError;
+
+            // 3. The target measure (the run's tracked objectRef).
+            var target = LatestObjectRefAnswer(run, answers);
+            if (target == null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure ref", Detail = "no answered objectRef-typed input names the measure to check against the anchors." };
+
+            var s = _sessions.Require();
+            var (current, canonRef) = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? (mm.Expression, ObjectRefs.For(mm)) : (null, null));
+            if (current == null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure", Detail = $"'{target}' does not resolve to a measure on the current model." };
+
+            // 4. CANDIDATE DRIFT — reuse the same guard dax_equivalence uses: the target's current expression must
+            // still match the last workflow-authored write (else it was changed OUTSIDE the workflow and the anchors
+            // would be proven against an unattested candidate). Checkable offline, before the live check.
+            if (canonRef != null
+                && _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux)
+                && aux?.AuthoredMeasureHashes != null
+                && aux.AuthoredMeasureHashes.TryGetValue(canonRef, out var authored)
+                && authored != NormalizeDaxHash(current))
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable", Missing = "an unchanged candidate",
+                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one) — re-author it inside the workflow before proving the anchors, so they are checked against an attested candidate.",
+                };
+
+            // 4b. RESOLVE every context column against the model (B1): the parsed table+column must exist; unknown
+            // refs refuse as `unavailable` naming the ref. The filter is then REBOUND to the model's canonical names
+            // (never the authored text — the query is rebuilt from resolved parts) and date-typed columns are noted
+            // (B2: a date filter takes the quoted string form, which DAX coerces — an honest caveat, not an error).
+            // A model read, checkable offline — before the live check.
+            string unresolvedRef = null;
+            var dateRefs = new List<string>();
+            await s.ReadAsync(m =>
+            {
+                foreach (var a in anchors)
+                    foreach (var f in a.Context)
+                    {
+                        var tbl = m.Tables.FirstOrDefault(t => string.Equals(t.Name, f.Table, StringComparison.OrdinalIgnoreCase));
+                        if (tbl == null)
+                        {
+                            unresolvedRef ??= $"anchor context column {AnchorGate.CanonicalRef(f)} names table '{f.Table}', which does not exist on the model";
+                            return false;
+                        }
+                        var col = tbl.Columns.FirstOrDefault(c => string.Equals(c.Name, f.Column, StringComparison.OrdinalIgnoreCase));
+                        if (col == null)
+                        {
+                            unresolvedRef ??= $"anchor context column {AnchorGate.CanonicalRef(f)} does not exist on table '{tbl.Name}'";
+                            return false;
+                        }
+                        f.Table = tbl.Name; f.Column = col.Name;   // canonical model casing — the emitted ref is never the input text
+                        // The coercion caveat applies ONLY to STRING literals on date columns (a numeric/boolean
+                        // literal on a date column is a plain type comparison, not string-form coercion).
+                        if (col.DataType == DataType.DateTime && f.Literal.StartsWith("\"", StringComparison.Ordinal))
+                        {
+                            var r = AnchorGate.CanonicalRef(f);
+                            if (!dateRefs.Contains(r)) dateRefs.Add(r);
+                        }
+                    }
+                return true;
+            });
+            if (unresolvedRef != null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a resolvable anchor context", Detail = unresolvedRef + " — fix the anchor's column reference, then re-submit." };
+            var dateNote = dateRefs.Count == 0 ? ""
+                : $" Note: date-typed context column(s) [{string.Join(", ", dateRefs)}] are filtered via their quoted string form (DAX coerces the literal) — confirm the string matches the column's date representation.";
+
+            // 5. Pin the CONNECTION IDENTITY for the whole proof: every anchor query and the query spec must use
+            // this one instance — if the session's connection changes mid-proof, the verify refuses rather than
+            // mixing evidence across connections (EvaluateAnchorsAsync re-checks per anchor).
+            var live = _live;
+            if (live == null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline — no live connection, so the anchors could not be evaluated (open_live/open_local and re-submit for real evidence)." };
+
+            // A changed set is not accepted from prose. Execute every changed anchor's row-returning extractQuery on
+            // this pinned connection, require real rows, and append the result hash + delta before the new values can
+            // become the run's current lock. Failure leaves the prior lock untouched.
+            revisionError = await ExecuteAndAcceptAnchorRevisionAsync(kind, run, step, runAnchorLock, anchors, pendingRevision, live);
+            if (revisionError != null) return revisionError;
+
+            // 5b. FIDELITY before evidence (mirrors dax_equivalence): the DaxQuerySpec/measure-faithful path may only
+            // reproduce the target under a reduced-fidelity surrogate — then the values are not authoritative, so the
+            // proof degrades to `unavailable` (never a false pass) exactly as the equivalence ladder does. The note is
+            // deterministic per (expr, spec), so one probe of the builder settles it before spending any point query.
+            var eqSpec = await BuildQuerySpecAsync(live, target);
+            DaxBench.BuildMeasureContextQuery(current, Array.Empty<string>(), eqSpec, out var fidelity);
+            if (fidelity != null)
+                return new VerifyResult
+                {
+                    Kind = kind, Status = "unavailable", Missing = "a full-fidelity evaluation — " + fidelity,
+                    Detail = "the anchors would evaluate under a REDUCED-fidelity surrogate (the target's identity could not be reproduced), so the values are not authoritative: " + fidelity + " Open the model live so the target's identity is known, then re-submit, or skip_workflow_step with a reason (recorded).",
+                };
+
+            // 6/7. Evaluate + verdict (extracted so the connection-identity, budget, and ceiling semantics are
+            // offline-testable against a hand-built spec + a test connection).
+            return await EvaluateAnchorsAsync(kind, anchors, current, eqSpec, live, dateNote);
+        }
+
+        /// <summary>The anchor evaluation loop + verdict: each anchor runs as a SARGable point query against the
+        /// PINNED connection, compared at the gold-style tolerance. ONE hard total budget bounds the whole set — the
+        /// per-query token is min(remaining budget, per-query ceiling), enforced inside RunVerifyQueryAsync. The
+        /// connection identity is re-checked per anchor: if the session's connection changed mid-proof (a swap, a
+        /// retirement), the verify refuses as `unavailable` — continuing would mix evidence across connections.
+        /// Internal for the offline seam tests (the executor supplies a resolved spec + the pinned connection).</summary>
+        internal async Task<VerifyResult> EvaluateAnchorsAsync(string kind, AnchorGate.Anchor[] anchors, string measureExpr,
+            DaxQuerySpec eqSpec, LiveConnection live, string dateNote)
+        {
+            VerifyResult MixedEvidence(string when) => new VerifyResult
+            {
+                Kind = kind, Status = "unavailable", Missing = "a stable connection",
+                Detail = $"the live connection changed during evaluation ({when}) — evidence would be mixed across connections; reconnect (open_live, connect_xmla, or connect_local) and re-submit so every anchor is proven on one connection.",
+            };
+
+            var deadlineUtc = DateTime.UtcNow.AddSeconds(VerifyTotalBudgetSeconds);
+            var evaluated = new List<(AnchorGate.Anchor Anchor, string ActualLabel, bool Matched, long ElapsedMs)>();
+            for (var i = 0; i < anchors.Length; i++)
+            {
+                var a = anchors[i];
+                // Identity pin, PRE-query: every anchor must be proven on the connection captured at verify start.
+                if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
+                    return MixedEvidence($"after {evaluated.Count} of {anchors.Length} anchor(s)");
+                if (DateTime.UtcNow > deadlineUtc)
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"completion within the total verify budget ({VerifyTotalBudgetSeconds}s)", Detail = $"the anchor set exceeded the total verify budget of {VerifyTotalBudgetSeconds}s after {evaluated.Count} of {anchors.Length} anchor(s) — trim the set or investigate the measure's cost, then re-submit." };
+
+                var filters = a.Context.Select(AnchorGate.CompileContextFilter).ToArray();
+                var query = DaxBench.BuildMeasureContextQuery(measureExpr, filters, eqSpec, out _);
+                var (rs, timedOut, retired, cause) = await RunVerifyQueryAsync(query, 10, live, deadlineUtc);
+                if (timedOut)
+                    return cause == VerifyTimeoutCause.LaneWait
+                        // A LANE-WAIT budget exhaustion is not the anchor's fault — nothing of ours ran, so the
+                        // advice is about the busy connection, never about narrowing the anchor.
+                        ? new VerifyResult
+                        {
+                            Kind = kind, Status = "unavailable", Missing = $"completion within the total verify budget ({VerifyTotalBudgetSeconds}s)",
+                            Detail = $"anchor at [{a.ContextLabel}]: the total verify budget was exhausted waiting for the query lane (another query held the connection the whole time) — re-submit when the connection is idle.",
+                        }
+                        : new VerifyResult
+                        {
+                            Kind = kind, Status = "unavailable", Missing = "a completed anchor query within the evaluation ceiling",
+                            Detail = $"anchor at [{a.ContextLabel}]: query exceeded the evaluation ceiling — narrow the anchor context or investigate the measure, then re-submit."
+                                + (retired ? " The connection was retired because the query ignored cancellation — reconnect (open_live, connect_xmla, or connect_local) before re-submitting." : ""),
+                        };
+                // Identity pin, POST-query: the result may only be consumed if the pinned connection is STILL the
+                // session's connection — a swap during the query (even the final anchor's) makes it untrusted.
+                if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
+                    return MixedEvidence($"while anchor {i + 1} of {anchors.Length} was evaluating; its result is untrusted");
+                if (!string.IsNullOrEmpty(rs.Error))
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a completed anchor query", Detail = $"anchor at [{a.ContextLabel}] query failed: {rs.Error}" };
+                var actual = rs.RowCount > 0 && rs.Rows[0].Length > 0 ? rs.Rows[0][0] : null;
+                var matched = AnchorGate.Matches(a, actual, out var actualLabel);
+                evaluated.Add((a, actualLabel, matched, rs.ElapsedMs));
+            }
+
+            // Identity pin, PRE-verdict: a swap that landed after the last anchor's post-query check must still
+            // refuse — a verdict may only certify evidence produced on one connection.
+            if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
+                return MixedEvidence("after the final anchor, before the verdict");
+
+            // Verdict: every anchor matched ⇒ passed (the payload lists each context/expected/actual/elapsed); any
+            // mismatch ⇒ failed, naming the diverging anchors. The date-coercion caveat rides both.
+            var payload = string.Join("; ", evaluated.Select(r => $"[{r.Anchor.ContextLabel}] expected {r.Anchor.ExpectLabel}, actual {r.ActualLabel} ({r.ElapsedMs} ms)"));
+            var bad = evaluated.Where(r => !r.Matched).ToArray();
+            if (bad.Length == 0)
+                return new VerifyResult { Kind = kind, Status = "passed", Detail = $"all {evaluated.Count} anchor(s) matched: {payload}{dateNote}" };
+            return new VerifyResult
+            {
+                Kind = kind, Status = "failed",
+                Detail = $"{bad.Length} of {evaluated.Count} anchor(s) diverged: "
+                    + string.Join("; ", bad.Select(r => $"[{r.Anchor.ContextLabel}] expected {r.Anchor.ExpectLabel} but got {r.ActualLabel}"))
+                    + $". Adjudicate each against a raw-row extract; fix the measure (or correct a wrong anchor) and re-submit. Full set: {payload}{dateNote}",
             };
         }
 
@@ -2023,7 +2831,7 @@ namespace Semanticus.Engine
             const string kind = "bpa_clean";
             if (_sessions.Current == null)
                 return new VerifyResult { Kind = kind, Status = "skipped", Detail = "no open session." };
-            _workflowAux.TryGetValue(run.RunId, out var aux);
+            _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux);
             if (aux?.BpaKeys == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run BPA snapshot exists (no session was open at start_workflow) — a before/after diff is impossible; abort and restart the workflow with the model open." };
             var before = aux.BpaKeys;
@@ -2051,7 +2859,7 @@ namespace Semanticus.Engine
             const string kind = "readiness_rescan";
             if (_sessions.Current == null)
                 return new VerifyResult { Kind = kind, Status = "skipped", Detail = "no open session." };
-            _workflowAux.TryGetValue(run.RunId, out var aux);
+            _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux);
             if (aux?.ReadinessKeys == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run readiness snapshot exists (no session was open at start_workflow) — a before/after diff is impossible; abort and restart the workflow with the model open." };
             var before = aux.ReadinessKeys;

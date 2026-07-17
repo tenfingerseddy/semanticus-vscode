@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { rpc, onReconnect, onDidChange } from './bridge';
+import { rpc, onReconnect, onDidChange, onConnectionChange } from './bridge';
 import type { ConnectionStatus } from './wire';
 
 // Live-connection state, shared across every Studio query tab (Statistics / DAX Query / DAX Lab / Pivot / Data).
@@ -20,6 +20,8 @@ export interface ConnectionContextModel {
   endpoint?: string;
   database?: string;
   authMode?: string;
+  account?: string;            // the account (UPN) last signed in to this side, when known — the identity bar's "as <account>"
+  tenantId?: string;
   label?: string;
   effectiveLabel?: string;
   unlabelled?: boolean;
@@ -32,6 +34,7 @@ export interface ModelConnectionContext {
   editing: ConnectionContextModel;
   querying: ConnectionContextModel;
   publishing: ConnectionContextModel;
+  reference: ConnectionContextModel;   // the "copy FROM" model the Reference tree is browsing, when one is bound
   relationship: string;
   twoModelsInPlay: boolean;
   publishDestinationSeparateFromQuerying: boolean;
@@ -56,6 +59,8 @@ export interface SessionInfo {
   liveConnected?: boolean;     // a live QUERY connection is attached (drives DAX/DMV/preview)
   liveKind?: string;           // "local" | "xmla" — the attached query engine's kind
   liveDataSource?: string;     // the attached query engine's data source
+  currentAccount?: string;     // the account (UPN) the live-bound/queried model is signed in as — for the identity bar; null = unknown
+  currentTenant?: string;      // the tenant that account/connection belongs to, when known
 }
 
 interface ConnCtx {
@@ -66,7 +71,7 @@ interface ConnCtx {
   err: string | null;
   instances: LocalInstance[];
   connectLocal: (dataSource?: string | null) => Promise<boolean>;   // attach a local instance to the current session
-  connectXmla: (endpoint: string, database: string, authMode: string) => Promise<boolean>;
+  connectXmla: (endpoint: string, database: string, authMode: string, tenantId?: string | null) => Promise<boolean>;
   disconnect: () => Promise<void>;
   refresh: () => Promise<void>;
   connectionsOpen: boolean;
@@ -117,10 +122,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     } catch (e) { setErr(String((e as Error).message ?? e)); return false; }
     finally { setBusy(false); }
   }
-  async function connectXmla(endpoint: string, database: string, authMode: string): Promise<boolean> {
+  async function connectXmla(endpoint: string, database: string, authMode: string, tenantId: string | null = null): Promise<boolean> {
     setBusy(true); setErr(null);
     try {
-      const c = await rpc<ConnectionStatus>('connectXmla', endpoint, database || null, authMode, null);
+      // Thread the tenant like the primary open — a remembered cross-tenant model must query its OWN tenant, not the
+      // default one the RPC's old four-arg form left null (which let az login's home tenant silently decide).
+      const c = await rpc<ConnectionStatus>('connectXmla', endpoint, database || null, authMode, null, tenantId || null);
       setConn(c);
       if (!c.connected && c.message) setErr(c.message);
       else await refresh();
@@ -151,7 +158,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // the moment a staged edit diverges from the queried model. Debounced so a burst of edits costs one round-trip.
     let t: ReturnType<typeof setTimeout> | undefined;
     const offChange = onDidChange(() => { clearTimeout(t); t = setTimeout(() => { void refresh(); }, 300); });
-    return () => { cancelled = true; off(); offChange(); clearTimeout(t); };
+    // An MCP-door connect/disconnect (or a reference set/clear) changes the live connection WITHOUT a model edit or a
+    // reconnect, so neither handler above fires — re-read the connection context so the ConnectBar never goes stale.
+    const offConn = onConnectionChange(() => { void refresh(); });
+    return () => { cancelled = true; off(); offChange(); offConn(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

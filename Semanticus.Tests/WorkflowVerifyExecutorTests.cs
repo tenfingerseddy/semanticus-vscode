@@ -225,9 +225,8 @@ inputs:
             try
             {
                 var e = new LocalEngine(sessions, new Pro(), ws);
-                // Start with NO session open → StartWorkflowAsync skips the snapshot (guarded on _sessions.Current).
+                // Start with NO session open: the run survives the later open, but there was no start snapshot.
                 var run = await e.StartWorkflowAsync("bpa-clean", "human");
-                // A session exists only at SUBMIT time → the executor is reached but has no before/after baseline.
                 await e.OpenAsync(TestModels.FindBim());
 
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(

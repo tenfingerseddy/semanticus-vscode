@@ -303,15 +303,17 @@ namespace Semanticus.Tests
         { Question = "q", Tier = "paraphrase", ScalarExpr = "[A]", ParaphraseExpr = "[B]", GroupBy = groupBy ?? Array.Empty<string>() };
 
         [Fact]
-        public void Paraphrase_full_agreement_is_correct_and_thin_grand_total_is_disclosed()
+        public void Paraphrase_full_agreement_is_correct_only_with_a_per_context_grid()
         {
             var eq = new EquivalenceResult { AllMatch = true, RowsCompared = 24 };
+            // No groupBy → THIN evidence: the shared ladder (DaxBench.ClassifyEquivalenceEvidence) holds it at
+            // Unverified — a grand-total-only agreement must never grade Correct (it used to, with a parenthetical).
             var (o, d) = InterviewScoring.ScoreParaphrase(ParaQ(), eq);
-            Assert.Equal("Correct", o);
-            Assert.Contains("grand-total only", d);              // no groupBy → the thinness is disclosed, not hidden
+            Assert.Equal("Unverified", o);
+            Assert.Contains("grand total", d);
             var (o2, d2) = InterviewScoring.ScoreParaphrase(ParaQ(new[] { "'Date'[Year]" }), eq);
             Assert.Equal("Correct", o2);
-            Assert.DoesNotContain("grand-total only", d2);
+            Assert.DoesNotContain("grand total", d2);
         }
 
         [Fact]
@@ -347,7 +349,11 @@ namespace Semanticus.Tests
         // number). ScalarExpr/ParaphraseExpr are the two phrasings; ExpectedValue is the oracle the agreed answer
         // must reconcile with.
         private static InterviewQuestion ParaOracleQ(string expected = "100", string[][] matrix = null) => new InterviewQuestion
-        { Question = "q", Tier = "paraphrase", ScalarExpr = "[A]", ParaphraseExpr = "[B]", ExpectedValue = matrix == null ? expected : null, ExpectedMatrix = matrix };
+        {
+            Question = "q", Tier = "paraphrase", ScalarExpr = "[A]", ParaphraseExpr = "[B]",
+            GroupBy = new[] { "'Date'[Year]" },   // a per-context grid: thin (grand-total-only) evidence never reaches the oracle gate
+            ExpectedValue = matrix == null ? expected : null, ExpectedMatrix = matrix,
+        };
 
         [Fact]
         public void Paraphrase_consistently_wrong_is_caught_by_the_oracle_probe_not_passed_as_consistent()
@@ -396,11 +402,12 @@ namespace Semanticus.Tests
         [Fact]
         public void Paraphrase_without_an_oracle_keeps_the_pure_consistency_verdict_no_regression()
         {
-            // The pre-existing behaviour is untouched when no trusted answer is pinned: agreement alone is Correct
+            // The behaviour is untouched when no trusted answer is pinned: PER-CONTEXT agreement alone is Correct
             // (and a supplied probe is ignored, since there is nothing to check it against).
+            var grid = new[] { "'Date'[Year]" };
             var agree = new EquivalenceResult { AllMatch = true, RowsCompared = 24 };
-            Assert.Equal("Correct", InterviewScoring.ScoreParaphrase(ParaQ(), agree).Outcome);
-            Assert.Equal("Correct", InterviewScoring.ScoreParaphrase(ParaQ(), agree, Rs(new object[] { 999.0 })).Outcome);
+            Assert.Equal("Correct", InterviewScoring.ScoreParaphrase(ParaQ(grid), agree).Outcome);
+            Assert.Equal("Correct", InterviewScoring.ScoreParaphrase(ParaQ(grid), agree, Rs(new object[] { 999.0 })).Outcome);
             // A mismatch is still SilentlyWrong before the oracle block is ever reached (the probe is not consulted).
             var mismatch = new EquivalenceResult { AllMatch = false, RowsCompared = 24, MismatchCount = 1, Mismatches = new[] { new EquivalenceMismatch { Context = "x", ValueA = "1", ValueB = "2" } } };
             Assert.Equal("SilentlyWrong", InterviewScoring.ScoreParaphrase(ParaOracleQ("100"), mismatch, Rs(new object[] { 100.0 })).Outcome);

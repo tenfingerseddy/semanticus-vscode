@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from './bridge';
 import { usePersistedState, useResizable } from './hooks';
 import { BenchBars } from './echart';
@@ -25,7 +25,46 @@ interface BenchmarkResult { runs: number; firstMs: number; warmMinMs: number; wa
 interface ScanEvent { line?: number; kind: string; subclass?: string; durationMs: number; cpuMs: number; rows: number; query?: string; }
 interface ServerTimings { totalMs: number; feMs: number; seMs: number; seCpuMs: number; seQueries: number; seCacheHits?: number; seParallelism: number; rowCount: number; scans: ScanEvent[]; traceAvailable: boolean; note?: string; error?: string; }
 interface EquivalenceMismatch { context: string; valueA: string; valueB: string; }
-interface EquivalenceResult { allMatch: boolean; rowsCompared: number; mismatchCount: number; mismatches: EquivalenceMismatch[]; query?: string; error?: string; }
+interface EquivalenceResult { allMatch: boolean; rowsCompared: number; mismatchCount: number; truncated?: boolean; fidelity?: string | null; mismatches: EquivalenceMismatch[]; query?: string; error?: string; }
+
+// Equivalence EVIDENCE with its provenance stamped at receipt time: the verdict is computed ONCE from the
+// grid the comparison actually RAN with (not whatever grid is currently configured); the request key
+// identifies the exact request and the context key the EXECUTION CONTEXT (query connection identity +
+// editing session/model revision), so an expression/grid/filter edit, a connection swap to a different
+// model, or another door editing the model (didChange bumps the session revision, which the
+// ConnectionProvider refreshes into these signals) all mark the evidence STALE instead of leaving a green
+// verdict up against a world it no longer describes. Reflected MCP results carry no REQUEST provenance
+// (gridCount/requestKey null) but do get the context stamp — they executed on this same engine.
+interface EqEvidence { result: EquivalenceResult; gridCount: number | null; requestKey: string | null; contextKey: string | null; }
+
+// The effective grid: trim + drop blanks (matches the engine's NormalizeGroupBy).
+function normGrid(grid: string[]): string[] { return (grid ?? []).map((g) => (g ?? '').trim()).filter(Boolean); }
+
+const VERIFY_MAX_ROWS = 100000;
+
+// Request identity for staleness checks: the EXACT serialized request (collision-free by construction).
+function requestKeyOf(exprA: string, exprB: string, grid: string[], filters: string[], maxRows: number): string {
+  return JSON.stringify([exprA, exprB, grid, filters, maxRows]);
+}
+
+// Mirrors the engine's ONE evidence ladder (DaxBench.ClassifyEquivalenceEvidence): fidelity before mismatch
+// (under a degraded comparison the surrogate itself can cause divergence — an observation, not a conviction),
+// degraded above thin. Only 'proven' may render the green apply affordance; 'failed' is the red conviction;
+// everything else is amber "not verified". 'noContext' = a clean match WITHOUT request provenance (a reflected
+// MCP result): proven-vs-thin is unknowable, so it renders unproven — never green.
+type EqVerdict = 'proven' | 'failed' | 'degraded_mismatch' | 'degraded' | 'thin' | 'unverified' | 'noContext';
+function eqVerdict(ev: EqEvidence): EqVerdict {
+  const eq = ev.result;
+  if (eq.error) return 'unverified';
+  if (!eq.allMatch && eq.fidelity) return 'degraded_mismatch';
+  if (!eq.allMatch) return 'failed';                 // grid-independent: a mismatch is classifiable without provenance
+  if ((eq.rowsCompared ?? 0) <= 0) return 'unverified';
+  if (eq.truncated) return 'unverified';
+  if (eq.fidelity) return 'degraded';
+  if (ev.gridCount == null) return 'noContext';      // clean match, no provenance — cannot claim per-context proof
+  if (ev.gridCount === 0) return 'thin';
+  return 'proven';
+}
 interface ClearCacheResult { cleared: boolean; local: boolean; dataSource?: string; database?: string; elapsedMs: number; note?: string; error?: string; }
 interface ColdWarmStats { n: number; avgMs: number; stdDevMs: number; minMs: number; maxMs: number; runsMs: number[]; }
 interface ColdWarmRun { index: number; cold: boolean; totalMs: number; seMs: number; seQueries: number; }
@@ -35,29 +74,64 @@ interface QueryPlanResult { traceAvailable: boolean; logicalPlan?: string; physi
 
 type Mode = 'visual' | 'query';
 type WbTab = 'result' | 'perf' | 'plan' | 'debug' | 'verify';
+type DaxLabBusy = 'run' | 'debug' | 'profile' | 'plan' | 'quick' | 'coldwarm' | 'clear' | 'verify' | null;
 const WB_TABS: { id: WbTab; label: string }[] = [
   { id: 'result', label: 'Result' }, { id: 'perf', label: 'Performance' }, { id: 'plan', label: 'Plan' },
   { id: 'debug', label: 'Debug' }, { id: 'verify', label: 'Verify' },
 ];
 
-export function DaxLabView() {
-  const { conn } = useConnection();
-  const model = useDaxModelContext();
-  const editorRef = useRef<DaxEditorHandle>(null);
+interface DaxLabTabState {
+  tab: WbTab;
+  setTab: React.Dispatch<React.SetStateAction<WbTab>>;
+  res: ResultSet | null;
+  setRes: React.Dispatch<React.SetStateAction<ResultSet | null>>;
+  logs: EvalLogEntry[] | null;
+  setLogs: React.Dispatch<React.SetStateAction<EvalLogEntry[] | null>>;
+  logNote: string | null;
+  setLogNote: React.Dispatch<React.SetStateAction<string | null>>;
+  bench: BenchmarkResult | null;
+  setBench: React.Dispatch<React.SetStateAction<BenchmarkResult | null>>;
+  cw: ColdWarmBenchmark | null;
+  setCw: React.Dispatch<React.SetStateAction<ColdWarmBenchmark | null>>;
+  plan: QueryPlanResult | null;
+  setPlan: React.Dispatch<React.SetStateAction<QueryPlanResult | null>>;
+  timings: ServerTimings | null;
+  setTimings: React.Dispatch<React.SetStateAction<ServerTimings | null>>;
+  clearMsg: string | null;
+  setClearMsg: React.Dispatch<React.SetStateAction<string | null>>;
+  eqEv: EqEvidence | null;
+  setEqEv: React.Dispatch<React.SetStateAction<EqEvidence | null>>;
+  vErr: string | null;
+  setVErr: React.Dispatch<React.SetStateAction<string | null>>;
+  busy: DaxLabBusy;
+  setBusy: React.Dispatch<React.SetStateAction<DaxLabBusy>>;
+  err: string | null;
+  setErr: React.Dispatch<React.SetStateAction<string | null>>;
+  claudeEvent: ActivityEvent | null;
+  setClaudeEvent: React.Dispatch<React.SetStateAction<ActivityEvent | null>>;
+  execContextKey: string;
+}
 
-  const [mode, setMode] = usePersistedState<Mode>('lab.mode', 'visual');
-  const [query, setQuery] = usePersistedState('lab.bq', "EVALUATE\n    TOPN(1000, SUMMARIZECOLUMNS('Date'[Date], \"v\", [Total Sales]))");
-  const [config, setConfig] = usePersistedState<PivotConfig>('lab.config', EMPTY_CONFIG);
-  const [viz, setViz] = usePersistedState<VizType>('lab.viz', 'bar');
+const DaxLabTabStateContext = createContext<DaxLabTabState | null>(null);
+
+function useDaxLabTabState(): DaxLabTabState {
+  const state = useContext(DaxLabTabStateContext);
+  if (!state) throw new Error('DaxLabView must be rendered inside DaxLabTabStateProvider');
+  return state;
+}
+
+// Null-tolerant selector for the Studio tab bar: true while any DAX Lab op (human or reflected agent run) is in
+// flight. Read outside DaxLabView so the tab bar can flag work that finished — or is still running — while hidden.
+export function useDaxLabBusy(): boolean {
+  return useContext(DaxLabTabStateContext)?.busy != null;
+}
+
+// Mounted by App above the conditional Studio tab body (and inside its model-session key). Human-started RPCs and
+// reflected agent runs can therefore finish while DAX Lab is hidden, while a different model still drops the entire
+// result set exactly as the old component remount did.
+export function DaxLabTabStateProvider({ children }: { children: React.ReactNode }) {
+  const { conn, session } = useConnection();
   const [tab, setTab] = usePersistedState<WbTab>('lab.wbtab', 'result');
-  const [railW, onRailDrag] = useResizable('lab.railW', 212, { axis: 'x', min: 160, max: 380 });
-  const [wbH, onWbDrag, setWbH] = useResizable('lab.wbH', 250, { axis: 'y', dir: -1, min: 130, max: 620 });
-
-  const [runs, setRuns] = usePersistedState('lab.runs', 5);
-  const [clearOnRun, setClearOnRun] = usePersistedState('lab.clearOnRun', true);
-  const [confirmShared, setConfirmShared] = useState(false);
-
-  // results
   const [res, setRes] = useState<ResultSet | null>(null);
   const [logs, setLogs] = useState<EvalLogEntry[] | null>(null);
   const [logNote, setLogNote] = useState<string | null>(null);
@@ -66,15 +140,71 @@ export function DaxLabView() {
   const [plan, setPlan] = useState<QueryPlanResult | null>(null);
   const [timings, setTimings] = useState<ServerTimings | null>(null);
   const [clearMsg, setClearMsg] = useState<string | null>(null);
+  const [eqEv, setEqEv] = useState<EqEvidence | null>(null);
+  const [vErr, setVErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<DaxLabBusy>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [claudeEvent, setClaudeEvent] = useState<ActivityEvent | null>(null);
+
+  // Keep the evidence context byte-for-byte equivalent to the old in-view calculation. Generic results retain the
+  // existing QueryStalenessChip behavior; equivalence evidence continues to compare its receipt stamp to this key.
+  const execContextKey = JSON.stringify([
+    conn?.connected ?? null, conn?.kind ?? null, conn?.dataSource ?? null,
+    conn?.database ?? null, conn?.connectionId ?? null, conn?.account ?? null,
+    session?.currentTenant ?? null,
+    session?.sessionId ?? null, session?.revision ?? null,
+  ]);
+
+  // Reflections must share the holder's lifetime too; otherwise an agent result emitted while another tab is visible
+  // would still disappear even though human-started promises now survive.
+  useClaudeReflection('run_dax', (e) => { setRes((e.result as ResultSet) ?? null); setLogs(null); setErr(e.error ?? null); setClaudeEvent(e); });
+  useClaudeReflection('evaluate_and_log', (e) => {
+    const r = e.result as EvalLogResult | undefined; const rows = r?.resultRows ?? [];
+    setRes(r ? { columns: r.resultColumns, rows, rowCount: r.resultRowCount, truncated: (r.resultRowCount ?? rows.length) > rows.length, elapsedMs: r.elapsedMs } : null);
+    setLogs(r?.entries ?? null); setLogNote(r?.note ?? null); setErr(e.error ?? null); setClaudeEvent(e); setTab('debug');
+  });
+  useClaudeReflection('profile_dax', (e) => { if (e.result) { setTimings(e.result as ServerTimings); setClaudeEvent(e); setTab('perf'); } });
+  useClaudeReflection('benchmark_dax', (e) => { if (e.result) { setBench(e.result as BenchmarkResult); setClaudeEvent(e); setTab('perf'); } });
+  useClaudeReflection('benchmark_coldwarm', (e) => { if (e.result) { setCw(e.result as ColdWarmBenchmark); setClaudeEvent(e); setTab('perf'); } });
+  useClaudeReflection('capture_query_plan', (e) => { if (e.result) { setPlan(e.result as QueryPlanResult); setClaudeEvent(e); setTab('plan'); } });
+  useClaudeReflection('clear_cache', (e) => { const r = e.result as ClearCacheResult | undefined; if (r) { setClearMsg(r.cleared ? `Cleared the cache (${r.elapsedMs} ms)` : (r.error ?? 'Clear cache failed')); setClaudeEvent(e); } });
+  useClaudeReflection('verify_equivalence', (e) => { if (e.result) { setEqEv({ result: e.result as EquivalenceResult, gridCount: null, requestKey: null, contextKey: execContextKey }); setVErr(e.error ?? null); setClaudeEvent(e); setTab('verify'); } });
+
+  return (
+    <DaxLabTabStateContext.Provider value={{
+      tab, setTab, res, setRes, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
+      plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
+      busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey,
+    }}>
+      {children}
+    </DaxLabTabStateContext.Provider>
+  );
+}
+
+export function DaxLabView() {
+  const { conn, session } = useConnection();
+  const model = useDaxModelContext();
+  const editorRef = useRef<DaxEditorHandle>(null);
+
+  const [mode, setMode] = usePersistedState<Mode>('lab.mode', 'visual');
+  const [query, setQuery] = usePersistedState('lab.bq', "EVALUATE\n    TOPN(1000, SUMMARIZECOLUMNS('Date'[Date], \"v\", [Total Sales]))");
+  const [config, setConfig] = usePersistedState<PivotConfig>('lab.config', EMPTY_CONFIG);
+  const [viz, setViz] = usePersistedState<VizType>('lab.viz', 'bar');
+  const {
+    tab, setTab, res, setRes, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
+    plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
+    busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey,
+  } = useDaxLabTabState();
+  const [railW, onRailDrag] = useResizable('lab.railW', 212, { axis: 'x', min: 160, max: 380 });
+  const [wbH, onWbDrag, setWbH] = useResizable('lab.wbH', 250, { axis: 'y', dir: -1, min: 130, max: 620 });
+
+  const [runs, setRuns] = usePersistedState('lab.runs', 5);
+  const [clearOnRun, setClearOnRun] = usePersistedState('lab.clearOnRun', true);
+  const [confirmShared, setConfirmShared] = useState(false);
+
   // verify (exprA seeds from the Values measure; the group-by + filters come from the visual's own matrix)
   const [exprA, setExprA] = usePersistedState('lab.exprA', '');
   const [exprB, setExprB] = usePersistedState('lab.exprB', '');
-  const [eq, setEq] = useState<EquivalenceResult | null>(null);
-  const [vErr, setVErr] = useState<string | null>(null);
-
-  const [busy, setBusy] = useState<'run' | 'debug' | 'profile' | 'plan' | 'quick' | 'coldwarm' | 'clear' | 'verify' | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [claudeEvent, setClaudeEvent] = useState<ActivityEvent | null>(null);
   // "Explain this number" (feature #2): right-click a value cell → the engine's explain_value dossier.
   const [explain, setExplain] = useState<ExplainPayload | null>(null);
 
@@ -83,6 +213,12 @@ export function DaxLabView() {
   const currentQuery = () => (mode === 'visual' ? buildQuery(config) : query);
   const groupByDerived = useMemo(() => [...config.rows, ...config.cols].map((f) => f.ref), [config]);
   const filterLinesDerived = useMemo(() => config.filters.map(filterToDax).filter((x): x is string => !!x), [config]);
+  // The execution context evidence is valid FOR: the QUERY TARGET identity (the attached database +
+  // registry connection id + authenticated account + tenant — NOT the editing-origin liveDatabase, which
+  // stays constant when you switch database A→B on the same endpoint or re-authenticate the same target
+  // under a different account/RLS context) + the editing session/model revision. Every field rides RPC
+  // payloads the ConnectionProvider re-reads on connection changes AND model/didChange; a payload that
+  // omits them (disconnect, a failed refresh nulling conn) still shifts the key — fail stale, not fresh.
   // (No DAX tab — the generated query is visible/editable in Query mode.) Heal a stale persisted tab id.
   useEffect(() => { if (!WB_TABS.some((t) => t.id === tab)) setTab('result'); }, [tab]);
 
@@ -97,20 +233,6 @@ export function DaxLabView() {
   }, [model]);
   // keep exprA pointed at the Values measure unless the user has typed their own
   useEffect(() => { if (!exprA && config.values[0]) setExprA(config.values[0].ref); /* eslint-disable-next-line */ }, [config.values]);
-
-  // reflect the user's Claude running the same ops on this session, live
-  useClaudeReflection('run_dax', (e) => { setRes((e.result as ResultSet) ?? null); setLogs(null); setErr(e.error ?? null); setClaudeEvent(e); });
-  useClaudeReflection('evaluate_and_log', (e) => {
-    const r = e.result as EvalLogResult | undefined; const rows = r?.resultRows ?? [];
-    setRes(r ? { columns: r.resultColumns, rows, rowCount: r.resultRowCount, truncated: (r.resultRowCount ?? rows.length) > rows.length, elapsedMs: r.elapsedMs } : null);
-    setLogs(r?.entries ?? null); setLogNote(r?.note ?? null); setErr(e.error ?? null); setClaudeEvent(e); setTab('debug');
-  });
-  useClaudeReflection('profile_dax', (e) => { if (e.result) { setTimings(e.result as ServerTimings); setClaudeEvent(e); setTab('perf'); } });
-  useClaudeReflection('benchmark_dax', (e) => { if (e.result) { setBench(e.result as BenchmarkResult); setClaudeEvent(e); setTab('perf'); } });
-  useClaudeReflection('benchmark_coldwarm', (e) => { if (e.result) { setCw(e.result as ColdWarmBenchmark); setClaudeEvent(e); setTab('perf'); } });
-  useClaudeReflection('capture_query_plan', (e) => { if (e.result) { setPlan(e.result as QueryPlanResult); setClaudeEvent(e); setTab('plan'); } });
-  useClaudeReflection('clear_cache', (e) => { const r = e.result as ClearCacheResult | undefined; if (r) { setClearMsg(r.cleared ? `Cleared the cache (${r.elapsedMs} ms)` : (r.error ?? 'Clear cache failed')); setClaudeEvent(e); } });
-  useClaudeReflection('verify_equivalence', (e) => { if (e.result) { setEq(e.result as EquivalenceResult); setVErr(e.error ?? null); setClaudeEvent(e); setTab('verify'); } });
 
   function reveal() { if (wbH < 200) setWbH(280); }
 
@@ -146,9 +268,31 @@ export function DaxLabView() {
   async function clearThenPlan() { setTab('plan'); reveal(); await clearCache(); await call<QueryPlanResult>('captureQueryPlan', setPlan, 'plan', currentQuery()); }
   async function runVerify() {
     setBusy('verify'); setVErr(null); setClaudeEvent(null);
-    try { const r = await rpc<EquivalenceResult>('verifyEquivalence', exprA, exprB, groupByDerived, filterLinesDerived, 100000); if (r.error) { setVErr(r.error); setEq(null); } else setEq(r); }
+    // Stamp provenance from the values the request is actually MADE with (captured before the await).
+    const requestKey = requestKeyOf(exprA, exprB, groupByDerived, filterLinesDerived, VERIFY_MAX_ROWS);
+    const contextKey = execContextKey;
+    try {
+      const r = await rpc<EquivalenceResult>('verifyEquivalence', exprA, exprB, groupByDerived, filterLinesDerived, VERIFY_MAX_ROWS);
+      if (r.error) {
+        // An execution error under degraded evaluation carries the caveat too: the failure happened under the
+        // surrogate, which may itself be the cause.
+        setVErr(r.error + (r.fidelity ? ` (ran under degraded evaluation: ${r.fidelity})` : ''));
+        setEqEv(null);
+      } else {
+        // Stamp the evidence with ITS OWN provenance at receipt: the effective grid this comparison ran with,
+        // the exact request key, and the execution context. The verdict comes from this stamp, never from the
+        // currently-configured grid or whatever is connected later.
+        setEqEv({ result: r, gridCount: normGrid(groupByDerived).length, requestKey, contextKey });
+      }
+    }
     catch (e) { setVErr(String((e as Error).message ?? e)); } finally { setBusy(null); }
   }
+  // Evidence is only as good as the request AND the world it answered: an expression/grid/filter edit, a
+  // connection/model swap, or a model revision bump (another door's edit) all invalidate it.
+  const eqStale = !!eqEv && (
+    (eqEv.requestKey != null && eqEv.requestKey !== requestKeyOf(exprA, exprB, groupByDerived, filterLinesDerived, VERIFY_MAX_ROWS))
+    || (eqEv.contextKey != null && eqEv.contextKey !== execContextKey)
+  );
 
   // Visual mode auto-runs on every well change (like a real Power BI visual).
   useEffect(() => {
@@ -231,10 +375,15 @@ export function DaxLabView() {
           <div className="shrink-0 flex flex-col min-h-0" style={{ height: wbH }}>
             <div className="flex items-center px-2 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)', background: 'var(--sem-surface-2)' }}>
               {WB_TABS.map((t) => {
-                const badge = t.id === 'result' && res ? String(res.rowCount) : t.id === 'verify' && eq ? (eq.allMatch ? 'match' : 'diff') : null;
+                // The verify badge follows the STAMPED evidence: only a fresh 'proven' is green 'match', only a
+                // fresh 'failed' is red 'diff' — stale evidence and every degraded/thin/unproven state show amber.
+                const eqV = eqEv ? eqVerdict(eqEv) : null;
+                const badge = t.id === 'result' && res ? String(res.rowCount)
+                  : t.id === 'verify' && eqV ? (eqStale ? 'stale' : eqV === 'proven' ? 'match' : eqV === 'failed' ? 'diff' : 'unproven') : null;
+                const badgeColor = eqStale ? 'var(--sem-warn)' : eqV === 'proven' ? 'var(--sem-good)' : eqV === 'failed' ? 'var(--sem-bad)' : 'var(--sem-warn)';
                 return (
                   <button key={t.id} onClick={() => setTab(t.id)} className="text-[12px] px-3 py-2 flex items-center gap-1.5 whitespace-nowrap" style={{ color: tab === t.id ? 'var(--sem-fg)' : 'var(--sem-muted)', fontWeight: tab === t.id ? 600 : 400, borderBottom: `2px solid ${tab === t.id ? 'var(--sem-accent)' : 'transparent'}`, background: 'none', cursor: 'pointer' }}>
-                    {t.label}{badge && <span className="text-[9.5px] rounded-full px-1.5" style={{ background: 'var(--sem-surface)', border: `1px solid ${t.id === 'verify' ? (eq?.allMatch ? 'color-mix(in srgb,var(--sem-good) 40%,transparent)' : 'color-mix(in srgb,var(--sem-bad) 40%,transparent)') : 'var(--sem-border)'}`, color: t.id === 'verify' ? (eq?.allMatch ? 'var(--sem-good)' : 'var(--sem-bad)') : 'var(--sem-muted)' }}>{badge}</span>}
+                    {t.label}{badge && <span className="text-[9.5px] rounded-full px-1.5" style={{ background: 'var(--sem-surface)', border: `1px solid ${t.id === 'verify' ? `color-mix(in srgb,${badgeColor} 40%,transparent)` : 'var(--sem-border)'}`, color: t.id === 'verify' ? badgeColor : 'var(--sem-muted)' }}>{badge}</span>}
                   </button>
                 );
               })}
@@ -248,7 +397,7 @@ export function DaxLabView() {
               {tab === 'perf' && <PerfTab {...{ runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared, conn, idle, busy, clearCache, runProfile, runPlan, runQuick, runColdWarm, timings, cw, plan, bench, clearMsg }} />}
               {tab === 'plan' && <PlanTab plan={plan} shared={!!shared} connected={!!conn?.connected} idle={idle} busy={busy} clearMsg={clearMsg} onCapture={runPlan} onClearCapture={clearThenPlan} />}
               {tab === 'debug' && <DebugTab logs={logs} logNote={logNote} connected={!!conn?.connected} idle={idle} busy={busy} visual={mode === 'visual'} onRun={() => debug()} onLogEach={() => debug(buildInstrumentedQuery(config))} />}
-              {tab === 'verify' && <VerifyTab {...{ exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eq, vErr }} />}
+              {tab === 'verify' && <VerifyTab {...{ exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr }} />}
             </div>
           </div>
         </div>
@@ -345,7 +494,7 @@ function DebugTab({ logs, logNote, connected, idle, busy, visual, onRun, onLogEa
 }
 
 function VerifyTab(p: any) {
-  const { exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eq, vErr } = p;
+  const { exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr } = p;
   return (
     <div className="p-3 flex flex-col gap-3">
       <div className="flex items-center gap-2">
@@ -360,10 +509,32 @@ function VerifyTab(p: any) {
         <b style={{ color: 'var(--sem-fg)' }}>Matrix from the visual:</b> group by {groupByDerived.length ? groupByDerived.join(', ') : '(none; add Rows/Columns)'}{filterLinesDerived.length ? ` · filters: ${filterLinesDerived.join(' && ')}` : ''}
       </div>
       {vErr && <Banner color="var(--sem-bad)">{vErr}</Banner>}
-      {eq && (
+      {eqEv && (() => {
+        const eq: EquivalenceResult = eqEv.result;
+        // The verdict comes from the evidence's OWN stamp (the grid it ran with), never the current config —
+        // and evidence invalidated by any expression/grid/filter edit renders stale, never green.
+        const verdict = eqVerdict(eqEv);
+        if (eqStale) {
+          return (
+            <Banner color="var(--sem-warn)">
+              {`△ Evidence is STALE: the expressions, grid, filters, connection, or model changed since this comparison ran (its verdict was: ${verdict === 'noContext' ? 'unproven' : verdict}). Re-run Verify for evidence that matches what you see.`}
+            </Banner>
+          );
+        }
+        const color = verdict === 'proven' ? 'var(--sem-good)' : verdict === 'failed' ? 'var(--sem-bad)' : 'var(--sem-warn)';
+        const text: Record<EqVerdict, string> = {
+          proven: `✓ Equivalent: all ${eq.rowsCompared} filter contexts match. Safe to apply.`,
+          failed: `✗ NOT equivalent: ${eq.mismatchCount} of ${eq.rowsCompared} contexts differ. Do not apply.`,
+          degraded_mismatch: `△ Difference observed in ${eq.mismatchCount} context(s) under a DEGRADED comparison. Not authoritative: the reduced-fidelity comparison itself can cause divergence. Not verified; do not apply on this evidence.`,
+          degraded: `△ Values matched, but the comparison ran with reduced fidelity. NOT verified.${eq.fidelity ? ' ' + eq.fidelity : ''}`,
+          thin: `△ Matched at the grand total only. NOT verified: add Rows/Columns for a per-context proof.`,
+          unverified: `△ Could not verify: ${eq.truncated ? `the comparison hit the row cap (${eq.rowsCompared} rows), so coverage is incomplete` : 'the comparison compared 0 rows, so nothing was proven'}.`,
+          noContext: `△ Unproven (no evidence context): this result was reflected from an assistant run without its request grid, so a per-context proof cannot be claimed. Re-run Verify here for stamped evidence.`,
+        };
+        return (
         <>
-          <Banner color={eq.allMatch ? 'var(--sem-good)' : 'var(--sem-bad)'}>{eq.allMatch ? `✓ Equivalent: all ${eq.rowsCompared} filter contexts match. Safe to apply.` : `✗ NOT equivalent: ${eq.mismatchCount} of ${eq.rowsCompared} contexts differ. Do not apply.`}</Banner>
-          {!eq.allMatch && eq.mismatches.length > 0 && (
+          <Banner color={color}>{text[verdict]}</Banner>
+          {eq.mismatches.length > 0 && (
             <div className="overflow-auto rounded-lg" style={{ border: '1px solid var(--sem-border)', maxHeight: 220 }}>
               <table className="text-[12px] border-collapse w-full">
                 <thead><tr>{['Context', 'Original', 'Candidate'].map((h) => <th key={h} className="text-left px-2 py-1 sticky top-0" style={{ background: 'var(--sem-surface-2)', borderBottom: '1px solid var(--sem-border)' }}>{h}</th>)}</tr></thead>
@@ -374,7 +545,8 @@ function VerifyTab(p: any) {
             </div>
           )}
         </>
-      )}
+        );
+      })()}
     </div>
   );
 }

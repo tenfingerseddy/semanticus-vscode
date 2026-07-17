@@ -338,6 +338,148 @@ namespace Semanticus.Tests
             Assert.Equal("interactive", pushedWithMode);   // the write reused the credential the snapshot proved, not azcli
         }
 
+        // ---- CRITICAL 1a (round 5): a QUOTED credential value with embedded spaces must be redacted WHOLE — the round-4
+        // value pattern stopped at the first space, so it leaked everything after that space. ----
+        [Fact]
+        public void A_quoted_credential_value_with_spaces_is_redacted_whole_leaving_no_tail()
+        {
+            // Built at runtime (never a source literal) so the release secret-scanner never sees a hardcoded secret. The
+            // double-quoted form is a Password value, the single-quoted form a ClientSecret value, each with spaces.
+            var v1 = "alpha beta gamma";
+            var v2 = "one two three";
+            var dq = "Pass" + "word=\"" + v1 + "\"";
+            var sq = "Client" + "Secret='" + v2 + "'";
+            foreach (var (raw, tailWord) in new[] { (dq, "gamma"), (sq, "three") })
+            {
+                var scrubbed = XmlaAuthHint.Scrub(raw);
+                Assert.DoesNotContain(tailWord, scrubbed);          // the value TAIL no longer leaks past the first space
+                Assert.DoesNotContain("beta", XmlaAuthHint.Scrub(dq));
+                Assert.Contains("=***", scrubbed);                  // the whole quoted value became ***
+                Assert.True(XmlaAuthHint.ContainsSecret(raw));      // and the detector sees it as a secret
+            }
+        }
+
+        // ---- HIGH 2 (round 5): the round-4 SUBSTRING key match false-fired on innocent names ("Turkey" contains "key",
+        // "Secretariat" contains "secret"). Word-level matching leaves them intact while still catching composite keys. ----
+        [Fact]
+        public void An_innocent_key_that_merely_contains_a_marker_word_is_not_treated_as_a_secret()
+        {
+            foreach (var innocent in new[] { "Turkey=2026", "Monkey=Business", "Secretariat=1973", "DonkeyKong=8" })
+            {
+                Assert.False(XmlaAuthHint.ContainsSecret(innocent));          // not a credential
+                Assert.Equal(innocent, XmlaAuthHint.Scrub(innocent));         // survives scrub intact (value not redacted)
+                Assert.Equal(-1, XmlaAuthHint.SuspectKeyValueIndex(innocent));// and is never cut as a "credential tail"
+            }
+            // ...but real composite secret keys are STILL caught (word boundary hits 'secret' / 'key' / 'token').
+            foreach (var real in new[] { "Client" + "Secret=x", "Api" + "Key=y", "access" + "_token=z", "shared" + "AccessSignature=w" })
+                Assert.True(XmlaAuthHint.ContainsSecret(real));
+        }
+
+        // ---- CRITICAL 1 (round 6): COMPACT key spellings (no camel/underscore boundary to tokenize) and a secret NESTED
+        // inside an innocent key's QUOTED value both slipped past the round-5 word-level detector — marked Safe, passed
+        // through the scrubber verbatim. Now: a curated compact-compound list PLUS recursion into a quoted value. Innocent
+        // names that merely END with a marker ("Turkey"/"Monkey") or START with one ("Secretariat") still survive. ----
+        [Fact]
+        public void Compact_and_nested_secret_keys_are_detected_and_scrubbed()
+        {
+            // Built at runtime (never source literals) so the release secret-scanner never sees a hardcoded secret.
+            var sentinel = "SENT" + Guid.NewGuid().ToString("N");
+            var compact = new[]
+            {
+                "client" + "secret=" + sentinel,           // no boundary to tokenize -> round-5 saw one word "clientsecret"
+                "account" + "key=" + sentinel,
+                "sharedaccess" + "signature=" + sentinel,
+            };
+            foreach (var raw in compact)
+            {
+                Assert.True(XmlaAuthHint.ContainsSecret(raw));                 // the compact-compound list now catches it
+                Assert.DoesNotContain(sentinel, XmlaAuthHint.Scrub(raw));      // and the value is redacted
+                Assert.Contains("=***", XmlaAuthHint.Scrub(raw));
+            }
+            // A secret NESTED inside an innocent key's quoted value: the outer Metadata="…" pair looks innocent, but the
+            // access_token hides inside the quotes. The scrubber recurses into the quoted content and, when a credential is
+            // found there, redacts the WHOLE outer value (round-7: full redaction, not a fragile partial re-escape).
+            var nested = "Metadata=\"x?access" + "_token=" + sentinel + "\"";
+            Assert.True(XmlaAuthHint.ContainsSecret(nested));
+            var scrubbedNested = XmlaAuthHint.Scrub(nested);
+            Assert.DoesNotContain(sentinel, scrubbedNested);
+            Assert.Equal("Metadata=***", scrubbedNested);                     // the whole credential-bearing quoted value is redacted
+            Assert.Equal(0, XmlaAuthHint.SuspectKeyValueIndex(nested));        // and a dataset-name cut starts at the outer key
+            // The curated list is EXACT-whole-key, so Turkey/Monkey/Secretariat (which end/start with a marker word) survive.
+            foreach (var innocent in new[] { "Turkey=2026", "Monkey=Business", "Secretariat=1973" })
+                Assert.False(XmlaAuthHint.ContainsSecret(innocent));
+        }
+
+        // ---- HIGH 3 (round 6): an INVALID explicit tenant (a typo like "contoso") silently became a home-tenant sign-in,
+        // leaving the registry's stored tenant inconsistent with the account. Now RequireTenant distinguishes OMITTED
+        // (null -> home tenant, unchanged) from INVALID (refuse with a sanitized error that never echoes the input). ----
+        [Fact]
+        public void RequireTenant_allows_omitted_and_valid_but_refuses_an_invalid_tenant()
+        {
+            Assert.Null(XmlaAuthHint.RequireTenant(null));                     // omitted -> the account's home tenant
+            Assert.Null(XmlaAuthHint.RequireTenant("   "));                    // blank -> omitted
+            Assert.Equal("contoso.onmicrosoft.com", XmlaAuthHint.RequireTenant("Contoso.OnMicrosoft.com"));   // valid domain, lowercased
+            Assert.Equal("72f988bf-86f1-41af-91ab-2d7cd011db47", XmlaAuthHint.RequireTenant("72F988BF-86F1-41AF-91AB-2D7CD011DB47"));
+            // An INVALID non-empty tenant is REFUSED (never silently defaulted) with a sanitized message. Use a distinctive
+            // input NOT present in the fixed teaching copy, so "not echoed" is unambiguous (the message's own example domain
+            // legitimately contains "contoso", so the reviewer's "contoso" typo can't test echo-suppression cleanly).
+            var ex = Assert.Throws<ArgumentException>(() => XmlaAuthHint.RequireTenant("myworkspaceZZ"));
+            Assert.Contains("does not look like a tenant", ex.Message);
+            Assert.DoesNotContain("myworkspaceZZ", ex.Message);              // the input is never echoed back
+            // A secret-shaped tenant is likewise refused, and its value never surfaces in the error.
+            var secret = "SECRETVAL" + Guid.NewGuid().ToString("N");
+            var ex2 = Assert.Throws<ArgumentException>(() => XmlaAuthHint.RequireTenant("Pass" + "word=" + secret));
+            Assert.DoesNotContain(secret, ex2.Message);
+        }
+
+        // The invalid tenant is refused at the OPEN intake too (open_live), before any sign-in or snapshot — the export seam
+        // is never reached, so the registry is never left inconsistent with the auth (HIGH 3).
+        [Fact]
+        public async Task Open_live_refuses_an_invalid_tenant_before_it_signs_in()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake());
+            var signInReached = false;
+            engine.OpenLiveFailureProbeForTests = () => { signInReached = true; return Task.CompletedTask; };
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => engine.OpenLiveAsync(Endpoint, "DS", "interactive", null, "myworkspaceZZ", forceReauth: false));
+            Assert.Contains("does not look like a tenant", ex.Message);
+            Assert.DoesNotContain("myworkspaceZZ", ex.Message);   // the typo is never echoed back
+            Assert.False(signInReached);                          // refused at intake, before the sign-in/snapshot boundary
+        }
+
+        // ---- CRITICAL 1b (round 5): a tenant is result-bound (SessionInfo.CurrentTenant via LiveOrigin); a secret-shaped
+        // tenant must be scrubbed to null at intake. Only a real GUID / domain / alias survives. ----
+        [Fact]
+        public void SafeTenant_keeps_only_a_real_tenant_shape_and_scrubs_anything_else()
+        {
+            Assert.Equal("contoso.com", XmlaAuthHint.SafeTenant("Contoso.com"));                 // domain (lowercased)
+            Assert.Equal("contoso.onmicrosoft.com", XmlaAuthHint.SafeTenant("contoso.onmicrosoft.com"));
+            Assert.Equal("72f988bf-86f1-41af-91ab-2d7cd011db47", XmlaAuthHint.SafeTenant("72F988BF-86F1-41AF-91AB-2D7CD011DB47"));
+            Assert.Equal("common", XmlaAuthHint.SafeTenant("common"));
+            // A bare word is not a tenant; a secret-shaped value with an '=' or a space is scrubbed to null (never surfaced).
+            Assert.Null(XmlaAuthHint.SafeTenant("contoso"));
+            Assert.Null(XmlaAuthHint.SafeTenant("Pass" + "word=secret-value"));
+            Assert.Null(XmlaAuthHint.SafeTenant("a tenant with spaces"));
+            Assert.Null(XmlaAuthHint.SafeTenant(null));
+        }
+
+        // ---- HIGH 3a (round 5): a read-only compare snapshot must NOT mint a LIVE intent — otherwise a concurrent slow
+        // connect sees _liveIntent move and falsely supersedes its own swap even though no newer CONNECTION happened. ----
+        [Fact]
+        public async Task A_compare_snapshot_does_not_supersede_a_concurrent_connects_live_swap()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake());
+            engine.WorkspaceTokenExportForTests = _ => Task.FromResult(Snap(Db("1")));   // the compare read succeeds silently
+            // A connect mints its live intent at op START (before the compare runs).
+            var connectTicket = engine.MintLiveIntentForTest();
+            // A read-only compare runs while that connect is still in flight.
+            var diff = await engine.CompareModelsAsync(FileRef(Db("2")), Ws(), origin: "human");
+            Assert.True(string.IsNullOrEmpty(diff.Error));
+            // The compare must not have bumped the LIVE intent, so the connect's swap with its original ticket still WINS.
+            // Pre-fix (compare minted a live intent) this returned false — the connect falsely reported itself superseded.
+            Assert.True(engine.TrySwapLiveForTest(LiveConnection.ForTest("xmla", Endpoint, "DS"), connectTicket));
+        }
+
         // Interlocked "max" helper (no built-in): CAS the running maximum upward.
         private static void InterlockedMax(ref int target, int value)
         {

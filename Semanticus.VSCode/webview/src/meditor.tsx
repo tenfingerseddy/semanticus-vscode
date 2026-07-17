@@ -109,7 +109,7 @@ const mTheme = EditorView.theme({
 // A CodeMirror M editor: highlighting + bracket match/close + history + standard-library-aware
 // autocomplete & hover-types (the powerquery-language-services Analysis, via manalysis.ts). Editable unless
 // readOnly. The parent owns format/validity/save; this component just edits text and reports changes.
-export function MEditor({ value, onChange, readOnly = false, minHeight = 260, selection }: { value: string; onChange?: (v: string) => void; readOnly?: boolean; minHeight?: number; selection?: { from: number; to: number; nonce: number } }) {
+export function MEditor({ value, onChange, readOnly = false, minHeight = 260, selection, resizable = false }: { value: string; onChange?: (v: string) => void; readOnly?: boolean; minHeight?: number; selection?: { from: number; to: number; nonce: number }; resizable?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -128,7 +128,10 @@ export function MEditor({ value, onChange, readOnly = false, minHeight = 260, se
         mHoverTooltip,
         mLinter,
         mTheme,
-        EditorView.theme({ '.cm-scroller': { minHeight: minHeight + 'px' } }),
+        EditorView.theme({
+          '&': { height: resizable ? '100%' : 'auto' },
+          '.cm-scroller': { minHeight: minHeight + 'px', height: resizable ? '100%' : 'auto' },
+        }),
         editable.current.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
         EditorView.updateListener.of((u) => { if (u.docChanged) onChangeRef.current?.(u.state.doc.toString()); }),
       ],
@@ -163,5 +166,5 @@ export function MEditor({ value, onChange, readOnly = false, minHeight = 260, se
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection?.nonce]);
 
-  return <div ref={host} />;
+  return <div ref={host} style={resizable ? { height: minHeight, minHeight, resize: 'vertical', overflow: 'hidden' } : undefined} />;
 }

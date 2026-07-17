@@ -37,6 +37,11 @@ namespace Semanticus.Engine
         public string PublishConnectionId { get; set; } // optional XMLA destination for this source's working folder
         public string LastUsedUtc { get; set; }
         public int UseCount { get; set; }
+        // The user identity (UPN) that LAST signed in to this target, captured from the MSAL AuthenticationRecord on a
+        // successful interactive/device-code sign-in. A DISPLAY HINT ("as kane@contoso.com") so a surface can show which
+        // account a connect will use — never an identity lock (the live token, per-tenant, still decides). Null for
+        // azcli/serviceprincipal/token (no MSAL record) and for a target no one has interactively signed in to yet.
+        public string LastAccount { get; set; }
     }
 
     public static class ConnectionRegistry
@@ -122,9 +127,26 @@ namespace Semanticus.Engine
         /// unlabel a target: that would turn a `prod` declaration back into an inference.
         /// </summary>
         public static ModelConnectionRecord Remember(string kind, string endpoint, string database,
-            string modelName = null, string tenantId = null, string authMode = null)
+            string modelName = null, string tenantId = null, string authMode = null, string lastAccount = null)
         {
             if (string.IsNullOrWhiteSpace(endpoint)) throw new ArgumentException("A connection needs an endpoint.", nameof(endpoint));
+
+            // Last line of defence at the persistence boundary: reduce a pasted connection string to its safe address +
+            // catalog and DROP any credential, so connections.json can never hold a Password=/token=, whatever the caller
+            // passed. A bare endpoint passes through unchanged (stable id); only a credential-bearing input is rewritten.
+            var coords = ConnectionInput.Parse(endpoint, database);
+            // FAIL CLOSED: an input that carried a credential and could NOT be reduced to a recognized address is refused
+            // outright — never write a raw, unparsed, possibly-secret-bearing string to disk. (A clean connection string
+            // whose credential we cleanly stripped is Safe and proceeds; only the unparseable credential shape is refused.)
+            if (!coords.Safe)
+                throw new ArgumentException("This endpoint could not be reduced to a safe address without a credential. Pass the bare address only (e.g. powerbi://api.powerbi.com/v1.0/myorg/Workspace) and a dataset name; Semanticus signs in for you and never stores a credential.", nameof(endpoint));
+            // Take the sanitized coordinates as-is — never fall back to the raw `database` argument, which the parser may
+            // have DROPPED precisely because it hid a secret ("Sales;Password=SECRET").
+            endpoint = coords.Endpoint;
+            database = coords.Database;
+            // Belt-and-braces: a Safe coordinate is already secret-free, but never write an endpoint the detector still
+            // flags (a residual redacted "…&token=***" query key) as if it were a plain address — redact it.
+            if (XmlaAuthHint.ContainsSecret(endpoint)) endpoint = ConnectionInput.Redacted;
 
             return Mutate(all =>
             {
@@ -136,6 +158,9 @@ namespace Semanticus.Engine
                 rec.ModelName = modelName ?? rec.ModelName;
                 rec.TenantId = tenantId ?? rec.TenantId;
                 rec.AuthMode = authMode ?? rec.AuthMode;
+                // Preserve a known account when this connect can't name one (azcli/sp) — like the label, a display hint the
+                // user earned by signing in once shouldn't be erased by a later headless connect to the same target.
+                rec.LastAccount = string.IsNullOrWhiteSpace(lastAccount) ? rec.LastAccount : lastAccount;
                 rec.LastUsedUtc = DateTimeOffset.UtcNow.ToString("O");
                 rec.UseCount++;
 
@@ -304,6 +329,12 @@ namespace Semanticus.Engine
                     || linkedPublishIds.Contains(r.Id)));
                 all = keep;
             }
+
+            // Serialization-boundary scrub (CRITICAL 1): redact any secret material from EVERY string field of every
+            // record right before the bytes are written — modelName, a secret-shaped tenant, or a field added later that
+            // a per-call-site sanitizer would miss. Endpoint/database are already reduced by ConnectionInput.Parse; this
+            // is the chokepoint that makes a future regression impossible, not a substitute for that earlier parse.
+            foreach (var r in all) XmlaAuthHint.ScrubStringProperties(r);
 
             Directory.CreateDirectory(Root());
             var tmp = FilePath() + ".tmp";

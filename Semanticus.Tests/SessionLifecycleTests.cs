@@ -98,18 +98,302 @@ namespace Semanticus.Tests
             Assert.False((await engine.ConnectionStatusAsync()).Connected);
         }
 
-        // ---- Race 1 pin: the new session is published ONLY AFTER stores are cleared and _live dropped. ----
-        // BetweenInvalidateAndCommitForTest fires between INVALIDATE (d) and COMMIT (e) — the last observable
-        // instant of the swap. At that instant the OLD session must still be current, and the plan store / live
-        // connection must ALREADY be gone: the chosen lesser evil is "old session with empty stores" (benign
-        // empty reads during a user-initiated open), never "new session with the old model's state".
+        // NOTE: the former "Xmla_connect_binding_sets_the_current_sessions_deploy_origin" pin was removed with the
+        // BindLiveOriginIfCurrent method it exercised: connect_xmla is a QUERY connection and must NEVER rebind the
+        // editing/deploy origin (HIGH 1). The query connection's own intent-race rejection is covered by the SwapLive
+        // pins; that connect_xmla leaves LiveOrigin untouched is pinned in
+        // ConnectionAccountHistoryTests.A_query_connection_never_rebinds_the_editing_origin.
+
+        // ---- Full-context race pin: admitted model work drains before the old dispatcher is retired. ---------
         [Fact]
-        public async Task The_new_session_publishes_only_after_stores_cleared_and_live_dropped()
+        public async Task A_session_swap_waits_for_admitted_old_model_work_then_rejects_stale_calls()
+        {
+            var sessions = new SessionManager();
+            var old = await sessions.OpenAsync(TestModels.FindBim());
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var admitted = old.ReadAsync(m =>
+            {
+                entered.TrySetResult(true);
+                release.Task.GetAwaiter().GetResult();
+                return m.Tables.Count;
+            });
+            await entered.Task;
+
+            var replacing = sessions.OpenAsync(TestModels.FindBim());
+            for (var i = 0; i < 500 && !old.RetiredForTest; i++) await Task.Delay(10);
+            Assert.True(old.RetiredForTest);                 // admission is closed at the commit boundary
+            Assert.Same(old, sessions.Current);             // publication waits for the admitted read to drain
+            Assert.False(replacing.IsCompleted);
+
+            release.TrySetResult(true);
+            Assert.True(await admitted > 0);
+            var current = await replacing;
+            Assert.Same(current, sessions.Current);
+
+            var stale = await Assert.ThrowsAsync<InvalidOperationException>(() => old.ReadAsync(m => m.Tables.Count));
+            Assert.Contains("replaced or closed", stale.Message);
+            Assert.True(await current.ReadAsync(m => m.Tables.Count) > 0);
+        }
+
+        // A disconnect retires the captured connection without tearing it out from under an admitted query/trace.
+        [Fact]
+        public async Task A_live_disconnect_drains_admitted_work_and_rejects_a_stale_connection_reference()
+        {
+            var live = LiveConnection.ForTest("xmla", "endpoint-A");
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var admitted = live.RunWithLifetimeLeaseAsync(async () =>
+            {
+                entered.TrySetResult(true);
+                await release.Task;
+                return 7;
+            });
+            await entered.Task;
+
+            live.Dispose();
+            Assert.False(live.DisposedForTest);              // actual teardown is deferred while admitted work runs
+            var stale = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => live.RunWithLifetimeLeaseAsync(() => Task.FromResult(0)));
+            Assert.Contains("disconnected or replaced", stale.Message);
+
+            release.TrySetResult(true);
+            Assert.Equal(7, await admitted);
+            Assert.True(live.DisposedForTest);
+            Assert.False(live.HasConnectionStringForTest);   // the bearer-bearing source is cleared at retirement
+        }
+
+        // A query admitted before disconnect may drain safely, but its old-endpoint rows must not surface afterward.
+        [Fact]
+        public async Task A_query_result_from_a_replaced_connection_is_discarded()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var live = LiveConnection.ForTest("xmla", "endpoint-A", execute: _ =>
+            {
+                entered.TrySetResult(true);
+                release.Task.GetAwaiter().GetResult();
+                return new ResultSet
+                {
+                    Columns = new[] { new ColumnDef { Name = "[v]" } },
+                    Rows = new[] { new object[] { 7 } },
+                    RowCount = 1,
+                };
+            });
+            engine.SetLiveConnectionForTest(live);
+
+            var query = engine.RunDaxAsync("EVALUATE ROW(\"v\", 7)", 10, "human");
+            await entered.Task;
+            Assert.False((await engine.DisconnectAsync()).Connected);
+            Assert.False(live.DisposedForTest);   // the admitted query still owns the connection lifetime
+            release.TrySetResult(true);
+
+            var result = await query;
+            Assert.Contains("stale result was discarded", result.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(result.Rows);
+            Assert.True(live.DisposedForTest);
+        }
+
+        [Fact]
+        public async Task A_query_captured_before_disconnect_returns_the_not_connected_result()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-A"));
+            var captured = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.LiveQueryCapturedForTest = async () =>
+            {
+                captured.TrySetResult(true);
+                await release.Task;
+            };
+
+            var query = engine.RunDmvAsync("SELECT * FROM $SYSTEM.TMSCHEMA_TABLES", 10);
+            await captured.Task;
+            Assert.False((await engine.DisconnectAsync()).Connected);
+            release.TrySetResult(true);
+
+            var result = await query;
+            Assert.Equal("Not connected. Call connect_xmla or connect_local first.", result.Error);
+            Assert.Empty(result.Rows);
+        }
+
+        [Fact]
+        public async Task Direct_session_manager_replacement_preserves_an_active_workflow_run()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new ProFake());
+            await sessions.OpenAsync(TestModels.FindBim());
+            var started = await engine.StartWorkflowAsync("new-measure", "human");
+
+            await sessions.OpenAsync(TestModels.FindBim());
+
+            var current = await engine.GetWorkflowRunAsync(started.RunId);
+            Assert.Equal("active", current.Status);
+            Assert.Equal(started.RunId, current.RunId);
+        }
+
+        // A plan prepared from model A must never land in model B's freshly-cleared store after an open races it.
+        [Fact]
+        public async Task A_stale_plan_proposal_cannot_repopulate_the_replacement_models_store()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            var prepared = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.PlanSeedsReadyForTest = async () =>
+            {
+                prepared.TrySetResult(true);
+                await release.Task;
+            };
+
+            var staleProposal = engine.ProposePlanAsync(null, includeAi: false, maxAiItems: 0, origin: "test");
+            await prepared.Task;
+            await engine.OpenAsync(TestModels.FindBim());
+            release.TrySetResult(true);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => staleProposal);
+            Assert.Contains("open model changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+            var current = await engine.GetPlanAsync();
+            Assert.Null(current.PlanId);
+            Assert.Empty(current.Items);
+        }
+
+        // A spec derived from model A must not become model B's current authoring spec after a racing open.
+        [Fact]
+        public async Task A_stale_model_spec_cannot_repopulate_the_replacement_models_store()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            var prepared = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.ModelSpecReadyForTest = async () =>
+            {
+                prepared.TrySetResult(true);
+                await release.Task;
+            };
+
+            var staleSpec = engine.AutogenerateSpecFromModelAsync("test");
+            await prepared.Task;
+            await engine.OpenAsync(TestModels.FindBim());
+            release.TrySetResult(true);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => staleSpec);
+            Assert.Contains("open model changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Null((await engine.GetSpecAsync()).Spec);
+        }
+
+        // A capture measured from model A's live connection must not land in model B's empty baseline store.
+        [Fact]
+        public async Task A_stale_baseline_capture_cannot_repopulate_the_replacement_models_store()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-A", execute: _ => new ResultSet
+            {
+                Columns = new[] { new ColumnDef { Name = "[v]" }, new ColumnDef { Name = "[__present]" } },
+                Rows = new[] { new object[] { 42.0, 1 } },
+                RowCount = 1,
+            }));
+            var prepared = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.BaselineReadyForTest = async () =>
+            {
+                prepared.TrySetResult(true);
+                await release.Task;
+            };
+
+            var staleCapture = engine.CaptureBaselineAsync(
+                "measure:Date/Days In Current Quarter", null, null, includeDependents: false,
+                maxMeasures: 25, rowCap: 2000, label: null, origin: "test");
+            await prepared.Task;
+            await engine.OpenAsync(TestModels.FindBim());
+            release.TrySetResult(true);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => staleCapture);
+            Assert.Contains("open model changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("not-found", (await engine.CompareBaselineAsync(null, null, "test")).Status);
+        }
+
+        // A run prepared for model A must not be registered against model B after a racing open.
+        [Fact]
+        public async Task A_stale_workflow_start_cannot_register_against_the_replacement_model()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            var prepared = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.WorkflowStartReadyForTest = async () =>
+            {
+                prepared.TrySetResult(true);
+                await release.Task;
+            };
+
+            var staleStart = engine.StartWorkflowAsync("new-measure", "test");
+            await prepared.Task;
+            await engine.OpenAsync(TestModels.FindBim());
+            release.TrySetResult(true);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => staleStart);
+            Assert.Contains("open model changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, engine.ActiveWorkflowRunsForTest);
+        }
+
+        [Fact]
+        public async Task A_benign_live_reconnect_during_workflow_prescan_does_not_abort_the_start()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-A", "Model A"));
+            engine.WorkflowStartReadyForTest = () =>
+            {
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-B", "Model B"));
+                return Task.CompletedTask;
+            };
+
+            var started = await engine.StartWorkflowAsync("new-measure", "human");
+
+            Assert.Equal("active", started.Status);
+            Assert.Equal("endpoint-B", (await engine.ConnectionStatusAsync()).DataSource);
+        }
+
+        // A late readiness scan from model A must not reactivate model B's workflow menu with A's grade.
+        [Fact]
+        public async Task A_stale_readiness_scan_cannot_repopulate_the_replacement_models_cache()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new ProFake());
+            await engine.OpenAsync(TestModels.FindBim());
+            var prepared = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            engine.ReadinessReadyForTest = async () =>
+            {
+                prepared.TrySetResult(true);
+                await release.Task;
+            };
+
+            var staleScan = engine.AiReadinessScanAsync();
+            await prepared.Task;
+            await engine.OpenAsync(TestModels.FindBim());
+            release.TrySetResult(true);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => staleScan);
+            Assert.Contains("open model changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // ---- Race 1 pin: there is no invalidate-then-publish half-state. --------------------------------
+        // Immediately before the atomic exchange, the old context is still complete. Immediately afterward, the
+        // replacement context owns fresh model-scoped stores, preserves workflow state, and has no old live binding.
+        // Readers see one complete side or the other.
+        [Fact]
+        public async Task A_model_replacement_atomically_exchanges_complete_session_contexts()
         {
             var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new ProFake());
             await engine.OpenAsync(TestModels.FindBim());
             var oldSession = sessions.Current;
+            var oldContext = sessions.CurrentContext;
 
             await engine.ProposePlanAsync(null, includeAi: false, maxAiItems: 0, origin: "test");   // model A holds a plan
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("local", "stub-A"));              // ...and a connection
@@ -122,13 +406,19 @@ namespace Semanticus.Tests
                 oldStillCurrentAtCommit = ReferenceEquals(sessions.Current, oldSession);
                 planIdAtCommit = engine.GetPlanAsync().GetAwaiter().GetResult().PlanId;
                 connectedAtCommit = engine.ConnectionStatusAsync().GetAwaiter().GetResult().Connected;
+                engine.SetSpecAsync("{\"name\":\"old-context-only\"}", "test").GetAwaiter().GetResult();
             };
             await engine.OpenAsync(TestModels.FindBim());
 
-            Assert.True(oldStillCurrentAtCommit);    // publication is the LAST step of the swap
-            Assert.Null(planIdAtCommit);             // stores were cleared BEFORE publication
-            Assert.False(connectedAtCommit);         // _live was dropped BEFORE publication
-            Assert.Null((await engine.GetPlanAsync()).PlanId);   // and stays cleared after the open returns
+            Assert.True(oldStillCurrentAtCommit);
+            Assert.NotSame(oldContext, sessions.CurrentContext);
+            Assert.NotNull(planIdAtCommit);           // old session + old plan remain one complete context
+            Assert.True(connectedAtCommit);           // old session + old live binding remain paired
+            Assert.NotNull(oldContext.Plans.Current); // retirement cannot redirect an old reference into new stores
+            Assert.NotNull(oldContext.Spec.View().Spec);
+            Assert.Null((await engine.GetPlanAsync()).PlanId);   // the replacement owns a fresh store
+            Assert.Null((await engine.GetSpecAsync()).Spec);     // even a last-instant old-context write is isolated
+            Assert.False((await engine.ConnectionStatusAsync()).Connected); // and no previous-model binding
         }
 
         // ---- Race 2 pin: the resurrection interleaving — a stale candidate must not displace a newer connection.

@@ -52,9 +52,10 @@ namespace Semanticus.LearnSmoke
             File.Copy(srcBim, seedB);
 
             var pipeName = "semanticus-learnsmoke-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            const string uiChallenge = "learn-smoke-ui-challenge-0123456789abcdef";
             var sessions = new SessionManager();
             var owner = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro(), wsDir);
-            using var server = new RpcServer(sessions, owner, pipeName);
+            using var server = new RpcServer(sessions, owner, pipeName, uiChallenge);
             using var cts = new CancellationTokenSource();
             var serverTask = server.RunAsync(cts.Token);
 
@@ -67,7 +68,7 @@ namespace Semanticus.LearnSmoke
                 var openA = await owner.OpenAsync(seedA);
                 Check("owner opened seed A", openA.Tables > 0);
 
-                ui = await UiClient.ConnectAsync(pipeName);            // the "VS Code UI" door
+                ui = await UiClient.ConnectAsync(pipeName, uiChallenge); // the "VS Code UI" door
                 claude = await RemoteEngine.ConnectAsync(pipeName);    // the IEngine the --mcp host injects
 
                 // 1) Fingerprint present + shaped
@@ -176,6 +177,22 @@ namespace Semanticus.LearnSmoke
         }
 
         // --- The UI door: a plain JSON-RPC client that only listens for workflow/didChange (dual-drive proof) ---
+        private static async Task ConfirmRpcRoleAsync(Stream stream)
+        {
+            var expected = "SEMANTICUS-RPC/1 accepted";
+            var bytes = new byte[256];
+            var one = new byte[1];
+            var count = 0;
+            while (count < bytes.Length)
+            {
+                if (await stream.ReadAsync(one, 0, 1) == 0) throw new EndOfStreamException("RPC server closed during role handshake.");
+                if (one[0] == (byte)'\n') break;
+                bytes[count++] = one[0];
+            }
+            if (count == bytes.Length || System.Text.Encoding.UTF8.GetString(bytes, 0, count) != expected)
+                throw new InvalidDataException("RPC server rejected the role handshake.");
+        }
+
         private sealed class UiClient : IDisposable
         {
             private readonly NamedPipeClientStream _pipe;
@@ -184,10 +201,14 @@ namespace Semanticus.LearnSmoke
 
             private UiClient(NamedPipeClientStream pipe, JsonRpc rpc, NotifyCollector notify) { _pipe = pipe; _rpc = rpc; Notify = notify; }
 
-            public static async Task<UiClient> ConnectAsync(string pipeName)
+            public static async Task<UiClient> ConnectAsync(string pipeName, string challenge)
             {
                 var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await pipe.ConnectAsync(5000);
+                var preamble = System.Text.Encoding.UTF8.GetBytes($"SEMANTICUS-RPC/1 human {challenge}\n");
+                await pipe.WriteAsync(preamble, 0, preamble.Length);
+                await pipe.FlushAsync();
+                await ConfirmRpcRoleAsync(pipe);
                 var notify = new NotifyCollector();
                 var rpc = new JsonRpc(RpcServer.CreateHandler(pipe));
                 rpc.AddLocalRpcTarget(notify);

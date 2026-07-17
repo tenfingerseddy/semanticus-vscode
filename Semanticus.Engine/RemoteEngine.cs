@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Pipes;
+using System.Threading;
 using System.Threading.Tasks;
 using StreamJsonRpc;
 using Semanticus.Analysis;
@@ -23,16 +24,22 @@ namespace Semanticus.Engine
         /// the next call re-reads .semanticus/engine.json, re-attaches to the new owner, and retries once —
         /// instead of every subsequent tool call failing until the whole MCP server is reconnected.
         /// Without a workspace (tests/smokes on a fixed pipe) a lost connection stays fatal.</summary>
-        public static async Task<RemoteEngine> ConnectAsync(string pipeName, string workspace = null, int timeoutMs = 5000)
+        public static async Task<RemoteEngine> ConnectAsync(
+            string pipeName,
+            string workspace = null,
+            int timeoutMs = 5000,
+            bool requireMatchingExecutable = false)
         {
             var (rpc, pipe) = await DialAsync(pipeName, timeoutMs);
-            return new RemoteEngine(new ResilientRpc(rpc, pipe, workspace, timeoutMs));
+            return new RemoteEngine(new ResilientRpc(rpc, pipe, workspace, timeoutMs, requireMatchingExecutable));
         }
 
         private static async Task<(JsonRpc rpc, Stream pipe)> DialAsync(string pipeName, int timeoutMs)
         {
             var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await pipe.ConnectAsync(timeoutMs);
+            await RpcHandshake.WriteAsync(pipe, RpcConnectionRole.Agent);
+            await RpcHandshake.ReadAcceptedAsync(pipe);
             var rpc = new JsonRpc(RpcServer.CreateHandler(pipe));
             rpc.StartListening();
             return (rpc, pipe);
@@ -46,12 +53,19 @@ namespace Semanticus.Engine
         {
             private readonly string _workspace;        // null → fixed-pipe mode, no re-attach
             private readonly int _timeoutMs;
+            private readonly bool _requireMatchingExecutable;
             private readonly System.Threading.SemaphoreSlim _swap = new(1, 1);
             private JsonRpc _rpc;
             private Stream _pipe;
 
-            internal ResilientRpc(JsonRpc rpc, Stream pipe, string workspace, int timeoutMs)
-            { _rpc = rpc; _pipe = pipe; _workspace = workspace; _timeoutMs = timeoutMs; }
+            internal ResilientRpc(JsonRpc rpc, Stream pipe, string workspace, int timeoutMs, bool requireMatchingExecutable)
+            {
+                _rpc = rpc;
+                _pipe = pipe;
+                _workspace = workspace;
+                _timeoutMs = timeoutMs;
+                _requireMatchingExecutable = requireMatchingExecutable;
+            }
 
             public async Task<T> InvokeAsync<T>(string method, params object[] args)
             {
@@ -73,6 +87,18 @@ namespace Semanticus.Engine
                 {
                     await ReattachAsync(current, ex);
                     try { await _rpc.InvokeAsync(method, args); }
+                    catch (RemoteInvocationException rex) { throw AfterRestart(rex); }
+                }
+            }
+
+            public async Task<T> InvokeWithCancellationAsync<T>(string method, CancellationToken cancellationToken, params object[] args)
+            {
+                var current = _rpc;
+                try { return await current.InvokeWithCancellationAsync<T>(method, args, cancellationToken); }
+                catch (System.Exception ex) when (!cancellationToken.IsCancellationRequested && IsConnectionLost(ex))
+                {
+                    await ReattachAsync(current, ex);
+                    try { return await _rpc.InvokeWithCancellationAsync<T>(method, args, cancellationToken); }
                     catch (RemoteInvocationException rex) { throw AfterRestart(rex); }
                 }
             }
@@ -100,6 +126,10 @@ namespace Semanticus.Engine
                             "The connection to the owner engine was lost and no running engine was found to re-attach to"
                             + (_workspace != null ? $" (workspace: {_workspace})" : " (fixed-pipe attach; re-attach needs a workspace)")
                             + ". Restart the engine (VS Code starts it on activation; there is also a status-bar restart button), then retry.", cause);
+                    if (_requireMatchingExecutable && EngineBroker.HasExecutableProvenance(info) && !EngineBroker.ExecutableMatches(info))
+                        throw new System.InvalidOperationException(
+                            "The owner engine restarted from a different Semanticus build, so this AI Assistant connection refused to attach. "
+                            + "Restart Semanticus and reconnect the AI Assistant.", cause);
                     var (rpc, pipe) = await DialAsync(info.PipeName, _timeoutMs);
                     var oldRpc = _rpc; var oldPipe = _pipe;
                     _rpc = rpc; _pipe = pipe;
@@ -127,7 +157,7 @@ namespace Semanticus.Engine
         public Task<TreeNode[]> ListTreeAsync(string parentRef) => _rpc.InvokeAsync<TreeNode[]>("listTree", parentRef);
         public Task<ObjectInfo> GetObjectAsync(string objRef) => _rpc.InvokeAsync<ObjectInfo>("getObject", objRef);
         public Task<string> GetDaxAsync(string objRef) => _rpc.InvokeAsync<string>("getDax", objRef);
-        public Task<SetResult> SetDaxAsync(string objRef, string expression, string origin) => _rpc.InvokeAsync<SetResult>("setDax", objRef, expression, origin);
+        public Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null) => _rpc.InvokeAsync<SetResult>("setDax", objRef, expression, origin, expectedSession, expectedRevision);
         public Task<SaveResult> SaveAsync(string path, string format) => _rpc.InvokeAsync<SaveResult>("save", path, format);
         public Task<SessionInfo> SessionInfoAsync() => _rpc.InvokeAsync<SessionInfo>("sessionInfo");
         public Task<ConnectionContext> ConnectionContextAsync() => _rpc.InvokeAsync<ConnectionContext>("connectionContext");
@@ -229,13 +259,13 @@ namespace Semanticus.Engine
         public Task<UnusedResult> UnusedObjectsAsync() => _rpc.InvokeAsync<UnusedResult>("unusedObjects");
         public Task<ReportAnalysisResult> AnalyzeReportsAsync(string[] paths) => _rpc.InvokeAsync<ReportAnalysisResult>("analyzeReports", new object[] { paths });
         public Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin) => _rpc.InvokeAsync<RemoveSafeReport>("removeSafeObjects", new object[] { refs, reportPaths, origin });
-        public Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId) => _rpc.InvokeAsync<CloudReport[]>("listReports", workspaceId, authMode, tenantId);
-        public Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId) => _rpc.InvokeAsync<ReportAnalysisResult>("analyzeCloudReports", new object[] { workspaceId, reportIds, consent, authMode, tenantId });
+        public Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<CloudReport[]>("listReports", cancellationToken, workspaceId, authMode, tenantId);
+        public Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<ReportAnalysisResult>("analyzeCloudReports", cancellationToken, workspaceId, reportIds, consent, authMode, tenantId, runId);
         public Task<string> ScriptObjectsAsync(string[] refs, string format) => _rpc.InvokeAsync<string>("scriptObjects", refs, format);
         public Task<ApplyScriptResult> ApplyDaxScriptAsync(string script, string origin) => _rpc.InvokeAsync<ApplyScriptResult>("applyDaxScript", script, origin);
         public Task<ApplyScriptResult> ApplyTmdlScriptAsync(string script, string origin) => _rpc.InvokeAsync<ApplyScriptResult>("applyTmdlScript", script, origin);
         public Task<SetResult> SetCompatibilityLevelAsync(int level, string origin) => _rpc.InvokeAsync<SetResult>("setCompatibilityLevel", level, origin);
-        public Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin) => _rpc.InvokeAsync<RenameResult>("renameObject", objRef, newName, origin);
+        public Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin, string expectedSession = null, long? expectedRevision = null) => _rpc.InvokeAsync<RenameResult>("renameObject", objRef, newName, origin, expectedSession, expectedRevision);
         public Task<SetResult> SetColumnMetadataAsync(string objRef, bool? isHidden, string summarizeBy, string dataCategory, string sortByColumn, string origin) => _rpc.InvokeAsync<SetResult>("setColumnMetadata", objRef, isHidden, summarizeBy, dataCategory, sortByColumn, origin);
         public Task<SetResult> SetMeasureFormatAsync(string objRef, string formatString, string origin) => _rpc.InvokeAsync<SetResult>("setMeasureFormat", objRef, formatString, origin);
         public Task<SetResult> MarkDateTableAsync(string tableRef, string dateColumn, string origin) => _rpc.InvokeAsync<SetResult>("markDateTable", tableRef, dateColumn, origin);
@@ -265,7 +295,7 @@ namespace Semanticus.Engine
         public Task<SetResult> DeleteCalendarAsync(string tableRef, string name, string origin) => _rpc.InvokeAsync<SetResult>("deleteCalendar", tableRef, name, origin);
         public Task<CalendarResult> TagCalendarColumnAsync(string tableRef, string calendarName, string column, string timeUnit, bool associated, bool remove, string origin) => _rpc.InvokeAsync<CalendarResult>("tagCalendarColumn", tableRef, calendarName, column, timeUnit, associated, remove, origin);
         public Task<CalendarResult> DefineCalendarFromTemplateAsync(string template, string tableName, string dateColumn, int fiscalStartMonth, string startExpr, string endExpr, string calendarName, string origin) => _rpc.InvokeAsync<CalendarResult>("defineCalendarFromTemplate", template, tableName, dateColumn, fiscalStartMonth, startExpr, endExpr, calendarName, origin);
-        public Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken) => _rpc.InvokeAsync<ConnectionStatus>("connectXmla", endpoint, database, authMode, rawToken);
+        public Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null) => _rpc.InvokeAsync<ConnectionStatus>("connectXmla", endpoint, database, authMode, rawToken, tenantId);
         public Task<ConnectionStatus> ConnectLocalAsync(string dataSource, string database) => _rpc.InvokeAsync<ConnectionStatus>("connectLocal", dataSource, database);
         public Task<LocalInstance[]> ListLocalInstancesAsync() => _rpc.InvokeAsync<LocalInstance[]>("listLocalInstances");
         public Task<ConnectionStatus> ConnectionStatusAsync() => _rpc.InvokeAsync<ConnectionStatus>("connectionStatus");
@@ -396,8 +426,11 @@ namespace Semanticus.Engine
         public Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null) => _rpc.InvokeAsync<ApplyDiffResult>("applyDiff", left, right, selectedRefs, commit, origin, overrideReason);
         public Task<CherryPickResult> CherryPickAsync(ModelRef source, string[] refs, bool includeDependencies, bool commit, string origin) => _rpc.InvokeAsync<CherryPickResult>("cherryPick", source, refs, includeDependencies, commit, origin);
         public Task<TreeNode[]> ListReferenceTreeAsync(ModelRef reference, string origin = "human") => _rpc.InvokeAsync<TreeNode[]>("listReferenceTree", reference, origin);
+        public Task<ConnectionContext> ClearReferenceBindingAsync() => _rpc.InvokeAsync<ConnectionContext>("clearReferenceBinding");
         public Task<DeployGate> DeployGateAsync(ModelRef compareTarget) => _rpc.InvokeAsync<DeployGate>("deployGate", compareTarget);
         public Task<ModelConnectionRecord[]> ListConnectionsAsync() => _rpc.InvokeAsync<ModelConnectionRecord[]>("listConnections");
+        public Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null) => _rpc.InvokeAsync<ConnectionHistoryEvent[]>("listConnectionHistory", connectionId);
+        public Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync() => _rpc.InvokeAsync<ConnectionAccountProbe[]>("probeConnectionAccounts");
         public Task<ModelConnectionRecord> LabelConnectionAsync(string id, string label, string origin = "agent") => _rpc.InvokeAsync<ModelConnectionRecord>("labelConnection", id, label, origin);
         public Task<ModelConnectionRecord> SetConnectionWorkingFolderAsync(string id, string folder) => _rpc.InvokeAsync<ModelConnectionRecord>("setConnectionWorkingFolder", id, folder);
         public Task<bool> ForgetConnectionAsync(string id, string origin = "agent") => _rpc.InvokeAsync<bool>("forgetConnection", id, origin);
@@ -413,28 +446,28 @@ namespace Semanticus.Engine
         public Task<RestorePointPurgeResult> PurgeRestorePointsAsync(string id = null, int? olderThanDays = null,
             bool confirm = false, string confirmToken = null, string origin = "human") =>
             _rpc.InvokeAsync<RestorePointPurgeResult>("purgeRestorePoints", id, olderThanDays, confirm, confirmToken, origin);
-        public Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId) => _rpc.InvokeAsync<FabricWorkspace[]>("listWorkspaces", authMode, tenantId);
-        public Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId) => _rpc.InvokeAsync<DeploymentPipeline[]>("listDeploymentPipelines", authMode, tenantId);
-        public Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId) => _rpc.InvokeAsync<PipelineStage[]>("getPipelineStages", pipelineId, authMode, tenantId);
-        public Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId) => _rpc.InvokeAsync<StageItem[]>("getStageItems", pipelineId, stageId, authMode, tenantId);
-        public Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId) => _rpc.InvokeAsync<DeployPreview>("previewDeploy", pipelineId, sourceStageId, targetStageId, authMode, tenantId);
-        public Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId, string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null) => _rpc.InvokeAsync<DeployStageReport>("deployStage", pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, tenantId, origin, overrideReason);
-        public Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId) => _rpc.InvokeAsync<DeploymentHistoryEntry[]>("deploymentHistory", pipelineId, authMode, tenantId);
-        public Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId) => _rpc.InvokeAsync<FabricGitConnection>("fabricGitConnection", workspaceId, authMode, tenantId);
-        public Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId) => _rpc.InvokeAsync<FabricGitStatus>("fabricGitStatus", workspaceId, authMode, tenantId);
-        public Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<FabricGitResult>("fabricGitCommit", workspaceId, comment, items, commit, authMode, tenantId, origin);
-        public Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<FabricGitResult>("fabricGitUpdate", workspaceId, conflictPolicy, allowOverride, commit, authMode, tenantId, origin);
-        public Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<FabricGitResult>("fabricGitConnect", workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, tenantId, origin);
-        public Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<FabricGitResult>("fabricGitDisconnect", workspaceId, commit, authMode, tenantId, origin);
-        public Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<CicdPublishResult>("cicdPublish", workspaceId, itemId, commit, authMode, tenantId, origin);
+        public Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricWorkspace[]>("listWorkspaces", cancellationToken, authMode, tenantId);
+        public Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeploymentPipeline[]>("listDeploymentPipelines", cancellationToken, authMode, tenantId);
+        public Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<PipelineStage[]>("getPipelineStages", cancellationToken, pipelineId, authMode, tenantId);
+        public Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<StageItem[]>("getStageItems", cancellationToken, pipelineId, stageId, authMode, tenantId);
+        public Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeployPreview>("previewDeploy", cancellationToken, pipelineId, sourceStageId, targetStageId, authMode, tenantId);
+        public Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId, string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeployStageReport>("deployStage", cancellationToken, pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, tenantId, origin, overrideReason);
+        public Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeploymentHistoryEntry[]>("deploymentHistory", cancellationToken, pipelineId, authMode, tenantId);
+        public Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitConnection>("fabricGitConnection", cancellationToken, workspaceId, authMode, tenantId);
+        public Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitStatus>("fabricGitStatus", cancellationToken, workspaceId, authMode, tenantId);
+        public Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitResult>("fabricGitCommit", cancellationToken, workspaceId, comment, items, commit, authMode, tenantId, origin);
+        public Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitResult>("fabricGitUpdate", cancellationToken, workspaceId, conflictPolicy, allowOverride, commit, authMode, tenantId, origin);
+        public Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitResult>("fabricGitConnect", cancellationToken, workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, tenantId, origin);
+        public Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricGitResult>("fabricGitDisconnect", cancellationToken, workspaceId, commit, authMode, tenantId, origin);
+        public Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<CicdPublishResult>("cicdPublish", cancellationToken, workspaceId, itemId, commit, authMode, tenantId, origin);
         public Task<CicdScaffold> CicdGenerateAsync(string target, string workspaceId, string environment, bool write) => _rpc.InvokeAsync<CicdScaffold>("cicdGenerate", target, workspaceId, environment, write);
-        public Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId) => _rpc.InvokeAsync<DataAgentList>("listDataAgents", workspaceId, authMode, tenantId);
-        public Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId) => _rpc.InvokeAsync<DataAgentDetail>("getDataAgent", workspaceId, agentId, authMode, tenantId);
+        public Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentList>("listDataAgents", cancellationToken, workspaceId, authMode, tenantId);
+        public Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentDetail>("getDataAgent", cancellationToken, workspaceId, agentId, authMode, tenantId);
         public Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable) => _rpc.InvokeAsync<DataAgentConfig>("generateDataAgentConfig", maxColumnsPerTable);
-        public Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<DataAgentWriteReport>("createDataAgent", workspaceId, name, aiInstructions, commit, authMode, tenantId, origin);
-        public Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<DataAgentWriteReport>("updateDataAgent", workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, tenantId, origin);
-        public Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<DataAgentWriteReport>("publishDataAgent", workspaceId, agentId, description, commit, authMode, tenantId, origin);
-        public Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin) => _rpc.InvokeAsync<DataAgentWriteReport>("deleteDataAgent", workspaceId, agentId, commit, authMode, tenantId, origin);
+        public Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentWriteReport>("createDataAgent", cancellationToken, workspaceId, name, aiInstructions, commit, authMode, tenantId, origin);
+        public Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentWriteReport>("updateDataAgent", cancellationToken, workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, tenantId, origin);
+        public Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentWriteReport>("publishDataAgent", cancellationToken, workspaceId, agentId, description, commit, authMode, tenantId, origin);
+        public Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DataAgentWriteReport>("deleteDataAgent", cancellationToken, workspaceId, agentId, commit, authMode, tenantId, origin);
 
         public void Dispose() => _rpc.Dispose();
     }

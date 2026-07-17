@@ -949,5 +949,37 @@ namespace Semanticus.Tests
             Assert.True(string.IsNullOrEmpty(added.LineageTag));                          // fresh identity
             Assert.Equal("dup", right.Tables.Find("Existing").LineageTag);               // incumbent kept its tag
         }
+
+        // ---- MINOR 3: the non-single-column RelEqual branch strips ALL annotations from its structural compare, so a
+        // FOREIGN-annotation-only difference reads Equal (no phantom Update the deploy channel can't carry). TOM exposes
+        // only SingleColumnRelationship concretely, so the branch itself can't be reached through a constructed object —
+        // this unit-tests the exact helper it now uses (SerWithoutAnnotations). ----
+        [Fact]
+        public void SerWithoutAnnotations_collapses_a_foreign_annotation_only_relationship_difference_to_equal()
+        {
+            TOM.SingleColumnRelationship RelInModel(Action<TOM.SingleColumnRelationship> tweak = null)
+            {
+                var m = new TOM.Model();
+                var a = Table(m, "A", "t-a"); Col(a, "K", "t-k");
+                var b = Table(m, "B", "t-b"); Col(b, "K", "t-bk");
+                var r = new TOM.SingleColumnRelationship
+                {
+                    Name = "r1", FromColumn = a.Columns["K"], ToColumn = b.Columns["K"],
+                    FromCardinality = TOM.RelationshipEndCardinality.Many, ToCardinality = TOM.RelationshipEndCardinality.One
+                };
+                tweak?.Invoke(r);
+                m.Relationships.Add(r);
+                return r;
+            }
+
+            var bare = RelInModel();
+            var foreignAnn = RelInModel(r => r.Annotations.Add(new TOM.Annotation { Name = "SomeOtherTool_State", Value = "x" }));
+            // ALL annotations stripped ⇒ the two serialize IDENTICALLY: a foreign-annotation-only diff reads Equal.
+            Assert.Equal(ModelCompare.SerWithoutAnnotations(bare), ModelCompare.SerWithoutAnnotations(foreignAnn));
+
+            var crossFiltered = RelInModel(r => r.CrossFilteringBehavior = TOM.CrossFilteringBehavior.BothDirections);
+            // A REAL structural change is NOT hidden by the annotation strip.
+            Assert.NotEqual(ModelCompare.SerWithoutAnnotations(bare), ModelCompare.SerWithoutAnnotations(crossFiltered));
+        }
     }
 }

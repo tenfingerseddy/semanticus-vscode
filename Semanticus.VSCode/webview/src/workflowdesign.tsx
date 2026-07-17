@@ -149,12 +149,15 @@ function structuralProblems(d: Draft): string[] {
 
 // ---- the design surface ----------------------------------------------------------------------------
 
-export function DesignMode({ info, def, creating, onSaved, onDeleted }: {
+export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = 'stack' }: {
   info: WorkflowInfo | null;
   def: WorkflowDef | null;
   creating: boolean;
   onSaved: (name: string) => void;
   onDeleted: () => void;
+  // 'outline' = the ratified Author screen: a step outline on the left, one focused pane on the right
+  // (Workflow settings, or a single step). 'stack' = the legacy full-chain scroll.
+  layout?: 'stack' | 'outline';
 }) {
   const readOnlyStock = !creating && info?.source === 'stock';
   const [editing, setEditing] = useState(creating);          // stock opens read-only; Customise unlocks
@@ -166,6 +169,8 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted }: {
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Outline focus: -1 = the Workflow settings pane, 0..n-1 = a step. Clamped when steps are added/removed.
+  const [activeIdx, setActiveIdx] = useState(-1);
 
   // Re-seed the draft when the selected workflow changes underneath us (only when not mid-edit).
   useEffect(() => {
@@ -213,86 +218,129 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted }: {
   };
 
   const inputNames = draft.steps.flatMap((s) => s.inputs.map((i) => i.name)).filter(Boolean);
+  const idx = Math.min(activeIdx, draft.steps.length - 1);   // clamp against removals
+  const addStepAndFocus = () => { const at = draft.steps.length; insertStep(at); setActiveIdx(at); };
+
+  // The frontmatter editor — the workflow's title/version/strictness/description/triggers. Shared by both layouts.
+  const frontmatter = (
+    <Panel>
+      <SectionTitle>Workflow</SectionTitle>
+      <div className="grid grid-cols-2 gap-3 mt-2">
+        <Field label="Title"><TextInput value={draft.title} disabled={!isEditable()} onChange={(v) => set({ title: v })} placeholder="What this playbook does" /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Version"><TextInput value={String(draft.version)} disabled={!isEditable()} onChange={(v) => set({ version: Math.max(1, parseInt(v, 10) || 1) })} /></Field>
+          <Field label="Default strictness">
+            <Select value={draft.strictness} disabled={!isEditable()} onChange={(v) => set({ strictness: v })}
+              options={[['', 'hard (default)'], ...STRICTNESS.map((s) => [s, s] as [string, string])]} />
+          </Field>
+        </div>
+        <div className="col-span-2">
+          <Field label="Description"><TextInput value={draft.description} disabled={!isEditable()} onChange={(v) => set({ description: v })} placeholder="Shown in the library and to the AI Assistant" /></Field>
+        </div>
+        <div className="col-span-2">
+          <Field label="Triggers: ops that suggest this workflow (advisory)">
+            <OpChipEditor ops={draft.triggers} disabled={!isEditable()} onChange={(triggers) => set({ triggers })} />
+          </Field>
+        </div>
+      </div>
+    </Panel>
+  );
+
+  // The top action bar (name/save/view-file/delete/customise) and the raw-file view — shared by both layouts.
+  const actionBar = (
+    <Panel>
+      <div className="flex items-center gap-3 flex-wrap">
+        {creating ? (
+          <label className="flex items-center gap-2 text-[12px]">
+            <span style={{ color: 'var(--sem-muted)' }}>Name</span>
+            <input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="my-workflow" spellCheck={false} autoFocus
+              className="tnum text-[12px] px-2 py-1 rounded-md outline-none w-56"
+              style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: `1px solid ${draft.name && !KEBAB.test(draft.name) ? 'var(--sem-bad)' : 'var(--sem-border)'}` }} />
+          </label>
+        ) : (
+          <div className="text-[12px] flex items-center gap-2">
+            <span className="tnum font-semibold">{draft.name}.md</span>
+            {info && <SourceBadge source={editing && info.source === 'stock' ? 'user' : info.source} />}
+            {readOnlyStock && !editing && <Pill>read-only</Pill>}
+          </div>
+        )}
+        <div className="flex-1" />
+        {readOnlyStock && !editing ? (
+          <Button primary onClick={() => { setEditing(true); setDirty(true); }}
+            title="Stock workflows are read-only. Customising saves YOUR copy to .semanticus/workflows, which replaces the built-in one until you delete your copy">
+            Customise…
+          </Button>
+        ) : (
+          <>
+            <Button onClick={() => setShowRaw(!showRaw)} title="The markdown this designer writes: the file is the artifact">{showRaw ? 'Hide file' : 'View file'}</Button>
+            {!creating && info?.source === 'user' && (
+              confirmDelete
+                ? <Button onClick={del} title="Really delete. Deleting your copy of a stock workflow reverts to the built-in one"><span style={{ color: 'var(--sem-bad)' }}>Confirm delete</span></Button>
+                : <Button onClick={() => setConfirmDelete(true)}>Delete…</Button>
+            )}
+            <Button primary disabled={saving || !dirty} onClick={save}
+              title="The file is checked again before saving. A file that fails the check is never saved">{saving ? 'Saving…' : savedTick ? 'Saved ✓' : 'Save'}</Button>
+          </>
+        )}
+      </div>
+      {readOnlyStock && !editing && (
+        <div className="text-[11.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
+          This is a stock playbook shipped with the engine. You can read everything below; Customise creates your project's editable copy.
+        </div>
+      )}
+      {saveErr && <div className="mt-2"><Banner color="var(--sem-bad)">{saveErr}</Banner></div>}
+      {!saveErr && problems.length > 0 && dirty && attempted && <div className="mt-2"><Banner color="var(--sem-accent)">{problems[0]}</Banner></div>}
+    </Panel>
+  );
+  const rawView = (
+    <Panel>
+      <SectionTitle>The file (deterministic emission)</SectionTitle>
+      <pre className="mt-2 rounded-lg px-3 py-2 text-[11.5px] whitespace-pre-wrap overflow-x-auto"
+        style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', font: '11.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace' }}>
+        {emitMarkdown(draft)}
+      </pre>
+    </Panel>
+  );
+
+  if (layout === 'outline') {
+    const active = draft.steps[idx];
+    return (
+      <div className="flex flex-col gap-3">
+        {actionBar}
+        {showRaw && rawView}
+        <div className="grid gap-3" style={{ gridTemplateColumns: '210px minmax(0, 1fr)' }}>
+          <div className="rounded-xl border p-2 self-start" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+            <div className="text-[10px] uppercase tracking-wide font-semibold px-2 pt-1 pb-2" style={{ color: 'var(--sem-muted)' }}>Outline</div>
+            <div className="flex flex-col gap-0.5 text-[12px]">
+              <button onClick={() => setActiveIdx(-1)} className="text-left px-2 py-1.5 rounded-md"
+                style={idx < 0 ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>◇ Workflow settings</button>
+              {draft.steps.map((s, i) => (
+                <button key={i} onClick={() => setActiveIdx(i)} className="text-left px-2 py-1.5 rounded-md truncate"
+                  style={i === idx ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>{i + 1} · {s.title.trim() || 'Untitled'}</button>
+              ))}
+              {isEditable() && (
+                <button onClick={addStepAndFocus} className="text-left px-2 py-1.5 rounded-md font-semibold" style={{ color: 'var(--sem-accent)' }}>+ Add step</button>
+              )}
+            </div>
+          </div>
+          <div className="min-w-0">
+            {idx < 0 || !active ? frontmatter : (
+              <StepCard step={active} index={idx} count={draft.steps.length} editable={isEditable()} inputNames={inputNames}
+                onChange={(patch) => setStep(idx, patch)}
+                onMove={(dir) => { moveStep(idx, dir); setActiveIdx(Math.max(0, Math.min(draft.steps.length - 1, idx + dir))); }}
+                onRemove={() => { removeStep(idx); setActiveIdx(Math.max(-1, idx - 1)); }} />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      {/* editing state + actions */}
-      <Panel>
-        <div className="flex items-center gap-3 flex-wrap">
-          {creating ? (
-            <label className="flex items-center gap-2 text-[12px]">
-              <span style={{ color: 'var(--sem-muted)' }}>Name</span>
-              <input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="my-workflow" spellCheck={false} autoFocus
-                className="tnum text-[12px] px-2 py-1 rounded-md outline-none w-56"
-                style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: `1px solid ${draft.name && !KEBAB.test(draft.name) ? 'var(--sem-bad)' : 'var(--sem-border)'}` }} />
-            </label>
-          ) : (
-            <div className="text-[12px] flex items-center gap-2">
-              <span className="tnum font-semibold">{draft.name}.md</span>
-              {info && <SourceBadge source={editing && info.source === 'stock' ? 'user' : info.source} />}
-              {readOnlyStock && !editing && <Pill>read-only</Pill>}
-            </div>
-          )}
-          <div className="flex-1" />
-          {readOnlyStock && !editing ? (
-            <Button primary onClick={() => { setEditing(true); setDirty(true); }}
-              title="Stock workflows are read-only. Customising saves YOUR copy to .semanticus/workflows, which replaces the built-in one until you delete your copy">
-              Customise…
-            </Button>
-          ) : (
-            <>
-              <Button onClick={() => setShowRaw(!showRaw)} title="The markdown this designer writes: the file is the artifact">{showRaw ? 'Hide file' : 'View file'}</Button>
-              {!creating && info?.source === 'user' && (
-                confirmDelete
-                  ? <Button onClick={del} title="Really delete. Deleting your copy of a stock workflow reverts to the built-in one"><span style={{ color: 'var(--sem-bad)' }}>Confirm delete</span></Button>
-                  : <Button onClick={() => setConfirmDelete(true)}>Delete…</Button>
-              )}
-              <Button primary disabled={saving || !dirty} onClick={save}
-                title="The file is checked again before saving. A file that fails the check is never saved">{saving ? 'Saving…' : savedTick ? 'Saved ✓' : 'Save'}</Button>
-            </>
-          )}
-        </div>
-        {readOnlyStock && !editing && (
-          <div className="text-[11.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
-            This is a stock playbook shipped with the engine. You can read everything below; Customise creates your project's editable copy.
-          </div>
-        )}
-        {saveErr && <div className="mt-2"><Banner color="var(--sem-bad)">{saveErr}</Banner></div>}
-        {!saveErr && problems.length > 0 && dirty && attempted && <div className="mt-2"><Banner color="var(--sem-accent)">{problems[0]}</Banner></div>}
-      </Panel>
-
-      {showRaw && (
-        <Panel>
-          <SectionTitle>The file (deterministic emission)</SectionTitle>
-          <pre className="mt-2 rounded-lg px-3 py-2 text-[11.5px] whitespace-pre-wrap overflow-x-auto"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', font: '11.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace' }}>
-            {emitMarkdown(draft)}
-          </pre>
-        </Panel>
-      )}
-
-      {/* frontmatter */}
-      <Panel>
-        <SectionTitle>Workflow</SectionTitle>
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <Field label="Title"><TextInput value={draft.title} disabled={!isEditable()} onChange={(v) => set({ title: v })} placeholder="What this playbook does" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Version"><TextInput value={String(draft.version)} disabled={!isEditable()} onChange={(v) => set({ version: Math.max(1, parseInt(v, 10) || 1) })} /></Field>
-            <Field label="Default strictness">
-              <Select value={draft.strictness} disabled={!isEditable()} onChange={(v) => set({ strictness: v })}
-                options={[['', 'hard (default)'], ...STRICTNESS.map((s) => [s, s] as [string, string])]} />
-            </Field>
-          </div>
-          <div className="col-span-2">
-            <Field label="Description"><TextInput value={draft.description} disabled={!isEditable()} onChange={(v) => set({ description: v })} placeholder="Shown in the library and to the AI Assistant" /></Field>
-          </div>
-          <div className="col-span-2">
-            <Field label="Triggers: ops that suggest this workflow (advisory)">
-              <OpChipEditor ops={draft.triggers} disabled={!isEditable()} onChange={(triggers) => set({ triggers })} />
-            </Field>
-          </div>
-        </div>
-      </Panel>
+      {actionBar}
+      {showRaw && rawView}
+      {frontmatter}
 
       {/* the chain */}
       <div className="relative flex flex-col gap-2">

@@ -41,6 +41,20 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task List_columns_exposes_the_partition_output_SourceColumn()
+        {
+            // Name is the model/DAX identity; SourceColumn is the PARTITION-OUTPUT name M operates on, and the two
+            // can legitimately differ — the UI's M transform generators need the M-side name (writing M against the
+            // model name is wrong M whenever they diverge). Pin that the projection carries it VERBATIM, not
+            // defaulted to Name.
+            var table = (await _engine.ListMeasuresAsync()).First().Table;
+            var colRef = await _engine.CreateColumnAsync("table:" + table, "Src_Col", "Int64", "src_col_raw", "agent");
+            var row = (await _engine.ListColumnsAsync()).First(c => c.Name == "Src_Col" && c.Table == table);
+            Assert.Equal("src_col_raw", row.SourceColumn);
+            await _engine.DeleteObjectAsync(colRef, "agent");
+        }
+
+        [Fact]
         public async Task Deleting_a_column_a_measure_references_succeeds_and_leaves_the_dependent_DAX_dangling()
         {
             // Contract pin (QA backlog #9): FormulaFixup rewrites DAX on RENAME only — it does NOT run on delete.

@@ -19,7 +19,7 @@
     // A small but representative model that exercises every cardinality + edge state:
     //  one-to-many (active), many-to-many, one-to-one, bidirectional, inactive, isolated.
     const tbl = (name, o = {}) => Object.assign(
-      { ref: 'table:' + name, name, isHidden: false, isDateTable: false, isCalculated: false,
+      { ref: 'table:' + name, name, isHidden: false, isDateTable: false, isCalculated: false, isFieldParameter: false,
         columns: 8, measures: 0, keyColumns: [name + 'Key'], hasDescription: true }, o);
     const rel = (fromTable, toTable, o = {}) => Object.assign(
       { name: fromTable + '_' + toTable, fromTable, fromColumn: toTable + 'Key', toTable, toColumn: toTable + 'Key',
@@ -137,6 +137,7 @@
         tbl('Currency', { columns: 4 }),
         tbl('Promotion', { columns: 6, hasDescription: false }),
         tbl('Budget', { isCalculated: true, columns: 5, keyColumns: [] }),
+        tbl('Fields by Measure', { isCalculated: true, isFieldParameter: true, columns: 3, keyColumns: [], hasDescription: false }), // field parameter (violet + FP)
         tbl('Notes', { columns: 3, keyColumns: [], hasDescription: false }), // isolated (no rels)
       ],
       relationships: [
@@ -154,7 +155,10 @@
     const specScenario = new URLSearchParams(location.search).get('spec');
     const SESSION = cfg.session || {
       sessionId: 'uishot', modelName: specScenario === 'empty' ? 'New model' : 'Contoso (mock)', measures: specScenario === 'empty' ? 0 : 12, tables: specScenario === 'empty' ? 0 : GRAPH.tables.length,
-      hasUnsavedChanges: false, liveConnected: false,
+      hasUnsavedChanges: false, liveConnected: false, currentAccount: 'kane@contoso.com', currentTenant: 'contoso.com',
+      // Live-bound endpoint carries the workspace NAME (url-encoded) — matches a WORKSPACES displayName so Lineage's
+      // Published-reports picker can demo the auto-default (pre-select the model's own workspace once workspaces list).
+      liveEndpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20%5BTest%5D', liveDatabase: 'Contoso',
     };
     const cat = (category, score, weight, applicable, violations) => ({ category, score, weight, applicable, violations, hasRules: true });
     const find = (ruleId, ruleTitle, category, severity, fix, objectRef, objectName, message) =>
@@ -210,13 +214,20 @@
         { ruleId: 'ORG_HIDE_KEYS', ruleName: 'Hide key columns', category: 'Model Layout', severity: 2, objectRef: 'column:Store/StoreKey', objectName: 'Store[StoreKey]', message: 'Store[StoreKey] looks like a key column and is visible.', canAutoFix: true, custom: true },
       ],
     };
-    const vcol = (table, column, total, encoding, pct) =>
-      ({ table, column, totalSize: total, encoding, pctOfModel: pct,
-         dataSize: Math.round(total * 0.55), dictionarySize: Math.round(total * 0.35), hashIndexSize: Math.round(total * 0.10) });
-    // ?dl=1 renders the model as Direct Lake: storage rows become "unknown" (resident-only) and partitions
-    // become Entity bindings, so the Direct-Lake read-correctness caveats can be screenshotted.
+    // Component split by encoding, mirroring real VertiPaq shape: Hash (high-cardinality) pays a big dictionary +
+    // hash index; Value/RLE are almost all data. This exercises the dictionary-dominated + hash-index-heavy findings.
+    const vcol = (table, column, total, encoding, pct) => {
+      var f = encoding === 'Value' ? { data: 0.97, dict: 0.02, hidx: 0.01 }
+            : encoding === 'RLE'   ? { data: 0.90, dict: 0.08, hidx: 0.02 }
+            :                        { data: 0.14, dict: 0.56, hidx: 0.30 };   // Hash
+      return { table, column, totalSize: total, encoding, pctOfModel: pct,
+        dataSize: Math.round(total * f.data), dictionarySize: Math.round(total * f.dict), hashIndexSize: Math.round(total * f.hidx) };
+    };
+    // ?dl=1 renders the model with resident-only storage observations and Entity-bound partitions,
+    // so the read-correctness caveats can be screenshotted.
     const directLake = new URLSearchParams(location.search).get('dl') === '1';
     const VPAQ = cfg.vpaq || {
+      queryIdentity: 'localhost:51000|Contoso', storageMode: 'import',
       modelSize: 48500000, columnCount: 64,
       tables: [
         { name: 'Sales', size: 32000000, rows: 2300000, columns: 14, pctOfModel: 66 },
@@ -233,6 +244,7 @@
         vcol('Customer', 'CustomerName', 4300000, 'Hash', 9),
         vcol('Sales', 'ProductKey', 3100000, 'Hash', 6),
         vcol('Product', 'ProductName', 2000000, 'Hash', 4),
+        vcol('Customer', 'MiddleName', 1500000, 'Hash', 3),   // large + unused (see UNUSED) → the "Can remove" group
         vcol('Sales', 'Quantity', 1500000, 'Value', 3),
         vcol('Customer', 'City', 1200000, 'Hash', 2),
         vcol('Date', 'Date', 900000, 'Value', 2),
@@ -242,8 +254,8 @@
       ],
     };
     if (directLake) {
-      VPAQ.isDirectLake = true;
-      VPAQ.caveat = 'Direct Lake: storage sizes and row counts reflect only the columns currently resident in memory (paged in by recent queries) — they are partial, not the full-model totals.';
+      VPAQ.storageMode = 'directLake';
+      VPAQ.caveat = 'Direct Lake: storage sizes and row counts reflect only the columns currently resident in memory (paged in by recent queries). They are partial, not the full-model totals.';
       VPAQ.tables = VPAQ.tables.map(function (t) { return Object.assign({}, t, { rows: null }); });
     }
 
@@ -267,14 +279,19 @@
         summarizeBy: summarizeBy || 'None', dataCategory: '', isKey: false, isHidden: false, isCalculated: false,
         hasDescription: false, description: '', expression: '' }, opts || {});
     const COLUMNS = cfg.columns || [
-      col('SalesAmount', 'Sales', 'Decimal', 'Sum', { hasDescription: true, description: 'Line-item sales amount.' }),
+      // sourceColumn = the PARTITION-OUTPUT name M operates on; two differ from the model name on purpose so
+      // the dual-identity plumbing (M ops write SourceColumn, display/DAX keep Name) is exercised.
+      col('SalesAmount', 'Sales', 'Decimal', 'Sum', { hasDescription: true, description: 'Line-item sales amount.', sourceColumn: 'sales_amount_usd' }),
       col('Cost', 'Sales', 'Decimal', 'Sum'),
       col('CustomerKey', 'Sales', 'Int64', 'Sum', { isKey: true }),                 // visible key + aggregating (smell)
       col('OrderDateKey', 'Sales', 'Int64', 'None', { isKey: true, isHidden: true }),// hidden key, not aggregating (good)
-      col('OrderDate', 'Sales', 'DateTime', 'None', { isHidden: true }),
+      col('OrderDate', 'Sales', 'DateTime', 'None', { isHidden: true, sourceColumn: 'order_dt' }),
       col('Quantity', 'Sales', 'Int64', 'Sum', { hasDescription: true, description: 'Units sold.' }),
+      // calculated → sourceColumn null on the wire; the M ops for it must STAND DOWN with the calc-specific note
+      col('GrossMargin', 'Sales', 'Decimal', 'None', { isCalculated: true, expression: '[SalesAmount] - [Cost]', sourceColumn: null }),
       col('CustomerKey', 'Customer', 'Int64', 'None', { isKey: true, isHidden: true }),
       col('CustomerName', 'Customer', 'String', 'None', { hasDescription: true, description: 'Full customer name.' }),
+      col('MiddleName', 'Customer', 'String', 'None'),   // large + unused → resolvable so its Delete/Reveal are enabled
       col('FullName', 'Customer', 'String', 'None', { isCalculated: true, expression: "[FirstName] & \" \" & [LastName]" }),
       col('Year', 'Date', 'Int64', 'None', { hasDescription: true, description: 'Calendar year.' }),
       col('DateKey', 'Date', 'Int64', 'Sum', { isKey: true }),                       // visible key + aggregating (smell)
@@ -309,32 +326,46 @@
     const pqMode = new URLSearchParams(location.search).get('pq');
     const connected = new URLSearchParams(location.search).get('conn') === '1' || !!pqMode;
     // A sample result set with varied types (text, numbers, dates) so column sort + the row filter are reviewable.
+    // Coherent with the SALES doc columns above (the M Code tab selects 'Sales', and the sample's per-column M
+    // ops resolve their SourceColumn from the doc model by MODEL name) — plus GrossMargin (calculated: EVALUATE
+    // TOPN returns it, but it is absent from the partition output → calc stand-down) and one preview-only
+    // column ('ETag', not in the doc model at all) whose M ops must also STAND DOWN.
     const PREVIEW = cfg.preview || (() => {
-      const first = ['Aria', 'Ben', 'Chloe', 'Diego', 'Esme', 'Finn', 'Grace', 'Hugo', 'Iris', 'Jonah', 'Kira', 'Liam'];
-      const city = ['Sydney', 'Melbourne', 'Brisbane', 'Perth', 'Adelaide'];
-      const rows = first.map((n, i) => [
-        1000 + i, n + ' ' + String.fromCharCode(65 + i) + '.', city[i % city.length],
-        Math.round((50 + (i * 37) % 90) * 100) / 100, (i * 7) % 4 === 0, '2026-0' + (1 + (i % 9)) + '-1' + (i % 9),
-      ]);
+      const rows = Array.from({ length: 12 }, (_, i) => {
+        const amt = Math.round((120 + (i * 137) % 880) * 100) / 100, cost = Math.round((40 + (i * 61) % 440) * 100) / 100;
+        return [amt, cost, 1000 + i, 20260101 + i, '2026-0' + (1 + (i % 9)) + '-1' + (i % 9), 1 + (i * 5) % 12,
+                Math.round((amt - cost) * 100) / 100, 'e' + (1000 + i * 7)];
+      });
       return {
         columns: [
-          { name: 'CustomerKey', type: 'Int64' }, { name: 'Customer', type: 'String' }, { name: 'City', type: 'String' },
-          { name: 'Lifetime Value', type: 'Decimal' }, { name: 'Active', type: 'Boolean' }, { name: 'Signup Date', type: 'DateTime' },
+          { name: 'SalesAmount', type: 'Decimal' }, { name: 'Cost', type: 'Decimal' }, { name: 'CustomerKey', type: 'Int64' },
+          { name: 'OrderDateKey', type: 'Int64' }, { name: 'OrderDate', type: 'DateTime' }, { name: 'Quantity', type: 'Int64' },
+          { name: 'GrossMargin', type: 'Decimal' }, { name: 'ETag', type: 'String' },
         ],
         rows, rowCount: rows.length, truncated: false, elapsedMs: 12,
       };
     })();
 
-    // ?pq=profile → the column-profiling DAX result the M transform strip runs: ONE row of
-    // COUNTROWS + DISTINCTCOUNT/COUNTBLANK per PREVIEW column (matches pqtransforms.tsx profileDax: "rows",
-    // "d<i>", "b<i>"). The webview parses columns by (bracket-stripped) name, so plain names match.
+    // ?pq=profile → the column-profiling DAX result the M transform strip runs. runColumnProfile issues a
+    // standalone "rows" probe then IFERROR-guarded chunk queries; this mock returns every slot ("rows", "d<i>",
+    // "b<i>", and "mn<i>"/"mx<i>" for numeric columns) for any of those calls, matched by (bracket-stripped) name.
+    // 'OrderDate' (i=4) carries the -1 sentinel so the per-column degradation ("n/a" + "1 column skipped")
+    // renders; Cost's min/max are null (DAX BLANK) so the omitted-range rule renders too.
     const PQ_PROFILE = (function () {
-      const cols = [{ name: 'rows' }];
-      const distincts = [12, 12, 5, 12, 2, 9], nulls = [0, 0, 0, 1, 0, 2];
+      // ROW(...) slot labels come back BRACKETED from ADOMD ('[rows]', '[d0]'), so the mock brackets them the
+      // same way the engine would; the webview matches bracket-insensitively.
+      const cols = [{ name: '[rows]' }];
+      const distincts = [12, 1, 12, 12, -1, 9, 12, 12], nulls = [0, 12, 0, 1, 0, 2, 0, 0];   // Cost: all-blank (distinct=1: DISTINCTCOUNT counts blank)
+      const mins = { 0: 12.5, 1: null, 2: 1000, 3: 20260101, 5: 1, 6: 78.4 }, maxs = { 0: 998.75, 1: null, 2: 1011, 3: 20260112, 5: 12, 6: 519.6 };
+      const numeric = function (t) { return /int|dec|doub|number|curr|float|real|money/i.test(t || ''); };
       const row = [12];
-      PREVIEW.columns.forEach(function (_, i) {
-        cols.push({ name: 'd' + i }, { name: 'b' + i });
+      PREVIEW.columns.forEach(function (col, i) {
+        cols.push({ name: '[d' + i + ']' }, { name: '[b' + i + ']' });
         row.push(distincts[i] != null ? distincts[i] : 12, nulls[i] != null ? nulls[i] : 0);
+        if (numeric(col.type)) {
+          cols.push({ name: '[mn' + i + ']' }, { name: '[mx' + i + ']' });
+          row.push(mins[i] !== undefined ? mins[i] : 0, maxs[i] !== undefined ? maxs[i] : 0);
+        }
       });
       return { columns: cols, rows: [row], rowCount: 1, truncated: false, elapsedMs: 8 };
     })();
@@ -1000,6 +1031,38 @@
         { stepId: 'step-3', title: 'Create and verify', status: 'skipped', note: 'skipped: release window closed', effectiveStrictness: 'hard', answers: { target: { value: 'measure:Sales/Total Sales', declined: false, answered: true } }, verifyResults: [ { kind: 'bpa_clean', status: 'passed', detail: 'No new violations.' } ] },
       ],
     };
+    // A run that FROZE enforcement OFF at start: every gated step's effectiveStrictness is "off" (global-off wins
+    // in the engine). Drives the honest per-run skipped state — the gate FORM is replaced, not annotated — and is
+    // the case a mid-run model-wide toggle must NOT be able to fake either way.
+    const RUN_OFF = {
+      runId: 'wfr-off', workflow: 'new-measure', title: 'Author a verified measure', workflowVersion: 1, status: 'active',
+      abortReason: null, stepIndex: 1, totalSteps: 3,
+      steps: [
+        Object.assign({}, RUN.steps[0], { effectiveStrictness: 'off', verifyResults: [] }),
+        { stepId: 'step-2', title: 'Author the DAX', status: 'in_progress', note: null, effectiveStrictness: 'off', answers: {}, verifyResults: [] },
+        { stepId: 'step-3', title: 'Create and verify', status: 'pending', note: null, effectiveStrictness: 'off', answers: {}, verifyResults: [] },
+      ],
+      currentStep: Object.assign({}, RUN.currentStep, { effectiveStrictness: 'off' }),
+    };
+    // A SECOND concurrent live run (dual-drive: you + the AI Assistant) with the SAME step ids as RUN — this is the
+    // case BLOCKER 1 guards (the focused-run subtree is keyed by runId so switching can't carry A's typed answers
+    // onto B) and HIGH 2 exercises (the switcher must list every live run so none becomes unreachable).
+    const RUN_B = {
+      runId: 'wfr-2', workflow: 'make-ai-ready', title: 'Make the model AI-ready', workflowVersion: 1, status: 'active',
+      abortReason: null, stepIndex: 0, totalSteps: 3,
+      steps: [
+        { stepId: 'step-1', title: 'Scan for gaps', status: 'in_progress', note: null, effectiveStrictness: 'hard', answers: {}, verifyResults: [] },
+        { stepId: 'step-2', title: 'Author the AI content', status: 'pending', note: null, effectiveStrictness: null, answers: {}, verifyResults: [] },
+        { stepId: 'step-3', title: 'Prove the grade', status: 'pending', note: null, effectiveStrictness: null, answers: {}, verifyResults: [] },
+      ],
+      currentStep: {
+        stepId: 'step-1', title: 'Scan for gaps',
+        instructions: 'Run the readiness scan and group the gaps by category so the biggest lifts come first.',
+        ops: ['ai_readiness_scan'],
+        questions: [ gi('scope', 'Which tables are in scope for this pass?', 'text', 'answer-or-decline') ],
+        verifyKinds: ['readiness_delta'], effectiveStrictness: 'hard',
+      },
+    };
 
     const OP_CATALOG = cfg.opCatalog || [
       { name: 'export_workflow_evidence', description: 'Export one terminal workflow run as sealed HTML and JSON evidence.' },
@@ -1179,11 +1242,22 @@
       { id: 'ap4', capability: 'QueryData', label: 'prod', intentHash: 'h4', summary: 'Preview 100 rows of DimCustomer to verify the region mapping', target: 'powerbi://api.powerbi.com/v1.0/myorg/Finance', requestedUtc: ago(40), grantedUtc: ago(25), expiresUtc: ago(10), ttlMinutes: 15 },
     ];
     const CONNECTIONS = cfg.connections || [
-      { id: 'cn1', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Finance', database: 'Finance', modelName: 'Finance', authMode: 'interactive', label: 'prod', useCount: 12, lastUsedUtc: ago(120) },
-      { id: 'cn2', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20UAT', database: 'Contoso', modelName: 'Contoso Sales', authMode: 'azcli', label: 'uat', useCount: 5, lastUsedUtc: ago(300) },
+      { id: 'cn1', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Finance', database: 'Finance', modelName: 'Finance', authMode: 'interactive', label: 'prod', tenantId: 'contoso.com', lastAccount: 'kane@contoso.com', useCount: 12, lastUsedUtc: ago(120) },
+      { id: 'cn2', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20UAT', database: 'Contoso', modelName: 'Contoso Sales', authMode: 'interactive', label: 'uat', tenantId: 'contoso.com', lastAccount: 'kane@contoso.com', useCount: 5, lastUsedUtc: ago(300) },
       { id: 'cn3', kind: 'localDesktop', endpoint: 'localhost:51000', database: 'Contoso', modelName: 'Contoso local test', authMode: 'interactive', label: 'local', useCount: 20, lastUsedUtc: ago(15) },
-      // Unlabelled → the UI shows the "treated as production" tag + a Forget affordance.
+      // Unlabelled xmla, signed out → the UI shows "Production safeguards" + "account unknown" + a Sign in and open verb.
       { id: 'cn4', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Sandbox', database: 'Sandbox Model', modelName: 'Sandbox Model', authMode: 'interactive', label: null, useCount: 2, lastUsedUtc: ago(2000) },
+      // Service-principal xmla → NO account picker (no "Open as…" / "Sign in and open"): a non-interactive identity the UI must not promise to switch.
+      { id: 'cn5', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/CI', database: 'CI Model', modelName: 'CI pipeline model', authMode: 'serviceprincipal', label: 'prod', tenantId: 'contoso.com', useCount: 8, lastUsedUtc: ago(60) },
+    ];
+    // The silent probe: cn1's tenant-wide sign-in now points at Bob (a sibling switched), while cn1's own last-used hint
+    // still says Kane → the drawer shows "as bob@contoso.com (was kane@contoso.com)". SP/local rows keep no record.
+    const ACCOUNT_PROBES = cfg.accountProbes || [
+      { id: 'cn1', account: 'bob@contoso.com', previousAccount: 'kane@contoso.com', tenantId: 'contoso.com' },
+      { id: 'cn2', account: 'kane@contoso.com', tenantId: 'contoso.com' },
+      // cn4 has NO live sign-in record → the next-open account is UNKNOWN; its last-used account rides along ONLY as
+      // provenance, so the drawer reads "last opened as alice@contoso.com", never predicting it (HIGH 3).
+      { id: 'cn4', previousAccount: 'alice@contoso.com', tenantId: 'contoso.com' },
     ];
     const CONNECTION_CONTEXT = cfg.connectionContext || {
       editing: { available: true, modelName: 'Contoso Retail', source: 'C:\\Models\\Contoso\\Contoso.SemanticModel\\definition', kind: 'file', workingFolder: 'C:\\Models\\Contoso\\Contoso.SemanticModel', sourceConnectionId: 'cn3', live: false, sourceControlled: true, repositoryRoot: 'C:\\Models\\Contoso' },
@@ -1191,6 +1265,8 @@
         ? { available: true, modelName: 'Contoso local test', source: 'localhost:51000', connectionId: 'cn3', kind: 'localDesktop', endpoint: 'localhost:51000', database: 'Contoso', live: true }
         : { available: false, live: false },
       publishing: { available: true, modelName: 'Contoso Sales', source: CONNECTIONS[1].endpoint, connectionId: 'cn2', kind: 'xmla', endpoint: CONNECTIONS[1].endpoint, database: 'Contoso', live: true },
+      // The "copy FROM" reference model, when one is bound — the drawer's 4th role card + a "reference" pill on its row.
+      reference: { available: true, modelName: 'Finance', source: CONNECTIONS[0].endpoint, connectionId: 'cn1', kind: 'workspace', endpoint: CONNECTIONS[0].endpoint, database: 'Finance', live: true },
       relationship: connected ? 'workingCopyAndLocalRuntime' : 'editingOnly', twoModelsInPlay: connected,
       publishDestinationSeparateFromQuerying: true,
       summary: connected
@@ -1263,6 +1339,20 @@
       getAgentPolicy: AGENT_POLICY,
       listPendingApprovals: PENDING_APPROVALS,
       listConnections: CONNECTIONS,
+      probeConnectionAccounts: ACCOUNT_PROBES,
+      // The device-local connection timeline the drawer's History panel renders (newest-first, credential-free), with a
+      // per-connection filter. Includes a role change and a failed switch (ok:false) so the states are all visible.
+      listConnectionHistory: function (params) {
+        var all = [
+          { id: 'cn3', kind: 'connect', account: null, endpoint: 'localhost:51000', database: 'Contoso', ok: true, whenUtc: ago(15) },
+          { id: 'cn1', kind: 'role', account: 'kane@contoso.com', endpoint: CONNECTIONS[0].endpoint, database: 'Finance', ok: true, detail: 'set as the reference model', whenUtc: ago(40) },
+          { id: 'cn2', kind: 'switch', account: 'kane@contoso.com', endpoint: CONNECTIONS[1].endpoint, database: 'Contoso', ok: true, whenUtc: ago(120) },
+          { id: 'cn2', kind: 'role', account: 'kane@contoso.com', endpoint: CONNECTIONS[1].endpoint, database: 'Contoso', ok: true, detail: 'set as the publish destination', whenUtc: ago(180) },
+          { id: 'cn4', kind: 'switch', account: 'bob@contoso.com', endpoint: CONNECTIONS[3].endpoint, database: 'Sandbox Model', ok: false, detail: 'signed in, but opening the model failed; the saved account was left unchanged', whenUtc: ago(2000) },
+        ];
+        var id = params && params[0];
+        return id ? all.filter(function (e) { return e.id === id; }) : all;
+      },
       prepareWorkingCopy: function (params) {
         var source = CONNECTIONS.find(function (r) { return r.id === params[0]; }) || CONNECTIONS[0];
         var query = CONNECTIONS.find(function (r) { return r.id === params[3]; }) || source;
@@ -1314,7 +1404,7 @@
       deleteDataAgent: cfg.deleteDataAgent || daReport('dry-run', 'da-finance-01', 'DRY RUN — would DELETE data agent "Finance Copilot" (item da-finance-01) from workspace Contoso [Dev]. This cannot be undone. Re-run with commit=true.', 'DELETE /v1/workspaces/w0/items/da-finance-01'),
       listWorkflows: WORKFLOWS,
       // The model-wide enforcement toggle: UISHOT_WF=enfoff renders the OFF state (amber pill + banner).
-      getWorkflowEnforcement: new URLSearchParams(location.search).get('wf') === 'enfoff'
+      getWorkflowEnforcement: (new URLSearchParams(location.search).get('wf') === 'enfoff' || new URLSearchParams(location.search).get('wf') === 'runbanner')
         ? { mode: 'off', enforced: false, note: 'Enforcement is OFF model-wide.' }
         : { mode: null, enforced: true, note: 'No global override — each workflow’s own strictness applies (engine default: hard).' },
       setWorkflowEnforcement: { mode: null, enforced: true, note: 'No global override.' },
@@ -1378,8 +1468,8 @@
         if (info) return Object.assign({}, info, { strictness: 'hard', filePath: 'workflows/' + n + '.md', steps: WORKFLOW_DEFS['new-measure'].steps });
         return WORKFLOW_DEFS['new-measure'];
       },
-      startWorkflow: RUN,
-      getWorkflowRun: RUN,
+      startWorkflow: new URLSearchParams(location.search).get('wf') === 'runoff' ? RUN_OFF : RUN,
+      getWorkflowRun: new URLSearchParams(location.search).get('wf') === 'runoff' ? RUN_OFF : RUN,
       exportWorkflowEvidence: {
         json: '{"contentHash":"3c9db0e861ef5a947be4f88a1c78cf68245332fb24a5a719dc726f77308ad1fd","id":"wfr-1","kind":"workflow-run","modelName":"Contoso Retail","title":"Author a verified measure evidence","verdict":"Overridden"}',
         contentHash: '3c9db0e861ef5a947be4f88a1c78cf68245332fb24a5a719dc726f77308ad1fd',
@@ -1632,7 +1722,9 @@
         catch (e) { return SPEC; }
       },
       getDocModel: DOCMODEL,
-      getIncrementalRefreshPolicy: cfg.refreshPolicy || { table: 'Sales', enabled: pqMode !== 'incremental', policyType: 'Basic', mode: 'Import', rollingWindowGranularity: 'Year', rollingWindowPeriods: 5, incrementalGranularity: 'Day', incrementalPeriods: 10, incrementalPeriodsOffset: 0, sourceExpression: null, pollingExpression: null },
+      // wiredDateField is the SOURCE field the Sales partition M actually filters ([OrderDateKey] above) — parsed
+      // engine-side; the UI surfaces it under the date selector so a policy can't silently claim a different column.
+      getIncrementalRefreshPolicy: cfg.refreshPolicy || { table: 'Sales', enabled: pqMode !== 'incremental', policyType: 'Basic', mode: 'Import', rollingWindowGranularity: 'Year', rollingWindowPeriods: 5, incrementalGranularity: 'Day', incrementalPeriods: 10, incrementalPeriodsOffset: 0, sourceExpression: null, pollingExpression: null, wiredDateField: 'OrderDateKey' },
       getDocOutline: DOCOUTLINE,
       aiReadinessScan: SCORECARD,
       // The Model Interview card (AI Readiness tab): saved questions covering every plain-label outcome —
@@ -1798,7 +1890,15 @@
       connectionStatus: connected
         ? { connected: true, kind: 'local', dataSource: 'localhost:51000', database: 'Contoso', message: 'Connected to a local Power BI Desktop instance.' }
         : { connected: false, message: 'Open a model with a live engine (Power BI Desktop or XMLA) to run queries.' },
-      previewTable: PREVIEW,
+      // Real ADOMD labels EVALUATE TOPN columns 'Table[Column]' — the webview must normalize to the bare model
+      // name before building profile DAX / M ops. Return QUALIFIED names so a normalization regression is
+      // visible in the capture (a plain-name mock masked exactly that bug).
+      previewTable: function (params) {
+        const t = (params && params[0]) || 'Sales';
+        return Object.assign({}, PREVIEW, {
+          columns: PREVIEW.columns.map(function (c) { return { name: t + '[' + c.name.replace(/\]/g, ']]') + ']', type: c.type }; }),
+        });
+      },
       runDax: pqMode === 'profile' ? PQ_PROFILE : PIVOT,
       getPlan: function () {
         if (FR_EMPTY) return EMPTY_REPLACE_PLAN;
@@ -2111,6 +2211,12 @@
             setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: { type: 'workingCopyFolder', id: msg.id, folder: 'C:\\Models\\Working' } })); }, 0);
             return;
           }
+          if (msg && msg.type === 'pickReportPaths') {
+            // Lineage's local Browse — one path deliberately contains ';' to prove picks survive as a structured
+            // string[] (they must never round-trip through the free-text field's ';' convention).
+            setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: { type: 'reportPaths', id: msg.id, paths: ['C:\\Reports\\Sales.Report', 'C:\\Reports\\FY25;Final.Report'] } })); }, 0);
+            return;
+          }
           if (msg && msg.type === 'openLocalModel') return;
           if (!msg || msg.type !== 'rpc') return;
           const has = Object.prototype.hasOwnProperty.call(RESPONSES, msg.method);
@@ -2172,103 +2278,153 @@
       }, 700);
     }
 
-    // ?wf=run → dispatch a live workflow/didChange (the host relay's 'workflowDidChange' message) so the Workflows tab
-    // shows the mid-flight RUN (step 1 passed, step 2 current) without a Start click — the run-active screenshot state.
-    // Without the flag the tab opens on the OVERVIEW (the pre-run step rail).
-    if (new URLSearchParams(location.search).get('wf') === 'run' || new URLSearchParams(location.search).get('wf') === 'evidence') {
-      var wfShotMode = new URLSearchParams(location.search).get('wf');
-      setTimeout(function () {
-        window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowDidChange', payload: wfShotMode === 'evidence' ? TERMINAL_RUN : RUN } }));
-        if (wfShotMode === 'evidence') {
-          var tries = 0, evidenceIv = setInterval(function () {
-            var button = [].slice.call(document.querySelectorAll('button')).find(function (b) { return (b.textContent || '').trim().indexOf('Evidence') === 0; });
-            if (button) { button.click(); clearInterval(evidenceIv); }
-            if (++tries > 240) clearInterval(evidenceIv);
-          }, 25);
-        }
-      }, 700);
-    }
-    // ?wf=design → click the Design mode tab (a stock workflow opens read-only with the Customise affordance);
-    // ?wf=new / evidenceaction → click "+ New" (the blank-draft creation state). Both are real clicks — the states are reached
-    // exactly the way a user reaches them.
+    // The Workflows tab is a section workbench (Home · Library · Runs · Governance · Author). Every fixture is
+    // reached by REAL navigation clicks — the sidebar items carry data-section, so the states are reached exactly
+    // the way a user reaches them. Helpers below poll until the target renders (async fetches settle first).
     var wfMode = new URLSearchParams(location.search).get('wf');
-    if (wfMode === 'design' || wfMode === 'new' || wfMode === 'evidenceaction') {
-      setTimeout(function () {
-        var label = wfMode === 'design' ? 'Design' : '+ New';
-        var btn = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return b.textContent.trim() === label; });
-        if (btn) btn.click();
-        if (wfMode === 'evidenceaction') setTimeout(function () {
-          var evidence = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return b.textContent.trim() === '+ evidence report'; });
-          if (evidence) evidence.click();
-        }, 450);
-      }, 900);
-    }
-    // ?wf=bind / ?wf=bindfree / ?wf=bindcond → select the new-measure card so its header shows the "Required for"
-    // control populated. Library cards are role="button" DIVS (not <button>), so match by title text.
-    if (wfMode === 'bind' || wfMode === 'bindfree' || wfMode === 'bindcond') {
-      var bindTries = 0;
-      var bindIv = setInterval(function () {
-        var card = Array.prototype.find.call(document.querySelectorAll('[role="button"]'), function (b) {
-          return (b.textContent || '').indexOf('Author a verified measure') > -1;
-        });
-        if (card) { card.click(); clearInterval(bindIv); }
-        if (++bindTries > 200) clearInterval(bindIv);
+    var wfPoll = function (finder, cb) {
+      var t = 0, iv = setInterval(function () {
+        var el = finder();
+        if (el) { el.click(); clearInterval(iv); if (cb) cb(); }
+        if (++t > 240) clearInterval(iv);
       }, 25);
-    }
+    };
+    var wfSection = function (id) { return document.querySelector('[data-section="' + id + '"]'); };
+    var wfBtn = function (label, exact) {
+      return Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
+        var s = (b.textContent || '').trim();
+        return exact ? s === label : s.indexOf(label) > -1;
+      });
+    };
+    var wfRowLink = function (title) {
+      return Array.prototype.find.call(document.querySelectorAll('[data-workflow] button'), function (b) { return (b.textContent || '').indexOf(title) > -1; });
+    };
 
-    // §10.12 Scenarios picker states, reached with real clicks (the analyst's path):
+    // ?wf=library / ?wf=avail → the browsing rows (avail pre-sets one OFF + one hidden-now on the WORKFLOWS mock).
+    if (wfMode === 'library' || wfMode === 'avail') setTimeout(function () { wfPoll(function () { return wfSection('library'); }); }, 500);
+
+    // ?wf=playbook → open a playbook page (the document view) from the Library.
+    if (wfMode === 'playbook') setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () { setTimeout(function () { var l = wfRowLink('Author a verified measure'); if (l) l.click(); }, 300); });
+    }, 500);
+
+    // ?wf=run → dispatch a live workflow/didChange, then land on Runs (the focused run view: step 1 passed, step 2
+    // current). ?wf=evidence → the terminal run, then open the sealed Evidence report dialog.
+    // ?wf=runoff → a live run that FROZE enforcement off at start (the honest per-run skipped gate state).
+    // ?wf=runbanner → enforcement is OFF model-wide (mock above) YET a hard-frozen run is live on Runs: proves the
+    // model-wide enforcement-off notice speaks only about NEW runs and no longer contradicts the run's own frozen
+    // "Enforcement on · blocking" chip (HIGH 2).
+    if (wfMode === 'run' || wfMode === 'evidence' || wfMode === 'runoff' || wfMode === 'runbanner') setTimeout(function () {
+      var payload = wfMode === 'evidence' ? TERMINAL_RUN : wfMode === 'runoff' ? RUN_OFF : RUN;
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowDidChange', payload: payload } }));
+      wfPoll(function () { return wfSection('runs'); }, function () {
+        if (wfMode === 'evidence') setTimeout(function () { var b = wfBtn('Evidence report', true); if (b) b.click(); }, 400);
+      });
+    }, 600);
+
+    // ?wf=tworuns → TWO concurrent live runs sharing step ids, then land on Runs (the multi-run switcher +
+    // per-runId keyed subtree: BLOCKER 1 / HIGH 2). B is dispatched last, so it is the most-recent live focus.
+    if (wfMode === 'tworuns') setTimeout(function () {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowDidChange', payload: RUN } }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowDidChange', payload: RUN_B } }));
+      wfPoll(function () { return wfSection('runs'); });
+    }, 600);
+
+    // ?wf=governance → the policy home (enforcement + profiles + the three-column table + lints).
+    if (wfMode === 'governance') setTimeout(function () { wfPoll(function () { return wfSection('governance'); }); }, 500);
+
+    // ?wf=bind / bindfree / bindcond → expand the "Required for" rules on the new-measure row; ?wf=activate /
+    // activatefree / activatelint → the "Hide when" rules on the dimensional-design row. POLICY is pre-built above.
+    var govRules = { bind: 'new-measure', bindfree: 'new-measure', bindcond: 'new-measure', activate: 'dimensional-design', activatefree: 'dimensional-design', activatelint: 'dimensional-design' };
+    if (govRules[wfMode]) setTimeout(function () {
+      wfPoll(function () { return wfSection('governance'); }, function () {
+        // Poll until the target row's Rules button exists (the governance table renders after the nav click),
+        // then click it to expand the three-axis per-workflow rules editor.
+        var gt = 0, giv = setInterval(function () {
+          var row = document.querySelector('[data-gov-row="' + govRules[wfMode] + '"]');
+          var r = row && Array.prototype.find.call(row.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === 'Rules'; });
+          if (r) { r.click(); clearInterval(giv); }
+          if (++gt > 240) clearInterval(giv);
+        }, 25);
+      });
+    }, 500);
+
+    // ?wf=author → the outline+editor authoring destination; ?wf=new → the blank-draft creation state;
+    // ?wf=design → open a stock playbook then Edit workflow (read-only stock with the Customise affordance);
+    // ?wf=evidenceaction → a new draft, focus step 1 in the outline, add the first-class evidence action.
+    if (wfMode === 'author' || wfMode === 'new' || wfMode === 'evidenceaction') setTimeout(function () {
+      wfPoll(function () { return wfSection('author'); }, function () {
+        setTimeout(function () {
+          var nw = wfBtn('+ New playbook', true); if (nw) nw.click();
+          if (wfMode === 'evidenceaction') setTimeout(function () {
+            var step = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return (b.textContent || '').trim().indexOf('1 · ') === 0; });
+            if (step) step.click();
+            setTimeout(function () { var ev = wfBtn('+ evidence report', true); if (ev) ev.click(); }, 300);
+          }, 400);
+        }, 300);
+      });
+    }, 500);
+    if (wfMode === 'design') setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () {
+        setTimeout(function () { var l = wfRowLink('Author a verified measure'); if (l) { l.click(); setTimeout(function () { var e = wfBtn('Edit workflow', true); if (e) e.click(); }, 350); } }, 300);
+      });
+    }, 500);
+
+    // §10.12 Ready-made-workflow setup, reached from Home's guided-setup card (profiles now live in Governance):
     //   ?wf=scenform     → open the Author a hard measure slot form (the second hero's questions)
     //   ?wf=scenfill     → the same form, filled from each field's example, advanced to the plain-words preview
-    //   ?wf=scenpreview  → open Team standard (a profile → straight to preview; Pro-gated Apply at free tier)
-    //   ?wf=scenapplied  → the Month-end template flow carried through Apply → the applied "To undo:" result card
-    //                      (a template apply is free; pair with ?tier=pro on a settings scenario to apply a binding)
+    //   ?wf=scenapplied  → the flow carried through Apply → the applied "To undo:" result card
     // React-controlled fields need the native value setter + an input event, so fill via setNativeValue.
-    if (wfMode === 'scenform' || wfMode === 'scenfill' || wfMode === 'scenpreview' || wfMode === 'scenapplied') {
+    if (wfMode === 'scenform' || wfMode === 'scenfill' || wfMode === 'scenapplied') {
       var setNativeValue = function (el, val) {
         var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
         var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
         setter.call(el, val);
         el.dispatchEvent(new Event('input', { bubbles: true }));
       };
-      var cardTitle = wfMode === 'scenpreview' ? 'Team standard' : 'Author a hard measure';
       var fillThenPreview = (wfMode === 'scenfill' || wfMode === 'scenapplied');
-      var clickByText = function (label) {
-        var btn = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === label; });
-        if (btn) btn.click();
-        return !!btn;
-      };
-      var scnTries = 0;
-      var scnIv = setInterval(function () {
-        var card = Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
-          var text = b.textContent || '';
-          return text.indexOf(cardTitle) > -1 && (text.indexOf('Set up') > -1 || text.indexOf('Choose') > -1 || text.indexOf('Review') > -1);
+      setTimeout(function () {
+        // open the guided-setup overlay from Home, then pick the hero card inside the templates panel.
+        wfPoll(function () { return wfBtn('Ready-made playbooks', false); }, function () {
+          var scnTries = 0;
+          var scnIv = setInterval(function () {
+            var card = Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
+              var text = b.textContent || '';
+              return text.indexOf('Author a hard measure') > -1 && (text.indexOf('Set up') > -1 || text.indexOf('Choose') > -1 || text.indexOf('Review') > -1);
+            });
+            if (card) {
+              card.click(); clearInterval(scnIv);
+              if (fillThenPreview) setTimeout(function () {
+                var scope = document.querySelector('main') || document;
+                [].slice.call(scope.querySelectorAll('textarea, input, select')).forEach(function (f) {
+                  if (f.hasAttribute('data-wf-filter')) return;
+                  var ex = f.getAttribute('data-example');
+                  if (f.tagName === 'SELECT') { if (f.options.length > 1) { f.selectedIndex = 1; f.dispatchEvent(new Event('change', { bubbles: true })); } }
+                  else { setNativeValue(f, ex || 'Provided at setup'); }
+                });
+                setTimeout(function () {
+                  var pv = wfBtn('Preview', true); if (pv) pv.click();
+                  if (wfMode === 'scenapplied') setTimeout(function () { var add = wfBtn('Add workflow', true); if (add) add.click(); }, 300);
+                }, 250);
+              }, 500);
+            }
+            if (++scnTries > 240) clearInterval(scnIv);
+          }, 25);
         });
-        if (card) {
-          card.click();
-          clearInterval(scnIv);
-          if (fillThenPreview) {
-            // wait for the async-fetched template form, fill each field from its data-example, then Preview.
-            // Scope to the scenario Panel and skip the library filter box (a plain [data-wf-filter] input) so
-            // filling the form never empties the rail behind it.
-            setTimeout(function () {
-              var scope = document.querySelector('main') || document;
-              [].slice.call(scope.querySelectorAll('textarea, input, select')).forEach(function (f) {
-                if (f.hasAttribute('data-wf-filter')) return;
-                var ex = f.getAttribute('data-example');
-                if (f.tagName === 'SELECT') { if (f.options.length > 1) { f.selectedIndex = 1; f.dispatchEvent(new Event('change', { bubbles: true })); } }
-                else { setNativeValue(f, ex || 'Provided at setup'); }
-              });
-              setTimeout(function () {
-                clickByText('Preview');
-                // scenapplied carries one step further: apply the scenario so the "To undo:" result card renders.
-                if (wfMode === 'scenapplied') setTimeout(function () { clickByText('Add workflow'); }, 300);
-              }, 250);
-            }, 500);
-          }
-        }
-        if (++scnTries > 240) clearInterval(scnIv);
-      }, 25);
+      }, 500);
     }
+
+    // ?wf=scenpreview → the Governance profile impact preview (Team standard) with its Pro-gated Apply.
+    if (wfMode === 'scenpreview') setTimeout(function () {
+      wfPoll(function () { return wfSection('governance'); }, function () {
+        setTimeout(function () {
+          var teamCard = Array.prototype.find.call(document.querySelectorAll('div'), function (d) {
+            return (d.textContent || '').indexOf('Team standard') > -1 && d.querySelector && Array.prototype.some.call(d.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === 'Preview changes'; });
+          });
+          if (teamCard) { var pv = Array.prototype.find.call(teamCard.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === 'Preview changes'; }); if (pv) pv.click(); }
+        }, 350);
+      });
+    }, 500);
 
     // The Edit History timeline is built from model/didChange events (App.tsx accumulates them), NOT an RPC — so the
     // harness dispatches the mutating edits that the Verified-Edits records (revisions 101..104, session 'uishot') weld

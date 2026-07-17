@@ -169,11 +169,12 @@ namespace Semanticus.Engine
             }
 
             // Does the target resolve to an existing object on the CURRENT model?
-            var resolves = _sessions.Current != null
-                && await _sessions.Current.ReadAsync(m => ObjectRefs.Resolve(m, target) != null);
+            var context = _sessions.CurrentContext;
+            var resolves = context.Session != null
+                && await context.Session.ReadAsync(m => ObjectRefs.Resolve(m, target) != null);
             if (!resolves)
             {
-                row.Detail = _sessions.Current == null
+                row.Detail = context.Session == null
                     ? $"not replayable now — no model open, so '{target}' can't be resolved (open the model, then replay)."
                     : $"not replayable — '{target}' does not resolve to an existing object on the current model.";
                 return row;
@@ -182,7 +183,7 @@ namespace Semanticus.Engine
             // Both sides present + the target resolves → REPLAYABLE. We do NOT execute live DAX here (a probe needs a
             // connection); mirror WorkflowDaxProbeAsync's honest offline-skip and point at the real-evidence path.
             row.Outcome = "replayable";
-            row.Detail = _live == null
+            row.Detail = context.Live == null
                 ? $"replayable: needs a live/attached session — probe '{v.Probe}' + target '{target}' resolve, but offline now, so the DAX was NOT executed (open_live/open_local, then start_workflow for real evidence)."
                 : $"replayable — probe '{v.Probe}' + target '{target}' resolve and a live session is attached; replay does not execute live DAX itself (run start_workflow for real evidence).";
             return row;

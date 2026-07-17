@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -166,6 +167,62 @@ namespace Semanticus.Tests
             var engine = new LocalEngine(new SessionManager());
             await Assert.ThrowsAsync<ArgumentException>(
                 () => engine.AnalyzeCloudReportsAsync("  ", new[] { "r1" }, consent: true, "azcli", null));
+        }
+
+        [Fact]
+        public void Progress_channel_publishes_updates_in_order_and_unsubscribes()
+        {
+            var bus = new ChangeBus();
+            var seen = new List<OperationProgress>();
+            void Record(OperationProgress progress) => seen.Add(progress);
+            bus.Progress += Record;
+
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 0, Total = 2, Note = "Sales" });
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 1, Total = 2, Note = "Finance" });
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 2, Total = 2 });
+            bus.Progress -= Record;
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 2, Total = 2 });
+
+            Assert.Equal(new[] { 0, 1, 2 }, seen.Select(p => p.Done));
+            Assert.All(seen, p => Assert.Equal(2, p.Total));
+            Assert.All(seen, p => Assert.Equal("run-a", p.RunId));
+            Assert.Equal(new[] { "Sales", "Finance", null }, seen.Select(p => p.Note));
+        }
+
+        [Fact]
+        public void Progress_channel_isolates_throwing_subscribers()
+        {
+            var bus = new ChangeBus();
+            var seen = new List<OperationProgress>();
+            bus.Progress += _ => throw new InvalidOperationException("listener failed");
+            bus.Progress += seen.Add;
+            var progress = new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 0, Total = 1, Note = "Sales" };
+
+            var error = Record.Exception(() => bus.PublishProgress(progress));
+
+            Assert.Null(error);
+            Assert.Same(progress, Assert.Single(seen));
+        }
+
+        [Fact]
+        public void Progress_channel_keeps_concurrent_invocations_distinguishable_on_the_wire()
+        {
+            var bus = new ChangeBus();
+            var seen = new List<OperationProgress>();
+            bus.Progress += seen.Add;
+
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-a", Done = 0, Total = 2, Note = "Sales" });
+            bus.PublishProgress(new OperationProgress { OpKey = "analyze_cloud_reports", RunId = "run-b", Done = 0, Total = 5, Note = "Finance" });
+
+            Assert.Equal(new[] { "run-a", "run-b" }, seen.Select(p => p.RunId));
+            Assert.NotEqual(seen[0].RunId, seen[1].RunId);
+
+            var serializer = new Newtonsoft.Json.JsonSerializer();
+            RpcServer.ConfigureSerializer(serializer);
+            var json = new StringWriter();
+            serializer.Serialize(json, seen[0]);
+            Assert.Contains("\"runId\":\"run-a\"", json.ToString());
+            Assert.DoesNotContain("\"RunId\"", json.ToString());
         }
 
         // ---- the error-aware analysis overload (the cloud sink) ----------------------------------------------------

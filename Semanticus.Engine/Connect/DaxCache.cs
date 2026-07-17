@@ -30,7 +30,8 @@ namespace Semanticus.Engine
         public static Task<ClearCacheResult> ClearAsync(LiveConnection live)
         {
             if (live == null) return Task.FromResult(new ClearCacheResult { Error = "Not connected." });
-            return Task.Run(() => Clear(live));   // AMO/TOM is thread-affine — never touch it from the dispatcher
+            return live.RunWithLifetimeLeaseAsync(
+                () => Task.Run(() => Clear(live)));   // AMO/TOM is thread-affine — never touch it from the dispatcher
         }
 
         private static ClearCacheResult Clear(LiveConnection live)

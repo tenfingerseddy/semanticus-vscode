@@ -9,6 +9,8 @@ let lastError = null;          // { name, error } from the most recent failed se
 let templates = null;          // format-template catalog (pushed once by the provider; null until then)
 let comboOpen = null;          // property name whose format-string picker popup is open
 const fx = { open: false, draft: null };   // Format expression editor state (draft survives re-renders + failed applies)
+let pendingFocusKey = null;    // a host 'focusName' (F2 rename) intent, KEYED to the object it was raised for (the load key);
+                               // null = none, true = wildcard (host sent no key). Applied only when THAT object loads.
 
 window.addEventListener('message', e => {
   const m = e.data;
@@ -23,12 +25,34 @@ window.addEventListener('message', e => {
     // by the other driver aren't shadowed by a stale draft.
     if (fx.draft != null) { const p = (state.props || []).find(x => x.kind === 'formatExpression'); if (p && p.value === fx.draft.trim()) fx.draft = null; }
     render();
+    tryFocusName();   // a 'focusName' that arrived before this object loaded lands now
   }
+  else if (m.type === 'focusName') { pendingFocusKey = (m.key != null ? m.key : true); tryFocusName(); }   // F2 rename: caret into the Name row (keyed to its object)
   else if (m.type === 'setError') { lastError = { name: m.name, error: m.error }; render(); }
   else if (m.type === 'formatTemplates') { templates = m.templates || []; if (state) render(); }
   else if (m.type === 'empty') { state = null; root.innerHTML = '<div class="empty">Open a model to inspect its properties. Select model objects to edit them; clear the selection to return to model settings.</div>'; }
 });
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// F2 rename (host 'focusName'): put the caret in the Name row with its text selected. The rename intent
+// outranks a filter or a collapsed category that hides the row — both are cleared if they're in the way.
+// A selection with no editable Name row (read-only, or none at all) leaves focus where it is, silently.
+//
+// The intent is KEYED to the object it was raised for: F2 on A, then selecting B before A loads must NOT
+// let B consume A's intent (focus steal + a rename aimed at the wrong object). A load whose key differs
+// from the pending key IS that selection change, so the intent is discarded, not applied.
+function tryFocusName() {
+  if (pendingFocusKey == null || !state) return;   // no intent, or nothing loaded yet — keep waiting
+  const cur = state.key != null ? state.key : state.name;
+  if (pendingFocusKey !== true && pendingFocusKey !== cur) { pendingFocusKey = null; return; }   // moved to a different object → drop it
+  let el = root.querySelector('input[type="text"][data-prop="Name"]');
+  if (!el && (filter !== '' || collapsed.size > 0)) { filter = ''; collapsed.clear(); render(); el = root.querySelector('input[type="text"][data-prop="Name"]'); }
+  pendingFocusKey = null;   // one-shot either way — a stale intent must never grab focus later
+  if (!el) return;
+  el.scrollIntoView({ block: 'nearest' });
+  el.focus();
+  el.select();
+}
 // Multiline editor only for genuinely multi-line content — Description, DAX/expression bodies, or any value that
 // actually contains a newline. NOT length-based: long single-line values (Format String, lineage tags, source
 // queries) stay as text inputs (they scroll horizontally) instead of overflowing a short textarea and showing

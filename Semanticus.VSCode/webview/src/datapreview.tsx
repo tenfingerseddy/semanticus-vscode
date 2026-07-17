@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { rpc } from './bridge';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { rpc, onDidChange, selectInProperties, focusSelectInProperties } from './bridge';
+import { RevealBtn, rowKeyProps } from './objectactions';
 import { ResultGrid } from './grid';
 import type { ModelGraph, GraphTable } from './diagram';
 import { useConnection, ConnectBar } from './connection';
@@ -24,10 +25,24 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
     if (e.result) { setRes(e.result as ResultSet); if (e.target) setSelected(e.target); setErr(e.error ?? null); setClaudeEvent(e); }
   });
 
-  // The table list is metadata (getModelGraph) — available even when no live engine is connected.
-  useEffect(() => {
-    rpc<ModelGraph>('getModelGraph').then((g) => setTables(g.tables)).catch(() => undefined);
+  // The table list is metadata (getModelGraph) — available even when no live engine is connected. Reload it on
+  // every model/didChange: a rename/add/drop after mount would otherwise leave a stale row whose ref is obsolete,
+  // so activating it feeds the selection bus (and the preview query) a name the model no longer has. Versioned so
+  // a slower earlier response can't restore an older list over a newer one; a failed read drops to empty (fail
+  // closed) rather than keep stale rows carrying obsolete refs.
+  const tablesSeq = useRef(0);
+  const loadTables = useCallback(() => {
+    const seq = ++tablesSeq.current;
+    setTables([]);   // fail closed: drop the old rows BEFORE the refetch so a renamed/dropped table's obsolete-ref row can't be activated mid-reload
+    rpc<ModelGraph>('getModelGraph')
+      .then((g) => { if (seq === tablesSeq.current) setTables(g.tables); })
+      .catch(() => { if (seq === tablesSeq.current) setTables([]); });
   }, []);
+  useEffect(() => {
+    loadTables();
+    const off = onDidChange(() => loadTables());
+    return () => off();
+  }, [loadTables]);
 
   // When a live engine connects, auto-preview the first (largest/first-listed) table so the grid shows data
   // immediately instead of an empty "pick a table" prompt. Fires once per connect; pick any other table to switch.
@@ -65,15 +80,23 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
       {/* table list */}
       <div className="w-56 shrink-0 overflow-auto border-r" style={{ borderColor: 'var(--sem-border)' }}>
         <div className="px-3 py-2 text-[11px] uppercase tracking-wide font-semibold sticky top-0" style={{ color: 'var(--sem-muted)', background: 'var(--sem-bg)' }}>Tables ({tables.length})</div>
-        {tables.map((t) => (
-          <button key={t.ref} onClick={() => conn?.connected && preview(t.name)} disabled={!conn?.connected || busy}
-            className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 disabled:opacity-50"
-            style={{ background: selected === t.name ? 'var(--sem-accent-soft)' : 'transparent', color: 'var(--sem-fg)' }}>
+        {tables.map((t) => {
+          // Selecting a table always feeds the selection bus (Properties follows even offline); the live row
+          // preview still needs a connection. The keyboard control (rowKeyProps = role=button) sits on the NAME
+          // span — never on the row div, whose nested Reveal button would then live inside a role=button (wrong
+          // ARIA + Enter/Space on Reveal bubbling into the row action). The row keeps the mouse onClick.
+          const activate = () => { selectInProperties(t.ref); if (conn?.connected && !busy) void preview(t.name); };
+          return (
+          <div key={t.ref} onClick={activate}
+            className="group w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 cursor-pointer"
+            style={{ background: selected === t.name ? 'var(--sem-accent-soft)' : 'transparent', color: 'var(--sem-fg)', opacity: conn?.connected ? 1 : 0.6 }}>
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: t.isDateTable ? 'var(--sem-warn)' : t.isCalculated ? 'var(--sem-good)' : 'var(--sem-accent)', opacity: t.isHidden ? 0.4 : 1 }} />
-            <span className="truncate" style={{ opacity: t.isHidden ? 0.55 : 1 }}>{t.name}</span>
-            <span className="ml-auto text-[10px] tnum" style={{ color: 'var(--sem-muted)' }}>{t.columns}</span>
-          </button>
-        ))}
+            <span className="truncate flex-1" style={{ opacity: t.isHidden ? 0.55 : 1 }} {...rowKeyProps(activate, () => focusSelectInProperties(t.ref))}>{t.name}</span>
+            <span className="text-[10px] tnum group-hover:hidden group-focus-within:hidden" style={{ color: 'var(--sem-muted)' }}>{t.columns}</span>
+            <RevealBtn objRef={t.ref} className="hidden group-hover:inline-block group-focus-within:inline-block" />
+          </div>
+          );
+        })}
       </div>
 
       {/* preview */}

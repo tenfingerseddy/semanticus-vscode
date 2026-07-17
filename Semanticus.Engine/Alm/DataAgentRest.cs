@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -37,20 +36,11 @@ namespace Semanticus.Engine
         internal const string PublishInfoSchema = "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/publishInfo/1.0.0/schema.json";
         internal const string FewshotsSchema = "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/fewShots/1.0.0/schema.json";
 
-        // The data agent's own client (NewClient-style: FabricRest.NewClient is private, so mirror its shape here —
-        // base URL + bearer only; the pagination/LRO/retry concerns still come from the reused FabricRest helpers).
-        private static HttpClient NewClient(string token)
-        {
-            var http = new HttpClient { BaseAddress = new Uri(FabricRest.BaseUrl), Timeout = TimeSpan.FromSeconds(100) };
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            return http;
-        }
-
         // ---- items ----
         internal static async Task<FabricItem[]> ListItemsAsync(string workspaceId, string token, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/items";
             var items = await FabricRest.GetAllPagesAsync<FabricItem>(http, url, ct).ConfigureAwait(false);
             return items.ToArray();
@@ -65,7 +55,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("An item id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/items/" + Uri.EscapeDataString(itemId) + "/getDefinition";
             var body = await FabricRest.PostForResultAsync(http, url, null, ct).ConfigureAwait(false);
             return FabricRest.DecodeDefinitionParts(body);
@@ -76,7 +66,7 @@ namespace Semanticus.Engine
         internal static async Task<string> CreateItemAsync(string workspaceId, string displayName, string itemType, string definitionJson, string token, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/items";
             var body = MergeCreateBody(displayName, itemType, definitionJson);
             var result = await FabricRest.PostForResultAsync(http, url, body, ct).ConfigureAwait(false);
@@ -87,7 +77,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("An item id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/items/" + Uri.EscapeDataString(itemId) + "/updateDefinition";
             return await FabricRest.PostForStatusAsync(http, url, definitionJson, ct).ConfigureAwait(false);
         }
@@ -96,7 +86,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("An item id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/items/" + Uri.EscapeDataString(itemId);
             var r = await FabricRest.SendAsync(http, HttpMethod.Delete, url, ct).ConfigureAwait(false);
             if (!r.Ok) throw new InvalidOperationException(FabricRest.ParseError(r.Body, r.Status));

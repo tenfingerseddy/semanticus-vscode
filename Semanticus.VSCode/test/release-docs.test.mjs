@@ -26,7 +26,7 @@ for (const [name, text] of publicDocs) {
     `${name} retains a pre-1.0.1 platform claim`);
 }
 
-assert.match(rootReadme, /Semanticus 1\.0\.1 corrects the Marketplace listing/u);
+assert.match(rootReadme, /Semanticus 1\.1\.0 is a feature release/u);
 for (const platform of ['Windows 11 x64', 'Windows 11 ARM64', 'Ubuntu 24.04 x64', 'macOS Intel', 'macOS Apple Silicon']) {
   assert.match(marketplaceReadme, new RegExp(`${platform}[\\s\\S]*Supported release package`, 'u'), platform);
   assert.match(support, new RegExp(`${platform}[\\s\\S]*Supported release package`, 'u'), platform);
@@ -38,7 +38,7 @@ assert.match(changelog, /## \[1\.0\.1\] - 2026-07-14/u);
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');
 assert.equal(packageJson.version, packageLock.version, 'package.json and package-lock.json versions differ');
 assert.equal(packageJson.version, packageLock.packages[''].version, 'root package-lock entry has a different version');
-assert.equal(packageJson.version, '1.0.1', 'release package version is not 1.0.1');
+assert.equal(packageJson.version, '1.1.0', 'release package version is not 1.1.0');
 assert.match(checklist, new RegExp(`package\\.json.*${packageJson.publisher}`, 'su'),
   'release checklist does not name the package publisher awaiting human ownership verification');
 assert.doesNotMatch(checklist, /replace `?"publisher": "kane"`?/u,

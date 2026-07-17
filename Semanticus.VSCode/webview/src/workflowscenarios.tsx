@@ -86,10 +86,10 @@ const SCENARIOS: Scenario[] = [
     title: 'Author a hard measure',
     tag: 'Measure',
     hero: true,
-    blurb: 'Pin the tricky edge cases, author one candidate, and prove it against an independent raw-row oracle before any optional speed work.',
+    blurb: 'Pin what the requirement actually says, lock the expected values from raw rows first, then author one candidate and prove it against an independent raw-row witness before any optional speed work.',
     kind: 'template',
     template: 'hard-measure',
-    runNote: 'Running the workflow is a Pro capability because it includes enforced oracle checks. Setting it up here is free.',
+    runNote: 'Running the workflow is a Pro capability because it includes enforced equality checks. Setting it up here is free.',
     undo: 'Delete the created workflow from the Workflows list.',
   },
   {
@@ -181,13 +181,17 @@ const TONE_COLOR: Record<PreviewTone, string> = {
 };
 
 // ---- the panel ------------------------------------------------------------------------------------
-export function ScenariosPanel({ tier, library, onApplied, onActiveChange }: {
+export function ScenariosPanel({ tier, library, onApplied, onActiveChange, variant = 'full' }: {
   tier: string;
   library: WorkflowInfo[] | null;
   onApplied: (freshLibrary?: WorkflowInfo[]) => void;
   onActiveChange?: (active: boolean) => void;
+  // 'templates' hides the profile tier — profiles live only in the Governance section now, so the Home
+  // guided-setup overlay offers just the ready-made-workflow shelf (one home per concept).
+  variant?: 'full' | 'templates';
 }) {
   const isPro = tier === 'pro';
+  const showProfiles = variant === 'full';
   const [open, setOpen] = useState(true);              // the whole picker collapses (calm once configured)
   const [templates, setTemplates] = useState<WorkflowTemplateInfo[] | null>(null);
   const [profiles, setProfiles] = useState<WorkflowProfileInfo[]>([]);
@@ -239,6 +243,7 @@ export function ScenariosPanel({ tier, library, onApplied, onActiveChange }: {
                     unavailable={templates != null && !templateInstalled(s.template)} onPick={() => setScnId(s.id)} />
                 ))}
               </div>
+              {showProfiles && (<>
               <div className="mt-4 mb-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
                 <div className="text-[11px] font-semibold">Workflow profiles</div>
                 <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>One choice sets what is available, what is required, and how strongly checks apply. The policy is saved with the project.</div>
@@ -249,6 +254,7 @@ export function ScenariosPanel({ tier, library, onApplied, onActiveChange }: {
                     unavailable={false} onPick={() => setScnId(s.id)} />
                 ))}
               </div>
+              </>)}
               <div className="mt-4 mb-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
                 <div className="text-[11px] font-semibold">More ready-made workflows</div>
                 <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Fill in your organisation's details once. The questions become a reusable workflow for people and the AI Assistant.</div>

@@ -39,6 +39,9 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(workingFolder))
                 throw new InvalidOperationException("The open model does not have a stable local folder to link.");
             ConnectionRegistry.SetWorkingCopy(source.Id, workingFolder, publish.Id);
+            // A role change belongs on the connection timeline too (MEDIUM 8/9), carrying the target's id so a
+            // per-connection history filter finds it.
+            RecordConnectionHistory(publish, "role", publish.LastAccount, publish.Endpoint, publish.Database, publish.TenantId, ok: true, detail: "set as the publish destination");
             await PublishActivityAsync(new ActivityEvent
             {
                 Kind = "set_publish_destination", Origin = origin,
@@ -90,7 +93,7 @@ namespace Semanticus.Engine
                 else if (string.Equals(queryRecord.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase))
                     await ConnectLocalAsync(queryRecord.Endpoint, queryRecord.Database);
                 else
-                    await ConnectXmlaAsync(queryRecord.Endpoint, queryRecord.Database, queryRecord.AuthMode, rawToken: null);
+                    await ConnectXmlaAsync(queryRecord.Endpoint, queryRecord.Database, queryRecord.AuthMode, rawToken: null, tenantId: queryRecord.TenantId);
                 result.QueryConnected = true;
             }
             catch (Exception ex)
@@ -147,7 +150,7 @@ namespace Semanticus.Engine
                 if (string.Equals(record.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase))
                     snapshot = await LiveModelExport.ToBimLocalAsync(record.Endpoint, record.Database);
                 else if (string.Equals(record.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
-                    snapshot = (await SnapshotWorkspaceMetadataAsync(record.Endpoint, record.Database, record.AuthMode, origin)).snap;
+                    snapshot = (await SnapshotWorkspaceMetadataAsync(record.Endpoint, record.Database, record.AuthMode, origin, record.TenantId)).snap;
                 else
                     throw new InvalidOperationException("This connection type cannot create a local working copy.");
 
@@ -155,7 +158,7 @@ namespace Semanticus.Engine
                 Directory.CreateDirectory(definition);
                 File.WriteAllText(Path.Combine(staging, "definition.pbism"), "{}");
                 snapshotSession = await _sessions.BuildOpenAsync(snapshot.BimPath);
-                await snapshotSession.Dispatcher.RunAsync(() =>
+                await snapshotSession.RunAsync(() =>
                 {
                     snapshotSession.Save(definition, SaveFormat.TMDL, SerializeOptions.Default, resetCheckpoint: false);
                     return true;

@@ -219,4 +219,56 @@ namespace Semanticus.Analysis
             return null;
         }
     }
+
+    /// <summary>
+    /// Conservative approximation of the Analysis Services linguistic validator's term normalisation. When a
+    /// linguistic schema (LSDL) is committed, AS folds every entity's bound object name (lower-case, camel-split,
+    /// lemmatise) into ONE term dictionary — two objects whose names normalise identically make the whole schema
+    /// uncommittable ("An item with the same key has already been added"). This is the single normaliser shared by
+    /// the set_synonyms/enable_qna guards (Engine's LsdlSynonyms) and the DAC-QNA-NAME-COLLISIONS readiness rule,
+    /// so a scan and a write can never disagree on what collides. It lives here because Analysis cannot reference
+    /// Engine. TWO TIERS: <see cref="Normalize"/> (lower-case + camel-split + punctuation fold, no lemma guess)
+    /// is certain enough to hard-refuse a write on; <see cref="NormalizeFolded"/> adds a naive plural fold
+    /// (Months → month, proven live) that can be WRONG (News is not the plural of New), so its matches only warn.
+    /// Known false NEGATIVES, accepted by design (the write path's commit-time backstop carries the live truth):
+    /// no letter-run acronym split (XMLParser stays one word while XML Parser is two) and no Unicode NFC/NFD
+    /// normalisation (composed vs decomposed accents read as different terms).
+    /// </summary>
+    public static class QnaTerms
+    {
+        /// <summary>The exact tier: lower-case, camel-split, punctuation → space, collapse. No plural fold.</summary>
+        public static string Normalize(string name) => Core(name, fold: false);
+
+        /// <summary>The lemma-approximation tier: <see cref="Normalize"/> plus a naive per-word singular fold.</summary>
+        public static string NormalizeFolded(string name) => Core(name, fold: true);
+
+        private static string Core(string name, bool fold)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+            var sb = new System.Text.StringBuilder(name.Length + 8);
+            for (var i = 0; i < name.Length; i++)
+            {
+                var ch = name[i];
+                if (char.IsLetterOrDigit(ch))
+                {
+                    // camelCase boundary (DateKey → date key): a lower/digit → UPPER transition opens a word.
+                    if (sb.Length > 0 && sb[sb.Length - 1] != ' ' && char.IsUpper(ch) && (char.IsLower(name[i - 1]) || char.IsDigit(name[i - 1])))
+                        sb.Append(' ');
+                    sb.Append(char.ToLowerInvariant(ch));
+                }
+                else if (sb.Length > 0 && sb[sb.Length - 1] != ' ')
+                    sb.Append(' ');   // '_' '.' and every other punctuation/space run reads as one word break
+            }
+            var words = sb.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (fold)
+                for (var i = 0; i < words.Length; i++)
+                {
+                    var w = words[i];
+                    // Naive singular fold (Months → month). >3 spares short words ("is", "gas"); the 'ss' guard spares "class".
+                    if (w.Length > 3 && w[w.Length - 1] == 's' && w[w.Length - 2] != 's')
+                        words[i] = w.Substring(0, w.Length - 1);
+                }
+            return string.Join(" ", words);
+        }
+    }
 }

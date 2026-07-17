@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { rpc, onDidChange } from './bridge';
+import { rpc, onDidChange, selectInProperties, focusSelectInProperties } from './bridge';
+import { RevealBtn, rowKeyProps } from './objectactions';
 
 // ===================================================================================================
 // <ObjectBrowser> — Studio backbone B. ONE virtualized, filterable, group-by browser over the model's
@@ -216,10 +217,14 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
               const n = row.node;
               const picked = pickedRefs?.has(n.ref);
               const checked = sel.has(n.ref);
+              // The keyboard control (rowKeyProps = role=button) lives on the NAME span, not the row div: the row
+              // hosts its own controls (the multi-select checkbox, Reveal), and a role=button ancestor of other
+              // buttons is both wrong ARIA and an activation hazard (Enter/Space on the nested control bubbling to
+              // the row). The row keeps the mouse onClick for the large click target; nested buttons stopPropagation.
               return (
                 <div key={vr.key} style={{ ...common, opacity: picked ? 0.4 : 1 }}
                   draggable={dragEnabled && daxRefOf(n) !== null} onDragStart={dragEnabled ? drag(n) : undefined}
-                  onClick={() => !picked && onPick?.(n)}
+                  onClick={() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }}
                   title={daxRefOf(n) ?? n.ref}
                   className={'group flex items-center gap-1.5 pl-2 pr-2 cursor-pointer hover:bg-[var(--sem-surface-2)] ' + (groupBy === 'flat' ? '' : 'pl-5')}>
                   {multiSelect && (
@@ -228,12 +233,13 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
                       style={{ background: checked ? 'var(--sem-accent)' : 'transparent', color: '#fff', border: '1px solid ' + (checked ? 'var(--sem-accent)' : 'var(--sem-border)') }}>{checked ? '✓' : ''}</button>
                   )}
                   <span className="shrink-0 w-3 text-center" style={{ color: KIND_GLYPH[n.kind].color }}>{KIND_GLYPH[n.kind].g}</span>
-                  <span className="text-[12px] truncate flex-1">{n.name}
+                  <span className="text-[12px] truncate flex-1" {...rowKeyProps(() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }, () => focusSelectInProperties(n.ref))}>{n.name}
                     {groupBy !== 'table' && <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}> · {n.table}</span>}
                     {n.isKey && <span className="text-[9px] ml-1 px-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>key</span>}
                   </span>
                   {n.dataType && <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-muted)' }}>{n.dataType}</span>}
-                  {!picked && <span className="text-[10px] shrink-0 opacity-0 group-hover:opacity-100" style={{ color: 'var(--sem-muted)' }}>add +</span>}
+                  {!picked && <span className="text-[10px] shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" style={{ color: 'var(--sem-muted)' }}>add +</span>}
+                  <RevealBtn objRef={n.ref} className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />
                 </div>
               );
             })}

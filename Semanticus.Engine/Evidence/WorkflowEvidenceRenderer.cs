@@ -111,8 +111,11 @@ namespace Semanticus.Engine.Evidence
             if (step.Status == "skipped") return Verdict.Overridden;
             if (step.Status == "failed") return Verdict.Broken;
             if (step.Status != "passed") return Verdict.Unknown;
-            if ((step.VerifyResults ?? Array.Empty<VerifyResult>()).Any(x => x.Status == "failed")) return Verdict.NeedsReview;
-            if ((step.VerifyResults ?? Array.Empty<VerifyResult>()).Any(x => x.Status == "skipped")) return Verdict.Unknown;
+            var vrs = step.VerifyResults ?? Array.Empty<VerifyResult>();
+            if (vrs.Any(x => x.Status == "failed")) return Verdict.NeedsReview;
+            // `unavailable`/`skipped` on a passed (warn/off) step = evidence could not be produced ⇒ not "verified".
+            // `not_applicable` (a conditional that did not apply) is legitimately silent and does NOT downgrade.
+            if (vrs.Any(x => x.Status == "unavailable" || x.Status == "skipped")) return Verdict.Unknown;
             return Verdict.Verified;
         }
 
@@ -120,7 +123,8 @@ namespace Semanticus.Engine.Evidence
         {
             "passed" => Verdict.Verified,
             "failed" => step.Status == "passed" ? Verdict.NeedsReview : Verdict.Broken,
-            _ => Verdict.Unknown,
+            "unavailable" => step.Status == "passed" ? Verdict.Unknown : Verdict.Broken,
+            _ => Verdict.Unknown,   // not_applicable / skipped — no evidence, neutral
         };
 
         private static string StepNote(StepResult step)

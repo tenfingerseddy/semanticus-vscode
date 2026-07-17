@@ -102,5 +102,25 @@ namespace Semanticus.Tests
             }
             finally { try { Directory.Delete(ws, true); } catch { } }
         }
+
+        [Fact]
+        public void Executable_provenance_distinguishes_legacy_records_from_genuine_mismatches()
+        {
+            var current = EngineBroker.CurrentExecutablePath();
+            Assert.False(string.IsNullOrWhiteSpace(current));
+            Assert.True(EngineBroker.HasExecutableProvenance(SelfInfo(exePath: current)));
+            Assert.True(EngineBroker.ExecutableMatches(SelfInfo(exePath: current)));
+
+            var different = Path.Combine(Path.GetDirectoryName(current) ?? Path.GetTempPath(), "other-" + Path.GetFileName(current));
+            Assert.True(EngineBroker.HasExecutableProvenance(SelfInfo(exePath: different)));
+            Assert.False(EngineBroker.ExecutableMatches(SelfInfo(exePath: different)));
+            Assert.False(EngineBroker.HasExecutableProvenance(SelfInfo(exePath: "")));
+            Assert.False(EngineBroker.HasExecutableProvenance(null));
+            Assert.False(EngineBroker.ExecutableMatches(SelfInfo(exePath: "")));
+            Assert.False(EngineBroker.ExecutableMatches(null));
+
+            if (OperatingSystem.IsWindows())
+                Assert.True(EngineBroker.ExecutableMatches(SelfInfo(exePath: current.ToUpperInvariant())));
+        }
     }
 }

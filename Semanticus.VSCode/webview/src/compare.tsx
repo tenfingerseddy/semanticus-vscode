@@ -16,7 +16,7 @@ function isSignInError(msg: string | null): boolean {
 // preset (Source=session, Target=gitref:HEAD) rendered with the SAME <CompareGrid>. Phase 1: read-only
 // drill-down (summary → object → property → code) + apply-into-a-FILE target (the today-supported applyDiff
 // target). Merge-into-the-open-session and copy/paste land in Phases 2–3.
-export interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; label?: string; }
+export interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
 export interface ModelDiffItem { ref: string; objectType: string; name: string; table?: string; action: string; leftText?: string; rightText?: string; matchedByName?: boolean; }
 export interface ModelDiff { leftLabel?: string; rightLabel?: string; created: number; updated: number; deleted: number; equal: number; items: ModelDiffItem[]; error?: string; }
 export interface ApplyDiffResult { applied: boolean; count: number; appliedRefs: string[]; failedRefs: string[]; target?: string; note?: string; error?: string; }
@@ -274,7 +274,7 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   async function signInAndRetry() {
     if (right.kind !== 'workspace' || !right.endpoint) return;
     setErr(null);
-    const ok = await connectXmla(right.endpoint, right.database ?? '', 'interactive');
+    const ok = await connectXmla(right.endpoint, right.database ?? '', 'interactive', right.tenantId ?? null);
     if (ok) void compare();
     else setErr('Sign-in did not complete. Try again, or use the Connect panel to sign in with an account that has access to this workspace.');
   }

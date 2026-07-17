@@ -275,7 +275,7 @@ verify:
 
             Assert.Equal(new[] { "bpa_clean" }, executed);             // dax_probe's when: did not hold
             var probe = run.Results[2].VerifyResults.Single(v => v.Kind == "dax_probe");
-            Assert.Equal("skipped", probe.Status);
+            Assert.Equal("not_applicable", probe.Status);              // E2: a conditional that did not hold is not_applicable (advances)
         }
 
         // ---- state machine + accountability ------------------------------------------------------

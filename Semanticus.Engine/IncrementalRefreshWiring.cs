@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Semanticus.Engine
 {
@@ -61,6 +62,141 @@ namespace Semanticus.Engine
                 + ",\n    " + stepRef + " = " + filterExpr
                 + source.Substring(last.End, shape.ResultStart - last.End)
                 + stepRef + source.Substring(shape.ResultEnd);
+        }
+
+        // [field] (>=|>|<=|<) RangeStart|RangeEnd  and the param-on-the-left mirror. Field content bans a nested
+        // '[' (a field access never opens another bracket) and un-escapes ']]' after capture.
+        private static readonly Regex ReFieldOpParam = new Regex(@"\[((?:\]\]|[^\[\]])*)\]\s*(?:<=|<|>=|>)\s*(RangeStart|RangeEnd)\b", RegexOptions.Compiled);
+        private static readonly Regex ReParamOpField = new Regex(@"\b(RangeStart|RangeEnd)\s*(?:<=|<|>=|>)\s*\[((?:\]\]|[^\[\]])*)\]", RegexOptions.Compiled);
+
+        /// <summary>Parse the SOURCE field the partition's range filter compares — with parse CONFIDENCE strong
+        /// enough to drive a hard rejection. A field only counts when BOTH RangeStart and RangeEnd bound the SAME
+        /// field inside the SAME predicate expression (an `each` or `=>` lambda body; top level otherwise), and
+        /// exactly ONE distinct pair-field exists in the whole expression. Anything else — a mixed-field pair,
+        /// half comparisons (an unrelated nested query bounding another table's field), several competing pairs,
+        /// or a compared field written as a quoted identifier ([#"Order Date"] — masked before matching, so
+        /// decoding it here would mean a second escape grammar; UNKNOWN is safe under the tier table, a wrong
+        /// field is not) — is UNKNOWN (returns false): the caller must not reject on suspicion. Comments and
+        /// string literals are masked first, so a mention in either can neither convict nor pair.</summary>
+        public static bool TryParseRangeField(string m, out string field)
+        {
+            field = null;
+            if (string.IsNullOrWhiteSpace(m)) return false;
+            var code = MaskNonCode(m);
+            var seg = SegmentIds(code);
+            var comps = new List<(string Field, string Param, int Seg)>();
+            // A compared field whose captured text was MASKED (differs from the original at the same span)
+            // contained a quoted identifier: stand down entirely rather than pair a name we cannot read.
+            bool Masked(Group g) => !string.Equals(g.Value, m.Substring(g.Index, g.Length), StringComparison.Ordinal);
+            foreach (Match x in ReFieldOpParam.Matches(code))
+            {
+                if (Masked(x.Groups[1])) return false;
+                comps.Add((x.Groups[1].Value.Replace("]]", "]", StringComparison.Ordinal), x.Groups[2].Value, seg[x.Index]));
+            }
+            foreach (Match x in ReParamOpField.Matches(code))
+            {
+                if (Masked(x.Groups[2])) return false;
+                comps.Add((x.Groups[2].Value.Replace("]]", "]", StringComparison.Ordinal), x.Groups[1].Value, seg[x.Index]));
+            }
+            var pairFields = comps.GroupBy(c => (c.Seg, c.Field))
+                .Where(g => g.Any(c => c.Param == "RangeStart") && g.Any(c => c.Param == "RangeEnd"))
+                .Select(g => g.Key.Field).Distinct().ToList();
+            if (pairFields.Count != 1) return false;
+            field = pairFields[0];
+            return true;
+        }
+
+        // Comments, string literals, and quoted identifiers become spaces (positions preserved), so the
+        // comparison regexes, the segment scanner, AND the range-filter prerequisite detector
+        // (LocalEngine.MFiltersOnRange shares this) only ever see live code — a range mention inside a string
+        // can neither satisfy the prerequisite nor pair a field.
+        internal static string MaskNonCode(string s)
+        {
+            var buf = s.ToCharArray();
+            var i = 0;
+            while (i < s.Length)
+            {
+                var start = i;
+                if (SkipNonCode(s, ref i)) { for (var j = start; j < i && j < buf.Length; j++) buf[j] = ' '; continue; }
+                i++;
+            }
+            return new string(buf);
+        }
+
+        /// <summary>A predicate-segment id per character: every lambda opener — the `each` keyword or a `=>`
+        /// arrow — opens a segment scoped to its enclosing bracket depth. A segment pops when that depth closes
+        /// OR at a comma at the same depth (the lambda extends only to the end of its argument — without the
+        /// comma-pop a following comparison in the NEXT argument would falsely share the lambda's segment).
+        /// Characters outside any lambda share segment 0. Bracketed field accesses / records with ']]' escapes
+        /// and no nested '[' are consumed atomically so an escaped ']' can neither corrupt the depth nor pop a
+        /// live segment.</summary>
+        private static int[] SegmentIds(string code)
+        {
+            var ids = new int[code.Length];
+            var stack = new Stack<(int Id, int Depth)>();
+            var next = 1;
+            var depth = 0;
+            var i = 0;
+            int Cur() => stack.Count > 0 ? stack.Peek().Id : 0;
+            while (i < code.Length)
+            {
+                var c = code[i];
+                if (c == '[')
+                {
+                    var j = i + 1;
+                    while (j < code.Length)
+                    {
+                        if (code[j] == '[') { j = -1; break; }   // nested bracket: not atomic, fall through
+                        if (code[j] == ']')
+                        {
+                            if (j + 1 < code.Length && code[j + 1] == ']') { j += 2; continue; }   // ]] escape
+                            break;
+                        }
+                        j++;
+                    }
+                    if (j > 0 && j < code.Length)
+                    {
+                        for (var k = i; k <= j; k++) ids[k] = Cur();
+                        i = j + 1;
+                        continue;
+                    }
+                }
+                if (c == ',')
+                {
+                    while (stack.Count > 0 && stack.Peek().Depth >= depth) stack.Pop();
+                    ids[i] = Cur();
+                    i++;
+                    continue;
+                }
+                if (c == '=' && i + 1 < code.Length && code[i + 1] == '>')
+                {
+                    stack.Push((next++, depth));
+                    ids[i] = Cur();
+                    ids[i + 1] = Cur();
+                    i += 2;
+                    continue;
+                }
+                if (c == '(' || c == '{' || c == '[') { ids[i] = Cur(); depth++; i++; continue; }
+                if (c == ')' || c == '}' || c == ']')
+                {
+                    depth--;
+                    while (stack.Count > 0 && depth < stack.Peek().Depth) stack.Pop();
+                    ids[i] = Cur();
+                    i++;
+                    continue;
+                }
+                if (IsIdentStart(c))
+                {
+                    var end = IdentEnd(code, i);
+                    if (end - i == 4 && string.CompareOrdinal(code, i, "each", 0, 4) == 0) stack.Push((next++, depth));
+                    for (var k = i; k < end; k++) ids[k] = Cur();
+                    i = end;
+                    continue;
+                }
+                ids[i] = Cur();
+                i++;
+            }
+            return ids;
         }
 
         private static bool TryShape(string source, out Shape shape)

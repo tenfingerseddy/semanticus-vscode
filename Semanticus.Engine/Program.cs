@@ -21,7 +21,7 @@ namespace Semanticus.Engine
                 default:
                     Console.Error.WriteLine("Semanticus.Engine");
                     Console.Error.WriteLine("Usage:");
-                    Console.Error.WriteLine("  serve --workspace <dir> [--open <modelPathOrFolder>] [--pipe <name>] [--license <token>]");
+                    Console.Error.WriteLine("  serve --workspace <dir> [--open <modelPathOrFolder>] [--pipe <name>] [--license <token>] --ui-challenge-stdin");
                     Console.Error.WriteLine("        Owner mode: hosts the model over a named pipe for the VS Code UI.");
                     Console.Error.WriteLine("  mcp   --workspace <dir> [--open <modelPathOrFolder>] [--license <token>]");
                     Console.Error.WriteLine("        MCP stdio server for Claude Code. Attaches to a running engine if present,");
@@ -36,10 +36,23 @@ namespace Semanticus.Engine
             var workspace = Path.GetFullPath(GetOpt(args, "--workspace") ?? Directory.GetCurrentDirectory());
             var open = GetOpt(args, "--open");
             var pipe = GetOpt(args, "--pipe") ?? EngineBroker.PipeNameFor(workspace);
+            var uiChallenge = Array.IndexOf(args, "--ui-challenge-stdin") >= 0 ? Console.In.ReadLine() : null;
+            if (string.IsNullOrWhiteSpace(uiChallenge))
+            {
+                Console.Error.WriteLine("[engine] --ui-challenge-stdin is required in owner/UI mode; refusing to expose an unauthenticated human RPC door.");
+                return 2;
+            }
 
             var existing = EngineBroker.ReadInfo(workspace);
             if (EngineBroker.IsAlive(existing))
             {
+                if (EngineBroker.HasExecutableProvenance(existing) && !EngineBroker.ExecutableMatches(existing))
+                {
+                    Console.Error.WriteLine("[engine] FATAL: a different Semanticus engine is already running for this workspace. Restart the engine, then reconnect the AI Assistant.");
+                    return 1;
+                }
+                if (!EngineBroker.HasExecutableProvenance(existing))
+                    Console.Error.WriteLine("[engine] WARNING: the running engine predates executable provenance. Leaving it in place; restart the engine to record its source.");
                 Console.Error.WriteLine($"[engine] already running for {workspace} (pid {existing.Pid}, pipe {existing.PipeName}).");
                 return 0;
             }
@@ -71,7 +84,7 @@ namespace Semanticus.Engine
                     Console.Error.WriteLine($"[engine] opened '{r.ModelName}': {r.Tables} tables, {r.Measures} measures.");
                 }
 
-                using var server = new RpcServer(sessions, engine, pipe);
+                using var server = new RpcServer(sessions, engine, pipe, uiChallenge);
                 EngineBroker.WriteInfo(workspace, NewInfo(pipe, workspace));
                 Console.Error.WriteLine($"[engine] listening on \\\\.\\pipe\\{pipe} (workspace {workspace}).");
 
@@ -126,12 +139,19 @@ namespace Semanticus.Engine
                 var info = EngineBroker.ReadInfo(workspace);
                 if (EngineBroker.IsAlive(info))
                 {
+                    if (EngineBroker.HasExecutableProvenance(info) && !EngineBroker.ExecutableMatches(info))
+                    {
+                        Console.Error.WriteLine("[mcp] FATAL: the running Semanticus engine belongs to a different installed or F5 build. Restart the engine, then reconnect the AI Assistant.");
+                        return 1;
+                    }
+                    if (!EngineBroker.HasExecutableProvenance(info))
+                        Console.Error.WriteLine("[mcp] WARNING: the running engine predates executable provenance. Attaching for this session; restart the engine to record its source.");
                     // Re-check right before the connect: it is the one slow step, and entering it at the deadline
                     // would stretch the election well past what the message promises.
                     if (election.Elapsed >= deadline) return FailElection();
                     try
                     {
-                        engine = await RemoteEngine.ConnectAsync(info.PipeName, workspace);
+                        engine = await RemoteEngine.ConnectAsync(info.PipeName, workspace, requireMatchingExecutable: true);
                         Console.Error.WriteLine($"[mcp] attached to running engine (pid {info.Pid}, pipe {info.PipeName}).");
                         break;
                     }
@@ -172,6 +192,9 @@ namespace Semanticus.Engine
                 // Number time-machine (feature #3): ambient vital-signs capture, owner-attached like the tee.
                 local.AmbientVitalsEnabled = true;
                 var pipe = EngineBroker.PipeNameFor(workspace);
+                // An MCP-owned server has no human proof to trust, so it explicitly rejects the UI handshake.
+                // VS Code treats that authenticated rejection as the ownership-reclaim signal and restarts this
+                // process as the human owner; a subsequent MCP launch then attaches through RemoteEngine.
                 var server = new RpcServer(sessions, local, pipe);
                 _ = server.RunAsync(CancellationToken.None);
                 EngineBroker.WriteInfo(workspace, NewInfo(pipe, workspace));   // we hold the lock ⇒ publish unconditionally

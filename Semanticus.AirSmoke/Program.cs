@@ -1697,22 +1697,25 @@ namespace Semanticus.AirSmoke
                 }
                 catch (Exception dlex) { Console.WriteLine("[i] direct-lake in-memory check skipped (TOM rejected DL construction here): " + dlex.Message); _failures++; }
 
-                // VertiPaq.Compute is a pure function — assert the Direct Lake flag turns resident-only storage figures
-                // into honest "unknown" rows + a caveat, while Import is unchanged (covers M2/M3 without a live engine).
+                // VertiPaq.Compute is a pure function. Assert the tri-state mode keeps resident-only and unknown
+                // observations from presenting row totals, while proven Import remains unchanged.
                 {
                     ResultSet Rs(string[] names, object[][] rows) => new ResultSet { Columns = names.Select(n => new ColumnDef { Name = n, Type = "x" }).ToArray(), Rows = rows, RowCount = rows.Length };
                     var seg = Rs(new[] { "DIMENSION_NAME", "COLUMN_ID", "USED_SIZE" }, new[] { new object[] { "Sales", "1", 1000L }, new object[] { "Sales", "2", 2000L } });
                     var col = Rs(new[] { "DIMENSION_NAME", "ATTRIBUTE_NAME", "COLUMN_ID", "COLUMN_ENCODING", "DICTIONARY_SIZE", "STRING_INDEX_SIZE" },
                         new[] { new object[] { "Sales", "Amount", "1", "1", 500L, 100L }, new object[] { "Sales", "Qty", "2", "2", 300L, 0L } });
                     var tbl = Rs(new[] { "DIMENSION_NAME", "ROWS_COUNT" }, new[] { new object[] { "Sales", 2300000L } });
-                    var imp = VertiPaq.Compute(seg, col, tbl, 25, isDirectLake: false);
-                    Check("vertipaq(import): rows reported (not null), no caveat, not flagged",
-                        imp.Tables.Length > 0 && imp.Tables.All(t => t.Rows.HasValue) && !imp.IsDirectLake && imp.Caveat == null);
-                    var dl = VertiPaq.Compute(seg, col, tbl, 25, isDirectLake: true);
-                    Check("vertipaq(direct lake): row counts become unknown (null) + flagged + caveat set",
-                        dl.IsDirectLake && !string.IsNullOrEmpty(dl.Caveat) && dl.Tables.Length > 0 && dl.Tables.All(t => t.Rows == null));
+                    var imp = VertiPaq.Compute(seg, col, tbl, 25, VpaqStorageMode.Import);
+                    Check("vertipaq(import): rows reported (not null), no caveat, mode proven",
+                        imp.Tables.Length > 0 && imp.Tables.All(t => t.Rows.HasValue) && imp.StorageMode == VpaqStorageMode.Import && imp.Caveat == null);
+                    var dl = VertiPaq.Compute(seg, col, tbl, 25, VpaqStorageMode.DirectLake);
+                    Check("vertipaq(direct lake): row counts become unknown (null) + mode + caveat set",
+                        dl.StorageMode == VpaqStorageMode.DirectLake && !string.IsNullOrEmpty(dl.Caveat) && dl.Tables.Length > 0 && dl.Tables.All(t => t.Rows == null));
                     Check("vertipaq(direct lake): the flag only affects rows/labelling, not sizes",
                         dl.ModelSize == imp.ModelSize && dl.ModelSize > 0);
+                    var unknown = VertiPaq.Compute(seg, col, tbl, 25);
+                    Check("vertipaq(unknown): row counts stay unavailable and mode does not fall through to import",
+                        unknown.StorageMode == VpaqStorageMode.Unknown && !string.IsNullOrEmpty(unknown.Caveat) && unknown.Tables.All(t => t.Rows == null));
                 }
 
                 // ---- CREATE FROM SCRATCH (Phase 2) — build a Fabric-first model from nothing, save, reopen ----

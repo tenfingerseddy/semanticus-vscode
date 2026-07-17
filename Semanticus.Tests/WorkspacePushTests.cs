@@ -1087,5 +1087,120 @@ namespace Semanticus.Tests
             }
             finally { File.Delete(src); }
         }
+
+        // ---- ROUND 6 · BLOCKER 1: a same-name CROSS-TABLE re-point whose Create can't stage refuses the Delete ----
+
+        // A Sales fact with two candidate FROM columns + two dims (Customer, CustomerV2), each with an Id. The single
+        // relationship named "r" joins Sales[fromCol] -> toTable[Id]. Re-pointing to a DIFFERENT table (or moving BOTH
+        // endpoints) keeps the NAME but changes the endpoint signature, so IsEndpointRepoint misses and only the shared
+        // name couples the pair. Both dims + both keys exist on every snapshot so the re-pointed Create's endpoints RESOLVE
+        // in snapshot B — the Create fails ONLY on the duplicate relationship name (the exact staging collision).
+        private static TOM.Database RepointDb(string fromCol, string toTable, string relName)
+        {
+            var db = new TOM.Database("t") { CompatibilityLevel = 1600, Model = new TOM.Model() };
+            void AddDim(string name, string tag)
+            {
+                var t = new TOM.Table { Name = name, LineageTag = tag };
+                t.Partitions.Add(new TOM.Partition { Name = name, Source = new TOM.MPartitionSource { Expression = "let S = 1 in S" } });
+                t.Columns.Add(new TOM.DataColumn { Name = "Id", SourceColumn = "Id", DataType = TOM.DataType.Int64, LineageTag = tag + "-id" });
+                db.Model.Tables.Add(t);
+            }
+            AddDim("Customer", "tag-cust");
+            AddDim("CustomerV2", "tag-custv2");
+            var sales = new TOM.Table { Name = "Sales", LineageTag = "tag-sales" };
+            sales.Partitions.Add(new TOM.Partition { Name = "Sales", Source = new TOM.MPartitionSource { Expression = "let S = 1 in S" } });
+            sales.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", SourceColumn = "CustomerKey", DataType = TOM.DataType.Int64, LineageTag = "tag-ck" });
+            sales.Columns.Add(new TOM.DataColumn { Name = "OtherKey", SourceColumn = "OtherKey", DataType = TOM.DataType.Int64, LineageTag = "tag-ok" });
+            db.Model.Tables.Add(sales);
+            db.Model.Relationships.Add(new TOM.SingleColumnRelationship
+            {
+                Name = relName,
+                FromColumn = sales.Columns[fromCol], ToColumn = db.Model.Tables[toTable].Columns["Id"],
+                FromCardinality = TOM.RelationshipEndCardinality.Many, ToCardinality = TOM.RelationshipEndCardinality.One
+            });
+            return db;
+        }
+
+        [Fact]
+        public async Task Cross_table_relationship_repoint_refuses_the_delete_when_the_same_name_create_cannot_stage()
+        {
+            // The exact BLOCKER-1 (round 6) sequence: live has r: Sales[CustomerKey]->Customer[Id]; source keeps the NAME r
+            // but re-points the TO endpoint to CustomerV2. ModelCompare emits Create(new sig)+Delete(old sig); the endpoint
+            // predicate can't pair a cross-table move, so ONLY the shared name couples them. Staging merges the Create into
+            // snapshot B, where the old r still lives -> the merged Create collides on the DUPLICATE NAME and lands in
+            // outcome.Failed. Without the name coupling the Delete would be unlinked and commit alone, leaving the live model
+            // with NO relationship. With it, the staging guard refuses the Delete and aborts the whole push (nothing written).
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));   // Create + Delete = multi-object -> Pro
+            var src = WriteBim(RepointDb("CustomerKey", "CustomerV2", "r"));
+            try
+            {
+                var pushed = false;
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(RepointDb("CustomerKey", "Customer", "r"));   // live: r -> Customer[Id]
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "relationship:Sales[CustomerKey]->CustomerV2[Id]", "relationship:Sales[CustomerKey]->Customer[Id]" },
+                    commit: true, "human");
+
+                Assert.False(r.Applied);
+                Assert.False(pushed);                                                                 // aborted BEFORE any live write — live keeps the old relationship
+                Assert.Contains("staged", r.Error ?? "");                                             // "...could not be staged..."
+                Assert.Contains(r.FailedRefs, f => f.Contains("Sales[CustomerKey]->Customer[Id]") && f.Contains("replacement"));
+            }
+            finally { File.Delete(src); }
+        }
+
+        [Fact]
+        public async Task Both_endpoints_move_relationship_repoint_refuses_the_delete_when_the_same_name_create_cannot_stage()
+        {
+            // The both-endpoints-move variant: source keeps the NAME r but moves the FROM column (CustomerKey->OtherKey) AND
+            // the TO table (Customer->CustomerV2). No endpoint part is shared, so only the name couples the pair. Same
+            // staging collision on the duplicate name -> the Create can't stage -> the coupled Delete is refused and the
+            // whole push aborts. Nothing reaches live; the original relationship survives.
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var src = WriteBim(RepointDb("OtherKey", "CustomerV2", "r"));
+            try
+            {
+                var pushed = false;
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(RepointDb("CustomerKey", "Customer", "r"));
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "relationship:Sales[OtherKey]->CustomerV2[Id]", "relationship:Sales[CustomerKey]->Customer[Id]" },
+                    commit: true, "human");
+
+                Assert.False(r.Applied);
+                Assert.False(pushed);
+                Assert.Contains("staged", r.Error ?? "");
+                Assert.Contains(r.FailedRefs, f => f.Contains("Sales[CustomerKey]->Customer[Id]") && f.Contains("replacement"));
+            }
+            finally { File.Delete(src); }
+        }
+
+        [Fact]
+        public async Task A_case_only_name_difference_still_couples_the_repoint_and_refuses_the_delete()
+        {
+            // AS/TOM collection keys are case-insensitive: source "r" collides at staging with live "R" exactly like an
+            // exact-case pair, so SameRelName must couple them case-insensitively too. Ordinal comparison here would leave
+            // the Delete unlinked and commit it alone: live loses "R" with no replacement.
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var src = WriteBim(RepointDb("CustomerKey", "CustomerV2", "r"));
+            try
+            {
+                var pushed = false;
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(RepointDb("CustomerKey", "Customer", "R"));   // live: "R", source: "r"
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "relationship:Sales[CustomerKey]->CustomerV2[Id]", "relationship:Sales[CustomerKey]->Customer[Id]" },
+                    commit: true, "human");
+
+                Assert.False(r.Applied);
+                Assert.False(pushed);                                                                 // live keeps "R"; nothing written
+                Assert.Contains("staged", r.Error ?? "");
+                Assert.Contains(r.FailedRefs, f => f.Contains("Sales[CustomerKey]->Customer[Id]") && f.Contains("replacement"));
+            }
+            finally { File.Delete(src); }
+        }
     }
 }

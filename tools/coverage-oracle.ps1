@@ -28,7 +28,7 @@ function Get-Family([string]$operation) {
         '^(bpa_|load_bpa_rules|reset_bpa_rules|list_waivers|waive_finding|unwaive_finding)' { return 'bpa-and-waivers' }
         '^(get_lineage|impact_of|impact_assessment|unused_objects|remove_safe_objects|analyze_reports|analyze_cloud_reports|list_reports)' { return 'lineage-and-impact' }
         '^(model_diff|apply_model_diff|cherry_pick|get_reference_tree|git_|create_history_checkpoint|list_history_checkpoints|restore_history_checkpoint)' { return 'compare-and-source-control' }
-        '^(list_connections|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy)' { return 'connections' }
+        '^(list_connections|list_connection_history|probe_connection_accounts|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy)' { return 'connections' }
         '^(deploy_|preview_deploy|deployment_history|list_workspaces|list_deployment_pipelines|get_pipeline_stages|get_stage_items|fabric_git_|cicd_|rollback_push|list_restore_points|purge_restore_points|refresh_partition)' { return 'deployment-and-fabric' }
         '^(list_data_agents|get_data_agent|generate_data_agent_config|create_data_agent|update_data_agent|delete_data_agent|publish_data_agent)' { return 'data-agent' }
         '^(propose_plan|get_plan|set_plan_item|add_plan_item|apply_plan|clear_plan|capture_baseline|compare_baseline|get_verified_mode|set_verified_mode|list_verified_edits|export_verified_edits)' { return 'change-plan-and-verified-edits' }
@@ -58,14 +58,16 @@ function Get-Risk([string]$operation) {
     return 'standard'
 }
 
-$mcpPaths = @(git ls-files 'Semanticus.Engine/McpTools*.cs' | Sort-Object)
+# Include non-ignored untracked source too: generation commonly runs before `git add`, and an oracle whose
+# result changes merely because the same file became staged is ambient-git-state dependent (local green, CI red).
+$mcpPaths = @(git ls-files --cached --others --exclude-standard -- 'Semanticus.Engine/McpTools*.cs' | Sort-Object -Unique)
 $mcpSource = ($mcpPaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
 $toolNames = [regex]::Matches($mcpSource, 'McpServerTool\(Name\s*=\s*"([^"]+)"\)') |
     ForEach-Object { $_.Groups[1].Value } |
     Sort-Object -Unique
 
-$tracked = @(git ls-files)
-$evidenceFiles = @($tracked | Where-Object {
+$candidateFiles = @(git ls-files --cached --others --exclude-standard | Sort-Object -Unique)
+$evidenceFiles = @($candidateFiles | Where-Object {
     ($_ -match '^(Semanticus\.(Tests|Smoke|RpcSmoke|McpSmoke|AirSmoke|CicdSmoke|LearnSmoke|LearnBench)/|Semanticus\.VSCode/(src/test|test)/)') -and
     ($_ -match '\.(cs|mjs)$')
 })
@@ -94,7 +96,11 @@ $operations = foreach ($tool in $toolNames) {
     }
 }
 
-$rpcSource = Get-Content -LiteralPath 'Semanticus.Engine/EngineRpcTarget.cs' -Raw
+$rpcPaths = @(
+    'Semanticus.Engine/EngineRpcTarget.cs',
+    'Semanticus.Engine/HumanGovernanceRpcTarget.cs'
+)
+$rpcSource = ($rpcPaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
 $rpcCount = ([regex]::Matches($rpcSource, 'public\s+(?:async\s+)?Task(?:<[^>]+>)?\s+[A-Za-z0-9_]+\s*\(')).Count
 $iEngineSource = Get-Content -LiteralPath 'Semanticus.Engine/IEngine.cs' -Raw
 $iEngineCount = ([regex]::Matches($iEngineSource, '^\s*Task<', [Text.RegularExpressions.RegexOptions]::Multiline)).Count
@@ -118,7 +124,7 @@ $withoutReference = @($operations | Where-Object { $_.referenceEvidence.Count -e
 $inventory = [ordered]@{
     schemaVersion = 1
     sourceHash = $sourceHash
-    sources = @($mcpPaths) + @('Semanticus.Engine/EngineRpcTarget.cs', 'Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx')
+    sources = @($mcpPaths) + $rpcPaths + @('Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx')
     summary = [ordered]@{
         mcpOperations = $operations.Count
         rpcActions = $rpcCount

@@ -12,10 +12,20 @@ import { RelationshipsView } from './relationships';
 import type { ColumnRow } from './wire';
 import { uiLabel } from './copy';
 
+// Field-parameter accent: a restrained muted violet (Kane's "purple") that sits beside the Ink+Signal palette
+// without competing with Signal green / date amber / calc teal. Solid swatch takes black text like the others.
+const FIELD_PARAM_VIOLET = '#9B7EDE';
+
 // wire types (camelCase, from Semanticus.Engine/Protocol.cs)
-export interface GraphTable { ref: string; name: string; isHidden: boolean; isDateTable: boolean; isCalculated: boolean; columns: number; measures: number; keyColumns: string[]; hasDescription: boolean; }
+export interface GraphTable { ref: string; name: string; isHidden: boolean; isDateTable: boolean; isCalculated: boolean; isFieldParameter: boolean; columns: number; measures: number; keyColumns: string[]; hasDescription: boolean; }
 export interface GraphRelationship { name: string; fromTable: string; fromColumn: string; toTable: string; toColumn: string; fromCardinality: string; toCardinality: string; crossFilter: string; isActive: boolean; }
 export interface ModelGraph { tables: GraphTable[]; relationships: GraphRelationship[]; }
+
+// Each table falls into exactly ONE kind for the diagram's type filters. A field parameter IS a calculated table,
+// so FP takes precedence over calc (it matches the "Field params" filter, never "Calculated"); everything else is a
+// regular data table. A date table is a data-CATEGORY, not a kind, so it counts as a regular data table here.
+type TableKind = 'data' | 'calc' | 'fp';
+const kindOf = (t: GraphTable): TableKind => (t.isFieldParameter ? 'fp' : t.isCalculated ? 'calc' : 'data');
 
 const NODE_W = 190;   // minimum node width (collapsed)
 const NODE_H = 92;    // minimum node height (collapsed)
@@ -85,9 +95,10 @@ function anchorStyle(side: Position, frac: number): React.CSSProperties {
 
 function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
   const t = data.t;
-  // Colour tables by role so the map reads at a glance: connected = Signal green, date = amber,
-  // calculated = teal, isolated (no relationships) = blue (informational, not alarming — avoids a red/green clash).
-  const accent = t.isDateTable ? 'var(--sem-warn)' : t.isCalculated ? '#17B3A3' : data.rels === 0 ? '#2E7BD0' : 'var(--sem-accent)';
+  // Colour tables by role so the map reads at a glance: connected = Signal green, date = amber, field parameter =
+  // muted violet, calculated = teal, isolated (no relationships) = blue (informational, not alarming — avoids a
+  // red/green clash). A field parameter IS a calc table, so it must be tested before the plain-calc branch.
+  const accent = t.isDateTable ? 'var(--sem-warn)' : t.isFieldParameter ? FIELD_PARAM_VIOLET : t.isCalculated ? '#17B3A3' : data.rels === 0 ? '#2E7BD0' : 'var(--sem-accent)';
 
   // Expanded column list: key + already-related columns first, then a divider, then the rest. Search filters across all.
   const cols = useMemo(() => {
@@ -123,7 +134,10 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
         <span className="ml-auto flex items-center gap-1 shrink-0">
           {t.isHidden && <span className="text-[9px] px-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }} title="Hidden from report view">hidden</span>}
           {t.isDateTable && <span className="text-[9px] px-1 rounded" style={{ background: 'var(--sem-warn)', color: '#000' }}>DATE</span>}
-          {t.isCalculated && <span className="text-[9px] px-1 rounded" style={{ background: '#17B3A3', color: '#000' }}>CALC</span>}
+          {/* A field parameter is a calc table — show the more specific FP marker instead of CALC, never both. */}
+          {t.isFieldParameter
+            ? <span className="text-[9px] px-1 rounded" style={{ background: FIELD_PARAM_VIOLET, color: '#000' }} title="Field parameter">FP</span>
+            : t.isCalculated && <span className="text-[9px] px-1 rounded" style={{ background: '#17B3A3', color: '#000' }}>CALC</span>}
         </span>
       </div>
       {!data.expanded ? (
@@ -616,15 +630,41 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   const allActiveRef = useRef(active.all);
   useEffect(() => { allActiveRef.current = active.all; }, [active.all]);
 
-  // The tables this diagram shows, in model order (curated set ∩ still-existing tables).
-  const members = useMemo<GraphTable[]>(() => {
+  // The tables this diagram SCOPES to, in model order (curated set ∩ still-existing tables) — before type filters.
+  const baseMembers = useMemo<GraphTable[]>(() => {
     if (!graph) return [];
     if (active.all) return graph.tables;
     const set = new Set(active.tables);
     return graph.tables.filter((t) => set.has(t.name));
   }, [graph, active]);
-  // Stable identity of the shown set — drives a relayout only when membership changes (NOT on drag).
-  const membershipKey = active.all ? 'ALL' : members.map((t) => t.name).join('|');
+  // Type-kind toggles — hide whole table KINDS from the canvas. Persisted like the other diagram view state (snap),
+  // all ON by default. Each table is exactly one kind (kindOf), so toggling Calculated off never hides field params.
+  const [showData, setShowData] = useState<boolean>(() => loadState<boolean>('diagramKindData', true));
+  const [showCalc, setShowCalc] = useState<boolean>(() => loadState<boolean>('diagramKindCalc', true));
+  const [showFp, setShowFp] = useState<boolean>(() => loadState<boolean>('diagramKindFp', true));
+  const shownKind = useCallback((t: GraphTable) => { const k = kindOf(t); return k === 'fp' ? showFp : k === 'calc' ? showCalc : showData; }, [showData, showCalc, showFp]);
+  // The tables actually RENDERED = scope minus any hidden kinds. Edges to a hidden table drop out automatically
+  // (edgesFor filters relationships to the member set), so filtering never leaves a dangling relationship line.
+  const members = useMemo<GraphTable[]>(() => baseMembers.filter(shownKind), [baseMembers, shownKind]);
+  // Per-kind counts (from the scope, not the filtered set) so each chip shows how many it governs.
+  const kindCounts = useMemo(() => {
+    let data = 0, calc = 0, fp = 0;
+    for (const t of baseMembers) { const k = kindOf(t); if (k === 'fp') fp++; else if (k === 'calc') calc++; else data++; }
+    return { data, calc, fp };
+  }, [baseMembers]);
+  // An explicit add (drop / picker / host request) is an unambiguous "show me this table" — if its kind is
+  // currently filtered out, flip that kind's toggle back on so the add never lands invisibly.
+  const revealKinds = useCallback((names: string[]) => {
+    if (!graph) return;
+    const byName = new Map(graph.tables.map((t) => [t.name, t]));
+    for (const n of names) {
+      const t = byName.get(n); if (!t) continue;
+      const k = kindOf(t);
+      if (k === 'fp') setShowFp(true); else if (k === 'calc') setShowCalc(true); else setShowData(true);
+    }
+  }, [graph]);
+  // Stable identity of the shown set — drives a relayout when membership OR the kind filters change (NOT on drag).
+  const membershipKey = (active.all ? 'ALL' : members.map((t) => t.name).join('|')) + `#${showData ? 1 : 0}${showCalc ? 1 : 0}${showFp ? 1 : 0}`;
   const layout: LayoutMode = active.layout ?? 'free';
   const expandedKey = JSON.stringify(active.expanded ?? {});
 
@@ -647,6 +687,9 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   useEffect(() => { saveState('diagrams', diagrams); }, [diagrams]);
   useEffect(() => { saveState('activeDiagramId', activeId); }, [activeId]);
   useEffect(() => { saveState('diagramSnap', snap); }, [snap]);
+  useEffect(() => { saveState('diagramKindData', showData); }, [showData]);
+  useEffect(() => { saveState('diagramKindCalc', showCalc); }, [showCalc]);
+  useEffect(() => { saveState('diagramKindFp', showFp); }, [showFp]);
   // heal a stale active id (e.g. a custom diagram deleted in a prior session) so the switcher never dangles
   useEffect(() => { if (!diagrams.some((d) => d.id === activeId)) setActiveId(ALL_ID); }, [diagrams, activeId]);
 
@@ -692,16 +735,20 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   const editActive = useCallback((fn: (d: SavedDiagram) => SavedDiagram) =>
     setDiagrams((ds) => ds.map((d) => (d.id === activeId ? fn(d) : d))), [activeId]);
 
-  const addTables = useCallback((names: string[]) =>
-    editActive((d) => ({ ...d, all: false, tables: uniq([...d.tables, ...names]) })), [editActive]);
+  const addTables = useCallback((names: string[]) => {
+    revealKinds(names);   // every add path (picker, palette, ＋ related) must surface the table, not hide it behind a filter
+    editActive((d) => ({ ...d, all: false, tables: uniq([...d.tables, ...names]) }));
+  }, [editActive, revealKinds]);
   // Add tables at a dropped canvas position (drag from the Model tree). Each NEW table is seeded a position near the
   // drop point (cascaded so a multi-select doesn't stack exactly), so the reconcile places it there instead of dagre-ing.
-  const addTablesAt = useCallback((names: string[], at: XY) =>
+  const addTablesAt = useCallback((names: string[], at: XY) => {
+    revealKinds(names);
     editActive((d) => {
       const positions = { ...d.positions };
       names.forEach((n, i) => { if (!d.tables.includes(n)) positions[n] = { x: at.x + i * 28, y: at.y + i * 28 }; });
       return { ...d, all: false, tables: uniq([...d.tables, ...names]), positions };
-    }), [editActive]);
+    });
+  }, [editActive, revealKinds]);
   const removeTable = useCallback((name: string) =>
     editActive((d) => { const { [name]: _drop, ...rest } = d.positions; return { ...d, tables: d.tables.filter((t) => t !== name), positions: rest }; }), [editActive]);
   const addRelated = useCallback((name: string) => {
@@ -826,16 +873,21 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   // (the fixed-NODE_H dagre/matrix math assumes collapsed nodes), persist positions, and fit the view.
   const arrangeWith = useCallback((layoutFn: (m: GraphTable[], r: GraphRelationship[], sizeOf: SizeOf) => Map<string, XY>, mode: LayoutMode) => {
     if (!graph) return;
+    // Arrange the FULL diagram scope (baseMembers), never the kind-filtered view: the filters hide tables, they
+    // don't evict them — so an arrangement must keep placing (and persisting) hidden tables too. Arranging only
+    // the visible subset then writing the whole map would silently drop the hidden tables' saved positions (and
+    // wipe the map entirely with every kind hidden); re-enabling a kind now lands those tables in their coherent
+    // slots of the SAME arrangement instead of stacked outside it as unknowns.
     // Size each node from the anchors of the TARGET layout (handle sides differ per layout), so spacing matches
     // exactly the box the node will render at — busy nodes get their own wider/taller footprint.
-    const anchors = computeAnchors(members, graph.relationships, mode);
+    const anchors = computeAnchors(baseMembers, graph.relationships, mode);
     const sizeOf: SizeOf = (n) => sizeForAnchors(anchors.get(n) ?? EMPTY_ANCHORS);
-    const placed = layoutFn(members, graph.relationships, sizeOf);
+    const placed = layoutFn(baseMembers, graph.relationships, sizeOf);
     setNodes((ns) => ns.map((n) => ({ ...n, position: placed.get(n.id) ?? n.position })));
     editActive((d) => ({ ...d, positions: Object.fromEntries(placed), layout: mode, expanded: {} }));
     if (active.all) saveEngineLayout(Object.fromEntries(placed));
     window.setTimeout(() => rf.fitView({ padding: 0.2, duration: 300 }), 30);
-  }, [graph, members, setNodes, editActive, rf, active.all, saveEngineLayout]);
+  }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout]);
   const autoArrange = useCallback(() => arrangeWith(hierarchyPositions, 'hierarchy'), [arrangeWith]);
   const busMatrix = useCallback(() => arrangeWith(busMatrixPositions, 'busmatrix'), [arrangeWith]);
   const layered = useCallback(() => arrangeWith(layeredPositions, 'layered'), [arrangeWith]);
@@ -858,12 +910,16 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     if (!dropped.length) return;
     if (active.all) { setToast({ text: 'Switch to (or create) a custom diagram to add tables. “All tables” already shows them all.', tone: 'error' }); return; }
     const known = new Set(graph?.tables.map((t) => t.name) ?? []);
-    const shown = new Set(members.map((t) => t.name));
-    const toAdd = [...new Set(dropped)].filter((t) => known.has(t) && !shown.has(t));
+    // Duplicate check against the diagram SCOPE, not the kind-filtered view — a filtered-out table is still on
+    // the diagram, so re-dropping it must not toast a false "added". revealKinds then makes it visible.
+    const inScope = new Set(baseMembers.map((t) => t.name));
+    const valid = [...new Set(dropped)].filter((t) => known.has(t));
+    revealKinds(valid);
+    const toAdd = valid.filter((t) => !inScope.has(t));
     if (!toAdd.length) { setToast({ text: 'Already on this diagram.', tone: 'ok' }); return; }
     addTablesAt(toAdd, rf.screenToFlowPosition({ x: clientX, y: clientY }));
     setToast({ text: `✓ added ${toAdd.length} table${toAdd.length > 1 ? 's' : ''}`, tone: 'ok' });
-  }, [active.all, graph, members, addTablesAt, rf]);
+  }, [active.all, graph, baseMembers, revealKinds, addTablesAt, rf]);
 
   // Host command "Add to Studio Diagram": add the selected table(s). On a custom diagram → add to it; on "All tables"
   // (already shows everything) → create a new custom diagram seeded with them and switch to it. Reconcile lays them out.
@@ -871,6 +927,7 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     const known = new Set(graph?.tables.map((t) => t.name) ?? []);
     const valid = [...new Set(names)].filter((n) => known.has(n));
     if (!valid.length) { setToast({ text: 'No matching tables to add.', tone: 'error' }); return; }
+    revealKinds(valid);   // an added table must never land invisibly behind a kind filter
     if (active.all) {
       const id = 'd_' + Date.now().toString(36);
       setDiagrams((ds) => [...ds, { id, name: 'Diagram', all: false, tables: valid, positions: {} }]);
@@ -881,7 +938,7 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
       addTables(valid);
       setToast(novel.length ? { text: `✓ added ${novel.length} table${novel.length > 1 ? 's' : ''}`, tone: 'ok' } : { text: 'Already on this diagram.', tone: 'ok' });
     }
-  }, [graph, active.all, active.tables, addTables]);
+  }, [graph, active.all, active.tables, addTables, revealKinds]);
 
   // Consume a one-shot host add-request exactly once (monotonic nonce; the module-level guard survives remounts so
   // leaving and returning to the tab can't replay a stale request).
@@ -1028,9 +1085,9 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   // tables not yet on a curated canvas (for the "+ Add table" picker)
   const absent = useMemo(() => {
     if (!graph || active.all) return [];
-    const shown = new Set(members.map((t) => t.name));
+    const shown = new Set(baseMembers.map((t) => t.name));   // scope, not the kind-filtered set — a hidden-kind table on the diagram isn't "absent"
     return graph.tables.filter((t) => !shown.has(t.name)).map((t) => t.name);
-  }, [graph, active.all, members]);
+  }, [graph, active.all, baseMembers]);
 
   if (err) return <div className="p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
   if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model graph…</div>;
@@ -1066,6 +1123,11 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
         <button onClick={() => setExpandAll(false)} style={tbBtn} title="Collapse all tables">Collapse all</button>
         <button onClick={() => setSnap((s) => !s)} style={snap ? tbBtnActive : tbBtn} title="Snap dragged tables to a grid for tidy, aligned custom layouts">Snap{snap ? ' ✓' : ''}</button>
         <button onClick={() => rf.fitView({ padding: 0.2, duration: 300 })} style={tbBtn} title="Fit to view">Fit</button>
+        <span style={{ width: 1, height: 16, background: 'var(--sem-border)' }} />
+        <span style={{ color: 'var(--sem-muted)' }}>Show</span>
+        <KindChip on={showData} onClick={() => setShowData((v) => !v)} color="var(--sem-accent)" label="Tables" count={kindCounts.data} title="Show regular data tables" />
+        <KindChip on={showCalc} onClick={() => setShowCalc((v) => !v)} color="#17B3A3" label="Calculated" count={kindCounts.calc} title="Show calculated (DAX) tables" />
+        <KindChip on={showFp} onClick={() => setShowFp((v) => !v)} color={FIELD_PARAM_VIOLET} label="Field params" count={kindCounts.fp} title="Show field parameters" />
         <span className="ml-auto" style={{ color: 'var(--sem-muted)' }}>{members.length} shown · expand a table to draw relationships</span>
       </div>
       {/* model audit */}
@@ -1112,8 +1174,10 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
           <Controls showInteractive={false} />
         </ReactFlow>
         {members.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px] pointer-events-none" style={{ color: 'var(--sem-muted)' }}>
-            Empty diagram. Drag tables from the “Add tables” palette, use “＋ Add table…” above, or select a table and “＋ related”.
+          <div className="absolute inset-0 flex items-center justify-center text-[12px] pointer-events-none px-6 text-center" style={{ color: 'var(--sem-muted)' }}>
+            {baseMembers.length > 0
+              ? 'All tables hidden by filters. Re-enable a type under “Show” above.'
+              : 'Empty diagram. Drag tables from the “Add tables” palette, use “＋ Add table…” above, or select a table and “＋ related”.'}
           </div>
         )}
       </div>
@@ -1161,6 +1225,18 @@ function ViewToggle({ active, onClick, children }: { active: boolean; onClick: (
 
 function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return <div className="flex items-baseline gap-1"><span className="font-semibold tnum" style={{ color: warn ? 'var(--sem-warn)' : 'var(--sem-fg)' }}>{value}</span><span>{label}</span></div>;
+}
+// A compact table-kind toggle in the diagram toolbar. The swatch matches that kind's node accent (green data, teal
+// calc, violet field-parameter) so the chip reads as "show these". ON = filled swatch + active button; OFF = hollow
+// swatch + dimmed. Toggling hides the whole kind (and its relationship lines) from the canvas.
+function KindChip({ on, onClick, color, label, count, title }: { on: boolean; onClick: () => void; color: string; label: string; count: number; title: string }) {
+  return (
+    <button onClick={onClick} title={title} aria-pressed={on}
+      style={{ ...(on ? tbBtnActive : tbBtn), display: 'inline-flex', alignItems: 'center', gap: 5, opacity: on ? 1 : 0.6 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? color : 'transparent', border: `1px solid ${color}` }} />
+      {label}<span className="tnum" style={{ color: 'var(--sem-muted)' }}>{count}</span>
+    </button>
+  );
 }
 // Mini crow's-foot / bar swatch for the legend (drawn directly, not via the edge markers).
 function CardGlyph({ kind }: { kind: 'many' | 'one' }) {

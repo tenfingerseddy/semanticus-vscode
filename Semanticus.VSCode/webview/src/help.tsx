@@ -284,22 +284,23 @@ const HELP: Record<string, TabHelp> = {
   },
 
   stats: {
-    title: 'Statistics: storage & memory',
-    lead: 'Where the model spends memory (the VertiPaq storage view). Offline you get the metadata overview; "Scan storage" against a live engine adds sizes, row counts and encodings.',
+    title: 'Storage',
+    lead: 'Where the model spends storage, and what the scan justifies acting on. Offline you get the metadata overview; "Scan storage" against a live engine adds sizes, composition and opportunities.',
     sections: [
       {
         h: 'Reading a scan',
         bullets: [
-          'The summary strip: model size, largest table, and the encoding mix (Hash / Value / RLE).',
-          'The Storage map treemap: tables → columns, tiles coloured by encoding; click to zoom in, breadcrumb to zoom out. An "(other columns)" tile keeps table areas honest.',
-          'The Tables and Columns grids sort by any header; clicking a row reveals the object in the Model tree.',
+          'The header: Known column storage plus its composition (data, dictionary, hash indexes), each with the measured change since the last comparable scan. A "structure changed" chip means the model shape differs between the two scans; the change is still measured, read it as before-vs-after.',
+          'Top storage consumers: ranked stacked bars (Columns or Tables), each split into data / dictionary / hash index. Click a bar to select the object and filter the Columns explorer to its table. In Tables mode the components are estimated from the scanned columns; the neutral remainder is unattributed.',
+          'Opportunities: grouped by what to do: Can remove, Worth reviewing, Behavior cleanup. Every action carries an honest effect label, and a smaller scan is a "measured decrease", never "saved".',
         ],
       },
       {
         h: 'What to look for',
         bullets: [
-          'A huge Hash-encoded column is the classic candidate: high cardinality, expensive dictionary. Consider dropping, splitting, or reducing precision.',
-          'On Direct Lake the numbers are RESIDENT-ONLY (what\'s currently paged in). The banner says so; don\'t read them as totals.',
+          'A dictionary-dominated or hash-index-heavy column often indicates high cardinality, but the standard scan carries no cardinality evidence; a Deep scan that measures distinct counts is coming. Ask AI for a plan, or change the data type, then refresh and rescan to measure the effect.',
+          'Removal is offered only where the safe-to-remove check confirms nothing depends on the column; if that check can\'t run, usage is Unknown and the delete is disabled. Removal is re-verified at the moment you confirm, so a dependency added since the scan blocks it.',
+          'On Direct Lake the numbers are RESIDENT-ONLY (what\'s currently paged in). The banner says so; don\'t read them as totals, and read a change as possibly cache residency rather than storage.',
         ],
       },
     ],
@@ -679,13 +680,13 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
   {
     group: 'Author (the Model tree: the side bar, not Studio)',
     items: [
-      { q: 'Create a measure', a: 'Model tree → right-click a table → "New Measure…". Its DAX editor opens immediately.' },
+      { q: 'Create a measure, calculated column, calculated table, calculation item, or function', a: 'Model tree → right-click a table (or a calculation group) → "New Measure/Calculated Column/…". The object is created at once and its editor opens with the name as the first line. Rename it there or edit the DAX, then Ctrl+S saves. A rename and the DAX are two tracked changes, applied in order (the rename first). New tables via the Model view "…" menu. Data columns come from the source/M, not the tree.' },
+      { q: 'Create a hierarchy', a: 'Model tree → right-click a table → "New Hierarchy…" (name, then the level columns), or multi-select the level columns → "New Hierarchy from Selected Columns…".' },
       { q: 'Edit a measure\'s DAX', a: 'Click the measure in the Model tree; a real DAX editor opens (autocomplete, hover, F12, format). Ctrl+S saves back to the model.' },
-      { q: 'Create a table / calculated column / hierarchy', a: 'Model tree → right-click a table ("New Calculated Column…", "New Hierarchy…"); new tables via the Model view "…" menu → "New Table…". Data columns come from the source/M, not the tree.' },
-      { q: 'Set a description or display folder', a: 'Select the object in the Model tree → edit it in the Properties view below (Description gets a multiline editor). There is no tree menu item for descriptions.' },
+      { q: 'Set a description or display folder', a: 'Select the object; the Properties view follows the selection. Edit Description (multiline) or DisplayFolder there. For folders you can also right-click a measure/column → "Move to Folder…".' },
       { q: 'Set a format string', a: 'Right-click the measure → "Set Format String…" (presets + custom), or the FormatString property in the Properties view.' },
-      { q: 'Rename or delete', a: 'Right-click → "Rename…" (DAX references are auto-rewritten) / "Delete" (references are NOT rewritten, so check dependents first).' },
-      { q: 'Create a relationship', a: 'Diagram tab: drag column → column. Or Model tree: right-click the many-side column → "New Relationship from Column…".', tab: 'diagram' },
+      { q: 'Rename or delete', a: 'Select it, then F2 to rename in the Properties Name row (DAX references and Q&A synonyms follow automatically), or right-click → "Delete" (references are NOT rewritten, so check dependents first).' },
+      { q: 'Create a relationship', a: 'Diagram tab: drag column → column. Or Model tree: right-click the many-side column → "New Relationship from Column…" and pick the lookup column from the list.', tab: 'diagram' },
       { q: 'Bulk-edit DAX or TMDL as a script', a: 'Right-click object(s) → "Script ▸ DAX/TMDL (editable)": edit the script, then the ▶ "Apply" button in the editor title writes it back as one undoable batch.' },
       { q: 'Edit several objects at once', a: 'Multi-select in the Model tree; the Properties view switches to multi-edit (shared properties; one change applies to all).' },
     ],
@@ -700,7 +701,7 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'Edit M / applied steps / incremental refresh', a: 'M Code (or right-click a table → "Edit M Code").', tab: 'mcode' },
       { q: 'Preview table rows', a: 'Data tab (or right-click a table → "Preview Data").', tab: 'data' },
       { q: 'Find what depends on a field / what\'s safe to remove', a: 'Lineage & Impact (or right-click → "Show Lineage & Impact").', tab: 'lineage' },
-      { q: 'See where memory goes', a: 'Statistics: "Scan storage" against a live engine.', tab: 'stats' },
+      { q: 'See where storage goes', a: 'Storage: "Scan storage" against a live engine, for ranked consumers + opportunities.', tab: 'stats' },
       { q: 'Refresh a partition', a: 'Model tree → expand the table → right-click the partition → "Refresh Partition…" (pick a refresh type, dry-run, confirm).' },
     ],
   },

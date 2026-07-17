@@ -8,6 +8,16 @@ using TabularEditor.TOMWrapper.Serialization;
 
 namespace Semanticus.Engine
 {
+    /// <summary>A cascade advisory bound to the object it concerns. Carrying the renamed object (not just its old
+    /// name) lets a multi-rename batch attribute the warning to the EXACT object — matching by old name is ambiguous
+    /// precisely in the duplicate-name collision this whole cascade exists for. <see cref="Text"/> is self-contained
+    /// (it already names the qualified object) so a caller can surface it verbatim.</summary>
+    public sealed class CascadeWarning
+    {
+        public TabularNamedObject Obj;   // durable identity of the renamed object (same instance across the rename)
+        public string Text;              // the advisory sentence
+    }
+
     /// <summary>
     /// THE canonical state for one open model. All access goes through the single-writer
     /// <see cref="ModelDispatcher"/>. Mutations are tracked: the real ObjectChanged firehose is
@@ -20,19 +30,36 @@ namespace Semanticus.Engine
         private readonly ChangeBus _bus;
         private List<ChangeDelta> _pending;   // non-null only while a tracked op runs (dispatcher thread)
 
+        // A caller can capture this session immediately before another door replaces it. Retiring the session
+        // closes admission atomically, then waits for work that already started to drain before the dispatcher is
+        // torn down. A late caller holding the stale reference is refused instead of enqueueing onto a dead worker.
+        private readonly object _lifetimeGate = new object();
+        private int _activeOperations;
+        private int _retired;
+        private bool _disposeWhenDrained;
+        private TaskCompletionSource<bool> _drained;
+        internal bool RetiredForTest => System.Threading.Volatile.Read(ref _retired) != 0;
+
         public string Id { get; }
-        public ModelDispatcher Dispatcher { get; }
+        internal ModelDispatcher Dispatcher { get; }
         // The TE2 handler now lives behind the IModelSession seam (ModelSession.cs); the engine talks to the
         // interface, never the concrete handler — see Te2ModelSession for why (the Singleton dies here later).
         private readonly IModelSession _model;
         // Settable: a model created from scratch starts with no path; the first save_model(path) anchors it here so
         // a later save_model() (no path) overwrites the same target (matching file-opened session semantics).
-        public string SourcePath { get; set; }
+        public string SourcePath { get; internal set; }
         /// <summary>Set once by open_live right after the session is created, to bind it to its live source so
         /// deploy_live can push back without re-supplying the endpoint. Null for file-opened sessions. Holds no
         /// secret (see <see cref="LiveOrigin"/>). Reference assignment is atomic; written on the open path,
         /// read later on the deploy path.</summary>
-        public LiveOrigin LiveOrigin { get; set; }
+        public LiveOrigin LiveOrigin { get; internal set; }
+
+        /// <summary>The session's PRIMER identity, computed once on first use and pinned for the session's lifetime
+        /// (LocalEngine.Primer.cs derives it from LiveOrigin/SourcePath — fields stamped once on the open path). A
+        /// cached value means the primer's filename can NEVER move mid-session, whatever future identity inputs are
+        /// added. Only a non-null identity is cached (null = "no durable anchor yet", e.g. the window between the
+        /// session swap and the LiveOrigin stamp — recomputed until one exists).</summary>
+        internal string PrimerIdentityCache;
 
         // ---- Live-auth reuse (in-memory only; never serialized) ------------------------------------------
         // The bug this fixes: each live op (open/deploy/refresh) built a NEW Azure.Identity credential whose
@@ -53,15 +80,16 @@ namespace Semanticus.Engine
         public Azure.Core.AccessToken TryReuseLiveToken(string key, TimeSpan skew)
         {
             lock (_authLock)
-                return (_liveTokenKey == key && _liveToken.Token != null && _liveToken.ExpiresOn - skew > DateTimeOffset.UtcNow) ? _liveToken : default;
+                return (System.Threading.Volatile.Read(ref _retired) == 0
+                    && _liveTokenKey == key && _liveToken.Token != null && _liveToken.ExpiresOn - skew > DateTimeOffset.UtcNow) ? _liveToken : default;
         }
 
         // The auth setters below are DISPOSAL-AWARE (checked under _authLock): open_live seeds the token +
         // credential AFTER the swap core returns, so a newer open can commit and dispose this session inside
         // that window — a non-aware setter would then RE-populate the dead session with a live secret that the
         // idempotent Dispose never cleans again (held until process exit). Ordering makes the check sound:
-        // Dispose sets _disposed BEFORE its auth-clear stage takes _authLock, so a setter that wins the lock
-        // first is cleaned by the clear right behind it, and one that loses sees _disposed and drops the offer.
+        // retirement sets _retired BEFORE the auth-clear stage takes _authLock, so a setter that wins the lock
+        // first is cleaned by the clear right behind it, and one that loses sees _retired and drops the offer.
 
         /// <summary>Cache the last acquired token under its identity key (for the fast-path reuse above).
         /// Dropped without caching on a disposed session.</summary>
@@ -69,7 +97,7 @@ namespace Semanticus.Engine
         {
             lock (_authLock)
             {
-                if (System.Threading.Volatile.Read(ref _disposed) != 0) return;   // dead session: drop the offer
+                if (System.Threading.Volatile.Read(ref _retired) != 0) return;   // dead/retiring session: drop the offer
                 _liveTokenKey = key; _liveToken = token;
             }
         }
@@ -83,7 +111,7 @@ namespace Semanticus.Engine
         {
             lock (_authLock)
             {
-                if (System.Threading.Volatile.Read(ref _disposed) != 0)
+                if (System.Threading.Volatile.Read(ref _retired) != 0)
                     throw new ObjectDisposedException(nameof(Session), "This model session was replaced; re-run the operation.");
                 if (_liveCredential == null || _liveCredentialKey != key) { _liveCredential = build(); _liveCredentialKey = key; }
                 return _liveCredential;
@@ -100,7 +128,7 @@ namespace Semanticus.Engine
         {
             lock (_authLock)
             {
-                if (System.Threading.Volatile.Read(ref _disposed) != 0)
+                if (System.Threading.Volatile.Read(ref _retired) != 0)
                 {
                     try { (cred as IDisposable)?.Dispose(); } catch { }   // dead session: dispose the offer, retain nothing
                     return;
@@ -141,7 +169,10 @@ namespace Semanticus.Engine
         internal Func<Task> ModelStateLeaseReadyForTest;
         internal Func<Task> ModelStateLeaseAcquiredForTest;
 
-        internal async Task<IDisposable> AcquireSourceControlStateLeaseAsync()
+        internal Task<IDisposable> AcquireSourceControlStateLeaseAsync()
+            => WithTransferredLifetimeLeaseAsync(AcquireSourceControlStateLeaseCoreAsync);
+
+        private async Task<IDisposable> AcquireSourceControlStateLeaseCoreAsync()
         {
             Task wait = null;
             ModelStateWaiter[] rejected;
@@ -167,7 +198,7 @@ namespace Semanticus.Engine
         }
 
         internal Task<IDisposable> AcquireModelFileWriteLeaseAsync()
-            => AcquireModelStateLeaseAsync("saved");
+            => WithTransferredLifetimeLeaseAsync(() => AcquireModelStateLeaseAsync("saved"));
 
         private async Task<IDisposable> AcquireModelStateLeaseAsync(string action)
         {
@@ -326,22 +357,33 @@ namespace Semanticus.Engine
             });
         }
 
-        public Task<T> ReadAsync<T>(Func<Model, T> work) => Dispatcher.RunAsync(() => work(Model));
+        public Task<T> ReadAsync<T>(Func<Model, T> work) => RunAsync(() => work(Model));
 
-        /// <summary>Apply a mutation as one undo step, collect deltas, and broadcast a change notification.</summary>
-        public Task<long> MutateAsync(string origin, string label, Action<Model> work)
+        /// <summary>Run arbitrary model-session work on the dispatcher under this session's lifetime lease.</summary>
+        internal Task<T> RunAsync<T>(Func<T> work) => WithLifetimeLeaseAsync(() => Dispatcher.RunAsync(work));
+
+        /// <summary>Apply a mutation as one undo step, collect deltas, and broadcast a change notification. Pass
+        /// <paramref name="cascadeSink"/> to receive the LSDL-cascade advisories THIS batch produced: the retry
+        /// deposits survivors into it INSIDE the lease, before the returned task completes, so the warnings are owned
+        /// by this exact call — never drained by a concurrent request (a session-global list let whoever drained first
+        /// steal another caller's advisory). Only the rename surfaces need it; every other caller passes null.</summary>
+        public Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink = null)
         {
             // Read the ambient dry-run scope on the CALLER's thread, BEFORE the dispatcher hop — AsyncLocal need
             // not flow to the dispatcher's dedicated thread, so we capture the collector here and never rely on it
             // being visible inside RunAsync. Non-null ⇒ rehearse (RehearseAsync); null ⇒ the real mutation.
             var dry = DryRunScope.Current;
-            if (dry != null) return RehearseAsync(dry, label, work);
-            return TrackAsync(origin, label, () =>
-            {
-                _model.BeginUpdate(label);
-                try { work(Model); _model.EndUpdate(); }
-                catch { _model.EndUpdate(undoable: true, rollback: true); throw; }
-            });
+            return WithLifetimeLeaseAsync(() => dry != null
+                ? RehearseAsync(dry, label, work, cascadeSink)
+                : TrackAsync(origin, label, () =>
+                {
+                    _model.BeginUpdate(label);
+                    // RetryPendingCascades runs INSIDE the batch (before EndUpdate) so retried LSDL writes join
+                    // the same undo step as the renames that queued them. On a work throw the rollback reverts
+                    // the renames themselves, so the pendings are moot — just cleared.
+                    try { work(Model); RetryPendingCascades(cascadeSink); _model.EndUpdate(); }
+                    catch { _pendingCascades.Clear(); _model.EndUpdate(undoable: true, rollback: true); throw; }
+                }));
         }
 
         /// <summary>Dry-run variant: run the REAL work on the dispatcher, then ALWAYS roll the batch back — the
@@ -350,7 +392,7 @@ namespace Semanticus.Engine
         /// DON'T <c>_bus.Publish</c>, and return the CURRENT revision unchanged — a rehearsal is invisible to both
         /// doors. On a work exception the batch still rolls back and the exception rethrows, so the caller reports
         /// the failed rehearsal (a dry-run that finds the failure is still a successful rehearsal).</summary>
-        private Task<long> RehearseAsync(DryRunCollector dry, string label, Action<Model> work) =>
+        private Task<long> RehearseAsync(DryRunCollector dry, string label, Action<Model> work, List<CascadeWarning> cascadeSink) =>
             Dispatcher.RunAsync(() =>
             {
                 _pending = new List<ChangeDelta>();   // the same ObjectChanged collector the real path uses
@@ -358,8 +400,10 @@ namespace Semanticus.Engine
                 {
                     _model.BeginUpdate(label);
                     ChangeDelta[] mutationDeltas;
-                    try { work(Model); mutationDeltas = _pending.ToArray(); }
-                    finally { _model.EndUpdate(undoable: true, rollback: true); }   // ALWAYS undo — success OR exception
+                    // The retry runs in rehearsals too (same behavior as the real path, all rolled back below);
+                    // the finally clears any pendings a work throw left so they can't leak into the next batch.
+                    try { work(Model); RetryPendingCascades(cascadeSink); mutationDeltas = _pending.ToArray(); }
+                    finally { _pendingCascades.Clear(); _model.EndUpdate(undoable: true, rollback: true); }   // ALWAYS undo — success OR exception
                     // The snapshot is taken BEFORE the rollback: reverting re-fires ObjectChanged for every undone
                     // property (that's how a real undo broadcasts its deltas), so snapshotting after would report
                     // each edit twice — forward and reversed. The report must carry what the op WOULD have broadcast.
@@ -370,8 +414,8 @@ namespace Semanticus.Engine
                 return Revision;
             });
 
-        public Task<long> UndoAsync(string origin) => TrackAsync(origin, "undo", () => _model.Undo.Undo());
-        public Task<long> RedoAsync(string origin) => TrackAsync(origin, "redo", () => _model.Undo.Redo());
+        public Task<long> UndoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "undo", () => _model.Undo.Undo()));
+        public Task<long> RedoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "redo", () => _model.Undo.Redo()));
 
         /// <summary>Serialize the model to <paramref name="target"/>. Engine-only (must run on the dispatcher
         /// thread); deliberately NOT a tracked mutation — saving is not an undoable edit.</summary>
@@ -384,8 +428,56 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Rename via the FormulaFixup contract seam (<see cref="IRenameService"/>): rewrites every DAX /
-        /// RLS reference. Must be called inside a <see cref="MutateAsync"/> so it is tracked and broadcast.</summary>
-        public bool Rename(TabularNamedObject obj, string newName) => _model.Renamer.Rename(obj, newName);
+        /// RLS reference, THEN cascades the rename into every JSON linguistic culture so the LSDL bindings follow the
+        /// object to its new name (an un-cascaded rename orphans them, and the next set_synonyms/enable_qna prunes
+        /// the orphan — silently deleting authored synonyms one write later). The single rename seam: rename_object,
+        /// Find&amp;Replace's rename branch, apply_plan's rename item, and the property grid's Name writes
+        /// (set_property / set_properties) all route through here. Must be called inside a <see cref="MutateAsync"/>
+        /// so both the fixup and the LSDL cascade are tracked, broadcast and undoable. The cascade never throws
+        /// (see <see cref="LsdlSynonyms.CascadeRename(TabularNamedObject, string, out string)"/>); a culture whose
+        /// recommit the live validator refuses is NOT warned about here — it is queued and retried once at batch
+        /// end (<see cref="RetryPendingCascades"/>), because a LATER rename in the same batch can remove the very
+        /// collision that blocked it. Callers surface survivors via the per-batch sink they pass to MutateAsync.</summary>
+        public bool Rename(TabularNamedObject obj, string newName)
+        {
+            var oldName = obj.Name;
+            var changed = _model.Renamer.Rename(obj, newName);
+            if (changed)
+            {
+                LsdlSynonyms.CascadeRename(obj, oldName, out var warning);
+                if (warning != null) _pendingCascades.Add((obj, oldName));
+            }
+            return changed;
+        }
+
+        // Renames whose LSDL cascade a culture refused MID-batch, keyed by the identity the cascade rewrites.
+        // Dispatcher-thread-only (populated by Rename, drained by RetryPendingCascades inside the same batch).
+        private readonly List<(TabularNamedObject Obj, string OldName)> _pendingCascades = new List<(TabularNamedObject, string)>();
+
+        /// <summary>Batch-end second chance for refused cascades (transient-collision sequencing): in a multi-rename
+        /// batch, rename #1's cascade can be refused by a collision that rename #2 later REMOVES — retried after the
+        /// whole batch's work, the recommit succeeds and no warning is owed. CascadeRename makes the retry safe:
+        /// cultures that already cascaded have no bindings naming the old identity left (nothing rewritten, nothing
+        /// recommitted), so only the refused cultures are re-attempted. Runs INSIDE the undo batch (see MutateAsync)
+        /// so a retried write stays in the rename's undo step. Survivors go into <paramref name="sink"/> (the caller's
+        /// per-batch channel) so each advisory belongs to the exact call that produced it; deposited here, inside the
+        /// lease, so it is bound before the awaiting caller resumes. A rename with no sink can't surface warnings.</summary>
+        private void RetryPendingCascades(List<CascadeWarning> sink)
+        {
+            if (_pendingCascades.Count == 0) return;
+            var pending = _pendingCascades.ToArray();
+            _pendingCascades.Clear();
+            foreach (var (obj, oldName) in pending)
+            {
+                string warning;
+                // CascadeRename is non-throwing by contract, but the guard reads obj.Name — an object DELETED later
+                // in the same batch throws there. Its entity is then an ordinary deletion orphan (the pruner's job),
+                // so the honest report is the neutral consequence, not a crash of the whole batch.
+                try { LsdlSynonyms.CascadeRename(obj, oldName, out warning); }
+                catch (Exception ex) { warning = $"The linguistic schema could not be re-checked after renaming '{oldName}' ({ex.Message})"; }
+                if (warning != null) sink?.Add(new CascadeWarning { Obj = obj, Text = warning });
+            }
+        }
 
         private async Task<long> TrackAsync(string origin, string label, Action action)
         {
@@ -467,6 +559,27 @@ namespace Semanticus.Engine
 
         public void Dispose()
         {
+            var drain = RetireAsync(disposeWhenDrained: true);
+            if (drain.IsCompleted) DisposeCore();
+        }
+
+        /// <summary>Close operation admission and complete when every already-admitted operation has left.</summary>
+        internal Task RetireAsync(bool disposeWhenDrained = false)
+        {
+            lock (_lifetimeGate)
+            {
+                System.Threading.Volatile.Write(ref _retired, 1);
+                _disposeWhenDrained |= disposeWhenDrained;
+                if (_activeOperations == 0) return Task.CompletedTask;
+                _drained ??= new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                return _drained.Task;
+            }
+        }
+
+        internal void DisposeRetired() => DisposeCore();
+
+        private void DisposeCore()
+        {
             if (System.Threading.Interlocked.Exchange(ref _disposed, 1) != 0)
             {
                 DisposeDispatcherStage();   // repeat call: retry ONLY a previously-failed dispatcher teardown
@@ -499,6 +612,73 @@ namespace Semanticus.Engine
                 catch (Exception ex) { try { Console.Error.WriteLine("[session] disposing the live credential during dispose failed (the fields are already cleared): " + ex.Message); } catch { } }
             }
             finally { DisposeDispatcherStage(); }   // ALWAYS attempted, whatever an earlier stage did
+        }
+
+        private IDisposable AcquireLifetimeLease()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_retired != 0)
+                    throw new InvalidOperationException(
+                        "This model session was replaced or closed before the operation started. Retry against the current model.");
+                _activeOperations++;
+                return new LifetimeLease(this);
+            }
+        }
+
+        private async Task<T> WithLifetimeLeaseAsync<T>(Func<Task<T>> operation)
+        {
+            using var lease = AcquireLifetimeLease();
+            return await operation().ConfigureAwait(false);
+        }
+
+        private async Task<IDisposable> WithTransferredLifetimeLeaseAsync(Func<Task<IDisposable>> operation)
+        {
+            var lifetime = AcquireLifetimeLease();
+            try
+            {
+                var inner = await operation().ConfigureAwait(false);
+                return new CompositeLease(inner, lifetime);
+            }
+            catch
+            {
+                lifetime.Dispose();
+                throw;
+            }
+        }
+
+        private void ReleaseLifetimeLease()
+        {
+            TaskCompletionSource<bool> drained = null;
+            var dispose = false;
+            lock (_lifetimeGate)
+            {
+                if (--_activeOperations != 0) return;
+                drained = _drained;
+                _drained = null;
+                dispose = _disposeWhenDrained;
+            }
+            drained?.TrySetResult(true);
+            if (dispose) DisposeCore();
+        }
+
+        private sealed class LifetimeLease : IDisposable
+        {
+            private Session _owner;
+            internal LifetimeLease(Session owner) => _owner = owner;
+            public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ReleaseLifetimeLease();
+        }
+
+        private sealed class CompositeLease : IDisposable
+        {
+            private IDisposable _inner;
+            private IDisposable _lifetime;
+            internal CompositeLease(IDisposable inner, IDisposable lifetime) { _inner = inner; _lifetime = lifetime; }
+            public void Dispose()
+            {
+                Interlocked.Exchange(ref _inner, null)?.Dispose();
+                Interlocked.Exchange(ref _lifetime, null)?.Dispose();
+            }
         }
 
         private void DisposeDispatcherStage()

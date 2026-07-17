@@ -7,13 +7,256 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
-## [Unreleased]
+## [1.1.0] - 2026-07-17
+
+The authoring-and-evidence wave. Studio task surfaces now keep their results and progress while you move
+between tabs; the Storage and M Code tabs are redesigned into scan/act/verify loops; report selection and
+connections get far easier; and the verified-measure workflow is hardened into a fail-closed, anchor-and-witness
+proof. Underneath, a large model-session, RPC and cloud-operation hardening pass lands and the deterministic
+AI-readiness catalog is reconciled. Live-tenant capabilities still depend on the user's tenant, capacity,
+permissions and credentials; the documented human acceptance checks remain mandatory for the artifact that is
+published.
+
+### Added: Studio surfaces keep their work across tab switches
+
+Lineage report analysis, DAX Lab results, and the Storage scan now survive moving between Studio tabs instead of
+being discarded when you leave. Their in-flight work continues in the background and its result is waiting when
+you return, and a subtle monochrome ring on the tab bar marks a converted surface that has an operation running
+while you are on another tab. Opening a different model or connection still clears every model-scoped result and
+orphans in-flight work, so one model's numbers can never surface under another. The M Code tab and its Profile
+stay cancellation-scoped and are deliberately excluded from the preserved set.
+
+### Added: A live progress channel for long operations
+
+Analysing several published reports ran a silent sequential loop, so a multi-report run looked frozen. A new
+progress channel streams per-report advancement to the Lineage reports pane ("Analyzing N of M: name"),
+correlated by a run id so overlapping runs never cross their counts. The AI Assistant door is unchanged, and a
+throwing progress listener can never fail the operation it is reporting on.
+
+### Changed: The Statistics tab is now the Storage tab, redesigned around decisions
+
+The former Statistics tab becomes "Storage" and turns the column-storage scan into a scan/act/verify loop over
+the existing engine reads (no new scan op). The header states total known column storage with Data, Dictionary
+and Hash-index composition and a measured delta against a pinned baseline; ranked component bars replace the
+treemap and click through to the object. An Opportunities panel groups honest findings (unused large column,
+dictionary-dominated, hash-index-heavy, identifier summarized by default), each carrying its effect; Ask AI
+copies a grounded prompt and bulk or destructive actions hand off to the Change Plan. Storage mode is reported as
+import, Direct Lake, or an honest "unknown" that suppresses totals and disables byte-grounded deletes until the
+scan is proven to describe the editing model. Delete is disabled when usage is Unknown or the object's name is
+slash-ambiguous, and plan-routed removals recompute the unused verdict at apply time (the new `delete_if_unused`
+plan kind) so a stale delete is skipped with its reason. Comparison baselines key on a stable model-and-storage
+identity, never the rotating endpoint. "VertiPaq" leaves every label and button, kept only as a nominative
+reference in help text.
+
+### Changed: The M Code tab redesign
+
+The M Code tab moves to a single Applied Steps rail beside the editor, a full-width preview, and a collapsible
+incremental-refresh panel below it. Every action shows keyed busy state with its own progressive label and honest
+inline errors, so one running action no longer blanks every button. Column profiling has an explicit lifecycle
+(idle, running with progress, per-column results with failure reasons, stale on preview change, manual refresh),
+built on the fault isolation and source-name discipline described in the M Code fixes below.
+
+### Added: Diagram table-kind filters and field-parameter identity
+
+The Diagram canvas gains filters to show or hide tables by kind, and field-parameter tables now render with a
+distinct muted violet and an "FP" marker instead of appearing as plain calculated tables. Detection is
+deterministic and metadata-only in the engine (both doors see the same truth), keyed on the extended-property
+marker Power BI Desktop writes, so it never misfires on an ordinary calculated table.
+
+### Added: Easier report selection in Lineage
+
+The Lineage published-reports pane no longer demands hand-typed paths and workspace GUIDs. A Browse button opens
+the host folder picker for local `.pbip` projects, and the workspace GUID box becomes a picker that lists your
+workspaces by name and auto-selects the one matching the open model, with an "enter id manually" escape hatch.
+Stale async responses, model switches, and mid-flight edits are all invalidated by a generation token so an
+analysis can never target the previous model's workspace.
+
+### Changed: The Workflows tab is a section workbench
+
+The Workflows tab is rebuilt into a stable section sidebar (Home, Library, Runs, Governance, Author) with an
+ambient live-run banner so a long AI Assistant run never takes the tab over. Library rows read in plain language
+with availability toggles and distinct Off, Hidden-now and File-error states; the run view shows one expanded step
+with receipts and decline-or-skip-with-reason and an honest enforcement-off state; Governance is the single home
+for enforcement profiles and per-workflow rules with a consequence preview. DAX Lab is filed under Understand,
+since its journey starts at "what does this query return?".
+
+### Changed: Zero-dialog authoring for DAX objects
+
+Creating a measure, calculated column, calculated table, calculation item or function no longer opens a name
+dialog. The object is created immediately with a generated, collision-checked name, and the editor opens with the
+name as an editable header line; saving applies the name and DAX together, and a header rename routes through the
+rename seam so references and Q&A synonyms cascade. New Relationship and New Folder collapse to a single picker.
+
+### Added: Account identity and history in Connections
+
+Remembered connections now show which account they signed in as, `connect_xmla` carries the tenant the way
+`open_live` already did (closing the connect-versus-open asymmetry), and a device-local, credential-free history
+logs connect, open and switch beside the registry. The status bar surfaces the current account and tenant.
+
+### Added: Connect the AI Assistant without the Command Palette
+
+Connecting the AI Assistant over MCP is now discoverable three ways: a plug button in the Model view title bar, a
+status-bar item shown only until the workspace is connected, and a one-time first-run prompt. The post-connect
+message leads with the restart step, since an `.mcp.json` change is only picked up on the assistant's next start.
+The standalone timeline tab now reads "Edits" instead of "Edit History" so it stops resizing awkwardly.
+
+### Changed: Verified DAX is evaluated as a deployed measure
+
+Probe and equivalence candidates were spliced into the query as inline scalar columns, which skip the implicit
+CALCULATE a deployed measure carries and could evaluate context-transition-heavy bodies with cheaper, and
+sometimes different, semantics. Both builders now emit the measure-faithful `DEFINE MEASURE` shape and define both
+sides of a comparison in one block so they share an identical filter context. This strengthens `probe_measure` and
+the shipped `verify_dax_equivalence` Pro gate, which previously could pass a rewrite a deployed measure would not.
+
+### Changed: Workflow verification is fail-closed with mandatory evidence
+
+Workflow verify outcomes gain a three-way-plus vocabulary: passed, failed, not_applicable, unavailable. A
+conditional check that does not apply advances legitimately; an applicable check without authoritative evidence
+(offline, missing witness, zero coverage, truncation, candidate drift, a degraded comparison) is "unavailable" and
+blocks a hard step exactly like a failure, naming what was missing. A skip with a recorded reason remains the only
+audited override, and the run's shape ledger, evidence receipts and history are immutable.
+
+### Added: expected_values verify kind
+
+A new Pro-mode workflow verify kind proves a target measure reproduces a set of locked value anchors (context and
+expected-value assertions the workflow author commits to). Anchors are parsed defensively, compared at a gold-style
+tolerance (BLANK matches only BLANK), evaluated in the measure-faithful shape, and locked with a revision receipt
+so a later change to the accepted values is admissible only with typed evidence.
+
+### Changed: The verified-measure workflow, benchmark-winning form
+
+The shipped verified-measure playbook and its featured template are rebuilt into the anchor-and-witness form
+proven by the benchmark: conventions are pinned from the requirement's own words, expected values are locked from
+raw rows before any candidate exists, one canonical candidate is reconciled against an independent, efficient
+witness (SARGable, never a bare FILTER over a whole fact table), disagreements are adjudicated cell by cell into a
+FULL or PARTIAL certificate, and the hard equivalence gate proves equality only on pinned shapes via a per-run
+partition that a later performance rewrite cannot silently re-open. Anchor revisions require a live receipt (the
+original and corrected values plus a row-returning query executed through the verify lane), and the whole run is
+audit-trailed.
+
+### Added: The deterministic AI-readiness catalog is reconciled
+
+Six completion passes reconcile the deterministic AI-readiness catalog against the model, accepting the rules that
+can be proven deterministically and leaving the rest dormant so they never inflate a category. New deterministic
+rules land for a URL, image or barcode column with no data category (`CAT-URL`), a visible numeric or date column
+with no format string (`FMT-COLUMN`), an ordered text column with no Sort By Column (`FMT-SORTBY`), a bare ID or
+code column name (`NAME-COLUMN-ID`), a visible business table in no relationship (`REL-DISCONNECTED`), a visible
+business table with no synonyms (`SYN-TABLE`), an ambiguous primary synonym (`SYN-COLLIDE`), and a legacy XML
+linguistic schema that cannot be patched safely (`SYN-LSDL-XML`).
+
+### Fixed: The Model Primer survives Power BI Desktop restarts
+
+A local Power BI Desktop connection rotates both its port and its per-session database GUID on every restart, so
+the Primer's identity key changed each reload and the user saw a blank Primer. A local source's Primer now rests
+on the Desktop model's captured provenance (its file path when known, else its display-name stem), stamped once at
+open and hash-vouched so a structural edit can never move it and one model can never be served another's Primer.
+Cloud and disk keys are unchanged.
+
+### Fixed: M Code profile fault isolation and source-name discipline
+
+Two reported M Code defects. Column profiling used to fail the entire distinct-and-null strip when one column
+errored, swallowing the reason; it now probes columns in IFERROR-guarded chunks that bisect to the offending
+column, renders "n/a" with the reason as a tooltip, reports how many were skipped, and adds numeric min and max.
+Separately, M writes now target the partition-output source name (the column's `SourceColumn`, which can
+legitimately differ from its model name) on every path, standing down honestly when the source name cannot be
+proven rather than writing a guessed name; a date column that disagrees with the wired incremental-refresh
+predicate is refused with both fields named.
+
+### Fixed: The AI activity feed stops sending every operation to DAX Lab
+
+Feed entries whose operation had no owning tab all fell back to a link into DAX Lab, so a metadata edit or workflow
+step dropped you in an unrelated tab. Unmapped entries are now inert (no link, no misleading tooltip) while mapped
+entries keep their navigate behavior, and tooltips speak the tab's display name instead of its internal id.
+
+### Changed: The public-repo mirror is a self-proving script
+
+The release mirror to the public repository is codified as a script that enforces its exclusion set and fails
+loudly when a docs file a csproj embeds as a build resource is dropped (the failure that turned public CI red).
+This is release tooling and is not part of the shipped product.
+
+### Fixed: rename_object cascades into the linguistic schema
+
+A rename rewrote every DAX / RLS reference but left the culture's LSDL untouched, so the renamed object's
+linguistic entity kept a Binding naming the OLD object — an orphan. Since the set_synonyms duplicate-name fix
+prunes entities bound to gone objects, that orphan was deleted by the very next set_synonyms / enable_qna call:
+a rename silently destroyed authored synonyms one write later, and you could not rename your way out of a
+Q&A name collision because the stale entity still collided. Every rename path (rename_object, find-and-replace's
+rename branch, apply_plan's rename item, and the property grid's Name writes via set_property / set_properties —
+now all routed through the one Session.Rename seam) cascades into every JSON culture, walking the whole document
+(Relationships / SemanticSlots phrasings carry the same Binding shape as Entities) and following each Binding to
+the new name: ConceptualEntity for tables (including the table name carried by its columns / measures /
+hierarchies / levels and by relationship bindings), ConceptualProperty for columns and measures, and the
+Hierarchy / HierarchyLevel slots for hierarchies and levels. Fail-safe like the pruner — only bindings whose
+shape resolves positively are touched — and non-throwing by contract: a culture whose recommit the live
+validator rejects (that schema was already uncommittable) is left untouched and surfaced as a warning, never a
+throw that would strand apply_plan's per-item isolation with a half-cascaded rename. A refused culture is
+retried once at the end of the mutation batch — in a multi-rename batch a later rename can remove the very
+collision that blocked an earlier cascade — and only failures that survive the retry warn, prescribing the
+collision remedy only when the failure positively is the duplicate-key refusal. The cascade runs inside the
+rename's mutation, so one undo reverts the name and the LSDL together and dry_run rehearses both. Two follow-ups
+from the set_synonyms review land with it: the prune's over-pinning no longer treats enum / metadata tokens
+(State, Type, Version, …) in SemanticSlots / Relationships as entity references, and enable_qna's collision
+advisory now distinguishes the refused exact tier from the write-through plural-fold tier per member (a mixed
+group names only its exact pair as refused). Verified: 13 new xUnit cases (RenameLsdlCascadeTests) + the full
+suite, McpSmoke, coverage-oracle.
+
+### Fixed: set_synonyms works on models with duplicate object names
+
+The AS linguistic validator folds every LSDL entity's bound name into one term dictionary (lower-case,
+camel-split, lemmatise), so entities generated for hidden shadow columns duplicating visible names made every
+synonym write fail model-wide with an opaque duplicate-key error. set_synonyms (and the apply_plan /
+find-and-replace synonym paths, which surface the same advisories) now refuses hidden targets, self-heals by
+pruning entities bound to hidden or deleted objects (entities it can't read, and entities referenced from
+SemanticSlots/Relationships, are kept untouched), pre-flights name collisions in two tiers (an exact
+normalised match refuses with the colliding objects named; a plural-fold match only warns, since the fold
+approximates the validator), and rewraps the validator's residual throw with the remedy. The LSDL write is
+undo-tracked, so undo_change restores it and dry_run rehearsals roll it back. enable_qna runs the same
+self-heal on an existing schema through both doors and surfaces surviving collisions as a warning instead of
+failing. New deterministic readiness rule DAC-QNA-NAME-COLLISIONS (DataAgentConfig, High) reports one finding
+per collision group of visible objects, sharing the writer's two-tier normaliser; it is dormant when the
+model has no linguistic schema and no Q&A signal. Verified: 13 new xUnit cases (SetSynonymsCollisionTests)
++ the full suite, McpSmoke, AirSmoke.
+
+### Fixed: Installed extension auto-heals its engine pairing
+
+Marketplace builds ignore the development-only engine DLL override and verify genuine executable mismatches, while
+an alive legacy owner without recorded provenance remains attachable with a one-time warning. Activation refreshes
+the Semanticus MCP launch entry when an extension update changes the bundled engine path, and a Development Host can
+attach to an already-running owner even when no local launch candidate is available. Installed-extension restarts
+never rebuild development source; the Development Host retains its explicit DLL and rebuild workflow.
 
 ### Fixed: Shared connection operations fail closed to agent attribution
 
 Remembering a connection, preparing a working copy and setting a publish destination now default omitted or blank
 shared-engine origins to agent attribution. The UI boundary remains human and the MCP boundary remains agent. This
 also prevents an origin-less working-copy request from entering interactive authentication fallback.
+
+### Fixed: Bounded and cancellable cloud operations
+
+Fabric and Power BI REST calls now enforce response, pagination and decoded-definition limits, fail loudly when
+pagination is truncated, and reuse pooled HTTP connections. Cancellation now crosses both public doors into token
+acquisition, throttling waits, response reads and long-running-operation polling, while an internal HTTP timeout in
+a setup read or live write is returned as a scrubbed result error rather than misreported as caller cancellation. Git commands no longer wait for
+interactive credentials and are stopped with their process tree after a bounded timeout; clone, push, pull and fetch
+receive a separate 15-minute transfer budget.
+### Fixed: Atomic model-session context ownership
+
+Opening or creating a model now exchanges one complete context containing the model session, live query binding,
+Change Plan, spec, baselines, workflow runs and AI-readiness cache. Work admitted to an old session or connection
+drains before teardown, stale callers are refused, and guarded DAX, DMV, table-preview and pivot results prepared
+against a replaced endpoint cannot appear as current query results. Active workflow runs and their verification
+snapshots survive a model-opening step; model-scoped stores reset. An XMLA connection also records the current session's
+deploy origin and in-memory authentication cache, so later deploy and refresh operations target the attached source.
+### Fixed: RPC authority is connection-bound
+
+Named-pipe clients can no longer choose whether a request is attributed to a person or an AI Assistant by changing
+an `origin` argument. VS Code proves a per-workspace challenge before JSON-RPC begins, while MCP proxy connections
+are bound to the agent role. Human governance mutations are registered only on the authenticated VS Code
+connection, so an agent connection cannot discover or invoke them. The challenge is held in encrypted VS Code
+SecretStorage and delivered to the owner engine over stdin rather than process arguments, environment variables,
+logs, or broker files. The server now explicitly accepts or rejects the proof before JSON-RPC begins. If an
+MCP-owned engine rejects the human proof, VS Code stops it and starts the authenticated UI owner; the AI Assistant
+then reconnects through the normal resilient agent proxy instead of leaving the UI silently locked out.
 
 ### Fixed: Model compare container metadata
 

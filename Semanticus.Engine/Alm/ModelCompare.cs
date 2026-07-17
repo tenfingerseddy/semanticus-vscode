@@ -256,6 +256,18 @@ namespace Semanticus.Engine
             var rightBySig = new Dictionary<string, TOM.Relationship>();
             foreach (var r in rl) { var s = RelSig(r); if (!rightBySig.ContainsKey(s)) rightBySig[s] = r; }   // first wins (endpoint pairs are unique in practice)
             var matched = new HashSet<TOM.Relationship>();
+            // BLOCKER 1 (replacement coupling): collect the left-only Creates so a right-only Delete can be linked to the
+            // Create that RE-POINTS the same logical relationship (below). TWO edge sources feed one union-find (round 6):
+            //   • ENDPOINT LINEAGE — a re-point keeps one endpoint intact and moves the other endpoint's column, so O and N
+            //     share three of four endpoint parts; this catches a SAME-TABLE re-point even when it was delete-and-
+            //     recreated (fresh guid name), where name alone would miss.
+            //   • SAME NAME — a Create and Delete carrying the same relationship name ARE a replacement pair by definition:
+            //     the name is the TOM collection key, so the old and new forms cannot coexist. This is the ONLY signal for a
+            //     CROSS-TABLE re-point (or a both-endpoints-move) that the endpoint predicate misses — without it the Delete
+            //     gets no requirement, the merged Create collides on the duplicate name and fails to stage, and the unlinked
+            //     Delete drops the live relationship with NO replacement (data loss).
+            // Either link lets the staging guard / LiveDeploy refuse the Delete when its replacement Create fails to stage or land.
+            var creates = new List<(TOM.Relationship rel, ModelDiffItem item)>();
             foreach (var l in left.Relationships.Cast<TOM.Relationship>())
             {
                 var sig = RelSig(l);
@@ -265,10 +277,77 @@ namespace Semanticus.Engine
                     matched.Add(r);
                     items.Add(Mk(refStr, "Relationship", RelDisplay(l), null, RelEqual(l, r) ? "Equal" : "Update", Ser(l), Ser(r), false));
                 }
-                else items.Add(Mk(refStr, "Relationship", RelDisplay(l), null, "Create", Ser(l), null, false));
+                else
+                {
+                    var createItem = Mk(refStr, "Relationship", RelDisplay(l), null, "Create", Ser(l), null, false);
+                    items.Add(createItem);
+                    creates.Add((l, createItem));
+                }
             }
+            var deletes = new List<(TOM.Relationship rel, ModelDiffItem item)>();
             foreach (var r in rl.Where(x => !matched.Contains(x)))
-                items.Add(Mk("relationship:" + RelSig(r), "Relationship", RelDisplay(r), null, "Delete", null, Ser(r), false));
+            {
+                var delItem = Mk("relationship:" + RelSig(r), "Relationship", RelDisplay(r), null, "Delete", null, Ser(r), false);
+                items.Add(delItem);
+                deletes.Add((r, delItem));
+            }
+            CoupleReplacements(deletes, creates);
+        }
+
+        // BLOCKER 1 (replacement coupling): couple right-only Deletes to the left-only Creates that RE-POINT the same
+        // logical relationship, so the push can refuse a Delete whose replacement did not land. The coupling MUST be
+        // UNIQUE — a MANY-TO-ONE, first-match link lets the guard be satisfied by the WRONG Create (a sibling Create
+        // syncs while the Delete's true replacement vanished) and drop a relationship with no replacement.
+        //
+        // RULE (unique, fail-closed, group-based): build the bipartite candidate graph (Delete ⟷ Create under
+        // IsEndpointRepoint OR a shared relationship name — round 6) and split it into CONNECTED COMPONENTS. Each Delete's
+        // required-replacement set = ALL Creates
+        // in its component:
+        //   • a 1-Delete / 1-Create component is an unambiguous one-to-one re-point → the Delete requires THAT one Create;
+        //   • any LARGER component is AMBIGUOUS (a Delete has >1 candidate Create, or a Create is shared by >1 Delete) →
+        //     every Delete in it requires ALL the component's Creates: the group is safe to delete only if EVERY
+        //     replacement landed (then it is trivially safe). This can over-refuse (fail-closed) but never under-refuse
+        //     (drop a relationship with no live replacement);
+        //   • a Delete with NO candidate Create carries no requirement — a genuine standalone delete still proceeds.
+        // The push guard (LiveDeploy / LocalEngine) refuses a Delete when ANY required Create that was pushed did not land.
+        private static void CoupleReplacements(List<(TOM.Relationship rel, ModelDiffItem item)> deletes, List<(TOM.Relationship rel, ModelDiffItem item)> creates)
+        {
+            int dN = deletes.Count, cN = creates.Count;
+            if (dN == 0 || cN == 0) return;
+            // Candidate edges per delete.
+            var adj = new List<int>[dN];
+            for (int di = 0; di < dN; di++)
+            {
+                adj[di] = new List<int>();
+                for (int ci = 0; ci < cN; ci++)
+                    // TWO edge sources into ONE union-find: an endpoint re-point (same-table column move) OR a shared
+                    // relationship NAME (round 6). The name edge is what couples a CROSS-TABLE re-point (or both endpoints
+                    // moving) that IsEndpointRepoint misses — the name is the TOM collection key, so a same-name Create and
+                    // Delete are a replacement pair that cannot coexist. Union-find merges name edges with endpoint edges.
+                    if (IsEndpointRepoint(deletes[di].rel, creates[ci].rel) || SameRelName(deletes[di].rel, creates[ci].rel))
+                        adj[di].Add(ci);
+            }
+            // Union-find over deletes [0..dN) and creates [dN..dN+cN) → connected components (the ambiguous groups).
+            var uf = new int[dN + cN];
+            for (int i = 0; i < uf.Length; i++) uf[i] = i;
+            int Find(int x) { while (uf[x] != x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; }
+            void Union(int a, int b) { int ra = Find(a), rb = Find(b); if (ra != rb) uf[ra] = rb; }
+            for (int di = 0; di < dN; di++)
+                foreach (var ci in adj[di]) Union(di, dN + ci);
+            // Component root → the Create refs it contains.
+            var compCreates = new Dictionary<int, List<string>>();
+            for (int ci = 0; ci < cN; ci++)
+            {
+                var root = Find(dN + ci);
+                if (!compCreates.TryGetValue(root, out var list)) compCreates[root] = list = new List<string>();
+                list.Add(creates[ci].item.Ref);
+            }
+            for (int di = 0; di < dN; di++)
+            {
+                if (adj[di].Count == 0) continue;   // no candidate replacement → standalone delete, no requirement
+                if (compCreates.TryGetValue(Find(di), out var reqs) && reqs.Count > 0)
+                    deletes[di].item.ReplacementCreateRefs = reqs.Distinct(StringComparer.Ordinal).ToArray();
+            }
         }
 
         // Endpoint signature (the relationship's structural identity, name-independent). Non-single-column
@@ -283,6 +362,53 @@ namespace Semanticus.Engine
             => r is TOM.SingleColumnRelationship sc && sc.FromColumn != null && sc.ToColumn != null
                 ? sc.FromColumn.Table?.Name + "[" + sc.FromColumn.Name + "] → " + sc.ToColumn.Table?.Name + "[" + sc.ToColumn.Name + "]"
                 : r.Name;
+
+        // BLOCKER 1: are `del` (a right-only Delete) and `create` (a left-only Create) the two halves of an ENDPOINT
+        // RE-POINT of the same logical relationship? True iff one endpoint is kept INTACT (same table + column) and the
+        // other endpoint's COLUMN moved within the SAME table — i.e. they share three of the four endpoint parts. This is
+        // the precise structural signature of "the relationship between these two tables was re-pointed"; it does not
+        // false-pair two unrelated relationships (which share at most a single endpoint table). Endpoints are compared by
+        // IDENTITY (lineage tag when both carry one, name fallback — see SameEndpoint), so a simultaneous endpoint rename
+        // still couples (BLOCKER 1b). This predicate is a CANDIDATE test only — uniqueness is enforced by CoupleReplacements.
+        private static bool IsEndpointRepoint(TOM.Relationship del, TOM.Relationship create)
+        {
+            if (!(del is TOM.SingleColumnRelationship d && d.FromColumn != null && d.ToColumn != null)) return false;
+            if (!(create is TOM.SingleColumnRelationship c && c.FromColumn != null && c.ToColumn != null)) return false;
+            bool sameFromCol = SameEndpoint(d.FromColumn, c.FromColumn);
+            bool sameToCol = SameEndpoint(d.ToColumn, c.ToColumn);
+            bool sameFromTable = SameTableIdent(d.FromColumn.Table, c.FromColumn.Table);
+            bool sameToTable = SameTableIdent(d.ToColumn.Table, c.ToColumn.Table);
+            // Exactly one endpoint intact + the other endpoint's table shared (its column moved).
+            return (sameFromCol && sameToTable && !sameToCol) || (sameToCol && sameFromTable && !sameFromCol);
+        }
+
+        // BLOCKER 1 (round 6): a right-only Delete and a left-only Create carrying the SAME relationship name are a
+        // replacement pair — the name is the TOM collection key (a NamedMetadataObjectCollection), so the OLD and NEW forms
+        // cannot coexist in one model. This is the coupling signal IsEndpointRepoint cannot see: a CROSS-TABLE re-point (the
+        // moved endpoint lands on a DIFFERENT table) or a both-endpoints-move shares fewer than three of the four endpoint
+        // parts, so only the shared name betrays the pairing. Guarded on a non-empty name (relationship names are auto-
+        // assigned and effectively always present; never couple two nameless relationships). Coupling by name can only
+        // OVER-refuse (fail-closed): two same-named relationships genuinely cannot both land, so refusing the Delete until
+        // its same-name Create stages is always the safe call.
+        // Case-INSENSITIVE on purpose: AS/TOM collection keys are case-insensitive, so "R" and "r" collide at
+        // staging exactly like an exact-case pair — the coupling must see what the collection sees. (Lineage-tag
+        // identity comparison stays ordinal; only the name edge relaxes.)
+        private static bool SameRelName(TOM.Relationship del, TOM.Relationship create)
+            => !string.IsNullOrEmpty(del.Name) && string.Equals(del.Name, create.Name, StringComparison.OrdinalIgnoreCase);
+
+        // BLOCKER 1(b): compare relationship endpoints by IDENTITY — lineage tag when BOTH sides carry one, name fallback
+        // otherwise (consistent with the deploy layer's identity discipline). A SIMULTANEOUS endpoint rename (the kept
+        // endpoint renamed too) would leave a genuine re-point unlinked under a pure name compare (safe direction, but it
+        // weakens the guard's coverage); by tag the kept endpoint still reads as intact, so the pair is coupled. An
+        // endpoint is its (table, column) pair, so both the column and its owning table are compared this way.
+        private static bool SameEndpoint(TOM.Column a, TOM.Column b)
+            => a != null && b != null && SameIdent(a.LineageTag, b.LineageTag, a.Name, b.Name) && SameTableIdent(a.Table, b.Table);
+        private static bool SameTableIdent(TOM.Table a, TOM.Table b)
+            => a != null && b != null && SameIdent(a.LineageTag, b.LineageTag, a.Name, b.Name);
+        private static bool SameIdent(string tagA, string tagB, string nameA, string nameB)
+            => (!string.IsNullOrEmpty(tagA) && !string.IsNullOrEmpty(tagB)) ? Eq(tagA, tagB) : Eq(nameA, nameB);
+
+        private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.Ordinal);
         // Equal ignores the (auto-assigned) name — only the meaningful behaviour props decide Equal vs Update. Note:
         // the signature is endpoints-only (NOT IsActive), so toggling a single relationship active↔inactive reads as
         // an Update here (correct) rather than a false Create+Delete; two relationships on the EXACT same column pair
@@ -291,6 +417,13 @@ namespace Semanticus.Engine
         private static bool RelEqual(TOM.Relationship a, TOM.Relationship b)
         {
             if (a.IsActive != b.IsActive) return false;
+            // MAJOR 3: an OWNED-annotation-only change (finding waivers / BPA ignore rules) must read as Update, else a
+            // selective apply_model_diff silently no-ops it while a whole-model deploy_live carries it (LiveDeploy's
+            // matched-relationship channel). Owned-only, directional (a=left=source, b=right=target) — mirroring EXACTLY
+            // what LiveDeploy.DeployOwnedAnnotations would deploy on a relationship: a foreign annotation is never carried
+            // (so it must not manufacture a phantom Update the deploy can't apply), and a live-only owned annotation is
+            // never deleted (absence never deletes), so it is not a source-introduced change.
+            if (OwnedAnnotationsIntroduceChange(a, b)) return false;
             if (a is TOM.SingleColumnRelationship sa && b is TOM.SingleColumnRelationship sb)
                 return sa.CrossFilteringBehavior == sb.CrossFilteringBehavior
                     && sa.SecurityFilteringBehavior == sb.SecurityFilteringBehavior
@@ -298,9 +431,14 @@ namespace Semanticus.Engine
                     && sa.FromCardinality == sb.FromCardinality
                     && sa.ToCardinality == sb.ToCardinality
                     && sa.JoinOnDateBehavior == sb.JoinOnDateBehavior;
-            // Non-single-column relationships (rare) matched by NAME — a full serialize compare is accurate, never
-            // assume Equal (so a real change surfaces as Update rather than being silently dropped).
-            return JsonSemanticEqual(Ser(a), Ser(b));
+            // Non-single-column relationships (rare) matched by NAME. MINOR 3: a FULL serialize compare would flag a
+            // FOREIGN-annotation-only drift (a finding waiver / BPA ignore rule some other tool wrote) as Update — a
+            // phantom the relationship deploy channel can never carry (LiveDeploy carries OWNED annotations only), so the
+            // selective apply would fail to reconcile it. Owned-annotation changes are already decided above
+            // (OwnedAnnotationsIntroduceChange returned Update), so here we compare the serialized forms with ALL
+            // annotations stripped — the structural behaviour only. This mirrors the single-column discipline: a
+            // foreign-annotation-only difference collapses to Equal, a real structural change still reads as Update.
+            return JsonSemanticEqual(SerWithoutAnnotations(a), SerWithoutAnnotations(b));
         }
 
         internal sealed class ApplyOutcome
@@ -601,6 +739,18 @@ namespace Semanticus.Engine
             return Normalize(TOM.JsonSerializer.SerializeObject(o, null, level, mode), o);
         }
 
+        // Serialize with ALL annotations stripped — used to compare a NON-single-column relationship structurally
+        // without an annotation (owned OR foreign) forging a phantom Update: owned-annotation changes are decided
+        // separately by OwnedAnnotationsIntroduceChange, and a foreign annotation is never carried by the deploy channel.
+        // internal: TOM exposes only SingleColumnRelationship concretely, so the non-single RelEqual branch can't be
+        // exercised through a constructed relationship — the ModelCompareTests unit-test this helper directly instead.
+        internal static string SerWithoutAnnotations(TOM.MetadataObject o)
+        {
+            var root = ParseObject(Ser(o));
+            Remove(root, "annotations");
+            return root.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
         // Properties the SERVER populates. A model read from an XMLA endpoint carries them; one read from TMDL or a
         // .bim never does — so a raw TOM-JSON compare of two semantically identical models called every object
         // Updated (210/210 on a real client model — issue #121). Scrubbing lives here, not in the UI, because both
@@ -754,10 +904,14 @@ namespace Semanticus.Engine
         internal static (string Supplement, string Residual) LiveTableState(TOM.Table table)
         {
             var root = ParseObject(TableShell(table));
-            var selected = Select(root, "defaultDetailRowsDefinition", "annotations");
+            // Annotations are DELIBERATELY absent from the deploy supplement: owned annotations (waivers + BPA ignore
+            // rules) deploy on LiveDeploy's dedicated channel, and a FOREIGN annotation we don't own is NEVER written,
+            // counted, or deleted on the deploy path — so the generic supplement must not carry annotations at all
+            // (else a stale session foreign annotation would overwrite the live value and be miscounted as Metadata).
+            var selected = Select(root, "defaultDetailRowsDefinition");
             if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
             {
-                var selectedGroup = Select(group, "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");
+                var selectedGroup = Select(group, "description", "noSelectionExpression", "multipleOrEmptySelectionExpression");
                 if (selectedGroup.HasValues) selected["calculationGroup"] = selectedGroup;
             }
             var residual = (Newtonsoft.Json.Linq.JObject)root.DeepClone();
@@ -770,30 +924,35 @@ namespace Semanticus.Engine
             return (selected.ToString(Newtonsoft.Json.Formatting.None), residual.ToString(Newtonsoft.Json.Formatting.None));
         }
 
+        // The model/column/measure deploy supplement carries NO generic members (they had only ever carried annotations,
+        // which are now owned-channel-only + foreign-never-touched — see LiveTableState). The supplement is empty so
+        // SupplementIntroducesChange never fires for them; owned annotations deploy via LiveDeploy.DeployOwnedAnnotations
+        // and the residual still reports any non-annotation shell difference the push can't carry.
         internal static (string Supplement, string Residual) LiveModelState(TOM.Model model)
         {
             var root = ParseObject(ModelShell(model));
-            var selected = Select(root, "annotations");
             Remove(root, "annotations");
-            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+            return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         internal static (string Supplement, string Residual) LiveColumnState(TOM.Column column)
         {
             var root = ParseObject(Ser(column));
-            var selected = Select(root, "annotations");
             Remove(root, "type", "name", "description", "isHidden", "dataCategory", "formatString",
-                "displayFolder", "summarizeBy", "expression", "lineageTag", "changedProperties", "annotations");
-            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+                "displayFolder", "summarizeBy", "expression", "lineageTag", "changedProperties", "annotations",
+                // sortByColumn is CARRIED by the deploy's dedicated sort-by pass (bound to the LIVE column by identity),
+                // so it is not an uncarried residual — a new column with a sort-by must not be refused, and a matched
+                // column's sort-by drift is reported by the sort-by pass, not double-reported as "cannot sync".
+                "sortByColumn");
+            return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         internal static (string Supplement, string Residual) LiveMeasureState(TOM.Measure measure)
         {
             var root = ParseObject(Ser(measure));
-            var selected = Select(root, "annotations");
             Remove(root, "name", "description", "isHidden", "formatString", "displayFolder", "expression",
                 "lineageTag", "changedProperties", "annotations");
-            return (selected.ToString(Newtonsoft.Json.Formatting.None), root.ToString(Newtonsoft.Json.Formatting.None));
+            return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         private static Newtonsoft.Json.Linq.JObject Select(Newtonsoft.Json.Linq.JObject source, params string[] names)
@@ -831,28 +990,32 @@ namespace Semanticus.Engine
                 preserve: a => IsAuditAnnotation(a?.Name));
         }
 
+        // The deploy supplement carries the generic (non-annotation) table members ADDITIVELY: it NEVER nulls out a
+        // live-only member (absence never deletes, one nested level down). A live-only DefaultDetailRowsDefinition, or a
+        // live-only calc-group NoSelection/MultipleOrEmptySelection expression, is preserved; only a member the SOURCE
+        // actually carries is written. (The old code assigned every member unconditionally, so a session-null member
+        // deleted a live-only one — the additive-supplement-still-deletes bug.) Annotations are NOT copied here at all:
+        // owned ones deploy via LiveDeploy.DeployOwnedAnnotations; a foreign one is never written or deleted.
         internal static void CopyLiveTableSupplement(TOM.Table source, TOM.Table target)
         {
-            target.DefaultDetailRowsDefinition = source.DefaultDetailRowsDefinition == null ? null : (TOM.DetailRowsDefinition)source.DefaultDetailRowsDefinition.Clone();
-            CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
+            if (source.DefaultDetailRowsDefinition != null)
+                target.DefaultDetailRowsDefinition = (TOM.DetailRowsDefinition)source.DefaultDetailRowsDefinition.Clone();
             if (source.CalculationGroup != null && target.CalculationGroup != null)
             {
-                target.CalculationGroup.Description = source.CalculationGroup.Description;
-                target.CalculationGroup.NoSelectionExpression = source.CalculationGroup.NoSelectionExpression == null ? null : (TOM.CalculationGroupExpression)source.CalculationGroup.NoSelectionExpression.Clone();
-                target.CalculationGroup.MultipleOrEmptySelectionExpression = source.CalculationGroup.MultipleOrEmptySelectionExpression == null ? null : (TOM.CalculationGroupExpression)source.CalculationGroup.MultipleOrEmptySelectionExpression.Clone();
-                CopyAnnotations(source.CalculationGroup.Annotations.Cast<TOM.Annotation>(), target.CalculationGroup.Annotations);
+                if (!string.IsNullOrEmpty(source.CalculationGroup.Description))
+                    target.CalculationGroup.Description = source.CalculationGroup.Description;
+                if (source.CalculationGroup.NoSelectionExpression != null)
+                    target.CalculationGroup.NoSelectionExpression = (TOM.CalculationGroupExpression)source.CalculationGroup.NoSelectionExpression.Clone();
+                if (source.CalculationGroup.MultipleOrEmptySelectionExpression != null)
+                    target.CalculationGroup.MultipleOrEmptySelectionExpression = (TOM.CalculationGroupExpression)source.CalculationGroup.MultipleOrEmptySelectionExpression.Clone();
             }
         }
 
-        internal static void CopyLiveModelSupplement(TOM.Model source, TOM.Model target)
-            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>().Where(a => !IsAuditAnnotation(a?.Name)), target.Annotations,
-                preserve: a => IsAuditAnnotation(a?.Name));
-
-        internal static void CopyLiveColumnSupplement(TOM.Column source, TOM.Column target)
-            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
-
-        internal static void CopyLiveMeasureSupplement(TOM.Measure source, TOM.Measure target)
-            => CopyAnnotations(source.Annotations.Cast<TOM.Annotation>(), target.Annotations);
+        // Model / column / measure supplements carry no generic members (annotations only, now handled off-supplement),
+        // so these are no-ops kept for call-site symmetry and to satisfy the (never-firing) supplement-change guards.
+        internal static void CopyLiveModelSupplement(TOM.Model source, TOM.Model target) { }
+        internal static void CopyLiveColumnSupplement(TOM.Column source, TOM.Column target) { }
+        internal static void CopyLiveMeasureSupplement(TOM.Measure source, TOM.Measure target) { }
 
         private static bool IsAuditAnnotation(string name)
             => name != null && (name.StartsWith("Semanticus_VerifiedEdits", StringComparison.Ordinal)
@@ -861,11 +1024,32 @@ namespace Semanticus.Engine
         // All TOM annotation collections expose the same named collection contract but use different concrete
         // generic collection types (model/table/calc-group). Dynamic is deliberately confined to this tiny adapter;
         // the values remain strongly-typed Annotation clones and the tests exercise every owner type.
-        private static void CopyAnnotations(IEnumerable<TOM.Annotation> source, dynamic target, Func<TOM.Annotation, bool> preserve = null)
+        // removeAbsent=true (the ALM Apply/CopyModelShell path) makes the target MATCH the source — a target annotation
+        // absent from source is deleted (pinned by ModelCompareTests: a live-only "Stale" is removed on apply). The
+        // deploy path no longer routes annotations through here at all (owned ones deploy on their own channel; a
+        // foreign one is never touched), so removeAbsent=false is retained only for completeness.
+        // MAJOR 3: does the SOURCE (left) introduce an OWNED-annotation change vs the target (right)? Mirrors
+        // LiveDeploy.DeployOwnedAnnotations' deploy direction exactly — for each owned annotation the source carries, a
+        // change is introduced iff the target lacks it or holds a different value. A live-only owned annotation (target
+        // has it, source doesn't) is NOT a change (LiveDeploy never deletes it). Owned only — a foreign annotation is
+        // never carried by the relationship deploy channel, so it must not manufacture an Update the deploy can't apply.
+        private static bool OwnedAnnotationsIntroduceChange(TOM.Relationship src, TOM.Relationship live)
+        {
+            var liveOwned = live.Annotations.Cast<TOM.Annotation>().Where(a => a?.Name != null && LiveDeploy.IsOwnedAnnotation(a.Name))
+                .GroupBy(a => a.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Value, StringComparer.Ordinal);
+            foreach (var sa in src.Annotations.Cast<TOM.Annotation>().Where(a => a?.Name != null && LiveDeploy.IsOwnedAnnotation(a.Name)))
+            {
+                if (!liveOwned.TryGetValue(sa.Name, out var lv) || !string.Equals(lv, sa.Value, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        private static void CopyAnnotations(IEnumerable<TOM.Annotation> source, dynamic target, Func<TOM.Annotation, bool> preserve = null, bool removeAbsent = true)
         {
             var src = source.Where(a => a?.Name != null).ToDictionary(a => a.Name, StringComparer.Ordinal);
-            foreach (var existing in ((IEnumerable<TOM.Annotation>)target).ToList())
-                if (!src.ContainsKey(existing.Name) && !(preserve?.Invoke(existing) == true)) target.Remove(existing);
+            if (removeAbsent)
+                foreach (var existing in ((IEnumerable<TOM.Annotation>)target).ToList())
+                    if (!src.ContainsKey(existing.Name) && !(preserve?.Invoke(existing) == true)) target.Remove(existing);
             foreach (var annotation in src.Values)
             {
                 if (target.Contains(annotation.Name)) target[annotation.Name].Value = annotation.Value;

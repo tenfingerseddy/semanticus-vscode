@@ -134,6 +134,7 @@ namespace Semanticus.Engine
         public string Endpoint { get; set; }    // XMLA endpoint (workspace)
         public string Database { get; set; }    // dataset (workspace)
         public string AuthMode { get; set; }    // entra mode (workspace)
+        public string TenantId { get; set; }    // Entra tenant (workspace) — a remembered cross-tenant reference must target ITS tenant, not the default one az login is home to
         public string Label { get; set; }       // display label
     }
 
@@ -170,6 +171,16 @@ namespace Semanticus.Engine
         // RetaggedCounterpart is the ref of the paired item (on the Delete: the Create's ref, and vice versa).
         public bool LikelyRepublished { get; set; }
         public string RetaggedCounterpart { get; set; }
+        // REPLACEMENT COUPLING (relationship endpoint re-point). A relationship is matched by its endpoint SIGNATURE, so
+        // re-pointing an endpoint surfaces the SAME logical relationship as a right-only Delete(old sig) + a left-only
+        // Create(new sig). ModelCompare couples them by ENDPOINT IDENTITY (lineage tag when both endpoints carry one,
+        // name fallback — one endpoint kept, the other's column moved). The coupling is UNIQUE and FAIL-CLOSED: this holds
+        // the required-replacement set = every Create in the Delete's connected candidate component. A one-to-one re-point
+        // yields ONE ref; an AMBIGUOUS group (a Delete with >1 candidate Create, or a Create shared by >1 Delete) yields
+        // the whole component's Creates, and the group is safe to delete only if ALL of them land. The push refuses this
+        // Delete when ANY required Create that was pushed did NOT land — so a delete can never drop the relationship with
+        // NO replacement (BLOCKER 1). Null/empty on every non-replacement item. See ModelCompare.CompareRelationships.
+        public string[] ReplacementCreateRefs { get; set; }
         // True when this object is matched across the two models by NAME ONLY (roles/perspectives/cultures/
         // datasources/named-expressions/partitions): correct within one lineage, but a rename reads as Delete+Create.
         // Relationships are matched STRUCTURALLY (by endpoints), so they are NOT name-matched. Lets the UI flag the
@@ -197,6 +208,15 @@ namespace Semanticus.Engine
         public string Name { get; set; }        // current name at diff time (tag-less resolution + reporting); for a relationship: the structural endpoint signature
         public string Table { get; set; }       // the owning table's current name at diff time (children); null for top-level
 
+        /// <summary>REPLACEMENT COUPLING (BLOCKER 1): on a relationship Delete that is the OLD half of an endpoint
+        /// re-point, the refs of the required NEW relationship Create(s) (each == that relationship's "relationship:&lt;sig&gt;"
+        /// ref). A one-to-one re-point carries ONE; an AMBIGUOUS group carries the whole candidate component (see
+        /// <see cref="ModelDiffItem.ReplacementCreateRefs"/>). The live-delete channel refuses this Delete as a conflict
+        /// when ANY of these was ATTEMPTED in this push (present in the pushed model) but did NOT land live — neither
+        /// synced NOR matched already-present (its endpoint no longer resolves, or a sibling replacement is missing) — so
+        /// the old relationship is never dropped with no replacement. Null/empty for every non-replacement target.</summary>
+        public string[] ReplacementNewRefs { get; set; }
+
         /// <summary>Build from a Delete <see cref="ModelDiffItem"/>, carrying the identity captured at diff time. This is
         /// the production path — it never parses <see cref="ModelDiffItem.Ref"/> for a tagged object (identity comes from
         /// the item's Target* fields). A relationship's identity IS its ref-borne structural signature (name-independent,
@@ -215,7 +235,7 @@ namespace Semanticus.Engine
             if (kind == "relationship")
             {
                 var sig = it.Ref != null && it.Ref.StartsWith("relationship:", StringComparison.Ordinal) ? it.Ref.Substring("relationship:".Length) : it.Ref;
-                return new LiveDeleteTarget { Kind = kind, Ref = it.Ref, Name = sig };
+                return new LiveDeleteTarget { Kind = kind, Ref = it.Ref, Name = sig, ReplacementNewRefs = (it.ReplacementCreateRefs != null && it.ReplacementCreateRefs.Length > 0) ? it.ReplacementCreateRefs : null };
             }
             return new LiveDeleteTarget
             {

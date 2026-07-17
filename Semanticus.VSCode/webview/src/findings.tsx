@@ -36,7 +36,7 @@ type Menu = { x: number; y: number; row: FindingRow } | null;
 
 // Collapsible Category → Rule → Items tree. Categories expand by default; rules collapse by default (so you
 // scan the rule list, then expand a rule to see its items). Right-click an item → reveal it in the Model tree.
-export function GroupedFindings({ rows, renderActions, renderRuleActions }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode }) {
+export function GroupedFindings({ rows, renderActions, renderRuleActions, categoryOrder }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode; categoryOrder?: string[] }) {
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   // rules collapse by default; ?expand=all opens them (used by the screenshot harness + a future expand-all).
   const [openRules, setOpenRules] = useState<Set<string>>(() =>
@@ -48,7 +48,13 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions }: { ro
     const next = new Set(set); next.has(key) ? next.delete(key) : next.add(key); setter(next);
   };
 
-  const groups = group(rows);
+  let groups = group(rows);
+  // Optional fixed category order (the Storage tab wants Can remove → Worth reviewing → Behavior cleanup,
+  // an actionability order, not the count order group() defaults to). Unlisted categories keep count order, last.
+  if (categoryOrder) {
+    const idx = (c: string) => { const i = categoryOrder.indexOf(c); return i < 0 ? categoryOrder.length : i; };
+    groups = [...groups].sort((a, b) => idx(a.category) - idx(b.category));
+  }
   if (groups.length === 0) return <div className="text-[12px] py-3" style={{ color: 'var(--sem-good)' }}>Nothing to show.</div>;
 
   return (

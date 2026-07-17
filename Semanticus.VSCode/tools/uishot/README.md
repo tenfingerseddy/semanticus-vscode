@@ -28,9 +28,11 @@ UISHOT_GRAPH=mini node shot.mjs Diagram   # focused 3-relationship graph (cardin
 UISHOT_GRAPH=docstress UISHOT_DOC_SECTION=diagram node shot.mjs Docs   # 34-table exported relationship diagram
 UISHOT_VE=broken node shot.mjs "Edit History"   # Verified-Edits audit trail with a TAMPERED (broken) hash chain
 UISHOT_PQ=incremental node shot.mjs "M Code"   # missing incremental-refresh prerequisites + repair actions
+
+node pageshot.mjs page.html out.png [widthPx]  # screenshot ANY local HTML file (mockups, wireframes, docs)
 ```
 
-- **studio** variants (tab labels): `AI Readiness · Optimize · BPA · Diagram · Statistics · Data · DAX Query · DAX Lab · Pivot`
+- **studio** variants (tab labels): `AI Readiness · Optimize · BPA · Diagram · Storage · Data · DAX Query · DAX Lab · Pivot`
 - **propgrid** variants (scenarios): `model` (the default no-object selection and its model settings) · `measure` (all editor kinds) · `multi` (multi-select / varies) · `column`
   (data-type dropdown + the Format String picker open) · `formatexpr` (the Format expression editor open) ·
   `lowcl` (Format expression locked below compatibility level 1601) · `staledraft` (an open editor + draft must

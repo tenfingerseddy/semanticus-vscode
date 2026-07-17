@@ -21,6 +21,12 @@ export const KIND_TAB: Record<string, string> = {
   health_delta: 'readiness',   // the post-commit health evidence record (feature #4) — review lands on AI Readiness
   review_reconcile_mapping: 'tests', reconcile_measure: 'tests',
 };
+// Display names for deep-link tooltips — the UI never speaks internal tab ids. `compare` is an alias
+// into Deploy (App.tsx routes it there), so its destination reads as Deploy too.
+const TAB_LABEL: Record<string, string> = {
+  daxlab: 'DAX Lab', data: 'Data', stats: 'Storage', docs: 'Docs', spec: 'Model Spec',
+  deploy: 'Deploy', compare: 'Deploy', readiness: 'AI Readiness', tests: 'Tests',
+};
 // A single neutral marker per feed entry — the op's text label carries the meaning (no colorful
 // pictographs in any product surface).
 const FEED_MARK = '•';
@@ -139,27 +145,43 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
             Live activity · AI Assistant
           </div>
           <div className="max-h-96 overflow-auto">
-            {feed.map((e) => (
-              // A policy refusal carries its exact ledger id straight to Permissions. Other entries pin BEFORE
-              // navigating so the destination reflects THIS run, not merely the newest one of the same kind.
-              <button key={e.seq} onClick={() => {
-                if (e.approvalId) onOpen('permissions', e.approvalId);
-                else { pin(e); onOpen(KIND_TAB[e.kind] ?? 'daxlab'); }
-                setOpen(false);
-              }}
-                className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--sem-surface-2)]"
-                title={e.approvalId ? 'Open the exact permission request waiting for approval' : `Open this run in the ${KIND_TAB[e.kind] ?? 'daxlab'} tab`}
-                style={{ borderBottom: '1px solid var(--sem-border)' }}>
-                <span className="shrink-0">{FEED_MARK}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="text-[12px] font-medium">{e.label}</span>
-                  {e.query && <span className="text-[11px] font-mono block truncate" style={{ color: 'var(--sem-muted)' }}>{e.query}</span>}
-                </span>
-                {e.error ? <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-bad)' }}>error</span>
-                  : e.rowCount != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.rowCount} rows</span>
-                  : e.elapsedMs != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.elapsedMs}ms</span> : null}
-              </button>
-            ))}
+            {feed.map((e) => {
+              // A policy refusal carries its exact ledger id straight to Permissions. An op whose result renders
+              // in a tab pins BEFORE navigating so the destination reflects THIS run, not merely the newest one
+              // of the same kind. Everything else (metadata edits, workflow steps, ...) has no owning tab — those
+              // entries are inert rather than dumping the click into an unrelated tab.
+              const tab = KIND_TAB[e.kind];
+              const body = (
+                <>
+                  <span className="shrink-0">{FEED_MARK}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-[12px] font-medium">{e.label}</span>
+                    {e.query && <span className="text-[11px] font-mono block truncate" style={{ color: 'var(--sem-muted)' }}>{e.query}</span>}
+                  </span>
+                  {e.error ? <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-bad)' }}>error</span>
+                    : e.rowCount != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.rowCount} rows</span>
+                    : e.elapsedMs != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.elapsedMs}ms</span> : null}
+                </>
+              );
+              if (!e.approvalId && !tab) return (
+                <div key={e.seq} className="w-full text-left px-3 py-1.5 flex items-center gap-2"
+                  style={{ borderBottom: '1px solid var(--sem-border)' }}>
+                  {body}
+                </div>
+              );
+              return (
+                <button key={e.seq} onClick={() => {
+                  if (e.approvalId) onOpen('permissions', e.approvalId);
+                  else { pin(e); onOpen(tab); }
+                  setOpen(false);
+                }}
+                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--sem-surface-2)]"
+                  title={e.approvalId ? 'Open the exact permission request waiting for approval' : `Open this run in the ${TAB_LABEL[tab] ?? tab} tab`}
+                  style={{ borderBottom: '1px solid var(--sem-border)' }}>
+                  {body}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

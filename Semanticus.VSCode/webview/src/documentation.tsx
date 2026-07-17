@@ -35,7 +35,7 @@ const CONFIG_LABELS: { key: keyof DocConfig; label: string }[] = [
   { key: 'kpis', label: 'KPIs' },
   { key: 'rls', label: 'Roles & RLS' },
   { key: 'lineage', label: 'Sources & lineage' },
-  { key: 'storageStats', label: 'Storage (VertiPaq)' },
+  { key: 'storageStats', label: 'Storage' },
   { key: 'readinessScorecard', label: 'AI-readiness scorecard' },
   { key: 'bpaScorecard', label: 'Best-practices summary' },
   { key: 'prepForAi', label: 'Prep-for-AI surface' },

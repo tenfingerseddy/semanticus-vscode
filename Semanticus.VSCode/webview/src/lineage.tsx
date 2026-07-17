@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, onDidChange, revealInTree } from './bridge';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { rpc, onDidChange, onProgress, revealInTree, pickReportPaths, type OperationProgress } from './bridge';
+import { useConnection } from './connection';
 import { KIND_GLYPH, KIND_COLOR, useFillHeight, type LineageResult } from './lineagetypes';
 import { LineageGraphView } from './lineagegraph';
 import { LineageTreeView } from './lineagetree';
@@ -21,6 +22,8 @@ interface SkippedObject { ref: string; reason: string }
 interface RemoveSafeReport { revision: number; removed: RemovedObject[]; skipped: SkippedObject[]; count: number; verification?: string; caveat?: string; note?: string }
 // Cloud report layer (Phase 3) — mirrors Semanticus.Engine/Lineage/LineageProtocol.cs (camelCased).
 interface CloudReport { id: string; name: string; datasetId?: string; reportType?: string; webUrl?: string }
+// Workspace list (list_workspaces) — mirrors Semanticus.Engine/Alm/AlmProtocol.cs FabricWorkspace (camelCased).
+interface FabricWorkspace { id: string; displayName: string; description?: string; type?: string; capacityId?: string }
 interface ReportVisualUsage { page: string; visual?: string; visualType?: string; usedRefs: string[] }
 interface ReportUsage { path: string; name: string; read: boolean; fieldCount: number; unresolved: number; usedRefs: string[]; extensionMeasures: string[]; visuals?: ReportVisualUsage[]; error?: string }
 interface ReportAnalysisResult { reports: ReportUsage[]; reportsRead: number; reportsUnreadable: number; modelFieldsUsed: string[]; unused: UnusedResult; caveat?: string }
@@ -36,6 +39,148 @@ interface ImpactAssessmentResult {
   unknowns: string[]; summary: string; suggestedNextAction: ImpactNextAction;
 }
 type AuthMode = 'azcli' | 'interactive' | 'devicecode' | 'serviceprincipal';
+type LineageMode = 'graph' | 'tree' | 'impact' | 'unused' | 'reports';
+type ReportsBusy = 'load' | 'analyze' | 'analyzeLocal' | 'workspaces' | 'browse' | null;
+
+interface LineageTabState {
+  mode: LineageMode;
+  setMode: React.Dispatch<React.SetStateAction<LineageMode>>;
+  analysis: ReportAnalysisResult | null;
+  localReportPaths: string[] | null;
+  onAnalyzed: (analysis: ReportAnalysisResult | null, localPaths: string[] | null) => void;
+  ws: string;
+  setWs: React.Dispatch<React.SetStateAction<string>>;
+  tenant: string;
+  setTenant: React.Dispatch<React.SetStateAction<string>>;
+  authMode: AuthMode;
+  setAuthMode: React.Dispatch<React.SetStateAction<AuthMode>>;
+  workspaces: FabricWorkspace[] | null;
+  setWorkspaces: React.Dispatch<React.SetStateAction<FabricWorkspace[] | null>>;
+  wsError: string | null;
+  setWsError: React.Dispatch<React.SetStateAction<string | null>>;
+  manualWs: boolean;
+  setManualWs: React.Dispatch<React.SetStateAction<boolean>>;
+  reports: CloudReport[] | null;
+  setReports: React.Dispatch<React.SetStateAction<CloudReport[] | null>>;
+  loadedWs: string;
+  setLoadedWs: React.Dispatch<React.SetStateAction<string>>;
+  sel: Set<string>;
+  setSel: React.Dispatch<React.SetStateAction<Set<string>>>;
+  consent: boolean;
+  setConsent: React.Dispatch<React.SetStateAction<boolean>>;
+  pbirPath: string;
+  setPbirPath: React.Dispatch<React.SetStateAction<string>>;
+  pickedPaths: string[];
+  setPickedPaths: React.Dispatch<React.SetStateAction<string[]>>;
+  lastLocalPaths: string[] | null;
+  setLastLocalPaths: React.Dispatch<React.SetStateAction<string[] | null>>;
+  busy: ReportsBusy;
+  setBusy: React.Dispatch<React.SetStateAction<ReportsBusy>>;
+  cloudProgress: OperationProgress | null;
+  setCloudProgress: React.Dispatch<React.SetStateAction<OperationProgress | null>>;
+  error: string | null;
+  setError: React.Dispatch<React.SetStateAction<string | null>>;
+  gates: {
+    cloudGen: React.MutableRefObject<number>;
+    localGen: React.MutableRefObject<number>;
+    activeCloudRunId: React.MutableRefObject<string | null>;
+    tenantOwner: React.MutableRefObject<'auto' | 'user' | null>;
+  };
+}
+
+const LineageTabStateContext = createContext<LineageTabState | null>(null);
+
+function useLineageTabState(): LineageTabState {
+  const state = useContext(LineageTabStateContext);
+  if (!state) throw new Error('LineageView must be rendered inside LineageTabStateProvider');
+  return state;
+}
+
+// Null-tolerant selector for the Studio tab bar: true while any report-discovery/analysis op (cloud list, cloud or
+// local analyze, workspace list, browse) is in flight. Read outside LineageView so cloud analysis that keeps running
+// while Lineage is hidden still shows a busy affordance on the tab bar.
+export function useLineageReportsBusy(): boolean {
+  return useContext(LineageTabStateContext)?.busy != null;
+}
+
+// This holder is mounted by App above the conditional Studio tab body. Report discovery, an in-flight analysis,
+// run-correlated progress, and its eventual result therefore outlive LineageView's mount without becoming persisted
+// webview data. App's session-keyed boundary still destroys the holder on a model swap.
+export function LineageTabStateProvider({ children }: { children: React.ReactNode }) {
+  const { session } = useConnection();
+  const [mode, setMode] = useState<LineageMode>('tree');
+  const [analysis, setAnalysis] = useState<ReportAnalysisResult | null>(null);
+  const [localReportPaths, setLocalReportPaths] = useState<string[] | null>(null);
+  const [ws, setWs] = useState('');
+  const [tenant, setTenant] = useState('');
+  const [authMode, setAuthMode] = useState<AuthMode>('azcli');
+  const [workspaces, setWorkspaces] = useState<FabricWorkspace[] | null>(null);
+  const [wsError, setWsError] = useState<string | null>(null);
+  const [manualWs, setManualWs] = useState(false);
+  const [reports, setReports] = useState<CloudReport[] | null>(null);
+  const [loadedWs, setLoadedWs] = useState('');
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [consent, setConsent] = useState(false);
+  const [pbirPath, setPbirPath] = useState('');
+  const [pickedPaths, setPickedPaths] = useState<string[]>([]);
+  const [lastLocalPaths, setLastLocalPaths] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState<ReportsBusy>(null);
+  const [cloudProgress, setCloudProgress] = useState<OperationProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // These gates belong to the holder too: recreating them with ReportsPane would sever runId progress correlation and
+  // let an old async completion bypass an invalidation after the user left the tab.
+  const cloudGen = useRef(0);
+  const localGen = useRef(0);
+  const activeCloudRunId = useRef<string | null>(null);
+  const prevIdentity = useRef<string | undefined>(undefined);
+  const tenantOwner = useRef<'auto' | 'user' | null>(null);
+
+  const onAnalyzed = (next: ReportAnalysisResult | null, localPaths: string[] | null) => {
+    setAnalysis(next); setLocalReportPaths(localPaths);
+  };
+
+  // Keep the progress listener alive while Lineage is not the selected Studio tab. Correlation remains exact: only
+  // analyze_cloud_reports events carrying the holder's current runId can advance the visible progress snapshot.
+  useEffect(() => onProgress((p) => {
+    if (p.opKey === 'analyze_cloud_reports' && p.runId === activeCloudRunId.current) setCloudProgress(p);
+  }), []);
+
+  // Preserve ReportsPane's original model-identity invalidation above the tab switch. A same-session endpoint/database
+  // rebind still bumps both generations and clears every model-scoped discovery/result; a different session remounts
+  // this whole provider through App's key. Tenant ownership remains unchanged: user input is never overwritten here.
+  useEffect(() => {
+    if (!session) return;
+    const ident = sessionIdentityKey(session);
+    const modelSwitched = prevIdentity.current !== undefined && prevIdentity.current !== ident;
+    prevIdentity.current = ident;
+    if (modelSwitched) {
+      cloudGen.current++; localGen.current++;
+      activeCloudRunId.current = null;
+      setBusy(null);
+      setCloudProgress(null);
+      setWorkspaces(null); setWs(''); setWsError(null); setLoadedWs('');
+      setReports(null); setSel(new Set()); setConsent(false); setError(null); onAnalyzed(null, null);
+    }
+    const next = nextTenantValue(tenant, tenantOwner.current, session.currentTenant || '', modelSwitched);
+    tenantOwner.current = next.owner;
+    if (next.value !== tenant) setTenant(next.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, session?.currentTenant]);
+
+  return (
+    <LineageTabStateContext.Provider value={{
+      mode, setMode, analysis, localReportPaths, onAnalyzed,
+      ws, setWs, tenant, setTenant, authMode, setAuthMode, workspaces, setWorkspaces, wsError, setWsError,
+      manualWs, setManualWs, reports, setReports, loadedWs, setLoadedWs, sel, setSel, consent, setConsent,
+      pbirPath, setPbirPath, pickedPaths, setPickedPaths, lastLocalPaths, setLastLocalPaths,
+      busy, setBusy, cloudProgress, setCloudProgress, error, setError,
+      gates: { cloudGen, localGen, activeCloudRunId, tenantOwner },
+    }}>
+      {children}
+    </LineageTabStateContext.Provider>
+  );
+}
 
 // Merge published-report usage into the MODEL lineage graph so the chain extends downstream into where each field is
 // actually shown: field → visual → page → report (a visual belongs to exactly one page/report, so this stays precise).
@@ -82,14 +227,12 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
   onOpenTests?: () => void;
   onOpenWorkflow?: (name: string) => void;
 } = {}) {
+  const { mode, setMode, analysis: reportAnalysis, localReportPaths, onAnalyzed } = useLineageTabState();
   // Open on the TREE: it's bounded (fan-out capped) so it renders instantly, whereas the whole-model force graph is the
   // heavy view. Users switch to Graph when they want the free-form explore.
-  const [mode, setMode] = useState<'graph' | 'tree' | 'impact' | 'unused' | 'reports'>('tree');
   const [graph, setGraph] = useState<LineageResult | null>(null);
   // Report analysis (cloud or offline PBIR), lifted here so it persists across mode switches and augments the Graph/Tree
   // with the report layer (field → visual → page → report). The "Published reports" pane reports its result up.
-  const [reportAnalysis, setReportAnalysis] = useState<ReportAnalysisResult | null>(null);
-  const [localReportPaths, setLocalReportPaths] = useState<string[] | null>(null);
   const [root, setRoot] = useState<string | null>(null);
   const [impact, setImpact] = useState<ImpactResult | null>(null);
   const [unused, setUnused] = useState<UnusedResult | null>(null);
@@ -180,8 +323,7 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
               onOpenPlan={onOpenPlan} onOpenTests={onOpenTests} onOpenWorkflow={onOpenWorkflow} />
           : mode === 'unused'
             ? <UnusedPane unused={unused} onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
-            : <ReportsPane analysis={reportAnalysis} onAnalyzed={(a, paths) => { setReportAnalysis(a); setLocalReportPaths(paths); }}
-                onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />}
+            : <ReportsPane onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />}
     </div>
   );
 }
@@ -520,51 +662,162 @@ function UnusedRow({ item, onImpact, onDelete }: { item: UnusedItem; onImpact: (
 // surprise sign-in. getDefinition needs a WRITE-CAPABLE scope, so the Analyze button is gated behind explicit consent.
 const PBIR_CAPABLE = (r: CloudReport) => (r.reportType ?? 'PowerBIReport') !== 'PaginatedReport';
 
-function ReportsPane({ analysis, onAnalyzed, onImpact }: { analysis: ReportAnalysisResult | null; onAnalyzed: (a: ReportAnalysisResult | null, localPaths: string[] | null) => void; onImpact: (ref: string) => void }) {
-  const [ws, setWs] = useState('');
-  const [tenant, setTenant] = useState('');
-  const [authMode, setAuthMode] = useState<AuthMode>('azcli');
-  const [reports, setReports] = useState<CloudReport[] | null>(null);
-  const [loadedWs, setLoadedWs] = useState('');   // the workspace the loaded `reports` belong to — guards a wrong-target Analyze
-  const [sel, setSel] = useState<Set<string>>(new Set());
-  const [consent, setConsent] = useState(false);
-  const [pbirPath, setPbirPath] = useState('');   // offline: local PBIR folder(s) to analyze (no sign-in)
-  // The paths behind the CURRENT analysis when it came from the local (offline) leg; null for a cloud analysis.
-  // Passed to the sweep so its at-apply re-verification is report-aware, and used to refresh this snapshot after a delete.
-  const [lastLocalPaths, setLastLocalPaths] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState<'load' | 'analyze' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+// The live XMLA endpoint carries the workspace NAME, not its id (powerbi://api.powerbi.com/v1.0/myorg/<WorkspaceName>).
+// Pull that trailing segment so, once workspaces are listed, we can pre-select the one whose DisplayName matches the
+// model's own workspace — bridging name→id without asking. URL-decoded (a workspace name can contain spaces/%20).
+// Anchored: only a TRAILING /myorg/<name> segment (optional trailing slash) is the workspace — a deeper path is not.
+// Malformed percent-encoding returns null (no auto-select on a garbled hint), never the raw undecoded segment.
+function workspaceNameFromEndpoint(endpoint?: string | null): string | null {
+  if (!endpoint) return null;
+  const m = /\/myorg\/([^/?#]+?)\/?$/i.exec(endpoint);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
+}
 
+// Merge the structured Browse picks with the free-text input's paths for analyze_reports. The picks stay a real
+// string[] end to end — a legal Windows folder name can contain ';' (or edge whitespace), so a pick passes through
+// EXACTLY as the OS dialog returned it; only the MANUAL free-text half uses the ';'-split + trim convention (its
+// documented limitation). Order-preserving, deduped verbatim so a path both picked and typed is analyzed once.
+function mergeReportPaths(picked: string[], freeText: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const p of picked) { if (p && !seen.has(p)) { seen.add(p); out.push(p); } }
+  for (const f of freeText.split(';')) {
+    const t = f.trim();
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  return out;
+}
+
+// The open model's identity, as one comparable key. sessionId is the primary signal (a new open = a new session id,
+// including two models in the SAME workspace, or local models where liveEndpoint is null for all of them); the
+// endpoint + database ride along to catch a rebind that reuses a session. Any change = the discovery state on
+// screen belongs to a different model and must be invalidated.
+function sessionIdentityKey(s?: { sessionId?: string; liveEndpoint?: string; liveDatabase?: string } | null): string {
+  return `${s?.sessionId ?? ''}|${s?.liveEndpoint ?? ''}|${s?.liveDatabase ?? ''}`;
+}
+
+// Decide the tenant field's next value when the open model's identity/tenant is observed. Ownership is explicit:
+// only a value WE auto-filled ('auto') is ever replaced — or CLEARED when the new model has no known tenant (a
+// stale prefill must not silently target the previous model's tenant). A user-typed value ('user') is theirs until
+// they empty the field themselves (which returns ownership, so prefill works again).
+function nextTenantValue(current: string, owner: 'auto' | 'user' | null, auto: string, modelSwitched: boolean):
+  { value: string; owner: 'auto' | 'user' | null } {
+  if (owner === 'user' && current !== '') return { value: current, owner };
+  if (auto) {
+    if (current === '' || (modelSwitched && owner === 'auto')) return { value: auto, owner: 'auto' };
+    return { value: current, owner };
+  }
+  if (modelSwitched && owner === 'auto') return { value: '', owner: null };
+  return { value: current, owner };
+}
+
+function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
+  const { session } = useConnection();   // the open model's live identity — used to default the workspace + tenant
+  const {
+    analysis, onAnalyzed, ws, setWs, tenant, setTenant, authMode, setAuthMode, workspaces, setWorkspaces,
+    wsError, setWsError, manualWs, setManualWs, reports, setReports, loadedWs, setLoadedWs, sel, setSel,
+    consent, setConsent, pbirPath, setPbirPath, pickedPaths, setPickedPaths, lastLocalPaths, setLastLocalPaths,
+    busy, setBusy, cloudProgress, setCloudProgress, error, setError, gates,
+  } = useLineageTabState();
+  const { cloudGen, localGen, activeCloudRunId, tenantOwner } = gates;
+  // Generation tokens: every async CLOUD flow (list workspaces / list reports / cloud analyze) captures cloudGen at
+  // start and commits its result only while still newest — so a slow old response (or one issued under a previous
+  // auth/tenant/model identity) can never overwrite newer state or clobber a GUID typed mid-flight. Identity edits and
+  // model switches bump the token to orphan whatever is in flight (and clear its busy honestly, since the orphaned
+  // finally won't). localGen does the same for the offline analyze, which only a MODEL switch invalidates (auth/tenant
+  // identity is irrelevant to a local file scan). Loaders bump on start too, so a second click orphans the first.
   const pbirCount = useMemo(() => (reports ?? []).filter(PBIR_CAPABLE).length, [reports]);
+  const analyzeLabel = cloudProgress
+    ? `Analyzing ${cloudProgress.done} of ${cloudProgress.total}${cloudProgress.note ? `: ${cloudProgress.note}` : ''}`
+    : 'Analyzing…';
+  // The model's own workspace name (from the live XMLA endpoint), used to pre-select it once workspaces list.
+  const wsNameHint = useMemo(() => workspaceNameFromEndpoint(session?.liveEndpoint), [session?.liveEndpoint]);
+  const clearCloudBusy = () => setBusy((b) => (b === 'workspaces' || b === 'load' || b === 'analyze' ? null : b));
   // Editing the workspace (or auth) after a Load must invalidate the on-screen reports — else Analyze would target a
-  // DIFFERENT workspace with the previous one's report ids. Also drops a stale consent so each workspace is re-consented.
-  function resetDiscovery() { setReports(null); setSel(new Set()); onAnalyzed(null, null); setConsent(false); setError(null); }
+  // DIFFERENT workspace with the previous one's report ids. Also drops a stale consent so each workspace is re-consented,
+  // and orphans any in-flight cloud call (its commit is for the previous selection).
+  function resetDiscovery() { cloudGen.current++; activeCloudRunId.current = null; clearCloudBusy(); setCloudProgress(null); setReports(null); setSel(new Set()); onAnalyzed(null, null); setConsent(false); setError(null); }
+  // Auth/tenant identity changed ⇒ any listed workspaces belong to the OLD identity. Drop them so the picker re-lists
+  // for the new one rather than offering a wrong-tenant list. A MANUALLY typed GUID survives (the list is stale, the
+  // GUID is not); a picker selection is cleared with the list it came from.
+  function resetWorkspaces() { cloudGen.current++; activeCloudRunId.current = null; clearCloudBusy(); setCloudProgress(null); setWorkspaces(null); setWsError(null); if (!manualWs) setWs(''); }
+
+  // List the workspaces for the current identity (a live Entra call — hence on demand, not on mount). On success,
+  // auto-select the workspace whose DisplayName matches the model's own workspace name (case-insensitive exact) so
+  // the common case ("analyze the model I'm editing") needs no typing. No match ⇒ leave unselected (never guess).
+  async function loadWorkspaces() {
+    const gen = ++cloudGen.current;
+    setBusy('workspaces'); setWsError(null);
+    try {
+      const list = await rpc<FabricWorkspace[]>('listWorkspaces', authMode, tenant.trim() || null);
+      if (gen !== cloudGen.current) return;   // identity/model/selection moved on — this list is for the old world
+      const sorted = [...(list ?? [])].sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+      setWorkspaces(sorted);
+      if (wsNameHint) {
+        const match = sorted.find((w) => (w.displayName || '').toLowerCase() === wsNameHint.toLowerCase());
+        // Functional read of the LATEST selection (never this closure's): a GUID typed mid-flight wins over the match.
+        if (match) setWs((cur) => cur || match.id);
+      }
+    } catch (e) { if (gen === cloudGen.current) { setWsError(String((e as Error).message ?? e)); setWorkspaces([]); } }
+    finally { if (gen === cloudGen.current) setBusy(null); }
+  }
 
   async function loadReports() {
     const id = ws.trim();
-    if (!id) { setError('Enter a workspace id first.'); return; }
+    if (!id) { setError('Choose a workspace first.'); return; }
+    const gen = ++cloudGen.current;
     setBusy('load'); setError(null); onAnalyzed(null, null); setReports(null); setSel(new Set()); setConsent(false);
-    try { setReports(await rpc<CloudReport[]>('listReports', id, authMode, tenant.trim() || null)); setLoadedWs(id); }
-    catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setBusy(null); }
+    try {
+      const list = await rpc<CloudReport[]>('listReports', id, authMode, tenant.trim() || null);
+      if (gen !== cloudGen.current) return;
+      setReports(list); setLoadedWs(id);
+    } catch (e) { if (gen === cloudGen.current) setError(String((e as Error).message ?? e)); }
+    finally { if (gen === cloudGen.current) setBusy(null); }
   }
   async function analyze() {
     // Send the explicit PBIR id set so an empty selection ("analyze all PBIR") never pulls paginated/RDL reports, and
     // pass the live `consent` (not a literal) so the engine call is driven by the same flag the button is gated on.
     const ids = sel.size > 0 ? [...sel] : (reports ?? []).filter(PBIR_CAPABLE).map((r) => r.id);
-    setBusy('analyze'); setError(null); onAnalyzed(null, null);
-    try { onAnalyzed(await rpc<ReportAnalysisResult>('analyzeCloudReports', loadedWs, ids, consent, authMode, tenant.trim() || null), null); setLastLocalPaths(null); }
-    catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setBusy(null); }
+    const gen = ++cloudGen.current;
+    const runId = crypto.randomUUID();
+    activeCloudRunId.current = runId;
+    setBusy('analyze'); setCloudProgress(null); setError(null); onAnalyzed(null, null);
+    try {
+      const res = await rpc<ReportAnalysisResult>('analyzeCloudReports', loadedWs, ids, consent, authMode, tenant.trim() || null, runId);
+      if (gen !== cloudGen.current) return;
+      onAnalyzed(res, null); setLastLocalPaths(null);
+    } catch (e) { if (gen === cloudGen.current) setError(String((e as Error).message ?? e)); }
+    finally {
+      if (gen === cloudGen.current) {
+        if (activeCloudRunId.current === runId) activeCloudRunId.current = null;
+        setBusy(null);
+      }
+    }
+  }
+  // Browse to report folder(s) via the host's native folder picker (multi-select). Picks land in the structured
+  // chips list — never the free-text field (whose ';' convention would corrupt a path containing ';').
+  async function browse() {
+    if (busy) return;
+    setBusy('browse');
+    try {
+      const picked = await pickReportPaths();
+      if (picked && picked.length) setPickedPaths((cur) => mergeReportPaths([...cur, ...picked], ''));
+    } catch (e) { setError(String((e as Error).message ?? e)); }   // the picker timed out/failed — say so, don't hang
+    finally { setBusy((b) => (b === 'browse' ? null : b)); }
   }
   // Offline path: analyze local PBIR folder(s) (a .pbip's *.Report) — no sign-in. Feeds the SAME report layer.
   async function analyzeLocal() {
-    const paths = pbirPath.split(';').map((s) => s.trim()).filter(Boolean);
-    if (!paths.length) { setError('Enter a local PBIR folder (or a .pbip report) path first.'); return; }
-    setBusy('analyze'); setError(null); onAnalyzed(null, null);
-    try { onAnalyzed(await rpc<ReportAnalysisResult>('analyzeReports', paths), paths); setLastLocalPaths(paths); }
-    catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setBusy(null); }
+    const paths = mergeReportPaths(pickedPaths, pbirPath);
+    if (!paths.length) { setError('Pick a local report folder (or enter a path) first.'); return; }
+    const gen = ++localGen.current;
+    setBusy('analyzeLocal'); setError(null); onAnalyzed(null, null);
+    try {
+      const res = await rpc<ReportAnalysisResult>('analyzeReports', paths);
+      if (gen !== localGen.current) return;   // the model was switched mid-analysis — this snapshot is the old model's
+      onAnalyzed(res, paths); setLastLocalPaths(paths);
+    } catch (e) { if (gen === localGen.current) setError(String((e as Error).message ?? e)); }
+    finally { if (gen === localGen.current) setBusy(null); }
   }
   // After a delete/sweep from the pane below, this snapshot is stale — re-run the (cheap, offline) local analysis.
   // Cloud analyses are not auto re-fetched (auth round-trip); the model change still refreshes the offline panes.
@@ -585,13 +838,32 @@ function ReportsPane({ analysis, onAnalyzed, onImpact }: { analysis: ReportAnaly
           longer “safe to remove”.
         </div>
         <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <input value={pbirPath} onChange={(e) => setPbirPath(e.target.value)} placeholder="C:\path\to\MyReport.Report   (multiple: ; separated)" spellCheck={false}
+          <input value={pbirPath} onChange={(e) => setPbirPath(e.target.value)} placeholder="C:\path\to\MyReport.Report   (or a .pbip file / project root; multiple: ; separated)" spellCheck={false}
             className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ minWidth: 380, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+          <button onClick={() => void browse()} disabled={busy != null} title="Pick report folder(s) with the file browser"
+            className="text-[12px] px-3 py-1 rounded-md" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)', opacity: busy ? 0.6 : 1 }}>
+            {busy === 'browse' ? 'Opening…' : 'Browse…'}
+          </button>
           <button onClick={() => void analyzeLocal()} disabled={busy != null}
             className="text-[12px] px-3 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', opacity: busy ? 0.6 : 1 }}>
-            {busy === 'analyze' ? 'Analyzing…' : 'Analyze local PBIR'}
+            {busy === 'analyzeLocal' ? 'Analyzing…' : 'Analyze local PBIR'}
           </button>
         </div>
+        {/* Browsed picks render as removable chips — visible, individually removable, and passed to analyze as a
+            real string[] alongside whatever the free-text field holds. */}
+        {pickedPaths.length > 0 && (
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            {pickedPaths.map((p) => (
+              <span key={p} className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-md" title={p}
+                style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)', maxWidth: 420 }}>
+                <span className="truncate">{p}</span>
+                <button onClick={() => setPickedPaths((cur) => cur.filter((x) => x !== p))} aria-label={'Remove ' + p}
+                  className="shrink-0 leading-none" style={{ color: 'var(--sem-muted)' }}>✕</button>
+              </span>
+            ))}
+            <button onClick={() => setPickedPaths([])} className="text-[11px] underline" style={{ color: 'var(--sem-muted)' }}>clear all</button>
+          </div>
+        )}
       </Panel>
 
       <Panel>
@@ -600,10 +872,13 @@ function ReportsPane({ analysis, onAnalyzed, onImpact }: { analysis: ReportAnaly
           List a workspace's reports (each carries the dataset it binds to), then check report usage against the open
           model. A field only a report displays is no longer flagged “safe to remove”.
         </div>
+        {/* Identity: WHO signs in (az cli may be a different tenant than the model's own) + the tenant to target. */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <input value={ws} onChange={(e) => { setWs(e.target.value); if (reports) resetDiscovery(); }} placeholder="Workspace (group) id…" spellCheck={false}
-            className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ minWidth: 280, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-          <select value={authMode} onChange={(e) => { setAuthMode(e.target.value as AuthMode); if (reports) resetDiscovery(); }}
+          {/* Identity/selection edits invalidate UNCONDITIONALLY (never `if (reports)`): while a load is in flight
+              `reports` is null, and only the gen bump inside the resets orphans that request — a conditional reset
+              would let it commit the PREVIOUS identity/workspace's reports under the new choice. */}
+          <select value={authMode} onChange={(e) => { setAuthMode(e.target.value as AuthMode); resetWorkspaces(); resetDiscovery(); }}
+            title="WHO signs in here; az cli may be logged into a different tenant than the model's own"
             className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
             <option value="azcli">azcli</option>
             <option value="interactive">interactive</option>
@@ -611,14 +886,59 @@ function ReportsPane({ analysis, onAnalyzed, onImpact }: { analysis: ReportAnaly
             <option value="serviceprincipal">serviceprincipal</option>
           </select>
           {authMode !== 'azcli' && (
-            <input value={tenant} onChange={(e) => { setTenant(e.target.value); if (reports) resetDiscovery(); }} placeholder="Tenant id / domain (optional)" spellCheck={false}
+            <input value={tenant} onChange={(e) => {
+                // Typing takes explicit ownership (the prefill machinery must never touch a user value); emptying
+                // the field hands ownership back, so the next model observation may prefill again.
+                tenantOwner.current = e.target.value.trim() === '' ? null : 'user';
+                setTenant(e.target.value); resetWorkspaces(); resetDiscovery();
+              }} placeholder="Tenant id / domain (optional)" spellCheck={false}
               className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ minWidth: 200, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
           )}
-          <button onClick={() => void loadReports()} disabled={busy != null}
-            className="text-[12px] px-3 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', opacity: busy ? 0.6 : 1 }}>
+          {!manualWs && (
+            <button onClick={() => void loadWorkspaces()} disabled={busy != null} title="List the workspaces you can access, then pick one"
+              className="text-[12px] px-3 py-1 rounded-md" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)', opacity: busy ? 0.6 : 1 }}>
+              {busy === 'workspaces' ? 'Loading…' : workspaces ? 'Reload workspaces' : 'Load workspaces'}
+            </button>
+          )}
+        </div>
+
+        {/* Workspace selection: the picker (default) or a manual-id escape hatch for a workspace the list can't reach. */}
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {manualWs ? (
+            <>
+              <input value={ws} onChange={(e) => { setWs(e.target.value); resetDiscovery(); }} placeholder="Workspace (group) id…" spellCheck={false}
+                className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ minWidth: 280, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+              <button onClick={() => {
+                // Back to the picker: a typed GUID that IS in the loaded list (ids compare case-insensitively — a
+                // GUID's casing is not identity) stays selected, normalized to the list's canonical id so the
+                // <select> can render it; an unlisted one can't render in a select, so it clears with its
+                // discovery state.
+                setManualWs(false);
+                const match = workspaces?.find((w) => w.id.toLowerCase() === ws.trim().toLowerCase());
+                if (match) setWs(match.id);
+                else { setWs(''); resetDiscovery(); }
+              }} className="text-[11px] underline" style={{ color: 'var(--sem-muted)' }}>use workspace picker</button>
+            </>
+          ) : workspaces ? (
+            <select value={ws} onChange={(e) => { setWs(e.target.value); resetDiscovery(); }} disabled={workspaces.length === 0}
+              className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ minWidth: 280, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+              <option value="">{workspaces.length === 0 ? 'No workspaces available' : 'Choose a workspace…'}</option>
+              {workspaces.map((w) => <option key={w.id} value={w.id}>{w.displayName}</option>)}
+            </select>
+          ) : (
+            <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Load workspaces to pick one, or</span>
+          )}
+          {/* Entering manual mode keeps the current id (the input opens pre-filled with it) — the selection did not
+              change, so any loaded reports stay valid; editing the id afterwards resets discovery as usual. */}
+          {!manualWs && <button onClick={() => setManualWs(true)} className="text-[11px] underline" style={{ color: 'var(--sem-muted)' }}>enter id manually</button>}
+          <button onClick={() => void loadReports()} disabled={busy != null || !ws.trim()}
+            className="text-[12px] px-3 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', opacity: (busy || !ws.trim()) ? 0.5 : 1 }}>
             {busy === 'load' ? 'Loading…' : 'Load reports'}
           </button>
         </div>
+        {/* The selected workspace's id, shown dimly — the value behind the picker, and what a manual entry expects. */}
+        {!manualWs && ws && <div className="text-[10px] mt-1 tnum" style={{ color: 'var(--sem-muted)' }}>id {ws}</div>}
+        {wsError && <div className="text-[11px] mt-2" style={{ color: 'var(--sem-bad)' }}>{wsError}</div>}
       </Panel>
 
       {error && <Banner color="var(--sem-bad)">{error}</Banner>}
@@ -657,7 +977,7 @@ function ReportsPane({ analysis, onAnalyzed, onImpact }: { analysis: ReportAnaly
           <div className="flex items-center gap-2 mt-2">
             <button onClick={() => void analyze()} disabled={busy != null || !consent || pbirCount === 0}
               className="text-[12px] px-3 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', opacity: (busy || !consent || pbirCount === 0) ? 0.5 : 1 }}>
-              {busy === 'analyze' ? 'Analyzing…' : sel.size > 0 ? `Analyze ${sel.size} selected` : 'Analyze all PBIR reports'}
+              {busy === 'analyze' ? analyzeLabel : sel.size > 0 ? `Analyze ${sel.size} selected` : 'Analyze all PBIR reports'}
             </button>
             {!consent && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>consent required</span>}
           </div>
