@@ -24,10 +24,9 @@ namespace Semanticus.Engine
     public sealed partial class LocalEngine : IEngine, IDisposable
     {
         private readonly SessionManager _sessions;
-        // Attached-readonly live connection, independent of the loaded TMDL model. Both doors reach the same
-        // LocalEngine on different threads, so it's volatile and EVERY consumer snapshots it into a local
-        // before use (check-then-act on the field would race a concurrent disconnect → NRE).
-        private volatile LiveConnection _live;
+        // The live binding is owned by the atomically-published SessionContext. The shorthand intentionally
+        // performs one volatile context read; callers still snapshot the returned reference before use.
+        private LiveConnection _live => _sessions.CurrentContext.Live;
         // Serializes _live SWAPS (connect/disconnect/open-rebind) so replacing the connection is atomic: the new
         // connection is opened+authenticated FIRST, then published under this gate, then the OLD one disposed. A
         // failed connect never touches _live. Queries never take this gate — they read the volatile field directly.
@@ -54,9 +53,20 @@ namespace Semanticus.Engine
         // publishing model B while the PREVIOUS model's connection stayed attached (queries answered from the
         // wrong model). Newer connects must survive an open; newer opens must supersede it.
         private long _sessionIntent;
+        // Monotonic AUTH-intent ticket — a THIRD counter, deliberately separate from _liveIntent (HIGH 3). It orders
+        // the SAVED-ACCOUNT commit barrier ONLY; it does NOT decide who owns the live connection. A read-only
+        // compare/reference snapshot signs in (and may repoint the saved account) but must NOT own the live connection —
+        // minting a live intent for it made a concurrent slow connect see _liveIntent move and falsely report itself
+        // superseded at SwapLive. So compare/reference reads mint an AUTH ticket here and never a live intent; connect /
+        // open_live mint BOTH (a live ticket for the swap, an auth ticket for the barrier).
+        private long _authIntent;
+        // Non-zero while a live open (open_live/open_local) has PUBLISHED its session but not yet stamped its
+        // LiveOrigin. The primer's attached-connection identity fallback stands down while set: in that window a
+        // stale _live from a previous connect would mint the WRONG identity for a session about to gain its real
+        // one. Counter (not bool): opens are serialized by _lifecycleGate, but cheap to be exact.
+        internal int _liveOriginStampPending;
         // Serializes the SESSION LIFECYCLE (open / create) against itself, so two concurrent opens can't interleave
-        // their dispose/swap (the swap itself is already a single atomic assignment in SessionManager). This is the
-        // scoped fix; full per-op generation-checking (SessionContext) is a larger, separate refactor.
+        // their build, retirement, and one-reference SessionContext exchange.
         private readonly System.Threading.SemaphoreSlim _lifecycleGate = new System.Threading.SemaphoreSlim(1, 1);
         // The %TEMP% dir holding THIS session's live/local snapshot (open_live / open_local write the target's full
         // metadata there and adopt it as the editable copy). Owned by the engine and deleted when the session it backs
@@ -65,12 +75,6 @@ namespace Semanticus.Engine
         private string _snapshotDir;
         private string _snapshotBim;             // the .bim inside it, absolute
         private (DateTime, long) _snapshotStamp; // as WE wrote it — a later edit means the user saved into it
-        private readonly PlanStore _plans = new PlanStore();   // the session-held change plan (Change-Plan engine)
-        private readonly System.Threading.SemaphoreSlim _planGate = new System.Threading.SemaphoreSlim(1, 1); // serialize plan ops across both doors
-        private readonly SpecStore _spec = new SpecStore();    // the session-held model spec (spec-driven authoring)
-        private readonly System.Threading.SemaphoreSlim _specGate = new System.Threading.SemaphoreSlim(1, 1); // serialize spec ops across both doors
-        private readonly BaselineStore _baselines = new BaselineStore();   // frozen edit-start baselines (Verified Edits, RESTRUCTURE)
-        private readonly System.Threading.SemaphoreSlim _baselineGate = new System.Threading.SemaphoreSlim(1, 1);
         private static readonly System.Text.Json.JsonSerializerOptions SpecJson = new System.Text.Json.JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -131,7 +135,11 @@ namespace Semanticus.Engine
         public void Dispose()
         {
             LiveConnection old;
-            lock (_liveGate) { _liveDisposed = true; old = _live; _live = null; }
+            lock (_liveGate)
+            {
+                _liveDisposed = true;
+                old = _sessions.CurrentContext.ExchangeLive(null);
+            }
             SafeDispose(old);
             ReleaseSnapshotDir();
         }
@@ -262,7 +270,7 @@ namespace Semanticus.Engine
             // thread that owns TOM, so blocking it on a subprocess would serialize every read and write in the
             // process. Fail-soft — "" for a non-git / unsaved / no-commits-yet model, so an edit never depends on git.
             rec.BaseCommit = await TryResolveHeadAsync(s);
-            var r = await s.Dispatcher.RunAsync(() => { var x = VerifiedEditsStore.Append(s.Model, rec); s.MarkAuditDirty(); return x; });
+            var r = await s.RunAsync(() => { var x = VerifiedEditsStore.Append(s.Model, rec); s.MarkAuditDirty(); return x; });
             try { await PublishActivityAsync(new ActivityEvent { Kind = "verified_edit", Origin = rec.Origin, Label = rec.Op, Ok = true }); } catch { /* nudge only */ }
             // Number time-machine (feature #3): the audit chokepoint IS the checkpoint moment — an applied
             // plan/optimize or a committed deploy ambiently snapshots the vital signs (Pro + host-enabled +
@@ -359,6 +367,7 @@ namespace Semanticus.Engine
 
         private long NewLiveIntent() => System.Threading.Interlocked.Increment(ref _liveIntent);
         private long NewSessionIntent() => System.Threading.Interlocked.Increment(ref _sessionIntent);
+        private long NewAuthIntent() => System.Threading.Interlocked.Increment(ref _authIntent);
 
         // Mint a session-replacing op's ticket PAIR atomically with respect to other pair mints: PAIR ORDERING IS
         // THE C2 SOUNDNESS PREMISE — a newer session ticket must ALWAYS carry a newer live ticket. Minted as two
@@ -372,6 +381,96 @@ namespace Semanticus.Engine
         private readonly object _sessionIntentMintGate = new object();
         private (long Live, long Session) NewSessionSwapIntents() { lock (_sessionIntentMintGate) return (NewLiveIntent(), NewSessionIntent()); }
         internal (long Live, long Session) MintSessionSwapIntentsForTest() => NewSessionSwapIntents();
+
+        // The tenant-wide saved-account pointer (EntraToken's on-disk AuthenticationRecord) must move in lock-step with
+        // WHO WON, not with whichever connect's post-swap code happens to resume last. Two connects to the same
+        // (client, tenant, family) slot can both win the intent race in sequence — A wins the swap then pauses; B mints
+        // a newer ticket, wins its swap, and commits Carol; A then resumes and (round-2) committed Bob, leaving the saved
+        // pointer on Bob while Carol is the live connection (HIGH 2). We LINEARIZE the commit by ticket: the auth-record
+        // write happens only for the newest ticket seen here, so an older op resuming after a newer winner already
+        // committed becomes a no-op. Tickets are drawn from the single _liveIntent counter, so they order every
+        // connect/open across BOTH doors. Kept OUT of _liveGate deliberately — that gate must never wait on file IO
+        // (disposing an ADOMD connection can block; no query may wait on the swap), so a tiny dedicated gate orders the
+        // claim and the file write follows outside it.
+        private readonly object _authCommitGate = new object();
+        // Guarded by _authCommitGate: the newest committed auth ticket PER SLOT (family+tenant, see
+        // EntraToken.AuthRecordSlot). PER-SLOT, not global (HIGH 3): the saved-account record is keyed per (family,
+        // tenant), so a silent read in tenant B must not advance the barrier for tenant A and invalidate A's pending
+        // first-sign-in commit (A would re-prompt next run). Each slot orders only its own commits.
+        private readonly Dictionary<string, long> _lastAuthCommitBySlot = new(StringComparer.Ordinal);
+
+        // Advance the barrier for one SLOT to `ticket` iff it is newer than that slot's last commit. Caller holds
+        // _authCommitGate. Returns false when an older ticket is resuming after a newer winner already advanced the slot.
+        private bool TryAdvanceAuthSlot(string slot, long ticket)
+        {
+            if (_lastAuthCommitBySlot.TryGetValue(slot, out var last) && ticket <= last) return false;
+            _lastAuthCommitBySlot[slot] = ticket;
+            return true;
+        }
+
+        // Claim the right to commit the saved-account pointer for this connect/open ticket IN ITS SLOT. Returns true
+        // only for the newest ticket ever claimed in that slot — an older ticket resuming after a newer win is refused,
+        // and a claim in a DIFFERENT slot never blocks it. Internal so the interleaving is unit-testable without a real
+        // interactive sign-in.
+        internal bool ClaimAuthCommit(long ticket, string slot)
+        {
+            lock (_authCommitGate) return TryAdvanceAuthSlot(slot, ticket);
+        }
+
+        // Advance the commit barrier for THIS winner's ticket and, when it carries a freshly-signed-in account, write the
+        // saved-account pointer — BOTH under the SAME gate so the claim and the file write are ATOMIC. Two round-3 gaps
+        // are closed here (HIGH 2):
+        //   (1) the write was OUTSIDE the gate — A claimed, paused; B claimed+wrote Carol; A resumed and wrote Bob LAST,
+        //       leaving the saved pointer on Bob behind live Carol. Holding the gate across the write (a small atomic
+        //       temp+rename — this dedicated gate never fronts a query, so it may block on that IO) serializes the writes.
+        //   (2) a SILENT LIVE-SWAP winner (no pending record) must STILL advance the barrier — a forced Bob switch could
+        //       pause, a silent Alice CONNECT win without claiming, and Bob then commit after. A live/session-swap winner
+        //       now advances ITS SLOT's barrier here, committing nothing when there is no pending record but still
+        //       invalidating an older pending commit in the SAME slot. Round-4's barrier was GLOBAL, so a silent read in
+        //       another tenant invalidated a pending commit for THIS one — the barrier is now keyed per (family, tenant) slot.
+        //   (3) but a SILENT READ-ONLY SNAPSHOT (a compare/reference probe that neither signed in fresh NOR owns the live
+        //       connection) must NOT advance the barrier (HIGH 2a): doing so let a later silent compare that merely READ
+        //       saved Alice invalidate a forced open_live's pending Bob commit (live identity Bob, saved pointer stuck on
+        //       Alice). Only a fresh sign-in (a pending record to persist) or a live/session-swap winner participates.
+        // Kept OUT of _liveGate deliberately (that gate must never wait on file IO — disposing an ADOMD connection can
+        // block, and no query may wait on the swap).
+        private void CommitAuthRecordOrdered(EntraToken.PreparedCredential prepared, long ticket, string slot, bool liveSwapWinner)
+        {
+            // azcli / serviceprincipal / token keep NO saved-account record (slot == null): there is nothing to commit
+            // and nothing another op could commit out of order behind them, so they take no barrier at all (this is also
+            // MORE correct than the old global barrier, where an azcli winner needlessly invalidated an interactive commit).
+            if (slot == null) return;
+            var hasRecord = prepared != null && prepared.HasPendingRecord;
+            // A silent read-only snapshot (no fresh sign-in, not a swap winner) never touches the barrier (HIGH 2a).
+            if (!hasRecord && !liveSwapWinner) return;
+            lock (_authCommitGate)
+            {
+                if (!TryAdvanceAuthSlot(slot, ticket)) return;   // an older op resuming after a newer winner already advanced THIS slot — no-op
+                if (hasRecord)
+                    EntraToken.CommitAuthRecord(prepared);       // write UNDER the gate — claim + write are one atomic, ordered step
+            }
+        }
+
+        // Test seams for the ordered commit (HIGH 2). The real saved-account write needs an MSAL AuthenticationRecord
+        // (unconstructible offline), so these exercise the SAME gate discipline with a stand-in:
+        //   AdvanceAuthBarrierForTest models a SILENT LIVE-SWAP winner (advances the barrier, writes nothing) — proving an
+        //     older pending commit is invalidated even when the newer winner had no record to persist.
+        //   AdvanceAuthBarrierReadOnlyForTest models a SILENT READ-ONLY snapshot (no record, NOT a swap winner) — proving it
+        //     does NOT advance the barrier, so a forced open_live's pending commit still lands behind it (HIGH 2a).
+        //   CommitAuthWriteForTest runs an arbitrary write UNDER _authCommitGate exactly where the real temp+rename runs,
+        //     so a test can interleave two commits and prove they land in ticket order (the gate is held ACROSS the write).
+        internal void AdvanceAuthBarrierForTest(long ticket, string slot) => CommitAuthRecordOrdered(null, ticket, slot, liveSwapWinner: true);
+        internal void AdvanceAuthBarrierReadOnlyForTest(long ticket, string slot) => CommitAuthRecordOrdered(null, ticket, slot, liveSwapWinner: false);
+        internal bool CommitAuthWriteForTest(long ticket, string slot, Action write)
+        {
+            lock (_authCommitGate)
+            {
+                if (!TryAdvanceAuthSlot(slot, ticket)) return false;
+                write?.Invoke();
+                return true;
+            }
+        }
+        internal long MintAuthIntentForTest() => NewAuthIntent();
 
         // Atomically publish <paramref name="next"/> (a fully-opened connection, or null to detach) as _live —
         // but ONLY while <paramref name="ticket"/> is still the newest connection intent (and the optional
@@ -387,16 +486,19 @@ namespace Semanticus.Engine
         {
             lock (_liveGate)
             {
+                var context = _sessions.CurrentContext;
+                var current = context.Live;
                 // NEVER hand back the instance that remains attached as Displaced (every caller disposes what we
                 // return): a self-swap (the test seams re-publishing the same stub; a retry with the same object)
                 // would win and return `old == next == _live`, and a LOSING swap of the already-attached instance
                 // would return `next == _live` — either way the caller disposes a connection that is still live.
                 // Terminal first, independent of ticket order: after Dispose, NOTHING may publish — not even the
                 // newest intent (a connect that started after Dispose would otherwise win and stay attached).
-                if (_liveDisposed) return (false, ReferenceEquals(next, _live) ? null : next);
+                if (_liveDisposed) return (false, ReferenceEquals(next, current) ? null : next);
                 if (System.Threading.Interlocked.Read(ref _liveIntent) != ticket || (guard != null && !guard()))
-                    return (false, ReferenceEquals(next, _live) ? null : next);
-                var old = _live; _live = next; return (true, ReferenceEquals(old, next) ? null : old);
+                    return (false, ReferenceEquals(next, current) ? null : next);
+                var old = context.ExchangeLive(next);
+                return (true, ReferenceEquals(old, next) ? null : old);
             }
         }
 
@@ -409,6 +511,48 @@ namespace Semanticus.Engine
             if (c == null) return;
             try { c.Dispose(); }
             catch (Exception ex) { try { Console.Error.WriteLine("[live] disposing a superseded/displaced connection failed (outcome already decided): " + ex.Message); } catch { } }
+        }
+
+        private void EnsureContextCurrent(SessionContext expected, string operation)
+        {
+            if (!ReferenceEquals(_sessions.CurrentContext, expected))
+                throw new InvalidOperationException(
+                    $"{operation}: the open model changed while the operation was preparing. Nothing was applied. Retry against the current model.");
+        }
+
+        private void EnsureContextCurrent(SessionContext expected, LiveConnection expectedLive, string operation)
+        {
+            EnsureContextCurrent(expected, operation);
+            if (!ReferenceEquals(expected.Live, expectedLive))
+                throw new InvalidOperationException(
+                    $"{operation}: the live connection changed while the operation was preparing. Nothing was applied. Retry against the current connection.");
+        }
+
+        internal Func<Task> LiveQueryCapturedForTest;
+
+        // Test seam: force OpenLiveAsync to fail INSIDE its sign-in/export failure boundary (a cancelled sign-in, a dead
+        // endpoint) so the honest failed-open attribution (MED 6) is exercised end-to-end without a live tenant. Consumed
+        // once per open (Interlocked.Exchange), so it never leaks into a later real open.
+        internal Func<Task> OpenLiveFailureProbeForTests;
+
+        private async Task<ResultSet> ExecuteLiveGuardedAsync(LiveConnection expected, string query, int maxRows,
+            int timeoutSeconds)
+        {
+            var hook = System.Threading.Interlocked.Exchange(ref LiveQueryCapturedForTest, null);
+            if (hook != null) await hook();
+            ResultSet result;
+            try { result = await expected.ExecuteAsync(query, maxRows, timeoutSeconds); }
+            catch (InvalidOperationException) when (!ReferenceEquals(_live, expected))
+            {
+                return _live == null
+                    ? ResultSet.FromError("Not connected. Call connect_xmla or connect_local first.")
+                    : ResultSet.FromError(
+                        "The live connection changed before the query started. Retry against the current connection.");
+            }
+            return ReferenceEquals(_live, expected)
+                ? result
+                : ResultSet.FromError(
+                    "The live connection changed while the query was running. Its stale result was discarded. Retry against the current connection.");
         }
 
         // The honest tool-result for a connect/disconnect that completed its work but LOST the intent race:
@@ -429,43 +573,17 @@ namespace Semanticus.Engine
         internal long MintLiveIntentForTest() => NewLiveIntent();
         internal bool TrySwapLiveForTest(LiveConnection c, long ticket) { var (won, displaced) = SwapLive(c, ticket); SafeDispose(displaced); return won; }
 
-        // Model-scoped state that must NOT survive a model replacement — an old plan/spec/baseline applied to a
-        // NEWLY opened model is a data-integrity bug (wrong-model edits, false regressions). Invoked on the
-        // lifecycle-gated open/create path AFTER the replacement is fully built AND its observer attached, but
-        // BEFORE it is published (SwapSessionCoreAsync step d): a concurrent reader mid-open sees the OLD session with stores
-        // that are each either still-old (a correct old-model pairing) or already-empty — the chosen lesser evil —
-        // and never the NEW session paired with the OLD model's state. The gates are taken ONE AT A TIME in a
-        // single documented order (alphabetical by store field: _baselines → _plans → _spec → _workflowAux) — we
-        // deliberately do NOT hold them all at once: every other code path is single-gate, and introducing the
-        // process's only multi-gate hold for a cosmetic tightening (the partial combinations are all
-        // old-or-empty, never wrong-model) is not worth the deadlock surface. DELIBERATELY does NOT reset:
-        //   • Verified Mode — user-level strictness; silently disabling enforcement on a model open would be
-        //     FAIL-OPEN (an AI edit that should be validated would commit unchecked).
-        //   • the entitlement, the workflow-enforcement/agent policy (user/project-level, disk-backed), and the
-        //     knowledge/experience stores (machine/user-level) — none are scoped to the open model.
-        //   • the workflow RUNS themselves — a run isn't bound to one model at start (a workflow may include the
-        //     open/create step), its steps are RE-VERIFIED against the current model at submit, and clearing runs
-        //     would silently drop in-flight progress. Only the model-specific START-OF-RUN scan baselines
-        //     (_workflowAux — the BPA/readiness snapshot the *_clean/_rescan verifies diff against) are cleared, so
-        //     after a swap those verifies fail LOUD ("no start-of-run snapshot") instead of diffing the new model
-        //     against the old one's baseline — the actual finding for workflows.
-        // The live query connection (_live) is handled separately by the caller (dropped unless the open rebinds it).
-        private async Task ResetModelScopedStateOnSwapAsync()
-        {
-            await _baselineGate.WaitAsync();
-            try { _baselines.Clear(); } finally { _baselineGate.Release(); }
-            await _planGate.WaitAsync();
-            try { _plans.Clear(); } finally { _planGate.Release(); }
-            await _specGate.WaitAsync();
-            try { _spec.Clear(); } finally { _specGate.Release(); }
-            await _workflowGate.WaitAsync();
-            try { _workflowAux.Clear(); } finally { _workflowGate.Release(); }   // stale-baseline snapshots only; runs survive (re-verified live)
-            _lastReadinessGrade = null;   // volatile — the cached activation fact; the next scan recomputes it for the new model
-        }
-
-        public async Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken)
+        public async Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null)
         {
             var ticket = NewLiveIntent();   // intent minted at op START — anything newer supersedes this connect
+            var authTicket = NewAuthIntent();   // separate ticket that orders the saved-account commit barrier only (HIGH 3)
+            // Reduce a bare address OR a pasted "Data Source=…;Initial Catalog=…" connection string to safe coordinates
+            // FIRST: parsing before use fixes the double-prefix (XmlaConnectionString adds its own "Data Source=", so a
+            // pasted one would become "Data Source=Data Source=…") AND drops any pasted credential — we mint our own
+            // Entra token; a pasted Password=/token is never trusted, connected with, or persisted.
+            var coords = ConnectionInput.Parse(endpoint, database);
+            endpoint = coords.Endpoint;
+            database = coords.Database;
             // The engine acquires an Entra token and injects it (the netcore AS client can't do its own AAD).
             // interactive pops a browser via Azure.Identity; serviceprincipal/azcli/devicecode/token as named.
             // Use BuildCredentialAsync (the SAME persistent-cache path open_live uses) so an interactive sign-in PERSISTS
@@ -474,12 +592,27 @@ namespace Semanticus.Engine
             // no credential (the caller supplies the raw token). Open the NEW connection fully (token + ADOMD open)
             // BEFORE touching _live — a failed reconnect must leave the existing working connection untouched.
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
-            var cred = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, null, System.Threading.CancellationToken.None);
+            // Carry the tenant the SAME way open_live does: resolve it for the credential and the remembered record so
+            // the same endpoint isn't re-typed on the next open. (connect_xmla is query-only — see the no-rebind note below.)
+            // VALIDATE at intake (CRITICAL 1b + HIGH 3): a real tenant is a GUID/domain/alias. OMITTED (null/blank) → the
+            // account's home tenant. But an INVALID non-empty value (a typo like "contoso") must NOT silently fall back to
+            // the home tenant — that leaves the remembered record's tenant inconsistent with the account actually signed in.
+            // RequireTenant refuses it with a sanitized message (never echoing the input, so a secret-shaped tenant can't leak).
+            var tenant = XmlaAuthHint.RequireTenant(tenantId);
+            var prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None);
+            var cred = prepared?.Credential;
             var token = cred != null
-                ? (await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)).Token
-                : await EntraToken.AcquireAsync(mode, rawToken, System.Threading.CancellationToken.None);
-            var cs = LiveConnection.XmlaConnectionString(endpoint, database, token);
+                ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
+                : await EntraToken.AcquireFullAsync(mode, rawToken, System.Threading.CancellationToken.None, tenant);
+            var cs = LiveConnection.XmlaConnectionString(endpoint, database, token.Token);
             var conn = await LiveConnection.OpenAsync("xmla", endpoint, cs);
+            // The account this sign-in resolved to — the identity the credential was ACTUALLY constructed with (the
+            // freshly captured record, else the saved record we pinned), read from the SAME once-loaded snapshot the
+            // credential was built from (round-10 HIGH). NOT a fresh ReadSavedAccount disk read: that could see a Bob a
+            // sibling process committed AFTER we pinned Alice, and report a live account we never connected as. Do NOT
+            // commit it yet: a first-sign-in record is persisted only when this op WINS the intent race (HIGH 5).
+            var account = prepared?.Account;
+            conn.Account = account;   // the identity this query connection authenticated as — a status read reports THIS
             // Status is captured BEFORE the swap decision (never read from a possibly-displaced conn after) — and
             // until SwapLive takes ownership the candidate is OURS to clean up: a throw here must not leak it.
             // SafeDispose, not Dispose: a throwing connection teardown must not REPLACE the Status failure.
@@ -489,8 +622,17 @@ namespace Semanticus.Engine
             var (won, displaced) = SwapLive(conn, ticket);
             SafeDispose(displaced);         // on a win: the replaced connection; on a loss: our own superseded candidate — outcome decided either way
             if (!won) return SupersededStatus("connect_xmla");
-            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, null, authMode);   // resolved identity, only after the swap won
-            status.Database = conn.Database; status.ConnectionId = record?.Id;
+            // WON the race → NOW persist any first-sign-in record (deferred until the win, per HIGH 5), but LINEARIZED
+            // by the auth ticket + PER-SLOT so an older connect resuming after a newer winner already committed in the
+            // SAME (family, tenant) slot can't repoint the saved account behind the live connection (HIGH 2 / HIGH 3).
+            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true);
+            // connect_xmla is a QUERY connection ONLY. Its credential/tenant/account live on THIS live connection and the
+            // remembered record — it must NEVER rebind the editing origin (session.LiveOrigin). Rebinding it (the removed
+            // BindLiveOriginIfCurrent call) made a later deploy_live with no endpoint target the *query* model and
+            // misreported the relationship as sameInstance (HIGH 1). open_live is the path that binds an editing origin.
+            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, tenant, authMode, account);   // resolved identity, only after the swap won
+            RecordConnectionHistory(record, "connect", account, endpoint, conn.Database, tenant, ok: true);
+            status.Database = conn.Database; status.ConnectionId = record?.Id; status.Account = account;
             await SafeRebroadcastWorkflowLibraryAsync();   // connection.* changed — activation may re-curate the menu (§10.6)
             return status;
         }
@@ -506,6 +648,9 @@ namespace Semanticus.Engine
             }
             var cs = LiveConnection.LocalConnectionString(dataSource, database);
             var conn = await LiveConnection.OpenAsync("local", dataSource, cs);   // open first — a failed connect keeps the old one
+            var localId = LocalDesktop.TryGetIdentity(dataSource);   // once, at connect — see LiveOrigin.LocalName/LocalPath
+            conn.DesktopName = localId?.Stem;
+            conn.DesktopPath = localId?.PbixPath;
             ConnectionStatus status;
             try { status = conn.Status(); }     // ownership is still ours until SwapLive — don't leak on a throw
             catch { SafeDispose(conn); throw; } // ...and a throwing teardown must not replace the Status failure
@@ -513,6 +658,7 @@ namespace Semanticus.Engine
             SafeDispose(displaced);
             if (!won) return SupersededStatus("connect_local");
             var record = RememberConnection("localDesktop", dataSource, conn.Database, conn.Database);
+            RecordConnectionHistory(record, "connect", null, dataSource, conn.Database, null, ok: true);   // local = integrated Windows auth, no named account
             status.Database = conn.Database; status.ConnectionId = record?.Id;
             await SafeRebroadcastWorkflowLibraryAsync();   // connection.* changed — activation may re-curate the menu (§10.6)
             return status;
@@ -521,9 +667,77 @@ namespace Semanticus.Engine
         // Recording history must never be able to fail a connection that already succeeded — the user is connected
         // either way, and a read-only convenience does not get to throw over the thing it is a convenience for.
         private static ModelConnectionRecord RememberConnection(string kind, string endpoint, string database,
-            string modelName = null, string tenantId = null, string authMode = null)
+            string modelName = null, string tenantId = null, string authMode = null, string lastAccount = null)
         {
-            try { return ConnectionRegistry.Remember(kind, endpoint, database, modelName, tenantId, authMode); } catch { return null; }
+            try { return ConnectionRegistry.Remember(kind, endpoint, database, modelName, tenantId, authMode, lastAccount); } catch { return null; }
+        }
+
+        // The timeline KIND for an open: a normal open is "open"; a forced re-auth is a "switch" ONLY when the account
+        // actually changed — re-signing in as the SAME account is a quieter "signin", so a same-account re-sign never
+        // spams the history with a no-op "switch". Pure + offline-unit-testable.
+        internal static string ConnectHistoryKind(bool forceReauth, string priorAccount, string newAccount)
+            => !forceReauth ? "open"
+               : string.Equals(priorAccount, newAccount, StringComparison.OrdinalIgnoreCase) ? "signin" : "switch";
+
+        // Record a FAILED open on ANY open path (MEDIUM 9). Resolves the target's registry record so the event carries a
+        // connection id (a per-connection history filter can find it, and failures don't all share the null-id cap), and
+        // classifies the kind honestly: a same-account forced re-sign is "signin" (failed), not a spurious "switch". Works
+        // even when there is NO pending record (a plain failed open with a saved/azcli account records "open", ok:false),
+        // so a failure with a saved account is no longer silently dropped. Best-effort — never fails the throw it precedes.
+        internal void RecordFailedOpenHistory(string endpoint, string database, string tenant, string mode,
+            bool forceReauth, EntraToken.PreparedCredential prepared, string detail, Exception ex = null)
+        {
+            ModelConnectionRecord record = null;
+            // Attribute ONLY to an EXACT endpoint+dataset match (MED 6). The old fallback to "any record on this
+            // endpoint" mis-attributed a failure to the wrong dataset (a sibling model on the same workspace). No exact
+            // match ⇒ leave the record null and log with a null connection id + the coordinates in the detail below.
+            try { record = ConnectionRegistry.FindByEndpoint(endpoint, database); }
+            catch { /* registry read is best-effort here */ }
+            var where = record != null
+                ? ""
+                : $" [endpoint {XmlaAuthHint.SafeEndpoint(endpoint)}{(string.IsNullOrWhiteSpace(database) ? "" : ", dataset " + database)}]";
+            // A FORCED sign-in that prepared NO credential means no account was ever chosen (MED 4): there is NO account to
+            // attribute to. Falling back to the saved record here logged a "switch to Bob" for a sign-in that never
+            // authenticated as Bob. But WHY no account was chosen is not always a cancellation — a wrong-tenant AADSTS or an
+            // expired device code also lands here. Classify: a genuine user cancellation (picker dismissed) says
+            // "cancelled"; anything else is a NEUTRAL "failed" with the failure category, never a false "you cancelled".
+            if (forceReauth && prepared == null)
+            {
+                var reason = XmlaAuthHint.IsUserCancellation(ex)
+                    ? "sign-in cancelled before an account was chosen."
+                    : "sign-in failed before an account was chosen (" + XmlaAuthHint.SignInFailureCategory(ex) + ").";
+                RecordConnectionHistory(record, "signin", null, endpoint, database, tenant, ok: false, detail: reason + where);
+                return;
+            }
+            string saved = null;
+            try { saved = EntraToken.ReadSavedAccount(mode, tenant)?.Username; } catch { }
+            // Account attribution is HONEST and names the identity the credential was ACTUALLY built with: prepared?.Account
+            // (round-11) — the captured-else-pinned account — NOT prepared.PendingAccount. PendingAccount is null on a SILENT
+            // reuse (the credential PINNED Alice without capturing a new record), so the old `PendingAccount ?? saved` fell
+            // through to the disk pointer; a sibling process that committed Bob AFTER our read then got the blame for an open
+            // that authenticated as Alice. Prefer the prepared identity whenever a credential exists; fall back to the
+            // tenant-wide saved record only when NO prepared identity is available (azcli/sp/token: prepared null, or Account
+            // null with no MSAL record). NEVER a stale per-target LastAccount (that would blame an account that never signed
+            // in). Unknown stays null, which the timeline reads as "account unknown" (MED 6). The prior arg to the kind
+            // classifier may still read the per-target hint — that's the record's own last-known account, not the failure's actor.
+            var account = prepared?.Account ?? saved;
+            var kind = ConnectHistoryKind(forceReauth, record?.LastAccount, account);
+            // No exact record ⇒ null connection id, but keep the WHERE in the detail so the event stays traceable.
+            var effectiveDetail = record != null ? detail : detail + where;
+            RecordConnectionHistory(record, kind, account, endpoint, database, tenant, ok: false, detail: effectiveDetail);
+        }
+
+        // Append a connection-timeline event beside the registry. Best-effort by construction (ConnectionHistory.Append
+        // swallows its own failures), and null-record safe — the timeline is a convenience, never a gate.
+        private static void RecordConnectionHistory(ModelConnectionRecord record, string kind, string account,
+            string endpoint, string database, string tenantId, bool ok, string detail = null)
+        {
+            ConnectionHistory.Append(new ConnectionHistoryEvent
+            {
+                Id = record?.Id, Kind = kind, Account = account,
+                Endpoint = record?.Endpoint ?? endpoint, Database = record?.Database ?? database,
+                TenantId = tenantId, Ok = ok, Detail = detail,
+            });
         }
 
         // A loopback endpoint is the user's own Power BI Desktop, never a shared server. HOST-exact via
@@ -606,14 +820,50 @@ namespace Semanticus.Engine
         public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List()
             .Where(r => !string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)).ToArray());
 
+        /// <summary>The connection timeline (connects, opens, account switches), newest first — optionally one target.
+        /// Device-local, holds no credentials. Read-only, free, both doors.</summary>
+        public Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null)
+            => Task.FromResult(ConnectionHistory.List(connectionId).ToArray());
+
+        /// <summary>A cheap SILENT PROBE: for each known XMLA target, the account (UPN) a persisted MSAL sign-in on this
+        /// device belongs to — a local disk read, no network, no prompt. Lets a picker show "as &lt;account&gt;" (or an
+        /// honest "account unknown" when absent) BEFORE the user clicks, even for targets connected before we captured
+        /// the account. Returns only targets with a known account; the caller reads a missing id as unknown.</summary>
+        public Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync()
+        {
+            var probes = new List<ConnectionAccountProbe>();
+            foreach (var r in ConnectionRegistry.List())
+            {
+                if (!string.Equals(r.Kind, "xmla", StringComparison.OrdinalIgnoreCase)) continue;
+                // The PREDICTED next account (what a picker shows as "as <account>") is ONLY a live MSAL sign-in record on
+                // this device — a sign-in is remembered per (client, tenant), so that record is exactly who the next open
+                // signs in as. When NO record exists — a family that keeps none (azcli/serviceprincipal), or a deleted/
+                // corrupt one — the account is genuinely UNKNOWN and must read as such; we never guess it from the
+                // per-target last-used hint, because a later open won't necessarily use that identity (HIGH 3). The
+                // last-used account rides along ONLY as provenance ("last opened as <x>"), never as the prediction.
+                var saved = EntraToken.ReadSavedAccount(r.AuthMode, r.TenantId)?.Username;
+                var last = string.IsNullOrWhiteSpace(r.LastAccount) ? null : r.LastAccount;
+                var account = string.IsNullOrWhiteSpace(saved) ? null : saved;
+                var previous = last != null && !string.Equals(last, account, StringComparison.OrdinalIgnoreCase) ? last : null;
+                if (account == null && previous == null) continue;   // nothing known and nothing to attribute — skip
+                probes.Add(new ConnectionAccountProbe { Id = r.Id, Account = account, PreviousAccount = previous, TenantId = r.TenantId });
+            }
+            return Task.FromResult(probes.ToArray());
+        }
+
         public async Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent")
         {
             origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
             if (string.IsNullOrWhiteSpace(endpoint)) throw new ArgumentException("An XMLA endpoint is required.", nameof(endpoint));
+            // Refuse a credential-bearing input outright (honest message), rather than silently storing it: this endpoint
+            // is remembered on disk, and a Password=/token= must never land there. Coordinates only — we mint our own token.
+            if (XmlaAuthHint.ContainsSecret(endpoint) || XmlaAuthHint.ContainsSecret(database))
+                throw new ArgumentException("Pass the endpoint address only, not a connection string with a password or token. Semanticus signs in for you (authMode), and it never stores a credential. Remove the Password=/User ID=/token part and try again.", nameof(endpoint));
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
             if (mode != "azcli" && mode != "interactive" && mode != "serviceprincipal")
                 throw new ArgumentException("Authentication must be azcli, interactive, or serviceprincipal.", nameof(authMode));
-            var record = ConnectionRegistry.Remember("xmla", endpoint.Trim(), string.IsNullOrWhiteSpace(database) ? null : database.Trim(),
+            var coords = ConnectionInput.Parse(endpoint.Trim(), database);
+            var record = ConnectionRegistry.Remember("xmla", coords.Endpoint, string.IsNullOrWhiteSpace(coords.Database) ? null : coords.Database.Trim(),
                 string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim(), authMode: mode);
             await PublishActivityAsync(new ActivityEvent
             {
@@ -698,15 +948,40 @@ namespace Semanticus.Engine
         {
             var live = _live;
             if (live == null) return VpaqReport.FromError("Not connected. Connect to a live model (connect_xmla / connect_local) first.");
+            // Bind identity to the SAME immutable live-connection reference used for the DMV reads below. The
+            // webview's connection snapshot is refreshed asynchronously and may still name the previous target.
+            // A half-known live identity is not canonical and therefore remains null rather than becoming an
+            // ambiguous persistence key.
+            var queryIdentity = !string.IsNullOrEmpty(live.DataSource) && !string.IsNullOrEmpty(live.Database)
+                ? live.DataSource + "|" + live.Database
+                : null;
             var seg = await live.ExecuteAsync("SELECT DIMENSION_NAME, COLUMN_ID, USED_SIZE FROM $SYSTEM.DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS", 5000000, 180);
             var col = await live.ExecuteAsync("SELECT DIMENSION_NAME, ATTRIBUTE_NAME, COLUMN_ID, COLUMN_ENCODING, DICTIONARY_SIZE, STRING_INDEX_SIZE FROM $SYSTEM.DISCOVER_STORAGE_TABLE_COLUMNS", 5000000, 180);
             var tbl = await live.ExecuteAsync("SELECT DIMENSION_NAME, ROWS_COUNT FROM $SYSTEM.DISCOVER_STORAGE_TABLES", 100000, 180);
-            // Flag Direct Lake from the open model (if any) so the storage figures get labelled resident-only.
-            // Best-effort: a connect_xmla-only session has no file model — then we simply don't flag (no false data).
-            var isDirectLake = false;
+            // Classify storage as import, directLake, or unknown, and classify the QUERY-TARGET model
+            // (what these DMVs actually measured), not the editing session. The editing model's storage mode describes
+            // the scanned model ONLY when they are the SAME live model: the session's authoritative LIVE ORIGIN
+            // (bound by open_live/open_local) matches the executing connection on BOTH endpoint AND database
+            // (TrustSessionSpec — the same identity gate the measure-faithful query spec uses). In attach mode a file
+            // edited alongside a foreign query engine could otherwise mislabel: an import editing model would strip the
+            // resident-only caveat off a Direct Lake query target (silently reporting resident bytes as totals). When
+            // the two are not the same model the mode remains unknown. Unknown must never fall through to Import:
+            // the DMV values may be resident-only, so totals, row counts, and comparisons stay guarded.
+            var storageMode = VpaqStorageMode.Unknown;
             var sess = _sessions.Current;
-            if (sess != null) { try { isDirectLake = await sess.ReadAsync(m => DirectLakeInfo.IsModelDirectLake(m)); } catch { /* detection is best-effort */ } }
-            return VertiPaq.Compute(seg, col, tbl, topN, isDirectLake);
+            var origin = sess?.LiveOrigin;
+            if (sess != null && origin != null && TrustSessionSpec(origin.Endpoint, origin.Database, live.DataSource, live.Database))
+            {
+                try
+                {
+                    storageMode = await sess.ReadAsync(m => DirectLakeInfo.IsModelDirectLake(m))
+                        ? VpaqStorageMode.DirectLake : VpaqStorageMode.Import;
+                }
+                catch { /* detection failed: preserve explicit unknown */ }
+            }
+            var report = VertiPaq.Compute(seg, col, tbl, topN, storageMode);
+            report.QueryIdentity = queryIdentity;
+            return report;
         }
 
         public async Task<VpaxExportResult> ExportVpaxAsync(string path)
@@ -727,7 +1002,7 @@ namespace Semanticus.Engine
                 {
                     var token = await EntraToken.AcquireAsync(origin.AuthMode, null, System.Threading.CancellationToken.None, origin.TenantId);
                     var connStr = LiveConnection.XmlaConnectionString(origin.Endpoint, origin.Database, token);
-                    var tables = await s.Dispatcher.RunAsync(() => VpaxExport.WriteWithStats(full, s.TomDatabase, connStr, 0));
+                    var tables = await s.RunAsync(() => VpaxExport.WriteWithStats(full, s.TomDatabase, connStr, 0));
                     return new VpaxExportResult
                     {
                         Exported = true, Path = full, Tables = tables,
@@ -739,7 +1014,7 @@ namespace Semanticus.Engine
                     // Stats unavailable (auth / capacity / endpoint) — fall through to a metadata-only export, noting why.
                     try
                     {
-                        var tables = await s.Dispatcher.RunAsync(() => VpaxExport.Write(full, s.TomDatabase));
+                        var tables = await s.RunAsync(() => VpaxExport.Write(full, s.TomDatabase));
                         return new VpaxExportResult { Exported = true, Path = full, Tables = tables, Note = "Metadata only — live storage statistics unavailable: " + ex.Message.Split('\n')[0] };
                     }
                     catch (System.Exception ex2) { return new VpaxExportResult { Error = ex2.Message }; }
@@ -750,7 +1025,7 @@ namespace Semanticus.Engine
             {
                 // Offline (no live source): metadata only (tables/columns/measures/relationships). Connect a live model
                 // (open_live) before exporting to include storage statistics.
-                var tables = await s.Dispatcher.RunAsync(() => VpaxExport.Write(full, s.TomDatabase));
+                var tables = await s.RunAsync(() => VpaxExport.Write(full, s.TomDatabase));
                 return new VpaxExportResult
                 {
                     Exported = true, Path = full, Tables = tables,
@@ -790,14 +1065,14 @@ namespace Semanticus.Engine
                     approvalId: out var approvalId, intentBasis: "querydata", consumeGrant: false);
                 if (gate != null) return Task.FromResult(ResultSet.FromRefusal(gate, approvalId));
             }
-            return live.ExecuteAsync(query, maxRows, 120);
+            return ExecuteLiveGuardedAsync(live, query, maxRows, 120);
         }
 
         public Task<ResultSet> RunDmvAsync(string query, int maxRows)
         {
             var live = _live;
             if (live == null) return Task.FromResult(ResultSet.FromError("Not connected. Call connect_xmla or connect_local first."));
-            return live.ExecuteAsync(query, maxRows, 120);
+            return ExecuteLiveGuardedAsync(live, query, maxRows, 120);
         }
 
         public Task<ResultSet> PreviewTableAsync(string table, int topN, string origin = "human")
@@ -818,7 +1093,7 @@ namespace Semanticus.Engine
             var name = table.StartsWith("table:", StringComparison.OrdinalIgnoreCase) ? table.Substring("table:".Length) : table;
             name = name.Trim().Replace("'", "''");
             var n = topN <= 0 ? 200 : topN;
-            return live.ExecuteAsync($"EVALUATE TOPN({n}, '{name}')", n, 120);
+            return ExecuteLiveGuardedAsync(live, $"EVALUATE TOPN({n}, '{name}')", n, 120);
         }
 
         public Task<ResultSet> PivotMeasureAsync(string measureExpr, string[] rowFields, string colField, string[] filters, int maxRows, string origin = "human")
@@ -841,7 +1116,7 @@ namespace Semanticus.Engine
             foreach (var f in (filters ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x))) args.Add(f.Trim());
             args.Add("\"__v\", " + DaxBench.InlineScalar(measureExpr));   // comment-proof: a trailing "-- note" must not eat the query
             var q = "EVALUATE\nSUMMARIZECOLUMNS(\n    " + string.Join(",\n    ", args) + "\n)";
-            return live.ExecuteAsync(q, maxRows <= 0 ? 100000 : maxRows, 120);
+            return ExecuteLiveGuardedAsync(live, q, maxRows <= 0 ? 100000 : maxRows, 120);
         }
 
         public Task<BenchmarkResult> BenchmarkDaxAsync(string query, int runs)
@@ -878,11 +1153,94 @@ namespace Semanticus.Engine
             return DaxTrace.EvaluateAndLogAsync(live, query, maxRows);
         }
 
-        public Task<EquivalenceResult> VerifyEquivalenceAsync(string exprA, string exprB, string[] groupBy, string[] filters, int maxRows)
+        public async Task<EquivalenceResult> VerifyEquivalenceAsync(string exprA, string exprB, string[] groupBy, string[] filters, int maxRows)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(new EquivalenceResult { Error = "Not connected. Call connect_xmla or connect_local first." });
-            return DaxBench.VerifyEquivalenceAsync(live, exprA, exprB, groupBy, filters, maxRows);
+            if (live == null) return new EquivalenceResult { Error = "Not connected. Call connect_xmla or connect_local first." };
+            // Prove A and B as DEPLOYED MEASURES (DEFINE MEASURE), not inline extension columns — see DaxQuerySpec.
+            var spec = await BuildQuerySpecAsync(live, null);
+            return await DaxBench.VerifyEquivalenceAsync(live, exprA, exprB, groupBy, filters, maxRows, spec);
+        }
+
+        // Resolve the DaxQuerySpec for measure-faithful probe/verify/bench queries. CROSS-MODEL GUARD: the spec is
+        // read from the EDITING session's model, but the live query connection can be attached to a DIFFERENT model
+        // (connect_xmla is query-only, and a DATABASE NAME alone is not identity — the same name can exist on other
+        // servers/workspaces). So the spec's facts are only trusted when the session's authoritative LIVE ORIGIN
+        // (bound by open_live/open_local; file-opened sessions have none) matches the executing connection on BOTH
+        // canonical endpoint AND database; otherwise return the Trusted=false MARKER so PlanEval ignores the
+        // session's facts, derives hosts from the expression's own table refs (provably present in the query text —
+        // a wrong table fails loudly there rather than rebinding silently), and NOTES that identity-sensitive
+        // semantics are unknowable. Best-effort by design: untrusted degrades fidelity honestly, never blocks the op.
+        private async Task<DaxQuerySpec> BuildQuerySpecAsync(LiveConnection live, string targetMeasureRef)
+        {
+            // The UNTRUSTED marker (never null): a null spec means "no engine context" and keeps legacy silent
+            // behavior in static callers — but an ENGINE op that cannot vouch for the session/connection identity
+            // must still tell PlanEval so ambiguity DEGRADES (notes fidelity) instead of silently proving.
+            var untrusted = new DaxQuerySpec { Trusted = false };
+            try
+            {
+                var s = _sessions.Require();
+                var origin = s.LiveOrigin;
+                if (live == null || origin == null
+                    || !TrustSessionSpec(origin.Endpoint, origin.Database, live.DataSource, live.Database))
+                    return untrusted;
+                return await s.ReadAsync(m =>
+                {
+                    Measure target = null;
+                    if (!string.IsNullOrWhiteSpace(targetMeasureRef))
+                        try { target = ObjectRefs.Resolve(m, targetMeasureRef) as Measure; } catch { /* unresolved ref => no identity */ }
+
+                    // Fallback home when no target identity: any real table parses (a measure's VALUE never depends
+                    // on its home table); prefer a fact-ish one (has measures + many-side, the fingerprint fact rule).
+                    var home = target?.Table?.Name;
+                    if (home == null)
+                    {
+                        var manySide = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var r in m.Relationships.OfType<SingleColumnRelationship>())
+                            if (r.FromColumn?.Table != null) manySide.Add(r.FromColumn.Table.Name);
+                        var fact = m.Tables.FirstOrDefault(t => !(t is CalculationGroupTable) && t.Measures.Count > 0 && manySide.Contains(t.Name));
+                        home = (fact
+                            ?? m.Tables.FirstOrDefault(t => !(t is CalculationGroupTable) && t.Columns.Any(c => c.Type != ColumnType.RowNumber))
+                            ?? m.Tables.FirstOrDefault(t => !(t is CalculationGroupTable)))?.Name;
+                    }
+
+                    return new DaxQuerySpec
+                    {
+                        HomeTable = home,
+                        TargetMeasureName = target?.Name,
+                        ModelMeasureNames = m.Tables.SelectMany(t => t.Measures).Select(mm => mm.Name).ToArray(),
+                        ModelHasCalcGroups = m.Tables.OfType<CalculationGroupTable>().Any(),
+                    };
+                });
+            }
+            catch { return untrusted; }
+        }
+
+        /// <summary>The DaxQuerySpec trust key: does the session's authoritative live origin identify the SAME model
+        /// the query connection executes against? Database-name equality alone is NOT identity (the same name exists
+        /// on other servers/workspaces), so BOTH the canonical endpoint AND the database must match. Null/empty on
+        /// either side fails closed (untrusted). Internal + pure for direct unit testing.</summary>
+        internal static bool TrustSessionSpec(string originEndpoint, string originDatabase, string liveDataSource, string liveDatabase)
+        {
+            // Canonical endpoint: trim + drop a trailing slash, and case-fold ONLY the scheme://host[:port] part —
+            // host names are case-insensitive but a URL PATH is not guaranteed to be, so the path stays
+            // case-sensitive (a case-differing path is ambiguity, and ambiguity fails closed to untrusted).
+            // Schemeless forms (localhost:56789) are host:port only, safe to fold whole. Anything beyond this
+            // (aliases, IP vs name) also stays untrusted: the builder degrades honestly, never rebinds silently.
+            static string Ep(string e)
+            {
+                var s = (e ?? "").Trim().TrimEnd('/');
+                var scheme = s.IndexOf("://", StringComparison.Ordinal);
+                if (scheme < 0) return s.ToLowerInvariant();                    // host:port — no path
+                var pathStart = s.IndexOf('/', scheme + 3);
+                if (pathStart < 0) return s.ToLowerInvariant();                 // scheme://host only
+                return s.Substring(0, pathStart).ToLowerInvariant() + s.Substring(pathStart);
+            }
+            static string Db(string d) => (d ?? "").Trim();
+            var oe = Ep(originEndpoint); var od = Db(originDatabase);
+            if (oe.Length == 0 || od.Length == 0) return false;
+            return string.Equals(oe, Ep(liveDataSource), StringComparison.Ordinal)
+                && string.Equals(od, Db(liveDatabase), StringComparison.OrdinalIgnoreCase);
         }
 
         // Clear the Storage-Engine cache (the cold/warm-benchmark primitive). SAFETY: cache-clear evicts the cache
@@ -954,17 +1312,27 @@ namespace Semanticus.Engine
 
             var s = _sessions.Require();
 
-            // 2) Resolve + read the CURRENT body as the baseline (candidates are proven against it).
-            string baseline;
-            try { baseline = await s.ReadAsync(m => CurrentDax(ObjectRefs.Resolve(m, measureRef))); }
+            // 2) Resolve + read the CURRENT body as the baseline (candidates are proven against it), and the
+            //    target's NAME + HOME TABLE for the circular-rewrite guard below (session-resolvable, no live
+            //    needed; the home table catches the qualified 'Home'[M] self-reference shape too).
+            string baseline, targetName, targetHome;
+            try { (baseline, targetName, targetHome) = await s.ReadAsync(m => { var o = ObjectRefs.Resolve(m, measureRef); return (CurrentDax(o), (o as Measure)?.Name, (o as Measure)?.Table?.Name); }); }
             catch (Exception ex) { return new OptimizeMeasureResult { Verdict = "error", Error = ex.Message }; }
             if (baseline == null)
                 return new OptimizeMeasureResult { Verdict = "error", Error = $"optimize_measure: {measureRef} has no DAX expression to optimize." };
 
             // 3) Validate each candidate offline; invalid ones are excluded from the race (not fatal unless <2 remain).
+            //    A candidate that bare-references the target ITSELF is a circular rewrite — rejected here, BEFORE any
+            //    comparison or apply, with the circularity named (shipping it would only fail later with a generic
+            //    engine error, or mutate the model into a self-referencing measure).
             var evid = new List<CandidateEvidence>();
             for (int i = 0; i < cands.Length; i++)
             {
+                if (DaxBench.ReferencesTarget(cands[i], targetName, targetHome))
+                {
+                    evid.Add(new CandidateEvidence { Index = i, Expression = cands[i], VerifyState = "invalid", Note = DaxBench.CircularRewriteNote });
+                    continue;
+                }
                 var val = await ValidateDaxAsync(cands[i]);
                 var bad = val == null || !val.Valid;
                 evid.Add(new CandidateEvidence { Index = i, Expression = cands[i], VerifyState = bad ? "invalid" : "pending", Note = bad ? "invalid DAX" : null });
@@ -981,17 +1349,29 @@ namespace Semanticus.Engine
 
             // 5) Prove equivalence candidate-vs-baseline. Same not-proven downgrade ladder as apply_change_plan
             //    (Truncated / RowsCompared<=0 / empty group-by ⇒ NOT a proof) so a thin matrix can't green a rewrite.
-            var gb = verifyGroupBy ?? Array.Empty<string>();
+            //    The spec carries the TARGET measure's real identity: the proof and the benchmark below evaluate
+            //    every candidate as a DEPLOYED MEASURE (the bench even SHADOWS the target's name, so calc-group
+            //    identity semantics match production), not as inline extension columns.
+            var spec = await BuildQuerySpecAsync(live, measureRef);
+            // The EFFECTIVE grid (trim + drop blanks): query construction evaluates exactly this, so the ladder
+            // must grade against it too — a whitespace-only entry must not masquerade as a per-context matrix.
+            var gb = DaxBench.NormalizeGroupBy(verifyGroupBy);
             foreach (var e in valid)
             {
-                var v = await DaxBench.VerifyEquivalenceAsync(live, baseline, e.Expression, gb, verifyFilters, 100000);
+                var v = await DaxBench.VerifyEquivalenceAsync(live, baseline, e.Expression, gb, verifyFilters, 100000, spec);
                 e.Equivalence = v;
-                if (!string.IsNullOrEmpty(v.Error)) { e.VerifyState = "unverified"; e.Note = "equivalence check failed to run — " + v.Error; }
-                else if (!v.AllMatch) { e.VerifyState = "failed"; e.Note = $"changes results in {v.MismatchCount} context(s)"; }
-                else if (v.RowsCompared <= 0) { e.VerifyState = "unverified"; e.Note = "equivalence check compared 0 rows (nothing to prove)"; }
-                else if (v.Truncated) { e.VerifyState = "unverified"; e.Note = $"equivalence matrix exceeded the row cap ({v.RowsCompared}+ rows) — coverage incomplete"; }
-                else if (gb.Length == 0) { e.VerifyState = "unverified"; e.Note = "grand-total match only — not a per-context equivalence proof (pass verifyGroupBy)"; }
-                else e.VerifyState = "proven";
+                // The shared evidence ladder (DaxBench.ClassifyEquivalenceEvidence). Non-null Fidelity GATES, not
+                // annotates: a fidelity-degraded match is NOT a proof, so the candidate can never be auto-applied —
+                // the evidence surfaces and the explicit path (update_measure) is the accountable way to ship it.
+                var (state, why) = DaxBench.ClassifyEquivalenceEvidence(v, gb.Length);
+                e.VerifyState = state == "thin" ? "unverified" : state;
+                e.Note = state switch
+                {
+                    "proven" => null,
+                    "thin" => why + " (pass verifyGroupBy)",
+                    "degraded" => why + " Not auto-applied — apply explicitly with update_measure if you accept the caveat.",
+                    _ => why,
+                };
             }
 
             // Audit-trail wing: a REAL Pro attempt (apply=true) is recorded whatever the outcome — "2 candidates,
@@ -1018,24 +1398,32 @@ namespace Semanticus.Engine
             var proven = valid.Where(e => e.VerifyState == "proven").ToList();
             if (proven.Count == 0)
             {
+                // Degraded candidates matched values but under reduced evaluation fidelity — honest evidence, never
+                // an auto-apply. Say so instead of the generic "fix the rewrites" (they may not be wrong at all).
+                var degradedCount = valid.Count(e => e.VerifyState == "degraded");
+                var summary = degradedCount > 0
+                    ? $"no candidate proved at FULL fidelity — {degradedCount} matched only under degraded evaluation fidelity; nothing auto-applied"
+                    : "no candidate proved equivalent over the supplied matrix — nothing applied";
                 if (recordOutcome)
                     // Revision 0: no mutation backs this record — stamping the CURRENT session revision would
                     // weld the verdict badge onto whatever unrelated edit happens to hold that revision.
                     await RecordVerifiedEditAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "optimize_measure", ObjectRef = measureRef,
-                        Verdict = "needs-review", Summary = "no candidate proved equivalent over the supplied matrix — nothing applied",
+                        Verdict = "needs-review", Summary = summary,
                         Evidence = EvidenceJson(null, null), BodyHash = VerifiedEditsStore.BodyHash(baseline),
                     });
                 return new OptimizeMeasureResult { Verdict = "none-proven", BaselineExpression = baseline, Candidates = evid.ToArray(),
-                    Note = "No candidate proved equivalent over the supplied matrix — nothing applied. Widen verifyGroupBy or fix the rewrites." };
+                    Note = degradedCount > 0
+                        ? $"No candidate proved at FULL fidelity — {degradedCount} candidate(s) matched values but only under degraded evaluation fidelity (see candidate notes). Nothing auto-applied: review the caveat and apply explicitly with update_measure, or fix the fidelity gap (open the model live so the target's identity is known)."
+                        : "No candidate proved equivalent over the supplied matrix — nothing applied. Widen verifyGroupBy or fix the rewrites." };
             }
 
             // 6) Benchmark ONLY the proven set + the baseline over the SAME grid the equivalence was proven on — a
             //    grand-total EVALUATE ROW would reward a rewrite that only wins at the total while losing per row.
             //    gb is guaranteed non-empty here: an empty group-by downgrades every candidate to "unverified" above,
             //    so proven.Count would be 0 and we'd have returned "none-proven" already. (correctness gates speed.)
-            string BenchQuery(string expr) => DaxBench.BuildProbeQuery(expr, gb, verifyFilters);
+            string BenchQuery(string expr) => DaxBench.BuildProbeQuery(expr, gb, verifyFilters, spec);
             var baseBench = await DaxBench.BenchmarkAsync(live, BenchQuery(baseline), 5);
             foreach (var e in proven) e.Benchmark = await DaxBench.BenchmarkAsync(live, BenchQuery(e.Expression), 5);
 
@@ -1139,8 +1527,11 @@ namespace Semanticus.Engine
                 return new ProbeResult { Status = "error", Fidelity = fid, Message = "No scenarios: pass scenarios[] or a primaryAxis to auto-generate them." };
 
             var cap = rowCap <= 0 ? 5000 : rowCap;
+            // Resolve the query spec so each scenario evaluates the expression MEASURE-FAITHFULLY (DEFINE MEASURE),
+            // not as an inline extension column that skips context transition (see DaxQuerySpec / PlanEval).
+            var spec = await BuildQuerySpecAsync(live, null);
             var ev = new List<ScenarioEvidence>();
-            foreach (var sc in scen) ev.Add(await RunScenarioAsync(live, expr, sc, cap));
+            foreach (var sc in scen) ev.Add(await RunScenarioAsync(live, expr, sc, cap, spec));
 
             var blanks = new List<int>(); var nonAdd = new List<int>(); var errs = 0;
             for (int i = 0; i < ev.Count; i++)
@@ -1181,12 +1572,12 @@ namespace Semanticus.Engine
             return list;
         }
 
-        private static async Task<ScenarioEvidence> RunScenarioAsync(LiveConnection live, string expr, ProbeScenario sc, int cap)
+        private static async Task<ScenarioEvidence> RunScenarioAsync(LiveConnection live, string expr, ProbeScenario sc, int cap, DaxQuerySpec spec = null)
         {
             var axis = (sc.GroupBy ?? Array.Empty<string>()).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToArray();
             var filterArgs = (sc.Filters ?? Array.Empty<ProbeFilter>()).Where(f => f != null && !string.IsNullOrWhiteSpace(f.Column))
                 .Select(f => f.Empty ? DaxBench.CompileEmptyFilter(f.Column) : DaxBench.CompileMemberFilter(f.Column, f.Members)).ToArray();
-            var query = DaxBench.BuildProbeQuery(expr, axis, filterArgs);
+            var query = DaxBench.BuildProbeQuery(expr, axis, filterArgs, spec, out var fidelityNote);
             var e = new ScenarioEvidence { Name = sc.Name, Dax = query, Status = "ok" };
             ResultSet rs;
             try { rs = await live.ExecuteAsync(query, cap, 120); }
@@ -1211,7 +1602,7 @@ namespace Semanticus.Engine
             {
                 try
                 {
-                    var grs = await live.ExecuteAsync(DaxBench.BuildProbeQuery(expr, Array.Empty<string>(), filterArgs), 2, 60);
+                    var grs = await live.ExecuteAsync(DaxBench.BuildProbeQuery(expr, Array.Empty<string>(), filterArgs, spec), 2, 60);
                     if (grs != null && string.IsNullOrEmpty(grs.Error) && grs.Rows != null && grs.Rows.Length > 0 && grs.Rows[0].Length > 0 && grs.Rows[0][0] != null && IsNum(grs.Rows[0][0]))
                     {
                         var grand = Convert.ToDouble(grs.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
@@ -1225,6 +1616,7 @@ namespace Semanticus.Engine
             if (rows.Count > 0 && nonBlank < rows.Count) flags.Add($"blank in {rows.Count - nonBlank} of {rows.Count} rows");
             if (e.Additivity == "non-additive") flags.Add("Σ(parts) ≠ grand total — non-additive (legitimate for distinct-count/semi-additive; else a bug)");
             if (e.Truncated) flags.Add($"row cap hit ({rows.Count}) — coverage incomplete");
+            if (fidelityNote != null) flags.Add(fidelityNote);   // reduced-fidelity evaluation, disclosed (blocker: honesty over silent wrongness)
             e.Flags = flags.ToArray();
             return e;
         }
@@ -1256,12 +1648,15 @@ namespace Semanticus.Engine
         /// SUMMARIZECOLUMNS grid, BEFORE an edit. FREE (Kane 2026-07-07: manual capture/compare are the free
         /// safety net — only the future ambient auto-capture + blame_value are Pro). Live-required: baselines
         /// are numbers, not metadata.</summary>
+        internal Func<Task> BaselineReadyForTest;
+
         public async Task<BaselineCaptureResult> CaptureBaselineAsync(string objRef, string[] groupBy, string[] filters, bool includeDependents, int maxMeasures, int rowCap, string label, string origin)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             if (string.IsNullOrWhiteSpace(objRef))
                 return new BaselineCaptureResult { Status = "error", Message = "objRef is required — the object you are about to change." };
-            var live = _live;
+            var live = context.Live;
             if (live == null)
                 return new BaselineCaptureResult { Status = "no-connection", Message = "capture_baseline needs a live model (open_live / open_local) — a baseline is measured values, not static metadata." };
 
@@ -1290,10 +1685,17 @@ namespace Semanticus.Engine
                 state.Entries.Add(e);
             }
 
+            var hook = System.Threading.Interlocked.Exchange(ref BaselineReadyForTest, null);
+            if (hook != null) await hook();
+
             string dropped;
-            await _baselineGate.WaitAsync();
-            try { dropped = _baselines.Add(state); }
-            finally { _baselineGate.Release(); }
+            await context.BaselineGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, live, "Baseline capture");
+                dropped = context.Baselines.Add(state);
+            }
+            finally { context.BaselineGate.Release(); }
 
             // CERTIFIED TOTALS: a `label` promotes this capture to a PERSISTED, immutable, tamper-evident,
             // model-bound certified baseline (month-end close). Fail-closed and honest — see CertifyAsync.
@@ -1425,16 +1827,21 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(label))
                 return await CompareCertifiedAsync(label.Trim(), origin);
 
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
 
             BaselineState state;
-            await _baselineGate.WaitAsync();
-            try { state = _baselines.Get(captureId); }
-            finally { _baselineGate.Release(); }
+            await context.BaselineGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, "Baseline compare");
+                state = context.Baselines.Get(captureId);
+            }
+            finally { context.BaselineGate.Release(); }
             if (state == null)
                 return new BaselineCompareResult { Status = "not-found", CaptureId = captureId, Message = "No such capture (captures are session-held; run capture_baseline first). For a signed-off month-end baseline, pass label:." };
 
-            var live = _live;
+            var live = context.Live;
             if (live == null)
                 return new BaselineCompareResult { Status = "no-connection", CaptureId = state.Id, Message = "compare_baseline needs the live model the baseline was captured from." };
 
@@ -1675,17 +2082,13 @@ namespace Semanticus.Engine
             return (await SwapSessionCoreAsync(() => _sessions.BuildCreateAsync(name, cl), releaseUnless: null, liveTicket, sessionTicket)).Result;
         }
 
-        // Test-only: invoked between INVALIDATE (d) and COMMIT (e) — the last observable instant of the swap —
-        // so the ordering pin can assert "old session still current, stores already cleared, _live dropped"
-        // deterministically. null in production: no fallible step exists between (d) and (e). Consumed ONE-SHOT
-        // and exception-swallowed at the invocation site: this seam is compiled into production, so a stale or
-        // throwing hook must never be able to gut the old session (stores cleared, _live dropped, replacement
-        // disposed) on every later swap — arming it affects exactly one swap, and failing it affects none.
+        // Test-only: invoked after the old session has drained but immediately before the one atomic context
+        // exchange. The old context must still be complete here: there is no invalidate-then-publish half-state.
         internal Action BetweenInvalidateAndCommitForTest;
 
         // THE SESSION-SWAP ORDER (session/connection lifecycle audit rounds 1–4 — do not reorder; each step's
-        // placement closes a specific race). Runs under _lifecycleGate so two swaps can't interleave (scoped fix —
-        // full per-op generation-checking is the separate SessionContext refactor). BOTH intent tickets arrive
+        // placement closes a specific race). Runs under _lifecycleGate so two context swaps can't interleave.
+        // BOTH intent tickets arrive
         // from the PUBLIC operation entry and are never re-minted here (intent order = the order ops were issued).
         //   a. BUILD the replacement completely off to the side (new dispatcher + model + Session; SessionManager.
         //      Build*Async). Failure disposes only the new dispatcher — the live session, its unsaved work, the
@@ -1709,16 +2112,11 @@ namespace Semanticus.Engine
         //      older op later aborts here) or SECOND (this op would commit only if it still held the newest
         //      ticket — impossible once the newer op minted — so it aborts here too). Either acquisition order
         //      ends with the newest intent's model current and never a committed stale open.
-        //   d. INVALIDATE model-scoped state while the OLD session is still Current: drop _live under the entry
-        //      ticket (a connect/disconnect issued after this op began is a NEWER intent — the drop loses to it,
-        //      as will the open's rebind), then clear the stores (ResetModelScopedStateOnSwapAsync — one
-        //      documented gate order). A concurrent reader mid-swap sees the OLD session with old-or-EMPTY stores
-        //      (benign reads during a user-initiated open — the documented lesser evil), NEVER the NEW session
-        //      paired with the OLD model's plan/spec/baseline/connection.
-        //   e. COMMIT (SessionManager.Commit): a no-throw method containing ONLY the volatile Current flip + the
-        //      caught old-session disposal. No fallible step exists between d and e (invalidate-before-publish
-        //      holds), and nothing after e may throw: the snapshot-dir release is wrapped, the library rebroadcast
-        //      swallows by contract, and the result returned was pre-built in step b.
+        //   d. RETIRE + DRAIN the old model session, closing admission before its dispatcher can be torn down.
+        //   e. EXCHANGE one complete SessionContext: session, live binding, plan, spec, baselines, workflow run and
+        //      readiness cache move as one volatile reference. If this open still owns the live-intent ticket the
+        //      old connection is detached; if a newer connect won while the open built, that connection is
+        //      transferred into the replacement context. No reader can observe a half-cleared context.
         // Returns the published session so the open_live/open_local rebind binds LiveOrigin/auth to the session
         // the swap produced (never a re-read of Current) and can refuse to attach if it is no longer Current.
         private async Task<(OpenResult Result, Session Session)> SwapSessionCoreAsync(
@@ -1744,20 +2142,40 @@ namespace Semanticus.Engine
                     if (System.Threading.Interlocked.Read(ref _sessionIntent) != sessionTicket)   // c2. point of no return
                         throw new InvalidOperationException(
                             "This open was superseded by a newer open or create issued while it was loading; the current model is unchanged. Re-issue this open if you still want that model.");
-                    var (_, displaced) = SwapLive(null, liveTicket);        // d. drop the old model's query connection...
-                    SafeDispose(displaced);
-                    await ResetModelScopedStateOnSwapAsync();               //    ...and clear model-scoped stores
-                    // Test-only observation point (null in prod) — consumed ONE-SHOT and swallowed: a seam that is
-                    // compiled into production must never be able to break the commit path or re-fire on a later swap.
+                    var previousContext = _sessions.CurrentContext;
+                    if (previousContext.Session != null)
+                        await previousContext.Session.RetireAsync();         // d. close admission + drain old work
+
+                    // Test-only observation point. The old context remains complete until the atomic exchange.
                     var hook = System.Threading.Interlocked.Exchange(ref BetweenInvalidateAndCommitForTest, null);
                     if (hook != null) { try { hook(); } catch { /* a test seam must never break the commit path */ } }
+
+                    var nextContext = new SessionContext(next, previousContext.WorkflowRuns, previousContext.WorkflowAux);
+                    LiveConnection displaced = null;
+                    SessionContext retired;
+                    using (await previousContext.AcquireStateLeaseAsync())
+                    lock (previousContext.ReadinessGate)
+                    lock (_liveGate)
+                    {
+                        // A newer connect/disconnect owns the current binding. Transfer a newer surviving
+                        // connection into the new context; otherwise this open's intent detaches the old binding.
+                        var current = _sessions.CurrentContext;
+                        if (!_liveDisposed && System.Threading.Interlocked.Read(ref _liveIntent) != liveTicket)
+                            nextContext.ExchangeLive(current.ExchangeLive(null));
+                        else
+                            displaced = current.ExchangeLive(null);
+                        retired = _sessions.ExchangeRetiredContext(nextContext);   // e. one volatile publication
+                    }
+                    SafeDispose(displaced);
+                    try { retired.DisposeRetired(); }
+                    catch (Exception ex) { try { Console.Error.WriteLine("[session] disposing the replaced context failed (the swap itself is committed): " + ex.Message); } catch { } }
                 }
                 catch
                 {
                     next.Dispose();                                         // exactly once — nothing below can throw
                     throw;
                 }
-                var published = _sessions.Commit(next);                     // e. volatile flip + caught old disposal ONLY
+                var published = next;
                 // Post-commit: nothing below may throw (a committed swap must never report as a failed open).
                 try { ReleaseSnapshotDir(unless: releaseUnless); }
                 catch (Exception ex) { try { Console.Error.WriteLine("[open] releasing the previous snapshot dir failed (the swap is committed): " + ex.Message); } catch { } }
@@ -1775,6 +2193,13 @@ namespace Semanticus.Engine
             // runs is a newer intent: the rebind must lose to it, never override it); the session ticket makes a
             // newer open/create issued meanwhile supersede THIS open.
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();
+            var authTicket = NewAuthIntent();   // separate ticket that orders the saved-account commit barrier only (HIGH 3)
+            // Reduce a bare address OR a pasted "Data Source=…;Initial Catalog=…" connection string to safe coordinates
+            // before any use: parsing before use fixes the double-prefix (the snapshot/live connection strings add their
+            // own "Data Source="), pulls out an embedded catalog, and drops any pasted credential (we mint our own token).
+            var coords = ConnectionInput.Parse(endpoint, database);
+            endpoint = coords.Endpoint;
+            database = coords.Database;
             // Read the deployed model's metadata from the live endpoint (TOM Server + the token via
             // Server.AccessToken) into a local .bim snapshot, then open it through the proven file path.
             // Edits are in-memory + undoable; the only persistence is Save() to disk — nothing is pushed
@@ -1786,30 +2211,97 @@ namespace Semanticus.Engine
             // refresh) — Azure.Identity keeps its token cache in this instance, so interactive prompts once, then
             // renews silently (the fix for "refresh re-prompts"). token mode has no credential (caller-supplied).
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
-            // Lowercase the tenant too (Entra tenant ids/domains are case-insensitive), so the same identity always
-            // lands on the same cache key — a differently-cased re-supply must still hit reuse, not re-prompt.
-            var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim().ToLowerInvariant();
+            // VALIDATE the tenant at intake (CRITICAL 1b + HIGH 3): a real Entra tenant is a GUID / domain / alias. An
+            // OMITTED tenant (null/blank) uses the account's home tenant; a secret-shaped or otherwise INVALID value is
+            // never surfaced. But an invalid NON-EMPTY tenant (a typo like "contoso") must NOT silently become a home-tenant
+            // sign-in — that repoints auth while the registry keeps the old tenant (probe/registry inconsistent). RequireTenant
+            // REFUSES it with a sanitized message that never echoes the input, so it can never reach LiveOrigin ->
+            // SessionInfo.CurrentTenant. RequireTenant also lowercases the valid form, so the same identity lands on one cache key.
+            var tenant = XmlaAuthHint.RequireTenant(tenantId);
             var authKey = mode + "|" + (tenant ?? "");
-            // BuildCredentialAsync (vs the sync BuildCredential) also persists the interactive sign-in to the
-            // encrypted on-disk cache the first time, so later reconnects/restarts acquire silently (no re-prompt).
-            // forceReauth ("use a different account") ignores the saved record, shows the account picker, and
-            // overwrites the saved identity — the recovery path when the one cache slot holds the wrong account.
-            Azure.Core.TokenCredential cred = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth);
-            var tok = cred != null
-                ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
-                : await EntraToken.AcquireFullAsync(mode, rawToken, System.Threading.CancellationToken.None, tenant);
-            var snap = await LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+            // BuildCredentialAsync (vs the sync BuildCredential) captures an interactive sign-in for the encrypted
+            // on-disk cache, so later reconnects/restarts acquire silently (no re-prompt). It DEFERS persisting the
+            // freshly chosen account until the open below succeeds (PreparedCredential) — so a FAILED open never
+            // silently repoints the tenant-wide saved account. forceReauth ("use a different account") ignores the
+            // saved record and shows the account picker; the new identity is committed only after the open authorizes.
+            // Auth acquisition AND the snapshot export share ONE failure-recording boundary (MED 6): a sign-in that is
+            // CANCELLED (or a wrong-tenant / no-consent throw) happens HERE, before any commit, and must be its own honest
+            // failed-open event — the round-2 catch wrapped only the export, so a cancelled sign-in produced NO event.
+            EntraToken.PreparedCredential prepared = null;
+            Azure.Core.TokenCredential cred = null;
+            LiveModelExport.Snapshot snap;
+            Azure.Core.AccessToken tok;
+            try
+            {
+                // Test seam: drive a REAL failing open (cancelled sign-in / dead endpoint) without a live tenant — throws
+                // from inside the failure boundary so the honest-attribution path (MED 6) is exercised end-to-end.
+                var probe = System.Threading.Interlocked.Exchange(ref OpenLiveFailureProbeForTests, null);
+                if (probe != null) await probe();
+                prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth);
+                cred = prepared?.Credential;
+                tok = cred != null
+                    ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
+                    : await EntraToken.AcquireFullAsync(mode, rawToken, System.Threading.CancellationToken.None, tenant);
+                snap = await LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+            }
+            catch (Exception ex)
+            {
+                // The open FAILED at sign-in or export — before we committed the freshly chosen account (deferred), so the
+                // tenant-wide saved account is UNCHANGED. Record the failure honestly: attributed ONLY to an exact
+                // endpoint+dataset record (never a stale same-endpoint guess) and never to a stale LastAccount hint (MED 6).
+                // Pass the exception so a wrong-tenant / expired-code forced sign-in reads as a neutral failure, not a
+                // false "cancelled" (MED 4).
+                RecordFailedOpenHistory(endpoint, database, tenant, mode, forceReauth, prepared,
+                    "signing in or opening the model failed; the saved account was left unchanged", ex);
+                throw;
+            }
             var liveCs = LiveConnection.XmlaConnectionString(endpoint, snap.DatabaseName, tok.Token);
-            var (open, session) = await OpenSnapshotAsync(snap, liveTicket, sessionTicket);
+            OpenResult open;
+            Session session;
+            string account;
+            string priorAccount;
+            // PUBLICATION WINDOW (primer 3b): see OpenLocalAsync — the primer's attached-connection identity
+            // fallback stands down between the session publish below and the LiveOrigin stamp.
+            System.Threading.Interlocked.Increment(ref _liveOriginStampPending);
+            try
+            {
+            try { (open, session) = await OpenSnapshotAsync(snap, liveTicket, sessionTicket); }
+            catch (Exception ex)
+            {
+                // The swap was SUPERSEDED (a newer open/connect won the intent race), so this open did NOT take effect —
+                // the freshly chosen account must NOT be committed (HIGH 5: commit only on the WIN, else an older switch
+                // finishing late overwrites the newer winner's account pointer). Record the failure with the target's id
+                // and an honestly-classified kind (MED 9), then rethrow.
+                RecordFailedOpenHistory(endpoint, snap.DatabaseName, tenant, mode, forceReauth, prepared,
+                    "signed in, but the open was superseded by a newer request; the saved account was left unchanged", ex);
+                throw;
+            }
+            // The endpoint authorized AND this open WON the swap → NOW persist any freshly chosen account (deferred commit),
+            // LINEARIZED by the auth ticket + PER-SLOT so a slower open resuming after a newer winner committed in the
+            // SAME (family, tenant) slot can't repoint the saved account behind it (HIGH 2 / HIGH 3).
+            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true);
             open.Source = $"xmla:{endpoint} -> {snap.DatabaseName} (local snapshot: {snap.BimPath})";
-            // Bind the session to its live source (non-secret coordinates only) so deploy_live can push back
-            // "to source" without re-supplying endpoint/database. Record the dataset actually resolved at open
-            // (snap.DatabaseName), not the caller's possibly-empty `database` arg. Deliberately the SESSION the
-            // swap returned — never a re-read of Current, which another door may have replaced by now.
-            session.LiveOrigin = new LiveOrigin(endpoint, snap.DatabaseName, tenantId, authMode);
+            // The account this sign-in resolved to: the identity the credential was ACTUALLY constructed with (the
+            // just-captured record, else the saved record we pinned), read from the SAME once-loaded snapshot the
+            // credential was built from (round-10 HIGH) — NOT a fresh ReadSavedAccount disk read, which could report a
+            // Bob a sibling process committed after we pinned Alice. A display hint; null for azcli/sp/token. Read BEFORE
+            // Remember so we can tell a real switch from a re-sign.
+            account = prepared?.Account;
+            priorAccount = ConnectionRegistry.FindByEndpoint(endpoint, snap.DatabaseName)?.LastAccount;
+            // Bind the session to its live source (non-secret coordinates only) so deploy_live can push back "to source"
+            // without re-supplying endpoint/database. Record the dataset actually resolved at open (snap.DatabaseName),
+            // not the caller's possibly-empty `database` arg. Carry the authenticated account so a status read reports
+            // the real identity even if the query attach below fails. The SESSION the swap returned — never a re-read.
+            // Use the VALIDATED tenant (never the raw tenantId): LiveOrigin.TenantId surfaces via SessionInfo.CurrentTenant,
+            // so a secret-shaped tenant must never reach it (CRITICAL 1b).
+            session.LiveOrigin = new LiveOrigin(endpoint, snap.DatabaseName, tenant, authMode, account);
+            }
+            finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
             // Record the dataset actually resolved, not the caller's possibly-empty argument — the registry is keyed on
             // it, so an empty `database` must not mint a second record for the same model on the next open.
-            RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, tenantId, authMode);
+            var record = RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, tenant, authMode, account);
+            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account), account, endpoint, snap.DatabaseName, tenant, ok: true);
+            open.Account = account;
             // Seed the session's live-auth cache with the credential + token we just used, so the first deploy /
             // refresh reuses them with no second prompt and no re-acquisition.
             session.CacheLiveToken(authKey, tok);
@@ -1818,7 +2310,7 @@ namespace Semanticus.Engine
             // connection too, REUSING the one token from above (so interactive prompts the browser exactly once).
             // Best-effort: the editable session is the primary outcome; if the ADOMD attach fails, leave _live null
             // (Studio offers to attach) rather than failing the whole open. Rides the OPEN's intent ticket + session.
-            open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session);
+            open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session, account);
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
             return open;
         }
@@ -1836,15 +2328,32 @@ namespace Semanticus.Engine
                 dataSource = inst.DataSource;
             }
             var snap = await LiveModelExport.ToBimLocalAsync(dataSource, database);
-            var (open, session) = await OpenSnapshotAsync(snap, liveTicket, sessionTicket);
-            open.Source = $"local:{dataSource} -> {snap.DatabaseName} (local snapshot: {snap.BimPath})";
-            // Bind the origin (local coordinates) so "Save to live model" can push edits back to THIS instance.
-            // deploy_live recognises a loopback endpoint and writes with integrated Windows auth (no token), so this
-            // no longer risks a confusing service-principal-against-localhost attempt. The SESSION the swap
-            // returned — never a re-read of Current (another door may have replaced it).
-            session.LiveOrigin = new LiveOrigin(dataSource, snap.DatabaseName, null);
-            RememberConnection("localDesktop", dataSource, snap.DatabaseName, snap.DatabaseName);
-            open.LiveConnected = await TryBindLiveAsync("local", dataSource, LiveConnection.LocalConnectionString(dataSource, snap.DatabaseName), liveTicket, session);
+            // Capture the Desktop identity ONCE, at open time — the restart-stable identity a local model's primer
+            // keys on (port + database GUID both rotate per Desktop session). Path-first ladder; best-effort: null
+            // degrades to the endpoint|database identity, never a wrong name.
+            var desktopId = LocalDesktop.TryGetIdentity(dataSource);
+            OpenResult open;
+            Session session;
+            // PUBLICATION WINDOW (primer 3b): the swap below PUBLISHES the session before LiveOrigin is stamped. A
+            // primer read landing in that window must not mint an identity from a stale attached connection and then
+            // silently gain the real one a moment later — the pending counter makes the primer's attached-connection
+            // fallback stand down until the stamp lands. (The LiveOrigin assignment itself must stay lexically in
+            // this method: its setter has a compiled-call-graph authority pin.)
+            System.Threading.Interlocked.Increment(ref _liveOriginStampPending);
+            try
+            {
+                (open, session) = await OpenSnapshotAsync(snap, liveTicket, sessionTicket);
+                open.Source = $"local:{dataSource} -> {snap.DatabaseName} (local snapshot: {snap.BimPath})";
+                // Bind the origin (local coordinates) so "Save to live model" can push edits back to THIS instance.
+                // deploy_live recognises a loopback endpoint and writes with integrated Windows auth (no token), so this
+                // no longer risks a confusing service-principal-against-localhost attempt. The SESSION the swap
+                // returned — never a re-read of Current (another door may have replaced it).
+                session.LiveOrigin = new LiveOrigin(dataSource, snap.DatabaseName, null, localName: desktopId?.Stem, localPath: desktopId?.PbixPath);
+            }
+            finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
+            var localRecord = RememberConnection("localDesktop", dataSource, snap.DatabaseName, snap.DatabaseName);
+            RecordConnectionHistory(localRecord, "open", null, dataSource, snap.DatabaseName, null, ok: true);
+            open.LiveConnected = await TryBindLiveAsync("local", dataSource, LiveConnection.LocalConnectionString(dataSource, snap.DatabaseName), liveTicket, session, desktopId: desktopId);
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
             return open;
         }
@@ -1876,11 +2385,14 @@ namespace Semanticus.Engine
         // The publish is gated twice: on the OPEN's intent ticket (a connect/disconnect issued after this open
         // started is a newer intent — the rebind must lose to it, never displace it) AND on the session still being
         // Current (a model swapped in behind us must not get the previous model's endpoint attached).
-        private async Task<bool> TryBindLiveAsync(string kind, string dataSource, string connectionString, long ticket, Session forSession)
+        private async Task<bool> TryBindLiveAsync(string kind, string dataSource, string connectionString, long ticket, Session forSession, string account = null, LocalDesktop.DesktopIdentity desktopId = null)
         {
             LiveConnection conn;
             try { conn = await LiveConnection.OpenAsync(kind, dataSource, connectionString); }
             catch { return false; }
+            conn.Account = account;   // the identity this query connection authenticated as — a status read reports THIS, not a registry hint
+            conn.DesktopName = desktopId?.Stem;       // local Desktop opens carry the captured identity (null elsewhere)
+            conn.DesktopPath = desktopId?.PbixPath;
             var (won, displaced) = SwapLive(conn, ticket, () => ReferenceEquals(_sessions.Current, forSession));
             SafeDispose(displaced);   // best-effort contract: a loser/displaced dispose failure must not throw post-commit
             return won;
@@ -2023,7 +2535,7 @@ namespace Semanticus.Engine
             try
             {
                 // Serialize the edited session WITHOUT resetting the undo checkpoint (deploying is not "saving to file").
-                await s.Dispatcher.RunAsync(() =>
+                await s.RunAsync(() =>
                 {
                     s.Save(bim, SaveFormat.ModelSchemaOnly, SerializeOptions.Default, resetCheckpoint: false);
                     return true;
@@ -2309,7 +2821,41 @@ namespace Semanticus.Engine
             });
         }
 
-        public async Task<SetResult> SetDaxAsync(string objRef, string expression, string origin)
+        // CRITICAL 1 (zero-dialog authoring header-save fence): an OPTIONAL expected-SESSION check. The header-save path
+        // reads SessionInfo once, verifies the editor still belongs to that model, then passes SessionInfo.SessionId here;
+        // if — by the time this runs inside MutateAsync's single-writer dispatch — an MCP-door model swap has replaced the
+        // live session, s.Id no longer matches and the write is REFUSED before any mutation. Because check + mutation share
+        // one dispatch turn, no swap can slip between them (the race the extension-side two-RPC guard could not close). We
+        // fence on the SESSION id, not the source path: every session (saved OR unsaved) has a unique, always-present id, so
+        // an unsaved model is fenced too, and REOPENING the same file (same source, brand-new session) is correctly caught —
+        // a source-path compare would have skipped the first and wrongly passed the second. Null skips the fence entirely,
+        // so both doors' other callers and every MCP tool are unaffected. Ordinal compare on the exact id string.
+        private static void GuardExpectedModel(Session s, string expectedSession)
+        {
+            if (expectedSession != null && !string.Equals(s.Id, expectedSession, StringComparison.Ordinal))
+                throw new InvalidOperationException("The model changed before this edit landed. Nothing was written.");
+        }
+
+        // CRITICAL (zero-dialog authoring, round 7): an OPTIONAL expected-REVISION fence, a strictly finer check than
+        // GuardExpectedModel. The session id fence catches a whole-model SWAP, but NOT a same-session, same-name write
+        // landing on the WRONG OBJECT: the header-save recovery path probes old-absent/new-alive over separate read RPCs,
+        // then writes; between the probes and the write the MCP door can delete the resumed object and RE-CREATE an
+        // UNRELATED object at the same name — the session id is unchanged, so GuardExpectedModel passes and the preserved
+        // body lands on the impostor. (Same hazard for a rename→body pair: a delete+recreate at the new name between the
+        // rename commit and the body write.) Every mutation bumps s.Revision (Interlocked.Increment inside TrackAsync,
+        // AFTER this work lambda runs), so a caller that captured the revision it verified against — the rename's returned
+        // revision, or the revision re-read as stable across the recovery probes — can pass it here: read INSIDE the same
+        // single-writer dispatch turn as the mutation, s.Revision still equals the pre-mutation value, so any interleaving
+        // commit makes it differ and the write is REFUSED before touching the model. Null skips the fence (the product-wide
+        // set-by-ref default every door uses — see the SCOPE RULING at the header-save call sites); only the feature's
+        // VERIFIED-RESUMPTION writes (rename→body pair, recovery) pass a non-null value.
+        private static void GuardExpectedRevision(Session s, long? expectedRevision)
+        {
+            if (expectedRevision != null && s.Revision != expectedRevision.Value)
+                throw new InvalidOperationException("The model changed before this edit landed. Nothing was written.");
+        }
+
+        public async Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null)
         {
             // §9c — update_measure (MCP) and the RPC set_dax BOTH funnel through here, so binding "update_measure"
             // covers the measure-edit path on both doors (the op name Claude knows + what stock workflows declare).
@@ -2319,6 +2865,8 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, "set DAX", m =>
             {
+                GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
+                GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): refuse if ANY mutation landed since the caller verified — catches a same-session delete+recreate at this name
                 var obj = ObjectRefs.Resolve(m, objRef);
                 switch (obj)
                 {
@@ -2342,6 +2890,7 @@ namespace Semanticus.Engine
                 }
             });
             if (changed) await RecordVerifiedModeEditAsync(verified, s, "set_dax", objRef, expression, rev, origin);
+            if (changed) await RecordWorkflowAuthoredMeasureAsync("update_measure", objRef, expression);   // E3(b) drift baseline
             return new SetResult { Revision = rev, Changed = changed };
         }
 
@@ -2675,7 +3224,7 @@ namespace Semanticus.Engine
                 fmt = SaveFormat.TMDL;
             using (await s.AcquireModelFileWriteLeaseAsync())
             {
-                await s.Dispatcher.RunAsync(() =>
+                await s.RunAsync(() =>
                 {
                     s.Save(target, fmt, SerializeOptions.Default, resetCheckpoint: true);
                     return true;
@@ -2697,10 +3246,21 @@ namespace Semanticus.Engine
 
         public Task<SessionInfo> SessionInfoAsync()
         {
-            var s = _sessions.Current;
+            var context = _sessions.CurrentContext;
+            var s = context.Session;
             if (s == null) return Task.FromResult(new SessionInfo { SessionId = null, Revision = 0 });
             var origin = s.LiveOrigin;
-            var live = _live;   // snapshot the volatile field once (a concurrent disconnect must not race us)
+            var live = context.Live;
+            // The account currently in play, for the status bar's identity chip, must reflect the ACTIVE credential, not
+            // a registry last-used hint (which can name a stale account after a tenant-wide switch — e.g. an SP attach to
+            // a target Alice once used must NOT still claim Alice). CurrentAccount AND CurrentTenant must come from ONE
+            // connection so they never disagree (HIGH 7): the live QUERY connection when present (its authenticated
+            // identity + that target's tenant), else the live-bound EDITING origin (its account + its tenant). Never mix
+            // the query account with the editing tenant. Null reads honestly as "account unknown".
+            var queryRec = live == null ? null : ConnectionRegistry.FindByEndpoint(live.DataSource, live.Database);
+            string currentAccount, currentTenant;
+            if (live != null) { currentAccount = live.Account; currentTenant = queryRec?.TenantId; }
+            else { currentAccount = origin?.Account; currentTenant = origin?.TenantId; }
             return s.ReadAsync(m => new SessionInfo
             {
                 SessionId = s.Id,
@@ -2719,17 +3279,62 @@ namespace Semanticus.Engine
                 LiveKind = live?.Kind,
                 LiveDataSource = live?.DataSource,
                 QueryDatabase = live?.Database,
-                QueryConnectionId = live == null ? null : ConnectionRegistry.FindByEndpoint(live.DataSource, live.Database)?.Id
+                QueryConnectionId = queryRec?.Id,
+                CurrentAccount = currentAccount,
+                CurrentTenant = currentTenant
             });
+        }
+
+        // The "copy FROM" reference model the UI is browsing, when one is bound. Engine-owned (not just host state) so the
+        // Connections drawer — which reads ConnectionContext — names the SAME reference the native Reference tree shows
+        // (MEDIUM 8). Set when the reference tree loads (ListReferenceTreeAsync) and cleared explicitly. Coordinates only,
+        // never a credential. volatile: read from ConnectionContextAsync on any thread.
+        private volatile ConnectionContextModel _referenceBinding;
+
+        // Record the bound reference from the ModelRef the tree just resolved — display coordinates only. A workspace
+        // reference resolves its registry id so the drawer's card can match it against the known-models list.
+        private void SetReferenceBinding(ModelRef reference)
+        {
+            if (reference == null || string.Equals(reference.Kind, "session", StringComparison.OrdinalIgnoreCase)) { _referenceBinding = null; return; }
+            var isWorkspace = string.Equals(reference.Kind, "workspace", StringComparison.OrdinalIgnoreCase);
+            var record = isWorkspace ? ConnectionRegistry.FindByEndpoint(reference.Endpoint, reference.Database) : null;
+            var name = record?.ModelName
+                ?? (isWorkspace ? (reference.Database ?? reference.Endpoint)
+                    : string.Equals(reference.Kind, "gitref", StringComparison.OrdinalIgnoreCase) ? reference.GitRef
+                    : System.IO.Path.GetFileName(reference.Path?.TrimEnd('/', '\\')) ?? reference.Path);
+            _referenceBinding = new ConnectionContextModel
+            {
+                Available = true,
+                ModelName = name,
+                Kind = reference.Kind,
+                Source = isWorkspace ? reference.Endpoint : (reference.Path ?? reference.GitRef),
+                Endpoint = reference.Endpoint,
+                Database = reference.Database,
+                TenantId = reference.TenantId,
+                ConnectionId = record?.Id,
+                Live = isWorkspace,
+            };
+        }
+
+        /// <summary>Clear the bound reference model (the native Reference tree was cleared). Returns the refreshed
+        /// connection context so both doors drop the Reference card. Free, both doors.</summary>
+        public Task<ConnectionContext> ClearReferenceBindingAsync()
+        {
+            _referenceBinding = null;
+            return ConnectionContextAsync();
         }
 
         public async Task<ConnectionContext> ConnectionContextAsync()
         {
-            var session = _sessions.Current;
-            var live = _live;
-            if (session == null) return ConnectionContextBuilder.Build(null, null, live);
-            var modelName = await session.ReadAsync(m => m.Database?.Name ?? m.Name);
-            return ConnectionContextBuilder.Build(session, modelName, live);
+            var context = _sessions.CurrentContext;
+            var session = context.Session;
+            var live = context.Live;
+            var ctx = session == null
+                ? ConnectionContextBuilder.Build(null, null, live)
+                : ConnectionContextBuilder.Build(session, await session.ReadAsync(m => m.Database?.Name ?? m.Name), live);
+            // Fold in the engine-owned reference binding so the Connections drawer's Reference card matches the tree.
+            ctx.Reference = _referenceBinding ?? new ConnectionContextModel { Available = false };
+            return ctx;
         }
 
         public Task<ModelGraph> GetModelGraphAsync()
@@ -2737,6 +3342,13 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             return s.ReadAsync(BuildGraph);
         }
+
+        // A field parameter is a calculated table whose "Fields" column carries the ParameterMetadata extended
+        // property that create_field_parameter writes ({"version":3,"kind":2}) — the same marker Power BI Desktop
+        // emits and the only thing that makes the engine (and Desktop) treat the table as a field parameter.
+        // Metadata-only + deterministic (no query), and it will NOT misfire on an ordinary calc table (no marker).
+        internal static bool IsFieldParameterTable(Table t) =>
+            t is CalculatedTable ct && ct.Columns.Any(c => c.GetExtendedProperty("ParameterMetadata") != null);
 
         private static ModelGraph BuildGraph(Model m)
         {
@@ -2749,6 +3361,7 @@ namespace Semanticus.Engine
                     IsHidden = t.IsHidden,
                     IsDateTable = string.Equals(t.DataCategory, "Time", StringComparison.OrdinalIgnoreCase),
                     IsCalculated = t is CalculatedTable,
+                    IsFieldParameter = IsFieldParameterTable(t),
                     Columns = t.Columns.Count(c => c.Type != ColumnType.RowNumber),
                     Measures = t.Measures.Count,
                     KeyColumns = t.Columns.Where(c => c.IsKey && c.Type != ColumnType.RowNumber).Select(c => c.Name).ToArray(),
@@ -2932,6 +3545,7 @@ namespace Semanticus.Engine
                 Description = c.Description,
                 Expression = (c as CalculatedColumn)?.Expression,
                 SortByColumn = c.SortByColumn?.Name,
+                SourceColumn = (c as DataColumn)?.SourceColumn,
             }))
             .OrderBy(r => r.Table, StringComparer.OrdinalIgnoreCase)
             .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
@@ -2999,6 +3613,7 @@ namespace Semanticus.Engine
                 newRef = ObjectRefs.For(me);
             });
             await RecordVerifiedModeEditAsync(verified, s, "create_measure", newRef, expression, rev, origin);
+            await RecordWorkflowAuthoredMeasureAsync("create_measure", newRef, expression);   // E3(b) drift baseline
             return newRef;
         }
 
@@ -3372,52 +3987,72 @@ namespace Semanticus.Engine
         // stay live. The spec is NOT model content — it is an authoring artifact that build_model_from_spec
         // materialises, so its ops do not go through MutateAsync / the model undo timeline.
 
-        private async Task<SpecView> PublishSpec(Action mutate)
+        private async Task<SpecView> PublishSpec(SessionContext context, Action mutate, string operation)
         {
-            await _specGate.WaitAsync();
+            await context.SpecGate.WaitAsync();
             SpecView view;
-            try { mutate(); view = _spec.View(); } finally { _specGate.Release(); }
-            _sessions.Bus.PublishSpec(view);
+            try
+            {
+                EnsureContextCurrent(context, operation);
+                mutate();
+                view = context.Spec.View();
+            }
+            finally { context.SpecGate.Release(); }
+            if (ReferenceEquals(_sessions.CurrentContext, context)) _sessions.Bus.PublishSpec(view);
             return view;
         }
 
         public async Task<SpecView> GetSpecAsync()
         {
-            await _specGate.WaitAsync();
-            try { return _spec.View(); } finally { _specGate.Release(); }
+            var context = _sessions.CurrentContext;
+            await context.SpecGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, "Spec read");
+                return context.Spec.View();
+            }
+            finally { context.SpecGate.Release(); }
         }
 
         public Task<SpecView> SetSpecAsync(string specJson, string origin)
         {
+            var context = _sessions.CurrentContext;
             var spec = ParseSpec(specJson, "spec JSON");
-            return PublishSpec(() => _spec.Set(spec, "manual"));
+            return PublishSpec(context, () => context.Spec.Set(spec, "manual"), "Spec update");
         }
 
-        public Task<SpecView> ClearSpecAsync(string origin) => PublishSpec(() => _spec.Clear());
+        public Task<SpecView> ClearSpecAsync(string origin)
+        {
+            var context = _sessions.CurrentContext;
+            return PublishSpec(context, () => context.Spec.Clear(), "Spec clear");
+        }
 
         public async Task<SpecView> SaveSpecAsync(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required to save the spec.");
             var full = Path.GetFullPath(path);
-            await _specGate.WaitAsync();
+            var context = _sessions.CurrentContext;
+            await context.SpecGate.WaitAsync();
             SpecView view;
             try
             {
-                var spec = _spec.Require();
+                EnsureContextCurrent(context, "Spec save");
+                var spec = context.Spec.Require();
                 File.WriteAllText(full, System.Text.Json.JsonSerializer.Serialize(spec, SpecJson));
-                view = _spec.View();
+                view = context.Spec.View();
             }
-            finally { _specGate.Release(); }
+            finally { context.SpecGate.Release(); }
             return view;
         }
 
         public Task<SpecView> LoadSpecAsync(string path, string origin)
         {
+            var context = _sessions.CurrentContext;
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required to load a spec.");
             var full = Path.GetFullPath(path);
             if (!File.Exists(full)) throw new FileNotFoundException("Spec file not found: " + full);
             var spec = ParseSpec(File.ReadAllText(full), "spec file " + full);
-            return PublishSpec(() => _spec.Set(spec, "file"));
+            return PublishSpec(context, () => context.Spec.Set(spec, "file"), "Spec load");
         }
 
         private static ModelSpec ParseSpec(string json, string what)
@@ -3436,11 +4071,17 @@ namespace Semanticus.Engine
         // for from-scratch.
         public async Task<SpecBuildReport> BuildModelFromSpecAsync(string origin)
         {
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             ModelSpec spec;
-            await _specGate.WaitAsync();
-            try { spec = _spec.Require(); } finally { _specGate.Release(); }
+            await context.SpecGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, "Spec build");
+                spec = context.Spec.Require();
+            }
+            finally { context.SpecGate.Release(); }
 
-            var s = _sessions.Require();
             // Pro gate: "build the whole model from a spec in one shot" is the spec→build bulk primitive (the Pro
             // value); free authors objects individually. Thrown before the mutate, so a refusal leaves the model intact.
             Entitlement.EntitlementGuard.RequirePro(_entitlement, "Building a model from a spec",
@@ -3660,11 +4301,16 @@ namespace Semanticus.Engine
         }
 
         // ---- autogenerate_spec_from_model: propose a starter spec from the OPEN model (read-only) ---------------
+        internal Func<Task> ModelSpecReadyForTest;
+
         public async Task<SpecView> AutogenerateSpecFromModelAsync(string origin)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             var spec = await s.ReadAsync(AutogenerateSpecFromModel);
-            return await PublishSpec(() => _spec.Set(spec, "autogenerate-model"));
+            var hook = System.Threading.Interlocked.Exchange(ref ModelSpecReadyForTest, null);
+            if (hook != null) await hook();
+            return await PublishSpec(context, () => context.Spec.Set(spec, "autogenerate-model"), "Spec generation");
         }
 
         // from = many (FK), to = one (lookup). Mirrors diagram.tsx roleOf: prefer the explicit Many end.
@@ -3764,6 +4410,7 @@ namespace Semanticus.Engine
         // ---- autogenerate_spec_from_fabric: introspect a Fabric SQL endpoint (TDS) and propose a starter spec -----
         public async Task<SpecView> AutogenerateSpecFromFabricAsync(string server, string database, string authMode, string storageMode, string origin, string tenantId = null)
         {
+            var context = _sessions.CurrentContext;
             if (string.IsNullOrWhiteSpace(server))
                 throw new ArgumentException("A Fabric SQL endpoint is required.");
             if (string.IsNullOrWhiteSpace(database))
@@ -3806,7 +4453,7 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(msg);
             }
             var spec = FabricSchemaToSpec(schema, server, database, storageMode);
-            return await PublishSpec(() => _spec.Set(spec, "autogenerate-fabric"));
+            return await PublishSpec(context, () => context.Spec.Set(spec, "autogenerate-fabric"), "Spec generation");
         }
 
         // Plain-language fix for a Fabric SQL auth failure (harness doctrine: the tool result must teach the fix). Names
@@ -4490,7 +5137,7 @@ namespace Semanticus.Engine
                 // TMDL-vs-TMDL — the same serializer both sides, which avoids false "updates" from format asymmetry.
                 var s = _sessions.Require();
                 var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "semanticus_cmp_" + System.Guid.NewGuid().ToString("N").Substring(0, 8));
-                var sessionCompatibilityLevel = await s.Dispatcher.RunAsync(() =>
+                var sessionCompatibilityLevel = await s.RunAsync(() =>
                 {
                     // Capture the authoritative value before writing: model-only TMDL may omit database metadata.
                     var level = s.TomDatabase.CompatibilityLevel;
@@ -4538,7 +5185,7 @@ namespace Semanticus.Engine
                 // Auth mirrors connect_xmla/open_live: reuse the persistent encrypted sign-in cache (silent when a saved
                 // sign-in exists) and, on a COLD auth rejection, sign a HUMAN in interactively and retry once — an AGENT
                 // never pops UI (it gets a teaching refusal). See SnapshotWorkspaceMetadataAsync.
-                var (snap, _) = await SnapshotWorkspaceMetadataAsync(r.Endpoint, r.Database, r.AuthMode, origin);   // compare reads only the snapshot; the write path (apply/rollback) is what reuses the effective mode
+                var (snap, _) = await SnapshotWorkspaceMetadataAsync(r.Endpoint, r.Database, r.AuthMode, origin, r.TenantId);   // compare reads only the snapshot; the write path (apply/rollback) is what reuses the effective mode; tenant honoured (HIGH 4)
                 var snapDir = System.IO.Path.GetDirectoryName(snap.BimPath);
                 Action wclean = () => { try { System.IO.Directory.Delete(snapDir, true); } catch { } };
                 try { return (ModelCompare.LoadRawModelDb(snap.BimPath), r?.Label ?? (string.IsNullOrWhiteSpace(r.Database) ? r.Endpoint : r.Database), wclean); }
@@ -4705,7 +5352,7 @@ namespace Semanticus.Engine
                 // Snapshot the CURRENT deployed metadata (read-only), loaded as raw TOM like a file — "snapshot A".
                 // Capture the EFFECTIVE auth mode it authenticated with, so the eventual push reuses that same proven
                 // credential instead of re-acquiring the mode the endpoint already rejected (see PushWorkspaceAsync).
-                var (adb, effectiveMode) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin);
+                var (adb, effectiveMode) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
 
                 var diff = ModelCompare.Diff(ldb.Model, adb.Model, llabel, tlabel);
                 var selected = selectedRefs != null && selectedRefs.Length > 0 ? new System.Collections.Generic.HashSet<string>(selectedRefs) : null;
@@ -4772,7 +5419,7 @@ namespace Semanticus.Engine
                 // overwrite (adds/updates AND deletes) A-vs-B, restricted to the SELECTED refs; any non-Equal ⇒ someone
                 // edited a ref we intend to change since we diffed. Deletes are irreversible on a published model, so
                 // they are guarded too. Snapshot A stays only the drift BASELINE — we no longer push it (see below).
-                var (bdb, _) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin);
+                var (bdb, _) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
                 // The RESTORE POINT is snapshot B, and it must be captured HERE: ModelCompare.Apply below merges the
                 // selected changes INTO bdb in place, so serializing it any later would persist the post-push state and
                 // silently make rollback a no-op. Cheap (in-memory) and it also works under the offline test hook.
@@ -4828,6 +5475,33 @@ namespace Semanticus.Engine
                 var failed = new System.Collections.Generic.List<string>(outcome.Failed.Select(f => f.Ref + " (" + f.Reason + ")"));
                 // Retag/republish items are refused with a clear, actionable reason (routed to FailedRefs). Never pushed.
                 foreach (var r in republishRefsB) failed.Add(RepublishReason(r));
+
+                // BLOCKER 1 (staging-collision coupling): a relationship Delete whose paired replacement Create was SELECTED
+                // but did NOT stage — an in-place re-point keeps the same endpoint pair on one side so the merged Create
+                // collides with the old relationship still in snapshot B, or the Create was otherwise refused — must NOT
+                // reach the explicit-delete channel: removing the old relationship with no replacement is data loss. Abort
+                // the whole push (atomic, like every delete refusal). A re-point that DID stage (its new endpoints resolve
+                // in B) is carried, and its deploy-time failure is caught downstream by SyncSessionToLive's own coupling.
+                // ROUND 6: this now also covers a CROSS-TABLE re-point (moved endpoint on a different table, or both endpoints
+                // moving) that keeps the relationship NAME. ModelCompare couples such a pair by shared name (SameRelName), so
+                // its Delete carries ReplacementCreateRefs; the merged Create still collides on the duplicate name in snapshot
+                // B and lands in outcome.Failed (not stagedOk), so the check below refuses the Delete — no separate same-name
+                // dependency is needed here because the coupling makes THIS guard fire on exactly that duplicate-name failure.
+                var stagedOk = new System.Collections.Generic.HashSet<string>(outcome.Applied, StringComparer.Ordinal);
+                var pushRefSet = new System.Collections.Generic.HashSet<string>(pushRefsB, StringComparer.Ordinal);
+                // A delete is refused if ANY of its required replacement Creates was selected in this push (pushRefSet) but
+                // failed to stage (not in stagedOk). One ref for a one-to-one re-point; the whole candidate group for an
+                // ambiguous set (then the delete is safe only if every sibling replacement staged too — fail-closed).
+                var replacementUnstaged = deleteItemsB
+                    .Where(di => di.ReplacementCreateRefs != null && di.ReplacementCreateRefs.Any(rc =>
+                                 pushRefSet.Contains(rc)          // the replacement Create was in this selection
+                                 && !stagedOk.Contains(rc)))      // ...but it failed to stage
+                    .Select(di => di.Ref).Distinct(StringComparer.Ordinal).ToArray();
+                if (replacementUnstaged.Length > 0)
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(),
+                        FailedRefs = failed.Concat(replacementUnstaged.Select(r => r + " (delete refused: its replacement relationship could not be staged in this push; removing the old one would leave no relationship. Re-diff.)")).ToArray(),
+                        Target = tlabel, Note = $"Nothing reached {right.Database} on {right.Endpoint}. Delete refused (nothing pushed): {string.Join(", ", replacementUnstaged)}.",
+                        Error = "Delete refused to avoid data loss: " + string.Join(", ", replacementUnstaged) + ". The replacement relationship could not be staged (its old form still occupies the model), so deleting the old one would leave no relationship. NOTHING was pushed. Re-diff against the current model." };
 
                 // Validate the MERGED model in memory BEFORE any live write — the invariant the file branch holds: a
                 // corrupt merge (an orphaned reference from a partial selection) throws here and we refuse to write.
@@ -4899,7 +5573,7 @@ namespace Semanticus.Engine
                         Error = "Delete refused: a restore point could not be written (" + (restoreError ?? "unknown error")
                             + "), and a delete on a published model cannot be undone without one. Nothing was pushed. Free some disk space under ~/.semanticus/restore and retry, or de-select the deletes to push the remaining changes." };
 
-                var rep = await PushWorkspaceAsync(bim, right.Endpoint, right.Database, effectiveMode, deleteTargetsB);   // reuse the credential the snapshot proved (P2-5)
+                var rep = await PushWorkspaceAsync(bim, right.Endpoint, right.Database, effectiveMode, deleteTargetsB, right.TenantId);   // reuse the credential the snapshot proved (P2-5); tenant threaded to the write (HIGH 6)
                 // NOTHING committed (SaveChanges wrote nothing) AND an error ⇒ a true failure; never claim success
                 // (surface it verbatim, incl. a rejected delete-of-a-table-with-dependents, which SaveChanges refuses
                 // atomically). CRITICAL: this branches on rep.Committed, NOT rep.Error. SyncSessionToLive commits in TWO
@@ -4910,7 +5584,22 @@ namespace Semanticus.Engine
                 // an Error) falls THROUGH to the normal reconciliation + audit below; its recalc warning is surfaced on
                 // the result at the end. Only a genuinely-nothing-written failure returns here.
                 if (rep != null && !rep.Committed && rep.Error != null)
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel, Error = rep.Error };
+                {
+                    // A delete-refusal abort (drift, or a conflict/replacement) carries its refused refs on the report.
+                    // The old return surfaced them ONLY in the free-form Error; the contract's structured fields
+                    // (FailedRefs + Note) were left empty. Populate both so a caller reading the fields sees the refused
+                    // refs, not just the prose. Nothing was committed, so Applied stays false.
+                    var refusedAll = (rep.DeletesRefused ?? Array.Empty<string>()).Concat(rep.DeletesRefusedConflict ?? Array.Empty<string>()).ToArray();
+                    if (refusedAll.Length == 0)
+                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel, Error = rep.Error };
+                    var abortFailed = new System.Collections.Generic.List<string>(failed);
+                    foreach (var rr in rep.DeletesRefused ?? Array.Empty<string>())
+                        abortFailed.Add(rr + " (delete refused: identity gone and a different object now bears the name; re-diff)");
+                    foreach (var rr in rep.DeletesRefusedConflict ?? Array.Empty<string>())
+                        abortFailed.Add(rr + " (delete refused: its replacement was not created, or the same object was just updated; re-diff)");
+                    var abortNote = $"Nothing reached {right.Database} on {right.Endpoint}. Delete refused (nothing pushed): {string.Join(", ", refusedAll)}.";
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = abortFailed.ToArray(), Target = tlabel, Note = abortNote, Error = rep.Error };
+                }
 
                 // RECONCILE the local merge against what the live deploy ACTUALLY synced. outcome.Applied is only what
                 // merged into the temp .bim; SyncSessionToLive carries a SUBSET of object types (e.g. relationships /
@@ -4973,7 +5662,8 @@ namespace Semanticus.Engine
                     noteOut = $"No changes were needed on {right.Database} on {right.Endpoint} (already reconciled).";
                 if ((rep?.DeletedRefs.Length ?? 0) > 0) noteOut += $" Deleted: {string.Join(", ", rep.DeletedRefs)}.";
                 if ((rep?.DeletesAlreadyAbsent.Length ?? 0) > 0) noteOut += $" Already absent (no-op): {string.Join(", ", rep.DeletesAlreadyAbsent)}.";
-                if ((rep?.DeletesRefused.Length ?? 0) > 0) noteOut += $" DELETE REFUSED — identity gone + a different object now bears the name (re-diff): {string.Join(", ", rep.DeletesRefused)}.";
+                if ((rep?.DeletesRefused.Length ?? 0) > 0) noteOut += $" DELETE REFUSED (identity gone and a different object now bears the name; re-diff): {string.Join(", ", rep.DeletesRefused)}.";
+                if ((rep?.DeletesRefusedConflict.Length ?? 0) > 0) noteOut += $" DELETE REFUSED to avoid data loss (its replacement was not created, or the same object was just updated; re-diff): {string.Join(", ", rep.DeletesRefusedConflict)}.";
                 if (noOpRefs.Length > 0) noteOut += $" Already reconciled on the target since the diff — no-op ({noOpRefs.Length}): {string.Join(", ", noOpRefs)}.";
                 if (failed.Count > 0) noteOut += " Not synced: " + string.Join("; ", failed);
                 if (driftRefs.Length > 0) noteOut += $" Drift override accepted for: {string.Join(", ", driftRefs)}.";
@@ -5072,7 +5762,10 @@ namespace Semanticus.Engine
             try
             {
                 var rdb = ModelCompare.LoadRawModelDb(rp.BimPath);                                     // the state to restore
-                var (ldb, effectiveMode) = await SnapshotWorkspaceAsync(rp.Endpoint, rp.Database, authMode, cleanups, origin);  // the state right now; capture the mode it proved for the push
+                // The restore point holds no tenant of its own; resolve it from the remembered target so BOTH the pre-push
+                // read AND the write below authenticate against the target's tenant, not the default az login (HIGH 6).
+                var refTenant = ConnectionRegistry.FindByEndpoint(rp.Endpoint, rp.Database)?.TenantId;
+                var (ldb, effectiveMode) = await SnapshotWorkspaceAsync(rp.Endpoint, rp.Database, authMode, cleanups, origin, refTenant);  // the state right now; capture the mode it proved for the push
 
                 // Direction: make the LIVE model match the RESTORE POINT. A "Delete" item is therefore an object that
                 // exists live but not in the snapshot — added by the push we are undoing, or by someone since.
@@ -5129,7 +5822,7 @@ namespace Semanticus.Engine
                 // identityStrict: the restore point IS a snapshot of this same target, so a non-empty tag that no longer
                 // resolves means the object was republished under us — refuse rather than mutate a same-named impostor.
                 var deleteTargets = removeItems.Select(LiveDeleteTarget.FromDiffItem).ToArray();
-                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets);   // reuse the credential the snapshot proved (P2-5)
+                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets, refTenant);   // reuse the credential the snapshot proved (P2-5); tenant threaded to the write (HIGH 6)
 
                 if (rep?.Committed != true)
                     return new RollbackResult { RestorePointId = rp.Id, Target = tlabel, FailedRefs = failed.ToArray(),
@@ -5175,10 +5868,10 @@ namespace Semanticus.Engine
 
         // Snapshot the live target's metadata to raw TOM. Test seam: WorkspaceSnapshotHook returns an in-memory
         // snapshot (A then B on successive calls) so offline tests never touch a real endpoint.
-        private async Task<(RawTom.Database db, string mode)> SnapshotWorkspaceAsync(string endpoint, string database, string authMode, System.Collections.Generic.List<Action> cleanups, string origin)
+        private async Task<(RawTom.Database db, string mode)> SnapshotWorkspaceAsync(string endpoint, string database, string authMode, System.Collections.Generic.List<Action> cleanups, string origin, string tenantId = null)
         {
             if (WorkspaceSnapshotHook != null) return (await WorkspaceSnapshotHook(), XmlaAuthHint.SafeMode(authMode));
-            var (snap, effectiveMode) = await SnapshotWorkspaceMetadataAsync(endpoint, database, authMode, origin);
+            var (snap, effectiveMode) = await SnapshotWorkspaceMetadataAsync(endpoint, database, authMode, origin, tenantId);
             var dir = System.IO.Path.GetDirectoryName(snap.BimPath);
             cleanups.Add(() => { try { System.IO.Directory.Delete(dir, true); } catch { } });   // a load failure must not orphan the snapshot dir
             try { return (ModelCompare.LoadRawModelDb(snap.BimPath), effectiveMode); }
@@ -5204,16 +5897,24 @@ namespace Semanticus.Engine
         // — it gets a teaching refusal telling it to ask the user to Connect. Every auth failure is rewritten to teach
         // the fix; only sanitized values (mode label, tenant label, scrubbed endpoint) reach the message, never a token.
         // Returns the auth MODE that actually succeeded, so a subsequent WRITE reuses the credential the snapshot proved.
-        private async Task<(LiveModelExport.Snapshot snap, string mode)> SnapshotWorkspaceMetadataAsync(string endpoint, string database, string authMode, string origin)
+        private async Task<(LiveModelExport.Snapshot snap, string mode)> SnapshotWorkspaceMetadataAsync(string endpoint, string database, string authMode, string origin, string tenantId = null)
         {
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
+            var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim().ToLowerInvariant();
             var ct = System.Threading.CancellationToken.None;
+            // A cold compare/reference read signs in and can repoint the tenant-wide saved account, so its commit must be
+            // LINEARIZED with connect_xmla / open_live (HIGH 2). But a compare/reference is a READ that does NOT own the
+            // live connection: minting a LIVE intent for it made a concurrent slow connect see _liveIntent move and
+            // falsely supersede itself at SwapLive (HIGH 3). So mint an AUTH-only ticket — it orders the saved-account
+            // barrier and nothing else — and thread it through both the initial attempt and the interactive fallback
+            // (they are one logical sign-in).
+            var ticket = NewAuthIntent();
 
             // First attempt: honour the requested mode, reusing the persistent sign-in cache (the same acquisition
             // connect_xmla / open_live use — a saved interactive/device-code record is served silently).
             try
             {
-                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct), mode);
+                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct, tenant, ticket), mode);
             }
             catch (Exception ex)
             {
@@ -5241,7 +5942,7 @@ namespace Semanticus.Engine
                 await _interactiveAuthGate.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
-                    return (await AcquireAndExportWorkspaceAsync(fbMode, endpoint, database, ct), fbMode);
+                    return (await AcquireAndExportWorkspaceAsync(fbMode, endpoint, database, ct, tenant, ticket), fbMode);
                 }
                 catch (Exception ex2)
                 {
@@ -5258,14 +5959,25 @@ namespace Semanticus.Engine
         // One acquire+export attempt in a single auth mode. Uses BuildCredentialAsync (the persistent-cache credential
         // open_live uses), so a saved interactive/device-code sign-in is reused silently and an interactive fallback
         // prompts + persists on first use. The test seam short-circuits both halves so no endpoint is touched offline.
-        private async Task<LiveModelExport.Snapshot> AcquireAndExportWorkspaceAsync(string mode, string endpoint, string database, System.Threading.CancellationToken ct)
+        private async Task<LiveModelExport.Snapshot> AcquireAndExportWorkspaceAsync(string mode, string endpoint, string database, System.Threading.CancellationToken ct, string tenantId = null, long ticket = 0)
         {
             if (WorkspaceTokenExportForTests != null) return await WorkspaceTokenExportForTests(mode);
-            var cred = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, null, ct);
-            var tok = cred != null
-                ? await EntraToken.GetTokenAsync(cred, ct)
-                : await EntraToken.AcquireFullAsync(mode, null, ct);
-            return await LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+            // Thread the tenant (HIGH 4): a remembered cross-tenant reference/workspace must target ITS tenant, not the
+            // default one the current az login happens to be home to. Defer persisting any first-sign-in record until
+            // the export authorizes, so a failed read never leaves a half-written account behind.
+            var prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenantId, ct);
+            var tok = prepared?.Credential != null
+                ? await EntraToken.GetTokenAsync(prepared.Credential, ct)
+                : await EntraToken.AcquireFullAsync(mode, null, ct, tenantId);
+            var snap = await LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+            // Route the account commit through the SAME ordered barrier connect_xmla / open_live use, keyed to THIS
+            // (family, tenant) slot so a compare's sign-in orders only against commits for the same saved-account record,
+            // never a different tenant's pending commit (HIGH 2 / HIGH 3). A caller with no ticket (ticket == 0) predates
+            // the barrier and always loses to a real op's ticket, committing nothing. liveSwapWinner: FALSE — a compare/
+            // reference is a READ-ONLY snapshot that does NOT own the live connection, so a SILENT reuse here (no fresh
+            // sign-in) must NOT advance the barrier and steal a concurrent forced open_live's pending commit (HIGH 2a).
+            CommitAuthRecordOrdered(prepared, ticket, EntraToken.AuthRecordSlot(mode, tenantId), liveSwapWinner: false);
+            return snap;
         }
 
         // Test-only observer of the EFFECTIVE auth mode the push acquires with — lets a test prove the snapshot->push
@@ -5279,11 +5991,14 @@ namespace Semanticus.Engine
         // to the encrypted on-disk cache — Windows (EntraToken.PersistenceSupported). On Linux/macOS the record is not
         // persisted, so AcquireAsync("interactive") re-prompts here just as open_live's first sign-in does; the write
         // still uses the RIGHT mode (never the rejected azcli), it just prompts once more on those platforms.
-        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets)
+        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets, string tenantId = null)
         {
             PushAuthModeForTests?.Invoke(authMode);
             if (WorkspacePushHook != null) return WorkspacePushHook(bimPath, deleteTargets);
-            var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None);
+            // Thread the tenant into the WRITE token too (HIGH 6): the pre-push snapshot read tenant-B, so the push must
+            // acquire against tenant-B as well — a default-tenant token here would read one model's diff but write with a
+            // different account/tenant. A null tenant falls back to the current az login exactly as before.
+            var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
             // identityStrict: TRUE for the selective push — src is snapshot B (the live target seconds ago), so a
             // non-empty tag miss means the object was republished/retagged under us and must NOT be name-mutated.
             // deploy_live (whole-model) leaves it FALSE (its src is an arbitrary session, often untagged).
@@ -5486,6 +6201,15 @@ namespace Semanticus.Engine
             var (db, _, cleanup) = await ResolveModelRefAsync(reference ?? new ModelRef { Kind = "session" }, origin);
             try
             {
+                // Loading the reference tree IS binding the reference — record it as engine-owned state so the Connections
+                // drawer's Reference card names the same model (MEDIUM 8), and append a role-change history event so the
+                // timeline reflects it. Best-effort: neither may fail the browse it rides along with.
+                SetReferenceBinding(reference);
+                if (reference != null && string.Equals(reference.Kind, "workspace", StringComparison.OrdinalIgnoreCase))
+                {
+                    var refRec = ConnectionRegistry.FindByEndpoint(reference.Endpoint, reference.Database);
+                    RecordConnectionHistory(refRec, "role", refRec?.LastAccount, reference.Endpoint, reference.Database, reference.TenantId, ok: true, detail: "set as the reference model");
+                }
                 var nodes = new System.Collections.Generic.List<TreeNode>();
                 foreach (var t in db.Model.Tables.Cast<RawTom.Table>().OrderBy(t => t.Name))
                 {
@@ -5552,28 +6276,28 @@ namespace Semanticus.Engine
         // ---- Fabric REST (the cloud ALM lane — read-only discovery) --------------------------------------------
         // Read-only GETs against api.fabric.microsoft.com with the user's own Entra identity (azcli default; SP is
         // the reliable headless path). No live write. Errors (incl. permission gates) surface scrubbed via FabricRest.
-        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId)
+        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-            return await FabricRest.ListWorkspacesAsync(token, System.Threading.CancellationToken.None);
+            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            return await FabricRest.ListWorkspacesAsync(token, cancellationToken);
         }
 
-        public async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId)
+        public async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-            return await FabricRest.ListDeploymentPipelinesAsync(token, System.Threading.CancellationToken.None);
+            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            return await FabricRest.ListDeploymentPipelinesAsync(token, cancellationToken);
         }
 
-        public async Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId)
+        public async Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-            return await FabricRest.GetPipelineStagesAsync(pipelineId, token, System.Threading.CancellationToken.None);
+            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            return await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
         }
 
-        public async Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId)
+        public async Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-            return await FabricRest.GetStageItemsAsync(pipelineId, stageId, token, System.Threading.CancellationToken.None);
+            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            return await FabricRest.GetStageItemsAsync(pipelineId, stageId, token, cancellationToken);
         }
 
         // ---- Deployment pipeline: preview + the GATED deploy (write lane) + history --------------------------
@@ -5610,18 +6334,18 @@ namespace Semanticus.Engine
             return System.Text.Json.JsonSerializer.Serialize(body);
         }
 
-        public async Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId)
+        public async Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
             string token; PipelineStage[] stages; StageItem[] srcItems;
             try
             {
                 // The setup reads (token + stage/item GETs) throw on a non-2xx (401/403/404) — catch so the failure
                 // is reported on the DTO's .Error, never thrown across the door (golden rule #2).
-                token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, System.Threading.CancellationToken.None);
-                srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, System.Threading.CancellationToken.None);
+                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
+                srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, cancellationToken);
             }
-            catch (Exception ex) { return new DeployPreview { PipelineId = pipelineId, SourceStageId = sourceStageId, TargetStageId = targetStageId, Error = FabricRest.Scrub(ex.Message) }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DeployPreview { PipelineId = pipelineId, SourceStageId = sourceStageId, TargetStageId = targetStageId, Error = FabricRest.Scrub(ex.Message) }; }
             var (isProd, tgtName) = ProdInfo(stages, targetStageId);
             var diffs = DiffFromSource(srcItems);
             DeployGate gate = null; try { gate = await DeployGateAsync(null); } catch { /* no open model — gate skipped */ }
@@ -5635,7 +6359,8 @@ namespace Semanticus.Engine
         }
 
         public async Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId,
-            string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null)
+            string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null,
+            System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(pipelineId) || string.IsNullOrWhiteSpace(sourceStageId) || string.IsNullOrWhiteSpace(targetStageId))
                 return new DeployStageReport { Error = "pipelineId, sourceStageId and targetStageId are all required." };
@@ -5645,11 +6370,11 @@ namespace Semanticus.Engine
             {
                 // Setup reads throw on a non-2xx — catch so the failure is reported on the DTO (golden rule #2), so the
                 // "any failure is reported on the DTO, never thrown" guarantee below holds for the WHOLE method.
-                token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, System.Threading.CancellationToken.None);
-                srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, System.Threading.CancellationToken.None);
+                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
+                srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, cancellationToken);
             }
-            catch (Exception ex) { return new DeployStageReport { PipelineId = pipelineId, SourceStageId = sourceStageId, TargetStageId = targetStageId, Error = FabricRest.Scrub(ex.Message), Plan = "Could not read the pipeline stages/items." }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DeployStageReport { PipelineId = pipelineId, SourceStageId = sourceStageId, TargetStageId = targetStageId, Error = FabricRest.Scrub(ex.Message), Plan = "Could not read the pipeline stages/items." }; }
             var (isProd, tgtName) = ProdInfo(stages, targetStageId);
             var srcName = StageName(stages, sourceStageId);
 
@@ -5716,22 +6441,31 @@ namespace Semanticus.Engine
             }
 
             // The single live write: POST the deploy, poll the LRO. Any failure is reported on the DTO, never thrown.
-            var body = BuildDeployBody(sourceStageId, targetStageId, selected == null ? null : diffs, note);
-            var outcome = await FabricRest.DeployAsync(pipelineId, body, token, System.Threading.CancellationToken.None);
-            report.Committed = outcome.Status == "Succeeded";
-            report.Status = outcome.Status;
-            report.OperationId = outcome.OperationId;
-            report.Error = outcome.Error;
-            report.Plan = report.Committed
-                ? $"Deployed {chosen.Length} item(s) {srcName}→{tgtName} ({outcome.Status})."
-                : $"Deploy {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            try
+            {
+                var body = BuildDeployBody(sourceStageId, targetStageId, selected == null ? null : diffs, note);
+                var outcome = await FabricRest.DeployAsync(pipelineId, body, token, cancellationToken);
+                report.Committed = outcome.Status == "Succeeded";
+                report.Status = outcome.Status;
+                report.OperationId = outcome.OperationId;
+                report.Error = outcome.Error;
+                report.Plan = report.Committed
+                    ? $"Deployed {chosen.Length} item(s) {srcName}→{tgtName} ({outcome.Status})."
+                    : $"Deploy {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                report.Status = "Failed";
+                report.Error = FabricRest.Scrub(ex.Message);
+                report.Plan = "Deploy failed.";
+            }
             return report;
         }
 
-        public async Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId)
+        public async Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-            return await FabricRest.ListDeploymentOperationsAsync(pipelineId, token, System.Threading.CancellationToken.None);
+            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            return await FabricRest.ListDeploymentOperationsAsync(pipelineId, token, cancellationToken);
         }
 
         // ---- Fabric Git (workspace ⇄ git) — reads + GATED writes (commit/update/connect/disconnect) -----------
@@ -5739,36 +6473,36 @@ namespace Semanticus.Engine
         // workspace role, workspace-not-git-connected) and on a failed LRO; EntraToken.AcquireFabricAsync throws on
         // an auth failure. Every method below CATCHES those and reports the (scrubbed) message on the result DTO's
         // .Error, so a failure is NEVER thrown across the RPC/MCP door (and the MCP Emit still fires with Ok=false).
-        public async Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId)
+        public async Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                return await FabricRest.GetGitConnectionAsync(workspaceId, token, System.Threading.CancellationToken.None);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                return await FabricRest.GetGitConnectionAsync(workspaceId, token, cancellationToken);
             }
-            catch (Exception ex) { return new FabricGitConnection { Error = FabricRest.Scrub(ex.Message) }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitConnection { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
-        public async Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId)
+        public async Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                return await FabricRest.GetGitStatusAsync(workspaceId, token, System.Threading.CancellationToken.None);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                return await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
-            catch (Exception ex) { return new FabricGitStatus { Error = FabricRest.Scrub(ex.Message) }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitStatus { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
-        public async Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin)
+        public async Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "commit", Error = "A workspaceId is required." };
             string token; FabricGitStatus status;
             try
             {
-                token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                status = await FabricRest.GetGitStatusAsync(workspaceId, token, System.Threading.CancellationToken.None);
+                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                status = await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
-            catch (Exception ex) { return new FabricGitResult { Action = "commit", Direction = "workspace→git", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitResult { Action = "commit", Direction = "workspace→git", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
             var wsChanges = status.Changes.Count(c => !string.IsNullOrEmpty(c.WorkspaceChange));
             var report = new FabricGitResult { Action = "commit", Direction = "workspace→git", ChangeCount = wsChanges, Conflicts = status.Conflicts };
             if (!commit) { report.Plan = $"DRY RUN — would commit {wsChanges} workspace change(s) to git."; return report; }
@@ -5788,13 +6522,22 @@ namespace Semanticus.Engine
                 ["workspaceHead"] = status.WorkspaceHead,
             };
             if (items != null && items.Length > 0) body["items"] = items.Select(id => new { objectId = id }).ToArray();
-            var outcome = await FabricRest.GitCommitAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(body), token, System.Threading.CancellationToken.None);
-            report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
-            report.Plan = report.Committed ? $"Committed {wsChanges} change(s) to git." : $"Commit {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            try
+            {
+                var outcome = await FabricRest.GitCommitAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(body), token, cancellationToken);
+                report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
+                report.Plan = report.Committed ? $"Committed {wsChanges} change(s) to git." : $"Commit {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                report.Status = "Failed";
+                report.Error = FabricRest.Scrub(ex.Message);
+                report.Plan = "Commit failed.";
+            }
             return report;
         }
 
-        public async Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin)
+        public async Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "update", Error = "A workspaceId is required." };
             // Safety gate (mirrors the deploy lane's agent-can't-do-the-destructive-thing rule, DeployGuard): an agent
@@ -5807,10 +6550,10 @@ namespace Semanticus.Engine
             string token; FabricGitStatus status;
             try
             {
-                token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                status = await FabricRest.GetGitStatusAsync(workspaceId, token, System.Threading.CancellationToken.None);
+                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                status = await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
-            catch (Exception ex) { return new FabricGitResult { Action = "update", Direction = "git→workspace", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitResult { Action = "update", Direction = "git→workspace", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
             var remoteChanges = status.Changes.Count(c => !string.IsNullOrEmpty(c.RemoteChange));
             var report = new FabricGitResult { Action = "update", Direction = "git→workspace", ChangeCount = remoteChanges, Conflicts = status.Conflicts };
             if (!commit) { report.Plan = $"DRY RUN — would update {remoteChanges} item(s) from git into the workspace" + (status.Conflicts ? " (CONFLICTS present — set a conflict policy)" : "") + "."; return report; }
@@ -5829,13 +6572,22 @@ namespace Semanticus.Engine
             var policy = string.Equals(conflictPolicy, "PreferWorkspace", System.StringComparison.OrdinalIgnoreCase) ? "PreferWorkspace" : "PreferRemote";
             body["conflictResolution"] = new { conflictResolutionType = "Workspace", conflictResolutionPolicy = policy };
             if (allowOverride) body["options"] = new { allowOverrideItems = true };
-            var outcome = await FabricRest.GitUpdateAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(body), token, System.Threading.CancellationToken.None);
-            report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
-            report.Plan = report.Committed ? $"Updated {remoteChanges} item(s) from git into the workspace ({policy})." : $"Update {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            try
+            {
+                var outcome = await FabricRest.GitUpdateAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(body), token, cancellationToken);
+                report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
+                report.Plan = report.Committed ? $"Updated {remoteChanges} item(s) from git into the workspace ({policy})." : $"Update {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                report.Status = "Failed";
+                report.Error = FabricRest.Scrub(ex.Message);
+                report.Plan = "Update failed.";
+            }
             return report;
         }
 
-        public async Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin)
+        public async Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(repository))
                 return new FabricGitResult { Action = "connect", Error = "workspaceId, provider (AzureDevOps|GitHub) and repository are required." };
@@ -5853,7 +6605,7 @@ namespace Semanticus.Engine
             if (!commit) { report.Plan = $"DRY RUN — would connect workspace {workspaceId} to {(isGh ? "GitHub" : "AzureDevOps")} {repository}/{branch}."; return report; }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
                 var details = new System.Collections.Generic.Dictionary<string, object>
                 {
                     ["gitProviderType"] = isGh ? "GitHub" : "AzureDevOps",
@@ -5866,15 +6618,15 @@ namespace Semanticus.Engine
                 var bodyD = new System.Collections.Generic.Dictionary<string, object> { ["gitProviderDetails"] = details };
                 if (!string.IsNullOrWhiteSpace(connectionId)) bodyD["myGitCredentials"] = new { source = "ConfiguredConnection", connectionId };
                 else if (!isGh) bodyD["myGitCredentials"] = new { source = "Automatic" };
-                var outcome = await FabricRest.GitConnectAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(bodyD), token, System.Threading.CancellationToken.None);
+                var outcome = await FabricRest.GitConnectAsync(workspaceId, System.Text.Json.JsonSerializer.Serialize(bodyD), token, cancellationToken);
                 report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
                 report.Plan = report.Committed ? $"Connected the workspace to {(isGh ? "GitHub" : "AzureDevOps")} {repository}/{branch}." : $"Connect {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
             }
-            catch (Exception ex) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Connect failed."; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Connect failed."; }
             return report;
         }
 
-        public async Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin)
+        public async Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "disconnect", Error = "A workspaceId is required." };
             // Tearing a workspace off source control is an Admin op, not routine authoring — an agent must not
@@ -5887,12 +6639,12 @@ namespace Semanticus.Engine
             if (!commit) { report.Plan = $"DRY RUN — would disconnect workspace {workspaceId} from git."; return report; }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
-                var outcome = await FabricRest.GitDisconnectAsync(workspaceId, token, System.Threading.CancellationToken.None);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var outcome = await FabricRest.GitDisconnectAsync(workspaceId, token, cancellationToken);
                 report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
                 report.Plan = report.Committed ? "Disconnected the workspace from git." : $"Disconnect {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
             }
-            catch (Exception ex) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Disconnect failed."; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Disconnect failed."; }
             return report;
         }
 
@@ -5902,7 +6654,7 @@ namespace Semanticus.Engine
         // POST nothing). Gated like the other destructive cloud writes: an agent must not self-serve the live
         // publish (full override, no recovery, no prod marker to gate finely) — a human confirms. Door-safe: any
         // failure is reported on the DTO, never thrown.
-        public async Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin)
+        public async Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
             var report = new CicdPublishResult { Action = "publish", WorkspaceId = workspaceId, ItemId = itemId };
             if (commit && DeployGuard.IsAgent(origin))
@@ -5943,15 +6695,15 @@ namespace Semanticus.Engine
                 report.PartCount = parts.Count;
                 report.SampleParts = parts.Take(8).Select(p => p.path).ToArray();
                 if (parts.Count == 0) { report.Error = "No definition files found under the model folder to publish."; return report; }
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
                 var body = System.Text.Json.JsonSerializer.Serialize(new { definition = new { parts = parts.Select(p => new { p.path, p.payload, p.payloadType }) } });
-                var outcome = await FabricRest.UpdateSemanticModelDefinitionAsync(workspaceId, itemId, body, token, System.Threading.CancellationToken.None);
+                var outcome = await FabricRest.UpdateSemanticModelDefinitionAsync(workspaceId, itemId, body, token, cancellationToken);
                 report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
                 report.Plan = report.Committed
                     ? $"Published {parts.Count} part(s) to workspace {workspaceId} / model {itemId} ({outcome.Status})."
                     : $"Publish {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
             }
-            catch (Exception ex) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Publish failed."; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { report.Error = FabricRest.Scrub(ex.Message); report.Plan = "Publish failed."; }
             return report;
         }
 
@@ -6555,19 +7307,19 @@ namespace Semanticus.Engine
 
         /// <summary>Read-only: list the published reports in a Fabric/Power BI workspace (id, name, datasetId,
         /// reportType, webUrl) so a caller can pick the ones that bind to the open model's dataset. Non-admin path.</summary>
-        public async Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId)
+        public async Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             workspaceId = workspaceId.Trim();
             try
             {
-                var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId).ConfigureAwait(false);
-                return await PowerBiReports.ListReportsAsync(workspaceId, token, System.Threading.CancellationToken.None).ConfigureAwait(false);
+                var token = await EntraToken.AcquireAsync(authMode, null, cancellationToken, tenantId).ConfigureAwait(false);
+                return await PowerBiReports.ListReportsAsync(workspaceId, token, cancellationToken).ConfigureAwait(false);
             }
             // Golden Rule #1: an Azure.Identity auth failure (or any REST throw) must NOT cross a door un-scrubbed —
             // its message can carry a token. PowerBiReports/FabricRest already scrub their own errors; this guards the
             // token-acquisition leg, matching the deploy/git methods.
-            catch (Exception ex) when (ex is not ArgumentException) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
+            catch (Exception ex) when (ex is not ArgumentException && !cancellationToken.IsCancellationRequested) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
         }
 
         /// <summary>Read-only report-aware safe-to-remove over CLOUD reports: fetch each report's PBIR via Fabric
@@ -6577,7 +7329,7 @@ namespace Semanticus.Engine
         /// Report.ReadWrite.All) + Contributor; <paramref name="consent"/> must be true to acknowledge that. Per-report
         /// failures (paginated/RDL, a sensitivity-label block, a fetch error) are recorded as unreadable, never thrown —
         /// the verdict degrades to a model-aware-but-incomplete caveat rather than silently overstating "safe".</summary>
-        public async Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId)
+        public async Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (!consent)
@@ -6588,7 +7340,7 @@ namespace Semanticus.Engine
                     "acknowledge and proceed.");
 
             var s = _sessions.Require();   // a model must be open (we reconcile report field usage to it by name)
-            var ct = System.Threading.CancellationToken.None;
+            var ct = cancellationToken;
 
             // Discover the workspace's reports (Power BI scope) to resolve names, skip paginated/RDL, and validate ids,
             // then mint the Fabric token getDefinition needs. Scrub-guard this leg too (Golden Rule #1) — an
@@ -6613,35 +7365,57 @@ namespace Semanticus.Engine
 
                 fabricToken = await EntraToken.AcquireFabricAsync(authMode, null, ct, tenantId).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not ArgumentException) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
+            catch (Exception ex) when (ex is not ArgumentException && !ct.IsCancellationRequested) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
 
             var parsed = new List<(string path, string error, Lineage.ReportDefinitionReader.ParseResult result)>();
-            foreach (var id in wanted)
+            var total = wanted.Count;
+            var operationRunId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId;
+            void PublishProgress(int done, string note = null) => _sessions.Bus.PublishProgress(new OperationProgress
             {
+                OpKey = "analyze_cloud_reports",
+                RunId = operationRunId,
+                Done = done,
+                Total = total,
+                Note = note,
+            });
+
+            for (var i = 0; i < wanted.Count; i++)
+            {
+                var id = wanted[i];
                 byId.TryGetValue(id, out var meta);
                 var name = string.IsNullOrEmpty(meta?.Name) ? id : meta.Name;
                 var empty = new Lineage.ReportDefinitionReader.ParseResult();
+                PublishProgress(i, name);
 
-                if (meta == null) { parsed.Add((name, "Report id not found in this workspace.", empty)); continue; }
-                if (string.Equals(meta.ReportType, "PaginatedReport", StringComparison.OrdinalIgnoreCase))
-                { parsed.Add((name, "Paginated (RDL) report — its field usage is not parsed.", empty)); continue; }
-
-                try
+                if (meta == null)
                 {
-                    var parts = await FabricRest.GetReportDefinitionAsync(workspaceId, id, "PBIR", fabricToken, ct).ConfigureAwait(false);
-                    var pr = Lineage.ReportDefinitionReader.Parse(parts.Select(p => (p.Path, p.Content)));   // path carries page/visual ids
-                    pr.DefinitionFound = parts.Length > 0;
-                    parsed.Add(parts.Length > 0
-                        ? (name, (string)null, pr)
-                        : (name, "getDefinition returned no PBIR parts (a PBIRLegacy report, or download disabled).", pr));
+                    parsed.Add((name, "Report id not found in this workspace.", empty));
                 }
-                catch (Exception ex)
+                else if (string.Equals(meta.ReportType, "PaginatedReport", StringComparison.OrdinalIgnoreCase))
                 {
-                    parsed.Add((name, FabricRest.Scrub(ex.Message), empty));   // sensitivity-label block / 403 / transport — fail-loud, keep the batch going
+                    parsed.Add((name, "Paginated (RDL) report — its field usage is not parsed.", empty));
+                }
+                else
+                {
+                    try
+                    {
+                        var parts = await FabricRest.GetReportDefinitionAsync(workspaceId, id, "PBIR", fabricToken, ct).ConfigureAwait(false);
+                        var pr = Lineage.ReportDefinitionReader.Parse(parts.Select(p => (p.Path, p.Content)));   // path carries page/visual ids
+                        pr.DefinitionFound = parts.Length > 0;
+                        parsed.Add(parts.Length > 0
+                            ? (name, (string)null, pr)
+                            : (name, "getDefinition returned no PBIR parts (a PBIRLegacy report, or download disabled).", pr));
+                    }
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
+                    {
+                        parsed.Add((name, FabricRest.Scrub(ex.Message), empty));   // sensitivity-label block / 403 / transport — fail-loud, keep the batch going
+                    }
                 }
             }
 
-            return await s.ReadAsync(m => Lineage.LineageGraph.AnalyzeReports(m, parsed)).ConfigureAwait(false);
+            var result = await s.ReadAsync(m => Lineage.LineageGraph.AnalyzeReports(m, parsed)).ConfigureAwait(false);
+            PublishProgress(total);
+            return result;
         }
 
         /// <summary>Script one or many objects to text (read-only — never mutates). format: 'dax' (annotated
@@ -7041,6 +7815,7 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
+            var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             var rev = await s.MutateAsync(origin, $"set {propertyName}", m =>
             {
                 var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
@@ -7050,9 +7825,14 @@ namespace Semanticus.Engine
                 var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
                 var next = ConvertPropertyValue(pt, value, propertyName);
                 var current = p.GetValue(obj);
-                if (!Equals(current, next)) { p.SetValue(obj, next); changed = true; }   // wrapper setter tracks + (for Name) FormulaFixup
-            });
-            return new SetResult { Revision = rev, Changed = changed };
+                if (Equals(current, next)) return;   // already the target value — honest no-op
+                // The property grid's rename path: a Name write must go through the ONE rename seam — the reflected
+                // setter still runs AutoFixup, but only Session.Rename cascades the rename into the LSDL.
+                if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
+                    changed = s.Rename(named, newName);
+                else { p.SetValue(obj, next); changed = true; }   // wrapper setter tracks the change
+            }, cascade);
+            return new SetResult { Revision = rev, Changed = changed, Warning = cascade.Count > 0 ? string.Join(" ", cascade.Select(w => w.Text)) : null };
         }
 
         /// <summary>Set ONE property to ONE value across N objects as a SINGLE atomic gesture — the multi-select
@@ -7079,6 +7859,8 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException("set_properties: propertyName is required — run get_properties on one of the objects to see the exact settable property names.");
             var s = _sessions.Require();
             var changedRefs = new List<string>();
+            var warnings = new List<string>();   // non-fatal LSDL-cascade advisories from Name writes
+            var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             var rev = await s.MutateAsync(origin, $"set {propertyName} on {objRefs.Length} objects", m =>
             {
                 // PASS 1 — resolve EVERY ref against the pre-gesture model and refuse duplicates by RESOLVED OBJECT
@@ -7117,7 +7899,14 @@ namespace Semanticus.Engine
                         throw new InvalidOperationException($"{r}: reading '{propertyName}' failed — {real.Message} Nothing was changed (the batch is all-or-nothing).", real);
                     }
                     if (Equals(current, next)) continue;   // already the target value — an honest no-op for THIS object
-                    try { p.SetValue(obj, next); }         // wrapper setter tracks + (for Name) FormulaFixup
+                    try
+                    {
+                        // Name writes route through the ONE rename seam so the LSDL cascade follows (the reflected
+                        // setter would still AutoFixup the DAX but orphan the linguistic schema).
+                        if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
+                            s.Rename(named, newName);      // refused cultures retry at batch end; survivors drained below
+                        else p.SetValue(obj, next);        // wrapper setter tracks the change
+                    }
                     catch (Exception ex)
                     {
                         var real = (ex as TargetInvocationException)?.InnerException ?? ex;
@@ -7125,7 +7914,8 @@ namespace Semanticus.Engine
                     }
                     changedRefs.Add(r);
                 }
-            });
+            }, cascade);
+            warnings.AddRange(cascade.Select(w => w.Text));   // survivors of the batch-end cascade retry (Name writes only)
             // ONE "batch" audit record for a genuine multi-object gesture that ACTUALLY changed something (attempted
             // >= 2 is guaranteed by the delegation above; a no-op writes nothing; a rolled-back batch never reaches
             // here). The record stays honest: Summary/Evidence state attempted vs actually-changed, so an
@@ -7140,7 +7930,7 @@ namespace Semanticus.Engine
                         : $"set {propertyName} = '{value}' on {changedRefs.Count} of {objRefs.Length} objects in one atomic change (the rest already had the value)",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new { property = propertyName, value, attempted = objRefs.Length, refs = objRefs, changed = changedRefs.Count, changedRefs }),
                 }, vitalsChangedRefs: changedRefs.ToArray());
-            return new SetResult { Revision = rev, Changed = changedRefs.Count > 0 };
+            return new SetResult { Revision = rev, Changed = changedRefs.Count > 0, Warning = warnings.Count > 0 ? string.Join(" ", warnings) : null };
         }
 
         private static ObjectProperty[] ReflectProperties(object obj)
@@ -7354,18 +8144,21 @@ namespace Semanticus.Engine
                 .ToArray());
         }
 
-        public async Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin)
+        public async Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin, string expectedSession = null, long? expectedRevision = null)
         {
             var s = _sessions.Require();
             var changed = false;
             string newRef = null;
+            var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             var rev = await s.MutateAsync(origin, "rename", m =>
             {
+                GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
+                GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): a recovery-path rename is fenced on the revision re-read as stable across the probes
                 var obj = ObjectRefs.Resolve(m, objRef) as TabularNamedObject ?? throw new InvalidOperationException($"{objRef} not found or not renameable — rename_object takes a named object (table, column, measure, hierarchy, role); run list_objects or search_model to find its exact ref.");
-                changed = s.Rename(obj, newName); // the FormulaFixup contract seam: rewrites all DAX / RLS references
+                changed = s.Rename(obj, newName); // the FormulaFixup contract seam: rewrites all DAX / RLS references + cascades the LSDL
                 newRef = ObjectRefs.For(obj);
-            });
-            return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef };
+            }, cascade);
+            return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef, Warning = cascade.Count > 0 ? string.Join(" ", cascade.Select(w => w.Text)) : null };
         }
 
         // ---- Find & Replace (Phase 2, one-by-one, free) ------------------------------------------------------
@@ -7448,10 +8241,13 @@ namespace Semanticus.Engine
             }
 
             // Pass 2 (mutate): re-resolve and apply. One undoable step; broadcasts model/didChange (dual-drive).
-            var rev = await s.MutateAsync(origin, $"replace in {req.Field}", m => ApplyReplace(m, req, ctx, s));
+            var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
+            var rev = await s.MutateAsync(origin, $"replace in {req.Field}", m => ApplyReplace(m, req, ctx, s), cascade);
+            ctx.Warnings.AddRange(cascade.Select(w => w.Text));   // a rename's refused-culture survivors (batch-end retry)
             result.Revision = rev;
             result.Changed = true;
             result.Ref = ctx.NewRef ?? req.Ref;
+            result.Warnings = ctx.Warnings.ToArray();   // re-snapshot: the apply itself can add warnings (synonym self-heal prune)
             return result;
         }
 
@@ -7584,13 +8380,14 @@ namespace Semanticus.Engine
             }
             var obj = ObjectRefs.Resolve(m, req.Ref) ?? throw new InvalidOperationException($"{req.Ref} vanished before the edit could apply.");
 
-            if (ctx.IsRename) { s.Rename((TabularNamedObject)obj, ctx.New); ctx.NewRef = ObjectRefs.For(obj); return; }
+            if (ctx.IsRename) { s.Rename((TabularNamedObject)obj, ctx.New); ctx.NewRef = ObjectRefs.For(obj); return; }   // the seam cascades the LSDL; refused cultures surface post-batch
             if (ctx.IsDax) { SetDaxOn(obj, ctx.New); return; }
             if (ctx.IsM) { ((Partition)obj).Expression = ctx.New; return; }
             if (ctx.IsSyn)
             {
                 var cult = m.Cultures.Contains(ctx.Culture) ? m.Cultures[ctx.Culture] : m.Cultures.FirstOrDefault();
-                TabularEditor.TOMWrapper.Linguistics.SynonymHelper.SetSynonyms((TabularNamedObject)obj, cult, ctx.New);
+                var syn = LsdlSynonyms.SetSynonyms((TabularNamedObject)obj, cult, ctx.New);
+                if (syn.Warning != null) ctx.Warnings.Add(syn.Warning);   // surfaced via ReplaceResult.Warnings (re-snapshot after apply)
                 return;
             }
             WriteStringProp(obj, ctx.DescProp, ctx.New);   // PlainText: Description / DisplayFolder / FormatString
@@ -7678,11 +8475,16 @@ namespace Semanticus.Engine
 
         // ---- AI-readiness -------------------------------------------------------------------
 
+        internal Func<Task> ReadinessReadyForTest;
+
         public async Task<Scorecard> AiReadinessScanAsync()
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             var card = await s.ReadAsync(m => new ReadinessAnalyzer().Analyze(m));
-            _lastReadinessGrade = card.Grade;   // cache for the `model.readinessGrade` activation fact (D2 — never force-scanned on a menu read)
+            var hook = System.Threading.Interlocked.Exchange(ref ReadinessReadyForTest, null);
+            if (hook != null) await hook();
+            SetReadinessGrade(context, card.Grade, "AI Readiness scan");   // cache for the model.readinessGrade activation fact (D2)
             return card;
         }
 
@@ -7690,8 +8492,9 @@ namespace Semanticus.Engine
         {
             // Live cardinality-aware scan: the offline rules PLUS the Dmv-kind rules (Q&A index 5M-unique-value
             // ceiling), fed by COLUMNSTATISTICS from the attached connection. Read-only.
-            var s = _sessions.Require();
-            var live = _live;
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
+            var live = context.Live;
             if (live == null)
                 throw new InvalidOperationException("Not connected to a live model. Connect first (connect_xmla / connect_local) — the live scan reads per-column cardinality (COLUMNSTATISTICS) for the Q&A-index rules.");
             var rs = await live.ExecuteAsync("EVALUATE COLUMNSTATISTICS()", 5_000_000, 180);
@@ -7707,7 +8510,7 @@ namespace Semanticus.Engine
                     card.Caveat = "Direct Lake: per-column cardinality (COLUMNSTATISTICS) reflects only resident columns, so the scale / Q&A-index rules (e.g. CopilotLimits) may under-count — a clean result here is not a guarantee until the model is fully reframed.";
                 return card;
             });
-            _lastReadinessGrade = scanned.Grade;   // cache for the `model.readinessGrade` activation fact (D2)
+            SetReadinessGrade(context, scanned.Grade, "Live AI Readiness scan");   // cache for the model.readinessGrade activation fact (D2)
             return scanned;
         }
 
@@ -8490,6 +9293,9 @@ namespace Semanticus.Engine
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
                     throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 var on = t.EnableRefreshPolicy;
+                var rangeM = FirstRangeFilteringM(t);
+                string wiredField = null;
+                if (rangeM != null) IncrementalRefreshWiring.TryParseRangeField(rangeM, out wiredField);
                 return new RefreshPolicyInfo
                 {
                     Table = t.Name,
@@ -8503,6 +9309,7 @@ namespace Semanticus.Engine
                     IncrementalPeriodsOffset = t.IncrementalPeriodsOffset,
                     SourceExpression = t.SourceExpression,
                     PollingExpression = t.PollingExpression,
+                    WiredDateField = wiredField,
                 };
             });
         }
@@ -8515,6 +9322,7 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
+            string warning = null;
             var rev = await s.MutateAsync(origin, "set incremental refresh policy", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
@@ -8554,15 +9362,26 @@ namespace Semanticus.Engine
                     var rangePartition = t.Partitions.FirstOrDefault(p => p.SourceType == PartitionSourceType.M && MFiltersOnRange(p.Expression));
                     var targetPartition = rangePartition ?? t.Partitions.FirstOrDefault(p => p.SourceType == PartitionSourceType.M)
                         ?? throw new InvalidOperationException($"Table '{t.Name}' has no M partition to receive the RangeStart/RangeEnd filter.");
-                    // Build the source before changing TOM so an unsupported M shape cannot leave half-wired parameters.
-                    var wiredM = rangePartition == null ? IncrementalRefreshWiring.AppendRangeFilter(targetPartition.Expression, dateColumn) : null;
+                    string wiredM = null;
+                    if (rangePartition == null)
+                    {
+                        // The filter is M, so it must name the PARTITION-OUTPUT field — DataColumn.SourceColumn, which
+                        // can legitimately differ from the model Name. A calculated column has no source-side field at
+                        // all (its values exist only after load), so wiring it would filter a column the query never
+                        // yields: reject honestly instead of authoring dead M.
+                        var dateCol = t.Columns.FirstOrDefault(c => c.Name == dateColumn);
+                        if (!(dateCol is DataColumn dc) || string.IsNullOrWhiteSpace(dc.SourceColumn))
+                            throw new InvalidOperationException($"Incremental refresh needs a data column loaded from the source; '{dateColumn}' is {(dateCol is CalculatedColumn ? "calculated" : "not loaded from the source")}. Pick a date column that comes from the partition query.");
+                        // Build the source before changing TOM so an unsupported M shape cannot leave half-wired parameters.
+                        wiredM = IncrementalRefreshWiring.AppendRangeFilter(targetPartition.Expression, dc.SourceColumn);
+                    }
                     changed |= UpsertRangeParameter(m, "RangeStart", "#datetime(2020, 1, 1, 0, 0, 0) meta [IsParameterQuery=true, Type=\"DateTime\", IsParameterQueryRequired=true]");
                     changed |= UpsertRangeParameter(m, "RangeEnd", "#datetime(2021, 1, 1, 0, 0, 0) meta [IsParameterQuery=true, Type=\"DateTime\", IsParameterQueryRequired=true]");
                     if (wiredM != null && targetPartition.Expression != wiredM) { targetPartition.Expression = wiredM; changed = true; }
                 }
 
                 // Both manual and automatic paths validate the final state before the policy is created.
-                ValidateIncrementalRefreshPrereqs(m, t, dateColumn);
+                warning = ValidateIncrementalRefreshPrereqs(m, t, dateColumn);
 
                 // Create the policy object FIRST — every scalar setter no-ops while RefreshPolicy is null.
                 if (!exists) { t.EnableRefreshPolicy = true; changed = true; }
@@ -8590,7 +9409,7 @@ namespace Semanticus.Engine
                     if (tmpl != null) { t.SourceExpression = tmpl; changed = true; }
                 }
             });
-            return new SetResult { Revision = rev, Changed = changed };
+            return new SetResult { Revision = rev, Changed = changed, Warning = warning };
         }
 
         public async Task<SetResult> RemoveIncrementalRefreshPolicyAsync(string tableRef, string origin)
@@ -8637,10 +9456,19 @@ namespace Semanticus.Engine
         // The hard prerequisites for a *valid* incremental refresh policy. Power BI re-validates at publish, but we
         // refuse the obviously-broken cases up front rather than write a dead policy. (RangeStart/RangeEnd are the
         // reserved, case-sensitive parameter names the service binds — confirmed by TOM's own SourceExpression doc.)
-        private static void ValidateIncrementalRefreshPrereqs(Model m, Table t, string dateColumn)
+        // Returns a non-fatal ADVISORY (SetResult.Warning) or null; hard failures throw.
+        private static string ValidateIncrementalRefreshPrereqs(Model m, Table t, string dateColumn)
         {
-            if (!string.IsNullOrEmpty(dateColumn) && !t.Columns.Contains(dateColumn))
-                throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}' — run list_columns on '{t.Name}' to see its columns, then pass an existing column name.");
+            if (!string.IsNullOrEmpty(dateColumn))
+            {
+                var dateCol = t.Columns.FirstOrDefault(c => c.Name == dateColumn);
+                if (dateCol == null)
+                    throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}' — run list_columns on '{t.Name}' to see its columns, then pass an existing column name.");
+                // A calculated column is DEFINITIVELY unavailable to M (it exists only after load), whatever the
+                // existing filter says — reject before any parse, on every path, same message as the authoring path.
+                if (!(dateCol is DataColumn))
+                    throw new InvalidOperationException($"Incremental refresh needs a data column loaded from the source; '{dateColumn}' is {(dateCol is CalculatedColumn ? "calculated" : "not loaded from the source")}. Pick a date column that comes from the partition query.");
+            }
 
             var rs = m.Expressions.FirstOrDefault(e => e.Name == "RangeStart");
             var re = m.Expressions.FirstOrDefault(e => e.Name == "RangeEnd");
@@ -8649,8 +9477,30 @@ namespace Semanticus.Engine
             if (!IsParameterExpr(rs) || !IsParameterExpr(re))
                 throw new InvalidOperationException("RangeStart/RangeEnd exist but are not parameter queries (missing IsParameterQuery=true in their M).");
 
-            if (FirstRangeFilteringM(t) == null)
+            var rangeM = FirstRangeFilteringM(t);
+            if (rangeM == null)
                 throw new InvalidOperationException($"No M partition on table '{t.Name}' filters on RangeStart and RangeEnd. Its partition query needs a date filter like: each [{(string.IsNullOrEmpty(dateColumn) ? "Date" : dateColumn)}] >= RangeStart and [{(string.IsNullOrEmpty(dateColumn) ? "Date" : dateColumn)}] < RangeEnd.");
+
+            // The partition M pins ONE source field. The engine never rewrites an existing filter, so a policy that
+            // named a DIFFERENT date column could silently disagree with the M. Confidence-tiered response:
+            //   parse says X, submitted resolves to Y, X == Y            → proceed
+            //   X != Y and X is ANOTHER column's SourceColumn on t       → HARD REJECT (a proven claim on another column)
+            //   X != Y and X matches NO column's source name (a rename   → ADVISORY, save proceeds (we cannot prove the
+            //     step downstream can make that legitimate)                 filter isn't on the submitted column post-rename)
+            //   parse UNKNOWN (mixed pair / competing pairs / no pair)   → no rejection (never convict on suspicion)
+            if (!string.IsNullOrEmpty(dateColumn) && IncrementalRefreshWiring.TryParseRangeField(rangeM, out var wiredField))
+            {
+                var submitted = (t.Columns.FirstOrDefault(c => c.Name == dateColumn) as DataColumn)?.SourceColumn;
+                if (!string.IsNullOrEmpty(submitted) && !string.Equals(submitted, wiredField, StringComparison.Ordinal))
+                {
+                    var claimedByOther = t.Columns.OfType<DataColumn>()
+                        .Any(c => c.Name != dateColumn && string.Equals(c.SourceColumn, wiredField, StringComparison.Ordinal));
+                    if (claimedByOther)
+                        throw new InvalidOperationException($"This table's range filter is on [{wiredField}]; the policy cannot claim [{dateColumn}]. Edit the partition M or remove the range filter first.");
+                    return $"The existing range filter references [{wiredField}], which does not match any column's source name; verify the policy's date column.";
+                }
+            }
+            return null;
         }
 
         // Strip ALL whitespace (not just spaces) before matching, so tab/newline-formatted M parameter meta
@@ -8658,17 +9508,16 @@ namespace Semanticus.Engine
         private static bool IsParameterExpr(NamedExpression e) =>
             System.Text.RegularExpressions.Regex.Replace(e.Expression ?? "", @"\s+", "").IndexOf("IsParameterQuery=true", StringComparison.OrdinalIgnoreCase) >= 0;
 
-        private static readonly System.Text.RegularExpressions.Regex ReMComment =
-            new System.Text.RegularExpressions.Regex(@"//[^\n]*|/\*.*?\*/", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.Compiled);
-
-        // Does this M actually USE RangeStart/RangeEnd in a date filter — not merely mention them in a comment or
-        // inside a larger identifier (e.g. [MyRangeStartCol])? Strip comments, then require each reserved name to
-        // appear as a whole word adjacent to a relational operator (the half-open `>= RangeStart` / `< RangeEnd`
-        // form, plus the `>`/`<=` and param-on-the-left variants). Best-effort heuristic (string literals aside).
+        // Does this M actually USE RangeStart/RangeEnd in a date filter — not merely mention them in a comment,
+        // a STRING literal, or inside a larger identifier (e.g. [MyRangeStartCol])? Mask all non-code (the same
+        // MaskNonCode the range-field parser uses — single source of truth, so the detector and the parser can
+        // never disagree about what is live code), then require each reserved name to appear as a whole word
+        // adjacent to a relational operator (the half-open `>= RangeStart` / `< RangeEnd` form, plus the
+        // `>`/`<=` and param-on-the-left variants).
         private static bool MFiltersOnRange(string m)
         {
             if (string.IsNullOrEmpty(m)) return false;
-            var s = ReMComment.Replace(m, " ");
+            var s = IncrementalRefreshWiring.MaskNonCode(m);
             return RelationalUse(s, "RangeStart") && RelationalUse(s, "RangeEnd");
         }
 
@@ -8941,26 +9790,42 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
+            string warning = null;
             var rev = await s.MutateAsync(origin, "enable Q&A linguistic schema", m =>
-            {
-                EnsureLinguisticCulture(m, culture, out var seeded);
-                changed = seeded;
-            });
-            return new SetResult { Revision = rev, Changed = changed };
+                (changed, warning) = EnableQnaCore(m, culture));
+            return new SetResult { Revision = rev, Changed = changed, Warning = warning };
+        }
+
+        /// <summary>The enable_qna core BOTH doors run (the direct op and the apply_plan item — they must not
+        /// drift): ensure the linguistic culture, and on an EXISTING schema self-heal the entities set_synonyms
+        /// would prune (bound to hidden/deleted objects), then SURFACE surviving name collisions rather than
+        /// hard-failing — keeping a schema enabled is always safe; the set_synonyms guard and
+        /// DAC-QNA-NAME-COLLISIONS carry the enforcement. Must run inside a MutateAsync.</summary>
+        private static (bool Changed, string Warning) EnableQnaCore(Model m, string culture)
+        {
+            var cult = EnsureLinguisticCulture(m, culture, out var seeded);
+            if (seeded) return (true, null);
+            string warning = null;
+            var pruned = LsdlSynonyms.PruneDeadEntities(m, cult);
+            if (pruned > 0) warning = LsdlSynonyms.PruneNote(pruned);
+            var collisions = LsdlSynonyms.DescribeCollisions(m, cult);
+            if (collisions != null) warning = warning == null ? collisions : warning + " " + collisions;
+            return (pruned > 0, warning);
         }
 
         public async Task<SetResult> SetSynonymsAsync(string objRef, string[] terms, string culture, string origin)
         {
             var s = _sessions.Require();
             var changed = false;
+            SetOutcome outcome = null;
             var rev = await s.MutateAsync(origin, "set synonyms", m =>
             {
                 if (!(ObjectRefs.Resolve(m, objRef) is TabularNamedObject obj)) throw new InvalidOperationException($"{objRef} not found — set_synonyms takes a table/column/measure/hierarchy ref; run list_objects or search_model to find it.");
                 var cult = EnsureLinguisticCulture(m, culture, out _);
-                TabularEditor.TOMWrapper.Linguistics.SynonymHelper.SetSynonyms(obj, cult, string.Join(",", terms ?? Array.Empty<string>()));
+                outcome = LsdlSynonyms.SetSynonyms(obj, cult, string.Join(",", terms ?? Array.Empty<string>()));
                 changed = true;
             });
-            return new SetResult { Revision = rev, Changed = changed };
+            return new SetResult { Revision = rev, Changed = changed, Warning = outcome?.Warning };
         }
 
         // Prep-for-AI "AI instructions": a single top-level "CustomInstructions" string in the LSDL (Culture.Content),
@@ -9378,23 +10243,29 @@ $@"ADDCOLUMNS(
         // plan is session-held (PlanStore); nothing mutates the model until apply_plan.
         // ============================================================================================
 
+        internal Func<Task> PlanSeedsReadyForTest;
+
         /// <summary>Analyse the model and seed a change plan: deterministic safe fixes + BPA auto-fixes
         /// (fully specified) plus an AI-content work queue (Claude fills each via set_plan_item). Nothing
         /// is mutated. <paramref name="scope"/> null/empty = whole model; "table:Name" = that table only.</summary>
         public async Task<ChangePlanView> ProposePlanAsync(string scope, bool includeAi, int maxAiItems, string origin)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             scope = string.IsNullOrWhiteSpace(scope) ? null : scope.Trim();
             var seeds = await s.ReadAsync(m => BuildSeeds(m, scope, includeAi, maxAiItems <= 0 ? 40 : maxAiItems));
+            var hook = System.Threading.Interlocked.Exchange(ref PlanSeedsReadyForTest, null);
+            if (hook != null) await hook();
             ChangePlanView view;
-            await _planGate.WaitAsync();
+            await context.PlanGate.WaitAsync();
             try
             {
-                var plan = _plans.StartNew(scope);
+                EnsureContextCurrent(context, "Plan proposal");
+                var plan = context.Plans.StartNew(scope);
                 foreach (var seed in seeds) plan.Add(seed);
                 view = PublishPlan(plan, s.Revision);
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
             await SafeRebroadcastWorkflowLibraryAsync();   // session.planLoaded → true: re-curate the menu (§10.6). Outside the plan gate to avoid nesting locks.
             return view;
         }
@@ -9414,7 +10285,8 @@ $@"ADDCOLUMNS(
             var matcher = SearchMatcher.Create(find.Query.Trim(), find.CaseSensitive, find.WholeWord, find.Regex);
             if (matcher.Error != null) throw new InvalidOperationException(matcher.Error);
 
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             var opts = new SearchOptions
             {
                 Query = find.Query.Trim(), CaseSensitive = find.CaseSensitive, WholeWord = find.WholeWord,
@@ -9432,15 +10304,16 @@ $@"ADDCOLUMNS(
             }
 
             ChangePlanView view;
-            await _planGate.WaitAsync();
+            await context.PlanGate.WaitAsync();
             try
             {
-                var plan = _plans.StartNew(string.IsNullOrWhiteSpace(find.Scope) ? null : find.Scope.Trim());
+                EnsureContextCurrent(context, "Replacement plan");
+                var plan = context.Plans.StartNew(string.IsNullOrWhiteSpace(find.Scope) ? null : find.Scope.Trim());
                 plan.Note = seeds.Excluded.Count == 0 ? null : "Not included: " + string.Join(" · ", seeds.Excluded) + ".";
                 foreach (var it in items) plan.Add(it);
                 view = PublishPlan(plan, s.Revision);
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
             await SafeRebroadcastWorkflowLibraryAsync();   // session.planLoaded → true (mirrors propose_plan)
             return view;
         }
@@ -9592,9 +10465,14 @@ $@"ADDCOLUMNS(
 
         public async Task<ChangePlanView> GetPlanAsync()
         {
-            await _planGate.WaitAsync();
-            try { return BuildView(_plans.Current, _sessions.Current?.Revision ?? 0); }
-            finally { _planGate.Release(); }
+            var context = _sessions.CurrentContext;
+            await context.PlanGate.WaitAsync();
+            try
+            {
+                EnsureContextCurrent(context, "Change plan read");
+                return BuildView(context.Plans.Current, context.Session?.Revision ?? 0);
+            }
+            finally { context.PlanGate.Release(); }
         }
 
         /// <summary>Add a custom change to the plan (incremental edit, or a Claude-proposed DAX rewrite).
@@ -9603,13 +10481,33 @@ $@"ADDCOLUMNS(
         /// auto-applied unverified; a human must explicitly approve it to accept applying it without a proof.</summary>
         public async Task<ChangePlanView> AddPlanItemAsync(string objRef, string kind, string after, string title, string[] verifyGroupBy, string[] verifyFilters, string origin)
         {
-            var s = _sessions.Require();
-            kind = (kind ?? "").Trim();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
+            // Normalize the kind ONCE at entry: lowercase-invariant, not just trimmed. Every kind switch
+            // (TargetForKind / CategoryForKind / RiskForKind / RequiresAfter / DefaultTitle) matches lowercase
+            // literals and is case-SENSITIVE, and dedupe compares Target with Ordinal (case-sensitive) — so an
+            // upper/mixed-case kind like "DELETE_IF_UNUSED" would fall to every switch's default (a garbage Target =
+            // the raw kind), evade the dedupe, and carry inconsistent metadata. One normalization keeps all of them honest.
+            kind = (kind ?? "").Trim().ToLowerInvariant();
             var ctx = await s.ReadAsync(m => ReadItemContext(m, objRef, kind));
-            await _planGate.WaitAsync();
+            await context.PlanGate.WaitAsync();
             try
             {
-                var plan = _plans.GetOrStart();
+                EnsureContextCurrent(context, "Change plan item");
+                var plan = context.Plans.GetOrStart();
+                var tgt = TargetForKind(kind);
+                // Dedupe by (ref, kind, target): an IDENTICAL pending duplicate (proposed / needs_content /
+                // approved, same proposed value) is a no-op returning the existing plan — a double-clicked
+                // "Review as a plan" (or any retrying caller, on either door) must not stack N copies the
+                // human then rejects one by one. A DIFFERENT After is a different proposal and still adds;
+                // applied / failed / skipped / rejected items never block a fresh attempt.
+                var dup = plan.Snapshot().FirstOrDefault(x =>
+                    (x.Status == "proposed" || x.Status == "needs_content" || x.Status == "approved")
+                    && string.Equals(x.ObjectRef, objRef, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Kind, kind, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Target, tgt, StringComparison.Ordinal)
+                    && string.Equals(x.After ?? "", after ?? "", StringComparison.Ordinal));
+                if (dup != null) return BuildView(plan, s.Revision);   // nothing changed → nothing to broadcast
                 string status = (after == null && RequiresAfter(kind)) ? "needs_content"
                     : OptInKind(kind, verifyGroupBy) ? "proposed"   // risky / unproven → opt-in (explicit approve required)
                     : "approved";
@@ -9623,7 +10521,7 @@ $@"ADDCOLUMNS(
                     Severity = "Medium",
                     Risk = RiskForKind(kind),
                     RuleId = null,
-                    Target = TargetForKind(kind),
+                    Target = tgt,
                     Title = string.IsNullOrWhiteSpace(title) ? DefaultTitle(kind) : title,
                     Rationale = "Added to the plan.",
                     Before = ctx.before,
@@ -9636,7 +10534,7 @@ $@"ADDCOLUMNS(
                 plan.Add(it);
                 return PublishPlan(plan, s.Revision);
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
         }
 
         /// <summary>Fill an AI item with Claude's authored value and/or approve/reject it. Authoring a value
@@ -9646,10 +10544,12 @@ $@"ADDCOLUMNS(
         /// none was authored.</summary>
         public async Task<ChangePlanView> SetPlanItemAsync(string itemId, string after, bool? approved, string origin)
         {
-            await _planGate.WaitAsync();
+            var context = _sessions.CurrentContext;
+            await context.PlanGate.WaitAsync();
             try
             {
-                var plan = _plans.Require();
+                EnsureContextCurrent(context, "Change plan item");
+                var plan = context.Plans.Require();
                 var it = plan.Find(itemId) ?? throw new InvalidOperationException($"Plan item '{itemId}' not found — run get_plan to see the current plan's item ids.");
                 if (after != null)
                 {
@@ -9666,22 +10566,24 @@ $@"ADDCOLUMNS(
                     // "approved" must mean apply-ready — refuse to approve an item that still needs content.
                     it.Status = (RequiresAfter(it.Kind) && string.IsNullOrEmpty(it.After)) ? "needs_content" : "approved";
                 else if (approved == false) it.Status = "rejected";
-                return PublishPlan(plan, _sessions.Current?.Revision ?? 0);
+                return PublishPlan(plan, context.Session?.Revision ?? 0);
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
         }
 
         public async Task<ChangePlanView> ClearPlanAsync(string origin)
         {
+            var context = _sessions.CurrentContext;
             ChangePlanView view;
-            await _planGate.WaitAsync();
+            await context.PlanGate.WaitAsync();
             try
             {
-                _plans.Clear();
-                view = new ChangePlanView { Items = Array.Empty<ChangeItem>(), Summary = new PlanSummary(), Revision = _sessions.Current?.Revision ?? 0 };
-                _sessions.Bus.PublishPlan(view);
+                EnsureContextCurrent(context, "Change plan clear");
+                context.Plans.Clear();
+                view = new ChangePlanView { Items = Array.Empty<ChangeItem>(), Summary = new PlanSummary(), Revision = context.Session?.Revision ?? 0 };
+                if (ReferenceEquals(_sessions.CurrentContext, context)) _sessions.Bus.PublishPlan(view);
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
             await SafeRebroadcastWorkflowLibraryAsync();   // session.planLoaded → false: re-curate the menu (§10.6). Outside the plan gate to avoid nesting locks.
             return view;
         }
@@ -9693,7 +10595,8 @@ $@"ADDCOLUMNS(
         /// refs needed by earlier items. Returns a report with per-item outcomes + before→after deltas.</summary>
         public async Task<ApplyPlanReport> ApplyPlanAsync(string[] approvedIds, string origin, string[] overrideIds = null, string overrideReason = null)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             // Accountable override (Verified Edits): items named in overrideIds ship even when their equivalence
             // verdict is failed/unverifiable — but only WITH a reason, and each shipped override is appended to the
             // model's audit chain below. The verdict itself stays honest (a failed proof is still "failed"); the
@@ -9701,11 +10604,12 @@ $@"ADDCOLUMNS(
             var overrides = new HashSet<string>(overrideIds ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             if (overrides.Count > 0 && string.IsNullOrWhiteSpace(overrideReason))
                 throw new ArgumentException("apply_plan: overrideIds need an overrideReason — an unexplained override is a silent suppression (it is recorded in the audit trail).");
-            await _planGate.WaitAsync();
+            await context.PlanGate.WaitAsync();
             try
             {
-            var plan = _plans.Require();
-            var all = plan.Snapshot();
+                EnsureContextCurrent(context, "Change plan apply");
+                var plan = context.Plans.Require();
+                var all = plan.Snapshot();
 
             // Target set: only APPROVED items; explicit ids narrow that set (they never widen it to
             // rejected/proposed/needs_content — that would bypass the human's review on the explicit-id path).
@@ -9744,7 +10648,7 @@ $@"ADDCOLUMNS(
 
             // Verify-gate set_dax rewrites that carry a matrix (async, BEFORE the mutate batch). Snapshot
             // the live connection once so a concurrent disconnect from the other door can't null it mid-loop.
-            var verifyConn = _live;
+            var verifyConn = context.Live;
             // A RED/unprovable verdict normally skips the item; an item named in overrideIds ships anyway with
             // its honest VerifyState kept and the override noted (and audit-recorded after the apply).
             var overridden = new List<ChangeItem>();
@@ -9754,6 +10658,27 @@ $@"ADDCOLUMNS(
                 if (overrides.Contains(item.Id)) { item.Note = "override accepted — " + why; overridden.Add(item); }
                 else { item.Status = "skipped"; item.Note = "DAX rewrite not applied: " + why; toApply.Remove(item); }
             }
+            // Circular-rewrite guard for EVERY set_dax item (even ones without a verify matrix, which would
+            // otherwise apply unverified): a body that references its own target measure — bare [M] or qualified
+            // 'Home'[M] — is rejected PRE-MUTATION with the circularity named. Session-resolvable, no live needed.
+            // NOT overridable: circularity is a structural impossibility (the engine cannot evaluate a measure
+            // defined in terms of itself), not a risk judgment — so the item leaves toApply outright, immune to
+            // overrideIds, and a later equivalence pass can never flip it back to verified.
+            var allSetDax = toApply.Where(i => string.Equals(i.Kind, "set_dax", StringComparison.OrdinalIgnoreCase)).ToList();
+            var setDaxTargets = allSetDax.Count == 0 ? new Dictionary<string, (string Name, string Home)>() : await s.ReadAsync(m =>
+                allSetDax.ToDictionary(i => i.Id, (string Name, string Home) (i) =>
+                {
+                    try { var t = ObjectRefs.Resolve(m, i.ObjectRef) as Measure; return (t?.Name, t?.Table?.Name); }
+                    catch { return (null, null); }
+                }));
+            foreach (var it in allSetDax)
+                if (setDaxTargets.TryGetValue(it.Id, out var tgt) && DaxBench.ReferencesTarget(it.After, tgt.Name, tgt.Home))
+                {
+                    it.Status = "rejected";
+                    it.VerifyState = "failed";
+                    it.Note = "DAX rewrite rejected: " + DaxBench.CircularRewriteNote + " (structural — not overridable)";
+                    toApply.Remove(it);
+                }
             foreach (var it in toApply.ToList())
             {
                 if (!string.Equals(it.Kind, "set_dax", StringComparison.OrdinalIgnoreCase) || it.VerifyGroupBy == null) continue;
@@ -9762,27 +10687,23 @@ $@"ADDCOLUMNS(
                     FailVerify(it, "unverified", "no live connection to prove equivalence");
                     continue;
                 }
-                var v = await DaxBench.VerifyEquivalenceAsync(verifyConn, baseline[it.Id], it.After, it.VerifyGroupBy, it.VerifyFilters, 100000);
-                if (!string.IsNullOrEmpty(v.Error))
-                    FailVerify(it, "unverified", "equivalence check failed to run — " + v.Error);
-                else if (!v.AllMatch)
-                    FailVerify(it, "failed", $"changes results in {v.MismatchCount} context(s)");
-                else if (v.RowsCompared <= 0)
-                    // Zero rows compared (empty group-by dimension / all-excluding filters) proves nothing —
-                    // AllMatch is vacuously true. Treat as unprovable, not proven.
-                    FailVerify(it, "unverified", "equivalence check compared 0 rows (nothing to prove)");
-                else if (v.Truncated)
-                    // The comparison hit the row cap — divergent contexts past it are invisible, so a match
-                    // over the read subset is not a proof. Don't apply it as "verified".
-                    FailVerify(it, "unverified", $"equivalence matrix exceeded the row cap ({v.RowsCompared}+ rows) — coverage incomplete");
-                else if (it.VerifyGroupBy.Length == 0)
+                // Per-item spec: the item's ObjectRef names the target measure, so the proof runs with its REAL
+                // home table (unqualified column refs bind correctly) — measure-faithful, matching optimize_measure.
+                var itemSpec = await BuildQuerySpecAsync(verifyConn, it.ObjectRef);
+                var v = await DaxBench.VerifyEquivalenceAsync(verifyConn, baseline[it.Id], it.After, it.VerifyGroupBy, it.VerifyFilters, 100000, itemSpec);
+                // The shared evidence ladder (DaxBench.ClassifyEquivalenceEvidence). "degraded" (values matched but
+                // the comparison ran with reduced fidelity) GATES like unverified — the item is skipped, not shipped
+                // as verified; overrideIds remains the audited way to ship it anyway.
+                var (state, why) = DaxBench.ClassifyEquivalenceEvidence(v, DaxBench.NormalizeGroupBy(it.VerifyGroupBy).Length);
+                if (state == "proven") it.VerifyState = "verified";
+                else if (state == "thin")
                 {
                     // Empty matrix proves only the GRAND TOTAL agrees, not per-context equivalence. The item
                     // is opt-in (proposed→approved by the human), so apply it, but label it honestly: not proven.
                     it.VerifyState = "unverified";
-                    it.Note = "applied: grand-total match only — not a per-context equivalence proof";
+                    it.Note = "applied: " + why;
                 }
-                else it.VerifyState = "verified";
+                else FailVerify(it, state, why);   // failed | unverified | degraded | degraded_mismatch
             }
 
             // Apply order: edits, CHILD renames, TABLE renames, then removals. A rename changes an object's Name,
@@ -9793,13 +10714,52 @@ $@"ADDCOLUMNS(
             var before = await s.ReadAsync(m => (bpa: BpaAnalyzer.Analyze(m, GetBpaRules(m)).ViolationCount, card: new ReadinessAnalyzer().Analyze(m)));
 
             var applied = 0; var failed = 0;
+            var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
+            // The exact renamed object per rename item, keyed by reference identity: a cascade warning carries the
+            // object it concerns, so it attributes to the RIGHT item even when two items rename same-named objects on
+            // different tables (matching the old Before name attached both warnings to the first same-named item).
+            var renamedByObj = new Dictionary<object, ChangeItem>(ReferenceEqualityComparer.Instance);
             var rev = await s.MutateAsync(origin, "apply change plan", m =>
             {
+                // delete_if_unused: the unused verdict recomputed INSIDE the single-writer delegate — one sweep
+                // serves the batch. Deletes run LAST (ApplyOrder) and a delete can only SHRINK referencer sets,
+                // so a "safe" computed here cannot go stale mid-batch (the same one-sweep argument
+                // RemoveSafeObjectsAsync documents); a not-safe that BECAME safe merely skips — conservative.
+                // But an earlier item in the SAME batch can GROW referencer sets (a set_dax/rename that adds a DAX
+                // reference to a delete target). The wrapper POSTPONES its dependency-tree rebuild to EndUpdate, so
+                // ReferencedBy is stale mid-batch — the sweep is fed a flushed tree (DependencyMaintenance.RebuildNow)
+                // so a target a same-batch edit just referenced reads as used and SKIPS, never a stale delete.
+                Dictionary<string, UnusedItem> unusedByRef = null;
                 foreach (var it in toApply)
                 {
                     try
                     {
-                        ApplyOneItem(m, it);
+                        // Capture the object BEFORE the rename (its ref still resolves by the old name); the same
+                        // instance survives the rename, so the warning's object matches it exactly at drain time.
+                        if (string.Equals(it.Kind, "rename", StringComparison.OrdinalIgnoreCase)
+                            && ObjectRefs.Resolve(m, it.ObjectRef) is TabularNamedObject renameTarget)
+                            renamedByObj[renameTarget] = it;
+                        // The Storage tab's plan-routed removal: re-verify "unused" AT APPLY TIME — the promise
+                        // remove_safe_objects keeps, kept on the plan door too. An object that gained a referencer
+                        // since the caller's scan SKIPS with the honest per-item reason, never a stale delete.
+                        if (string.Equals(it.Kind, "delete_if_unused", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (unusedByRef == null)
+                            {
+                                TabularEditor.TOMWrapper.Utils.DependencyMaintenance.RebuildNow();   // flush postponed deps so same-batch referencers are visible
+                                unusedByRef = Lineage.LineageGraph.Unused(m).Items.ToDictionary(x => x.Ref, StringComparer.OrdinalIgnoreCase);
+                            }
+                            if (!unusedByRef.TryGetValue(it.ObjectRef, out var now) || now.Verdict != "safe")
+                            {
+                                it.Status = "skipped";
+                                it.Note = "not removed: the unused verdict no longer holds at apply time. " + NotSafeReason(m, it.ObjectRef, unusedByRef, false);
+                                continue;
+                            }
+                            DeleteResolvedObject(m, ObjectRefs.Resolve(m, it.ObjectRef), it.ObjectRef);
+                            it.Status = "applied"; it.Note = "applied (unused verdict re-verified at apply time)"; applied++;
+                            continue;
+                        }
+                        ApplyOneItem(m, it, s);
                         // An approved set_dax with no verify matrix went in WITHOUT an equivalence proof
                         // (the human opted in) — flag it so the report/summary surfaces the unproven rewrite.
                         if (string.Equals(it.Kind, "set_dax", StringComparison.OrdinalIgnoreCase) && it.VerifyGroupBy == null)
@@ -9808,17 +10768,31 @@ $@"ADDCOLUMNS(
                     }
                     catch (Exception ex) { it.Status = "failed"; it.Note = ex.Message; failed++; }
                 }
-            });
+            }, cascade);
+            // Cascade warnings that survived the batch-end retry (a culture the live validator refused even after
+            // every rename in this plan applied). Attribute each to the EXACT renamed object it carries; fall back to
+            // any applied rename only when the object is gone (deleted later in the batch) so none is ever dropped.
+            foreach (var w in cascade)
+            {
+                var owner = (w.Obj != null && renamedByObj.TryGetValue(w.Obj, out var byId)) ? byId
+                            : toApply.FirstOrDefault(i => string.Equals(i.Kind, "rename", StringComparison.OrdinalIgnoreCase) && i.Status == "applied");
+                if (owner != null) owner.Note = owner.Note == "applied" ? w.Text : owner.Note + " " + w.Text;
+            }
 
             var after = await s.ReadAsync(m => (bpa: BpaAnalyzer.Analyze(m, GetBpaRules(m)).ViolationCount, card: new ReadinessAnalyzer().Analyze(m)));
 
             var skipped = targets.Count(i => i.Status == "skipped");
+            // Structurally rejected (the non-overridable circular-rewrite guard) — distinct from "skipped"
+            // (a verify verdict overrideIds could ship). Appended to the Note only when present so the common
+            // all-clean summary keeps its established shape.
+            var rejected = targets.Count(i => i.Status == "rejected");
             var report = new ApplyPlanReport
             {
                 Revision = rev,
                 AppliedCount = applied,
                 FailedCount = failed,
                 SkippedCount = skipped,
+                RejectedCount = rejected,
                 Items = targets.ToArray(),
                 BpaViolationsBefore = before.bpa,
                 BpaViolationsAfter = after.bpa,
@@ -9826,11 +10800,12 @@ $@"ADDCOLUMNS(
                 GradeAfter = after.card.Grade,
                 OverallBefore = before.card.Overall,
                 OverallAfter = after.card.Overall,
-                Note = $"{applied} applied · {skipped} skipped · {failed} failed · BPA {before.bpa}→{after.bpa} · grade {before.card.Grade}→{after.card.Grade}",
+                Note = $"{applied} applied · {skipped} skipped · {failed} failed{(rejected > 0 ? $" · {rejected} rejected" : "")} · BPA {before.bpa}→{after.bpa} · grade {before.card.Grade}→{after.card.Grade}",
             };
             // Learning Loop L3 distillable hint: a clean multi-item apply that didn't regress the grade
             // is a repeatable recipe worth /distill-workflow. Grade delta >= 0 = OverallAfter >= OverallBefore.
-            report.Distillable = report.FailedCount == 0 && report.AppliedCount >= 2 && report.OverallAfter >= report.OverallBefore;
+            // A structurally rejected item disqualifies the recipe too — it planned an impossible edit.
+            report.Distillable = report.FailedCount == 0 && report.RejectedCount == 0 && report.AppliedCount >= 2 && report.OverallAfter >= report.OverallBefore;
             report.DistillableWhy = report.Distillable
                 ? $"{report.AppliedCount} items applied cleanly with no failures and the grade held ({before.card.Grade}→{after.card.Grade}) — a repeatable recipe; run /distill-workflow to capture it."
                 : null;
@@ -9858,9 +10833,10 @@ $@"ADDCOLUMNS(
                     Verdict = "batch", Summary = report.Note,
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new
                     {
-                        applied, skipped, failed,
+                        applied, skipped, failed, rejected,
                         verified = appliedItems.Count(i => i.VerifyState == "verified"),
-                        unverified = appliedItems.Count(i => i.VerifyState == "unverified"),
+                        // degraded* items only reach "applied" via an accountable override — still unproven evidence.
+                        unverified = appliedItems.Count(i => i.VerifyState == "unverified" || i.VerifyState == "degraded" || i.VerifyState == "degraded_mismatch"),
                         overridden = overridden.Count(i => i.Status == "applied"),
                         bpaBefore = before.bpa, bpaAfter = after.bpa,
                         gradeBefore = before.card.Grade, gradeAfter = after.card.Grade,
@@ -9879,10 +10855,11 @@ $@"ADDCOLUMNS(
             {
                 await PublishActivityAsync(new ActivityEvent
                 {
-                    Kind = "apply_plan", Origin = origin, Label = report.Note, Ok = failed == 0,
+                    // A structural rejection is not a clean apply — the feed must not report Ok over it.
+                    Kind = "apply_plan", Origin = origin, Label = report.Note, Ok = failed == 0 && rejected == 0,
                     Result = new
                     {
-                        applied, skipped, failed,
+                        applied, skipped, failed, rejected,
                         bpaBefore = before.bpa, bpaAfter = after.bpa,
                         gradeBefore = before.card.Grade, gradeAfter = after.card.Grade,
                         overallBefore = before.card.Overall, overallAfter = after.card.Overall,
@@ -9892,10 +10869,10 @@ $@"ADDCOLUMNS(
                 });
             }
             catch { }
-            PublishPlan(plan, rev);
+            if (ReferenceEquals(_sessions.CurrentContext, context)) PublishPlan(plan, rev);
             return report;
             }
-            finally { _planGate.Release(); }
+            finally { context.PlanGate.Release(); }
         }
 
         // ---- plan seeding (read-only; runs on the dispatcher thread) -------------------------------
@@ -10093,7 +11070,7 @@ $@"ADDCOLUMNS(
 
         // ---- apply one item (runs inside the MutateAsync batch on the dispatcher thread) -----------
 
-        private void ApplyOneItem(Model m, ChangeItem it)
+        private void ApplyOneItem(Model m, ChangeItem it, Session s)
         {
             var obj = ObjectRefs.Resolve(m, it.ObjectRef);
             switch ((it.Kind ?? "").Trim())
@@ -10162,7 +11139,7 @@ $@"ADDCOLUMNS(
                     break;
                 case "rename":
                     if (!(obj is TabularNamedObject rn)) throw new InvalidOperationException($"{it.ObjectRef} is not renameable (rename targets a named object) — fix the ref with set_plan_item or drop the item, then apply_plan again.");
-                    rn.Name = it.After;   // AutoFixup rewrites DAX references
+                    s.Rename(rn, it.After);   // the shared seam: AutoFixup rewrites DAX references AND the LSDL cascade follows (a bare Name set orphaned the linguistic schema); refused cultures retry at batch end
                     break;
                 case "set_dax":
                     switch (obj)
@@ -10178,10 +11155,14 @@ $@"ADDCOLUMNS(
                 case "set_synonyms":
                     if (!(obj is TabularNamedObject so)) throw new InvalidOperationException($"{it.ObjectRef} not found — fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
                     var cult = EnsureLinguisticCulture(m, null, out _);
-                    TabularEditor.TOMWrapper.Linguistics.SynonymHelper.SetSynonyms(so, cult, it.After ?? "");
+                    var synOutcome = LsdlSynonyms.SetSynonyms(so, cult, it.After ?? "");
+                    if (synOutcome.Warning != null) it.Note = "applied: " + synOutcome.Warning;   // the item's Note IS the per-item warning channel
                     break;
                 case "enable_qna":
-                    EnsureLinguisticCulture(m, null, out _);
+                    // The SAME self-heal core as the direct op (prune dead entities + surface collisions) — the
+                    // plan door must not be the one door that leaves a broken schema unhealed.
+                    var qna = EnableQnaCore(m, null);
+                    if (qna.Warning != null) it.Note = "applied: " + qna.Warning;
                     break;
                 case "set_ai_instructions":
                     // Model-level; ignores obj. Shares the direct writer's no-op-before-seed + read-back guarantees.
@@ -10200,6 +11181,10 @@ $@"ADDCOLUMNS(
                 case "delete":
                     DeleteResolvedObject(m, obj, it.ObjectRef);
                     break;
+                case "delete_if_unused":
+                    // Handled (with the apply-time unused re-verification) in ApplyPlanAsync's loop BEFORE this
+                    // dispatch; reaching here means that guard was bypassed — refuse rather than delete unverified.
+                    throw new InvalidOperationException("delete_if_unused must be applied through apply_plan, which re-verifies the unused verdict at apply time.");
                 default:
                     throw new InvalidOperationException($"Unknown plan item kind '{it.Kind}' — see get_op_catalog for valid item kinds; fix it with set_plan_item or drop the item, then apply_plan again.");
             }
@@ -10242,7 +11227,8 @@ $@"ADDCOLUMNS(
                     before = ReadEntityExcluded(FindLinguisticCulture(m, null)?.Content, t, p) ? "Excluded" : "Included";
                     break;
                 case "rename": before = obj.Name; break;
-                case "delete": before = $"{obj.GetType().Name}: {obj.Name}"; break;
+                case "delete":
+                case "delete_if_unused": before = $"{obj.GetType().Name}: {obj.Name}"; break;
                 default: before = null; break;
             }
             return (obj.Name, string.IsNullOrEmpty(before) ? "(none)" : before);
@@ -10277,7 +11263,10 @@ $@"ADDCOLUMNS(
                 Approved = items.Count(i => i.Status == "approved"),
                 Rejected = items.Count(i => i.Status == "rejected"),
                 Applied = items.Count(i => i.Status == "applied"),
-                Unverified = items.Count(i => i.VerifyState == "unverified" || i.VerifyState == "failed"),
+                // Everything short of "verified" counts as unproven for the summary — incl. the fidelity-gated
+                // degraded states (values may have matched, but the evidence is not authoritative).
+                Unverified = items.Count(i => i.VerifyState == "unverified" || i.VerifyState == "failed"
+                                           || i.VerifyState == "degraded" || i.VerifyState == "degraded_mismatch"),
             };
             return new ChangePlanView { PlanId = plan.PlanId, Scope = plan.Scope, Revision = revision, Items = items, Summary = summary, Note = plan.Note };
         }
@@ -10288,7 +11277,8 @@ $@"ADDCOLUMNS(
         /// invalidate a ref needed by an earlier item, and a table rename never invalidates a queued child rename.</summary>
         private static int ApplyOrder(ChangeItem i)
         {
-            if (string.Equals(i.Kind, "delete", StringComparison.OrdinalIgnoreCase)) return 3;
+            if (string.Equals(i.Kind, "delete", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Kind, "delete_if_unused", StringComparison.OrdinalIgnoreCase)) return 3;
             if (!string.Equals(i.Kind, "rename", StringComparison.OrdinalIgnoreCase)) return 0;
             return (i.ObjectRef ?? "").StartsWith("table:", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
         }
@@ -10312,14 +11302,16 @@ $@"ADDCOLUMNS(
         /// <summary>The plan kinds a human must EXPLICITLY approve, however the value was authored — ONE
         /// class-driven rule shared by add_plan_item's initial status and set_plan_item's edit path (never an
         /// enumerated special case in one and not the other): a rename (rewrites references), a set_dax without a
-        /// NON-EMPTY verify matrix (an empty matrix [] proves only the grand total, not per-context equivalence),
-        /// a set_m (a literal M edit that reference fixup cannot reach), and a delete.</summary>
+        /// NON-EMPTY verify matrix (an empty matrix [] proves only the grand total, not per-context equivalence;
+        /// the EFFECTIVE count is what query construction evaluates, so [" "] is empty here too), a set_m
+        /// (a literal M edit that reference fixup cannot reach), and a delete.</summary>
         private static bool OptInKind(string kind, string[] verifyGroupBy) =>
             string.Equals(kind, "rename", StringComparison.OrdinalIgnoreCase)
             || string.Equals(kind, "delete", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(kind, "delete_if_unused", StringComparison.OrdinalIgnoreCase)
             || string.Equals(kind, "set_m", StringComparison.OrdinalIgnoreCase)
             || (string.Equals(kind, "set_dax", StringComparison.OrdinalIgnoreCase)
-                && (verifyGroupBy == null || verifyGroupBy.Length == 0));
+                && DaxBench.NormalizeGroupBy(verifyGroupBy).Length == 0);
 
         private static bool RequiresAfter(string kind)
         {
@@ -10329,6 +11321,7 @@ $@"ADDCOLUMNS(
                 case "mark_date_table":
                 case "bpa_fix":
                 case "delete":
+                case "delete_if_unused":
                     return false;
                 default:
                     return true;
@@ -10354,7 +11347,8 @@ $@"ADDCOLUMNS(
             {
                 case "set_description": return "Descriptions";
                 case "rename": return "Naming";
-                case "delete": return "Structure";
+                case "delete":
+                case "delete_if_unused": return "Structure";
                 case "set_measure_format":
                 case "set_format_string":
                 case "set_display_folder":
@@ -10377,7 +11371,8 @@ $@"ADDCOLUMNS(
             switch ((kind ?? "").Trim())
             {
                 case "rename": return "rename";
-                case "delete": return "structural";
+                case "delete":
+                case "delete_if_unused": return "structural";
                 case "set_m": return "m";   // literal M edit: not reference-fixed, so it wears its own (amber) badge
                 case "set_relationship_crossfilter":
                 case "mark_date_table": return "structural";
@@ -10402,7 +11397,8 @@ $@"ADDCOLUMNS(
                 case "set_column_hidden": return "isHidden";
                 case "set_data_category": return "dataCategory";
                 case "rename": return "name";
-                case "delete": return "object";
+                case "delete":
+                case "delete_if_unused": return "object";
                 case "set_synonyms": return "synonyms";
                 case "set_relationship_crossfilter": return "crossFilter";
                 case "set_dax": return "expression";
@@ -10428,6 +11424,7 @@ $@"ADDCOLUMNS(
                 case "set_data_category": return "Set data category";
                 case "rename": return "Rename";
                 case "delete": return "Remove object";
+                case "delete_if_unused": return "Remove object (re-verified unused at apply)";
                 case "set_synonyms": return "Set synonyms";
                 case "set_relationship_crossfilter": return "Set cross-filter direction";
                 case "set_dax": return "Update DAX";

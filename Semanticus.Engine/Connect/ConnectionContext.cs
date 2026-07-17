@@ -15,6 +15,8 @@ namespace Semanticus.Engine
         public string Endpoint { get; set; }
         public string Database { get; set; }
         public string AuthMode { get; set; }
+        public string Account { get; set; }      // the account (UPN) last signed in to this side, when known — the identity bar's "as <account>"
+        public string TenantId { get; set; }     // the tenant this side authenticated against, when known
         public string Label { get; set; }
         public string EffectiveLabel { get; set; }
         public bool Unlabelled { get; set; }
@@ -22,6 +24,22 @@ namespace Semanticus.Engine
         public bool Live { get; set; }
         public bool SourceControlled { get; set; }
         public string RepositoryRoot { get; set; }
+    }
+
+    /// <summary>One target's silently-probed account (UPN) — what a picker shows as "as &lt;account&gt;" before a click.
+    /// <see cref="Account"/> is what the NEXT open will actually use, and it is ONLY a live MSAL sign-in record on this
+    /// device (a sign-in is remembered per (client, tenant), so that record IS the next identity). It is NULL — "account
+    /// unknown" — when no record exists: a family that keeps none (azcli/serviceprincipal), or a deleted/corrupt record.
+    /// It is NEVER guessed from the per-target last-used hint, which a later open won't necessarily use.
+    /// <see cref="PreviousAccount"/> is the per-target last-used account, surfaced ONLY as provenance ("last opened as
+    /// &lt;x&gt;") when it differs from <see cref="Account"/> — never as the prediction. Holds no credential; a missing
+    /// entry means nothing is known about the target, not that it is signed out.</summary>
+    public sealed class ConnectionAccountProbe
+    {
+        public string Id { get; set; }
+        public string Account { get; set; }
+        public string PreviousAccount { get; set; }
+        public string TenantId { get; set; }
     }
 
     /// <summary>
@@ -34,6 +52,9 @@ namespace Semanticus.Engine
         public ConnectionContextModel Editing { get; set; } = new ConnectionContextModel();
         public ConnectionContextModel Querying { get; set; } = new ConnectionContextModel();
         public ConnectionContextModel Publishing { get; set; } = new ConnectionContextModel();
+        // The "copy FROM" model the Reference tree is browsing, when one is bound (engine-owned so BOTH the native
+        // Reference tree and the Connections drawer name the same reference). Available=false when none is set.
+        public ConnectionContextModel Reference { get; set; } = new ConnectionContextModel();
         public string Relationship { get; set; }
         public bool TwoModelsInPlay { get; set; }
         public bool PublishDestinationSeparateFromQuerying { get; set; }
@@ -143,6 +164,8 @@ namespace Semanticus.Engine
         {
             side.ConnectionId = record?.Id;
             side.AuthMode = record?.AuthMode;
+            side.Account = record?.LastAccount;
+            side.TenantId = record?.TenantId;
             side.Label = record?.Label;
             side.EffectiveLabel = side.Available && side.Live ? ConnectionRegistry.EffectiveLabel(record) : record?.Label;
             side.Unlabelled = side.Available && side.Live && ConnectionRegistry.IsUnlabelled(record);

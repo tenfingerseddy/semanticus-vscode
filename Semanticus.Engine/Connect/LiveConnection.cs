@@ -17,15 +17,27 @@ namespace Semanticus.Engine
     public sealed class LiveConnection : IDisposable
     {
         private readonly Adomd.AdomdConnection _conn;
-        private readonly string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
+        private readonly Func<string, ResultSet> _executeForTest;
+        private string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
         private readonly ModelDispatcher _queryThread = new ModelDispatcher();
         // A session-scoped trace sees every query on this XMLA session. Keep the trace setup, warm-up, real query
         // and teardown in one exclusive lane with ordinary ExecuteAsync calls so another UI/MCP request cannot
         // contaminate its timings, plan or evaluation log. Per connection, not global: unrelated models stay live.
         private readonly System.Threading.SemaphoreSlim _queryOperationGate = new System.Threading.SemaphoreSlim(1, 1);
+        // Disconnect/swap can race a caller that already captured this object. Close admission first, let admitted
+        // query/trace/cache work finish, and only then dispose ADOMD + its thread. A stale late call fails clearly.
+        private readonly object _lifetimeGate = new object();
+        private int _activeOperations;
+        private bool _retired;
+        private int _disposeStarted;
 
         public string Kind { get; }
         public string DataSource { get; }
+        /// <summary>The account (UPN) this connection actually authenticated as, when known — set by the open path from
+        /// the credential it built. This is the IDENTITY IN PLAY for a live connection; a status/session read reports
+        /// THIS, never a registry last-used hint (which can be stale after a tenant-wide account switch). Null for
+        /// azcli / serviceprincipal / local (integrated Windows) / token — honestly "account unknown".</summary>
+        public string Account { get; set; }
         /// <summary>The resolved catalog (database) the connection is bound to — captured after Open (ADOMD
         /// resolves the real dataset even when open_live passed an empty Initial Catalog). Needed by ClearCache,
         /// whose XMLA command requires a &lt;DatabaseID&gt;. Empty until a successful open.</summary>
@@ -42,10 +54,19 @@ namespace Semanticus.Engine
         /// <summary>Diagnostic note on how (or whether) the SPID was resolved — surfaced in trace fallback messages
         /// while server-side tracing is brought up on cloud XMLA. Never contains a secret.</summary>
         public string SpidNote { get; private set; }
+        /// <summary>The Power BI Desktop display-name STEM this LOCAL connection resolved to at connect time, when
+        /// capturable (see <see cref="LiveOrigin.LocalName"/> for why it exists). Null for cloud XMLA, real SSAS,
+        /// and uncapturable. Stamped once by connect_local/open_local; never re-derived.</summary>
+        public string DesktopName { get; internal set; }
+        /// <summary>The full .pbix PATH behind this LOCAL connection, when the owning Desktop's command line exposed
+        /// it (see <see cref="LiveOrigin.LocalPath"/>). Stamped once by connect_local/open_local.</summary>
+        public string DesktopPath { get; internal set; }
 
-        private LiveConnection(string kind, string dataSource, Adomd.AdomdConnection conn, string connectionString)
+        private LiveConnection(string kind, string dataSource, Adomd.AdomdConnection conn, string connectionString,
+            Func<string, ResultSet> executeForTest = null)
         {
             Kind = kind; DataSource = dataSource; _conn = conn; _connectionString = connectionString;
+            _executeForTest = executeForTest;
         }
 
         public static string XmlaConnectionString(string endpoint, string database, string bearerToken)
@@ -93,30 +114,69 @@ namespace Semanticus.Engine
         // Test-only: a NEVER-OPENED connection stub, so lifecycle tests can prove _live is dropped/swapped without a
         // real XMLA endpoint. Status() reports Connected (it does not probe the socket); executing a query would fail,
         // which is fine — these tests only assert connection PRESENCE and that Dispose() is clean.
-        internal static LiveConnection ForTest(string kind, string dataSource, string database = null) =>
-            new LiveConnection(kind, dataSource, new Adomd.AdomdConnection(), "") { Database = database };
+        internal static LiveConnection ForTest(string kind, string dataSource, string database = null,
+            Func<string, ResultSet> execute = null) =>
+            new LiveConnection(kind, dataSource, new Adomd.AdomdConnection(), "", execute) { Database = database };
 
         public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds) =>
             RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds));
 
+        /// <summary>Execute with a caller-held cancellation token: when it fires, <c>AdomdCommand.Cancel</c> is
+        /// invoked (thread-safe by contract, like SqlCommand.Cancel) so the SERVER-side operation is really
+        /// cancelled and the serialized query lane is released — the ADOMD call then completes with a cancellation
+        /// error rather than running to the bitter end. The verify-ceiling path depends on this: an ABANDONED op
+        /// would keep the lane + lifetime lease held, and abandoned ops piling up on the single lane is exactly the
+        /// crash class the ceiling guards against.</summary>
+        public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds, System.Threading.CancellationToken ct) =>
+            RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds, ct));
+
         // DaxTrace already owns the exclusive lane while it warms and runs the captured query. Re-entering through
         // ExecuteAsync would deadlock, so trace code uses this narrow bypass. It still preserves ADOMD thread affinity.
-        internal Task<ResultSet> ExecuteWithinExclusiveAsync(string query, int maxRows, int commandTimeoutSeconds) =>
-            _queryThread.RunAsync(() => Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds));
+        internal Task<ResultSet> ExecuteWithinExclusiveAsync(string query, int maxRows, int commandTimeoutSeconds,
+            System.Threading.CancellationToken ct = default) =>
+            _executeForTest != null
+                ? Task.Run(() => _executeForTest(query))
+                : _queryThread.RunAsync(() => Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds, ct));
+
+        /// <summary>ExecuteWithinExclusiveAsync PLUS the command's TRUE completion timestamp, captured
+        /// SYNCHRONOUSLY on the execution-producing thread (inside the work body, immediately after the execute
+        /// returns). The verify-ceiling verdict compares this against its absolute command-start deadline: an
+        /// awaiter's continuation can be parked arbitrarily long (the dispatcher queues continuations
+        /// asynchronously), so a timestamp taken after ANY await would mis-time an on-time completion as late —
+        /// this stamp makes the continuation's resume time irrelevant in both directions.</summary>
+        internal Task<(ResultSet Rs, DateTime CompletedUtc)> ExecuteWithinExclusiveStampedAsync(string query, int maxRows,
+            int commandTimeoutSeconds, System.Threading.CancellationToken ct = default) =>
+            _executeForTest != null
+                ? Task.Run(() => { var r = _executeForTest(query); return (r, DateTime.UtcNow); })
+                : _queryThread.RunAsync(() => { var r = Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds, ct); return (r, DateTime.UtcNow); });
 
         internal async Task<T> RunExclusiveAsync<T>(Func<Task<T>> operation)
         {
+            using var lifetime = AcquireLifetimeLease();
             await _queryOperationGate.WaitAsync().ConfigureAwait(false);
             try { return await operation().ConfigureAwait(false); }
             finally { _queryOperationGate.Release(); }
         }
 
-        private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds)
+        internal async Task<T> RunWithLifetimeLeaseAsync<T>(Func<Task<T>> operation)
+        {
+            using var lifetime = AcquireLifetimeLease();
+            return await operation().ConfigureAwait(false);
+        }
+
+        private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds,
+            System.Threading.CancellationToken ct = default)
         {
             var sw = Stopwatch.StartNew();
             try
             {
                 using var cmd = new Adomd.AdomdCommand(query, _conn) { CommandTimeout = commandTimeoutSeconds <= 0 ? 120 : commandTimeoutSeconds };
+                // Real cancellation for the verify-ceiling path: the registration calls Cancel from the token's
+                // callback thread (documented safe cross-thread, mirroring SqlCommand.Cancel); ExecuteReader/Read
+                // then throw a cancellation error which folds into the ResultSet.Error below.
+                using var reg = ct.CanBeCanceled
+                    ? ct.Register(() => { try { cmd.Cancel(); } catch { /* best-effort — CommandTimeout still bounds the server */ } })
+                    : default;
                 using var rdr = cmd.ExecuteReader();
                 var cols = Enumerable.Range(0, rdr.FieldCount)
                     .Select(i => new ColumnDef { Name = rdr.GetName(i), Type = SafeTypeName(rdr, i) })
@@ -159,7 +219,9 @@ namespace Semanticus.Engine
         public ConnectionStatus Status()
         {
             var record = ConnectionRegistry.FindByEndpoint(DataSource, Database);
-            return new ConnectionStatus { Connected = true, Kind = Kind, DataSource = DataSource, Database = Database, ConnectionId = record?.Id };
+            // Account is the identity THIS connection authenticated with (set on the open path) — not a registry hint,
+            // which can name a stale account after a tenant-wide switch. Null reads honestly as "account unknown".
+            return new ConnectionStatus { Connected = true, Kind = Kind, DataSource = DataSource, Database = Database, ConnectionId = record?.Id, Account = Account };
         }
 
         /// <summary>
@@ -243,12 +305,55 @@ namespace Semanticus.Engine
         // Test-observable only: the lifecycle pins assert a still-attached connection is never disposed out from
         // under _live (the SwapLive self-swap contract). Nothing in production reads it.
         internal bool DisposedForTest { get; private set; }
+        internal bool HasConnectionStringForTest => !string.IsNullOrEmpty(_connectionString);
 
         public void Dispose()
         {
+            var dispose = false;
+            lock (_lifetimeGate)
+            {
+                _retired = true;
+                dispose = _activeOperations == 0;
+            }
+            if (dispose) DisposeCore();
+        }
+
+        private IDisposable AcquireLifetimeLease()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_retired)
+                    throw new InvalidOperationException(
+                        "This live connection was disconnected or replaced before the operation started. Retry against the current connection.");
+                _activeOperations++;
+                return new LifetimeLease(this);
+            }
+        }
+
+        private void ReleaseLifetimeLease()
+        {
+            var dispose = false;
+            lock (_lifetimeGate)
+            {
+                if (--_activeOperations == 0 && _retired) dispose = true;
+            }
+            if (dispose) DisposeCore();
+        }
+
+        private void DisposeCore()
+        {
+            if (System.Threading.Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
             DisposedForTest = true;
             try { _queryThread.RunAsync(() => { try { _conn.Dispose(); } catch { } return true; }).Wait(2000); } catch { }
             _queryThread.Dispose();
+            _connectionString = null;   // bearer-bearing connection strings stay transient, never retained after retirement
+        }
+
+        private sealed class LifetimeLease : IDisposable
+        {
+            private LiveConnection _owner;
+            internal LifetimeLease(LiveConnection owner) => _owner = owner;
+            public void Dispose() => System.Threading.Interlocked.Exchange(ref _owner, null)?.ReleaseLifetimeLease();
         }
     }
 }

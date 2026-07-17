@@ -1351,6 +1351,62 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
+            // Q&A/Copilot fold object names (lower-case + camel-split + lemmatise) into ONE term dictionary: two
+            // VISIBLE objects whose names normalise to the same term are indistinguishable to term matching, and
+            // the AS validator refuses to commit a linguistic schema holding entities for both — which blocks EVERY
+            // synonym write, model-wide (docs/bug-set_synonyms-duplicate-name-collision.md). QnaTerms is the same
+            // two-tier normaliser the set_synonyms guard uses, so scan and write agree: an EXACT normalised match
+            // is a certain collision (the write refuses it); a plural-fold match is our approximation of the closed
+            // AS lemmatiser (the write proceeds with a warning), so its finding says "likely", same rule/severity.
+            // Population mirrors the writer's guard: calc-group tables are excluded (the neighbouring DAC rules'
+            // convention — their names are calc-item machinery, not Q&A vocabulary), RowNumber columns are excluded
+            // (system columns nobody synonymises, though the writer can technically target one), and hierarchy
+            // LEVELS are excluded (level names duplicate their source column by construction — grouping them would
+            // flag every hierarchy; the writer's guard skips them for the same reason). Only meaningful when Q&A is
+            // engaged: dormant without a JSON linguistic culture and without a positive qnaEnabled signal.
+            // Applicable = the collision groups, every one a violation (the dormant-or-dock convention).
+            rules.Add(new ModelRule("DAC-QNA-NAME-COLLISIONS", "Object names collide under Q&A term matching", ReadinessCategory.DataAgentConfig, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var cfg = PrepForAiReader.Read(m);
+                    var ev = new RuleEvaluation();
+                    if (!cfg.HasLinguisticSchema && cfg.QnaEnabled != true) return ev;   // Q&A not engaged → dormant
+
+                    var pop = new List<(string Label, ITabularNamedObject Obj)>();
+                    foreach (var t in m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)))
+                    {
+                        pop.Add(($"table '{t.Name}'", t));
+                        foreach (var c in t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber)) pop.Add(($"column '{t.Name}'[{c.Name}]", c));
+                        foreach (var me in t.Measures.Where(x => !x.IsHidden)) pop.Add(($"measure '{t.Name}'[{me.Name}]", me));
+                        foreach (var h in t.Hierarchies.Where(x => !x.IsHidden)) pop.Add(($"hierarchy '{t.Name}'[{h.Name}]", h));
+                    }
+
+                    List<List<(string Label, ITabularNamedObject Obj)>> GroupsBy(Func<string, string> normalize) => pop
+                        .GroupBy(x => normalize(x.Obj.Name), StringComparer.Ordinal)
+                        .Where(g => g.Key.Length > 0 && g.Count() > 1)
+                        .Select(g => g.ToList()).ToList();
+
+                    var exactMembers = new HashSet<ITabularNamedObject>();
+                    foreach (var g in GroupsBy(QnaTerms.Normalize))
+                    {
+                        ev.Applicable++;
+                        foreach (var x in g) exactMembers.Add(x.Obj);
+                        ev.Violations.Add(rule.NewFinding(g[0].Obj, QnaTerms.Normalize(g[0].Obj.Name),
+                            $"These visible objects all normalise to the Q&A term '{QnaTerms.Normalize(g[0].Obj.Name)}': {string.Join(", ", g.Select(v => v.Label))}. Q&A and Copilot treat them as the same term, and the linguistic schema cannot hold entities for more than one (every synonym write fails). Rename or hide the duplicates."));
+                    }
+                    // Fold-tier groups that the fold CREATED (members span 2+ exact terms) — likely, not certain.
+                    foreach (var g in GroupsBy(QnaTerms.NormalizeFolded).Where(g => g.Select(x => QnaTerms.Normalize(x.Obj.Name)).Distinct(StringComparer.Ordinal).Count() > 1))
+                    {
+                        ev.Applicable++;
+                        // Anchor on a member the exact tier didn't already flag when one exists (all-flagged is
+                        // possible: the fold can merge two whole exact groups into one fold group).
+                        var anchor = g.FirstOrDefault(x => !exactMembers.Contains(x.Obj)).Obj ?? g[0].Obj;
+                        ev.Violations.Add(rule.NewFinding(anchor, QnaTerms.NormalizeFolded(g[0].Obj.Name),
+                            $"These visible objects likely collide on the Q&A term '{QnaTerms.NormalizeFolded(g[0].Obj.Name)}' after plural folding (an approximation of the validator's lemmatiser): {string.Join(", ", g.Select(v => v.Label))}. Q&A and Copilot may treat them as the same term. Rename or hide the duplicates."));
+                    }
+                    return ev;
+                }));
+
             // AI instructions live in the LSDL as the top-level "CustomInstructions" string (read from TOM, so this
             // works for any model with a linguistic schema). Recommend adding them; enforce the documented 10k cap.
             rules.Add(new ModelRule("DAC-AI-INSTRUCTIONS", "No AI instructions for Copilot/data agents", ReadinessCategory.DataAgentConfig, Severity.Medium, RuleKind.Deterministic, FixKind.AiContent,

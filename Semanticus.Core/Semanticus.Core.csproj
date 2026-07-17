@@ -49,6 +49,8 @@
     <Compile Include="CalendarOps.cs" />
     <!-- Non-undoable audit-annotation seam (Verified Edits) — same-assembly access to the internal undoable:false overload. -->
     <Compile Include="AuditAnnotations.cs" />
+    <!-- Mid-batch dependency-tree flush (same-assembly access to the internal FormulaFixup + postpone flags). -->
+    <Compile Include="DependencyMaintenance.cs" />
   </ItemGroup>
 
   <!-- ===== TOMWrapper project sources (compiled in place from the donor clone) ===== -->

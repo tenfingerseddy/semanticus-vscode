@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Tasks;
 using Semanticus.Analysis;
 
@@ -22,7 +23,14 @@ namespace Semanticus.Engine
         Task<TreeNode[]> ListTreeAsync(string parentRef);
         Task<ObjectInfo> GetObjectAsync(string objRef);
         Task<string> GetDaxAsync(string objRef);
-        Task<SetResult> SetDaxAsync(string objRef, string expression, string origin);
+        // expectedSession (optional): the SessionInfo.SessionId the caller sampled when it verified this edit belongs to
+        // the live model. When non-null and it no longer matches the live session's id, the write is REFUSED before any
+        // mutation — closing the model-swap race for the zero-dialog header-save path. Fencing on the session id (not the
+        // source path) also fences unsaved models and catches a same-file REOPEN (same source, new session). Null = no
+        // fence (both doors' other callers, and every MCP tool, are unaffected).
+        // expectedRevision (round 7): an optional finer fence than expectedSession — refuse if ANY mutation landed since the
+        // caller captured the revision it verified against (the rename→body pair + recovery writes; see GuardExpectedRevision).
+        Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null);
         Task<SaveResult> SaveAsync(string path, string format);
         Task<SessionInfo> SessionInfoAsync();
         Task<ConnectionContext> ConnectionContextAsync();
@@ -159,13 +167,14 @@ namespace Semanticus.Engine
         // current safe set); reportPaths makes verification report-aware. >1 item = Pro; a single item stays free.
         Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin);
         // Cloud report layer (Phase 3): discover published reports + report-aware safe-to-remove over their cloud PBIR.
-        Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId);   // read-only (Power BI scope)
-        Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId);
+        Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);   // read-only (Power BI scope)
+        Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, CancellationToken cancellationToken = default);
         Task<string> ScriptObjectsAsync(string[] refs, string format);
         Task<ApplyScriptResult> ApplyDaxScriptAsync(string script, string origin);
         Task<ApplyScriptResult> ApplyTmdlScriptAsync(string script, string origin);
         Task<SetResult> SetCompatibilityLevelAsync(int level, string origin);
-        Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin);
+        // expectedSession/expectedRevision: see SetDaxAsync — the same optional session-id swap fence + revision fence for the header-save rename path.
+        Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin, string expectedSession = null, long? expectedRevision = null);
         Task<SetResult> SetColumnMetadataAsync(string objRef, bool? isHidden, string summarizeBy, string dataCategory, string sortByColumn, string origin);
         Task<SetResult> SetMeasureFormatAsync(string objRef, string formatString, string origin);
         Task<SetResult> MarkDateTableAsync(string tableRef, string dateColumn, string origin);
@@ -203,7 +212,7 @@ namespace Semanticus.Engine
         Task<CalendarResult> DefineCalendarFromTemplateAsync(string template, string tableName, string dateColumn, int fiscalStartMonth, string startExpr, string endExpr, string calendarName, string origin);
 
         // --- live connectivity (attached-readonly DAX/DMV) ---
-        Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken);
+        Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null);
         Task<ConnectionStatus> ConnectLocalAsync(string dataSource, string database);
         Task<LocalInstance[]> ListLocalInstancesAsync();
         Task<ConnectionStatus> ConnectionStatusAsync();
@@ -391,10 +400,13 @@ namespace Semanticus.Engine
         Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null);
         Task<CherryPickResult> CherryPickAsync(ModelRef source, string[] refs, bool includeDependencies, bool commit, string origin);
         Task<TreeNode[]> ListReferenceTreeAsync(ModelRef reference, string origin = "human");
+        Task<ConnectionContext> ClearReferenceBindingAsync();
         Task<DeployGate> DeployGateAsync(ModelRef compareTarget);
 
         // --- Connections: one registry, doing double duty as the agent-permissions target registry ---
         Task<ModelConnectionRecord[]> ListConnectionsAsync();
+        Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null);
+        Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync();
         Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent");
         Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent");
         Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent");
@@ -418,35 +430,35 @@ namespace Semanticus.Engine
             bool confirm = false, string confirmToken = null, string origin = "human");
 
         // --- Fabric REST (the cloud ALM lane — read-only discovery) ---
-        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId);
-        Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId);
-        Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId);
-        Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId);
+        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, CancellationToken cancellationToken = default);
 
         // --- Deployment pipeline: preview + the GATED deploy (write lane) + history ---
-        Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId);
-        Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId, string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null);
-        Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId);
+        Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId, string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null, CancellationToken cancellationToken = default);
+        Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default);
 
         // --- Fabric Git (workspace ⇄ git): reads + GATED writes ---
-        Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId);
-        Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId);
-        Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin);
-        Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin);
-        Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin);
-        Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin);
+        Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
 
         // --- CI/CD: publish the open model's definition (Items API, GATED) + emit a fabric-cicd scaffold (no gate) ---
-        Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin);
+        Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
         Task<CicdScaffold> CicdGenerateAsync(string target, string workspaceId, string environment, bool write);
 
         // --- Fabric Data Agent (definition-based item): reads (free) + the model-scope generator (Pro) + dry-run writes ---
-        Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId);
-        Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId);
+        Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, CancellationToken cancellationToken = default);
         Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable);
-        Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin);
-        Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin);
-        Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin);
-        Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin);
+        Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
+        Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
     }
 }

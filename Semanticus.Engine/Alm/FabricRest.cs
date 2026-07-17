@@ -1,8 +1,11 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,7 +25,16 @@ namespace Semanticus.Engine
     internal static class FabricRest
     {
         internal const string BaseUrl = "https://api.fabric.microsoft.com/v1/";
+        internal const int MaxResponseBodyBytes = 64 * 1024 * 1024;
+        internal const long MaxPagedResponseBytes = 128L * 1024 * 1024;
+        internal const long MaxDecodedDefinitionBytes = 64L * 1024 * 1024;
         private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+        private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        };
 
         // ---- public entry points (own the HttpClient + bearer auth) ----
         internal static async Task<FabricWorkspace[]> ListWorkspacesAsync(string token, CancellationToken ct)
@@ -62,13 +74,20 @@ namespace Semanticus.Engine
         // documented static seam beats a DI rewrite of an otherwise-untestable network boundary; the branch is free.
         internal static Func<HttpClient> TestClientFactory;
 
-        private static HttpClient NewClient(string token)
+        internal static HttpClient NewClient(string token)
         {
             var http = TestClientFactory?.Invoke()
-                ?? new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(100) };
+                ?? CreateSharedClient(BaseUrl);
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             return http;
         }
+
+        internal static HttpClient CreateSharedClient(string baseUrl)
+            => new(SharedHandler, disposeHandler: false)
+            {
+                BaseAddress = new Uri(baseUrl),
+                Timeout = TimeSpan.FromSeconds(100),
+            };
 
         // ---- deploy (write lane — the ONE outward write; gated by the caller, see DeployGuard) ----
         internal sealed class DeployOutcome { public string Status; public string OperationId; public string DeploymentId; public string Error; }
@@ -226,9 +245,10 @@ namespace Semanticus.Engine
         // Only the JSON parts carry model field references (report.json / pages/**/visual.json / reportExtensions.json); a
         // binary asset (theme image, etc.) or a non-decodable payload is skipped. Defensive: a missing definition/parts
         // yields an empty array (a report with nothing to parse) rather than throwing.
-        internal static ReportPart[] DecodeDefinitionParts(string body)
+        internal static ReportPart[] DecodeDefinitionParts(string body, long maxDecodedBytes = MaxDecodedDefinitionBytes)
         {
             var parts = new List<ReportPart>();
+            long decodedBytes = 0;
             JsonDocument doc;
             try { doc = JsonDocument.Parse(body); }
             catch { return parts.ToArray(); }   // a non-JSON result body (proxy HTML / gateway page) degrades to "no parts", like ParseError/ParseOperationState
@@ -243,8 +263,17 @@ namespace Semanticus.Engine
                     if (string.IsNullOrEmpty(path) || !path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
                     var payload = p.TryGetProperty("payload", out var pl) && pl.ValueKind == JsonValueKind.String ? pl.GetString() : null;
                     if (string.IsNullOrEmpty(payload)) continue;
-                    try { parts.Add(new ReportPart { Path = path, Content = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload)) }); }
-                    catch { /* not valid base64/UTF-8 (a binary part mislabelled .json) — skip; the parser tolerates a missing part */ }
+                    var upperBound = ((long)payload.Length + 3) / 4 * 3;
+                    if (upperBound > maxDecodedBytes - decodedBytes)
+                        throw new InvalidOperationException($"The decoded Fabric definition exceeds the {FormatBytes(maxDecodedBytes)} safety limit.");
+                    try
+                    {
+                        var bytes = Convert.FromBase64String(payload);
+                        decodedBytes += bytes.LongLength;
+                        parts.Add(new ReportPart { Path = path, Content = StrictUtf8.GetString(bytes) });
+                    }
+                    catch (FormatException) { /* a non-base64 part mislabelled .json is ignored */ }
+                    catch (DecoderFallbackException) { /* a binary part mislabelled .json is ignored */ }
                 }
             }
             return parts.ToArray();
@@ -313,17 +342,26 @@ namespace Semanticus.Engine
         // ---- pagination (testable) ----
         // Follows continuationToken across pages (preferring the pre-built, already-URL-encoded continuationUri).
         // A missing/empty continuationToken is the documented end-of-pages signal (the field is OMITTED, not null).
-        internal static async Task<List<T>> GetAllPagesAsync<T>(HttpClient http, string firstUrl, CancellationToken ct)
+        internal static async Task<List<T>> GetAllPagesAsync<T>(HttpClient http, string firstUrl, CancellationToken ct,
+            int maxPages = 1000, long maxResponseBytes = MaxPagedResponseBytes)
         {
+            if (maxPages <= 0) throw new ArgumentOutOfRangeException(nameof(maxPages));
+            if (maxResponseBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxResponseBytes));
             var items = new List<T>();
             var url = firstUrl;
-            for (var page = 0; page < 1000; page++)   // bound: a runaway-pagination backstop
+            long responseBytes = 0;
+            for (var page = 0; page < maxPages; page++)
             {
                 var r = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
                 if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+                responseBytes += r.BodyBytes;
+                if (responseBytes > maxResponseBytes)
+                    throw new InvalidOperationException($"Fabric pagination exceeded the {FormatBytes(maxResponseBytes)} aggregate response limit; results are incomplete.");
                 var env = JsonSerializer.Deserialize<Envelope<T>>(r.Body, JsonOpts);
                 if (env?.Value != null) items.AddRange(env.Value);
                 if (string.IsNullOrEmpty(env?.ContinuationToken)) break;
+                if (page == maxPages - 1)
+                    throw new InvalidOperationException($"Fabric pagination exceeded the {maxPages}-page safety limit; results are incomplete.");
                 // Prefer the API's pre-built continuationUri, but ONLY if it points back at the Fabric host —
                 // we carry a Bearer header, so never follow an off-origin URL even if the response was tampered with.
                 url = !string.IsNullOrEmpty(env.ContinuationUri) && IsFabricHost(env.ContinuationUri)
@@ -363,6 +401,7 @@ namespace Semanticus.Engine
         {
             public int Status;
             public string Body;
+            public long BodyBytes;
             public string Location;     // poll/result URL on a 202 — reserved for the Phase-3 result-fetch leg (operations/{id}/result)
             public string OperationId;  // x-ms-operation-id on a 202
             public string DeploymentId; // deployment-id on a deploy 202 (the pipeline-history operation id)
@@ -380,7 +419,7 @@ namespace Semanticus.Engine
             {
                 using var req = new HttpRequestMessage(method, url);
                 if (jsonBody != null) req.Content = new System.Net.Http.StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
-                using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 var status = (int)resp.StatusCode;
                 var retryAfter = RetryAfterSeconds(resp);
                 if (status == 429 && attempt < 4)
@@ -389,13 +428,16 @@ namespace Semanticus.Engine
                     await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
                     continue;   // bounded retry on throttle
                 }
-                var body = resp.Content != null ? await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false) : "";
+                var (body, bodyBytes) = resp.Content != null
+                    ? await ReadBodyAsync(resp.Content, MaxResponseBodyBytes, ct).ConfigureAwait(false)
+                    : (string.Empty, 0L);
                 resp.Headers.TryGetValues("x-ms-operation-id", out var opIds);
                 resp.Headers.TryGetValues("deployment-id", out var depIds);
                 return new FabricResponse
                 {
                     Status = status,
                     Body = body,
+                    BodyBytes = bodyBytes,
                     Location = resp.Headers.Location?.ToString(),
                     OperationId = opIds?.FirstOrDefault(),
                     DeploymentId = depIds?.FirstOrDefault(),
@@ -403,6 +445,37 @@ namespace Semanticus.Engine
                 };
             }
         }
+
+        internal static async Task<(string Body, long Bytes)> ReadBodyAsync(HttpContent content, int maxBytes, CancellationToken ct)
+        {
+            var declared = content.Headers.ContentLength;
+            if (declared > maxBytes)
+                throw new InvalidOperationException($"The Fabric REST response exceeds the {FormatBytes(maxBytes)} safety limit.");
+
+            await using var source = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var destination = new MemoryStream(declared.HasValue && declared.Value >= 0 && declared.Value <= maxBytes ? (int)declared.Value : 0);
+            var buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                long total = 0;
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                    if (read == 0) break;
+                    total += read;
+                    if (total > maxBytes)
+                        throw new InvalidOperationException($"The Fabric REST response exceeds the {FormatBytes(maxBytes)} safety limit.");
+                    await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                }
+                try { return (StrictUtf8.GetString(destination.GetBuffer(), 0, checked((int)total)), total); }
+                catch (DecoderFallbackException)
+                { throw new InvalidOperationException("The Fabric REST response is not valid UTF-8 text."); }
+            }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
+        }
+
+        private static string FormatBytes(long bytes)
+            => bytes % (1024 * 1024) == 0 ? $"{bytes / (1024 * 1024)} MiB" : $"{bytes} byte" + (bytes == 1 ? "" : "s");
 
         private static int? RetryAfterSeconds(HttpResponseMessage resp)
         {

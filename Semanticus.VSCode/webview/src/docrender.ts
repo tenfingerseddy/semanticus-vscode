@@ -35,7 +35,7 @@ export interface Scorecard { overall: number; rawOverall: number; grade: string;
 export interface BpaScorecard { ruleCount: number; violationCount: number; autoFixable: number; }
 export interface VpaqTable { name: string; size: number; rows: number | null; pctOfModel: number; columns?: number; }
 export interface VpaqColumn { table: string; column: string; totalSize: number; encoding: string; pctOfModel: number; }
-export interface VpaqReport { modelSize: number; columnCount: number; tables: VpaqTable[]; topColumns: VpaqColumn[]; isDirectLake?: boolean; caveat?: string; error?: string; }
+export interface VpaqReport { modelSize: number; columnCount: number; tables: VpaqTable[]; topColumns: VpaqColumn[]; storageMode?: 'import' | 'directLake' | 'unknown'; caveat?: string; error?: string; }
 export interface PrepForAiConfig { hasLinguisticSchema: boolean; aiInstructions?: string; aiInstructionsLength: number; aiSchemaExcludedFields: number; sourceReadable: boolean; qnaEnabled?: boolean | null; verifiedAnswersPresent: boolean; verifiedAnswerCount: number; }
 
 export interface DocModelDto {
@@ -383,7 +383,7 @@ function renderHtml(dto: DocModelDto, cfg: DocConfig, b: DocBranding): string {
   // Lineage (partitions / sources / expressions)
   if (cfg.lineage && (dto.dataSources.length || dto.expressions.length)) add('lineage', 'Data Sources & Lineage', lineageHtml(dto));
   // Storage
-  if (cfg.storageStats && dto.storageAvailable && dto.storage && !dto.storage.error) add('storage', 'Storage (VertiPaq)', storageHtml(dto.storage));
+  if (cfg.storageStats && dto.storageAvailable && dto.storage && !dto.storage.error) add('storage', 'Storage', storageHtml(dto.storage));
   // Prep for AI
   if (cfg.prepForAi && dto.prepForAi) add('prepforai', 'Prep for AI', prepForAiHtml(dto.prepForAi));
   // Glossary + Methodology (model narrative sections)
@@ -544,12 +544,16 @@ function lineageHtml(dto: DocModelDto): string {
 
 function storageHtml(vp: VpaqReport): string {
   // PctOfModel is ALREADY a 0–100 percentage from VertiPaq.Compute (matches the Storage tab in App.tsx) — don't ×100 again.
+  const mode = vp.storageMode === 'import' || vp.storageMode === 'directLake' ? vp.storageMode : 'unknown';
+  const shareLabel = mode === 'import' ? '% model' : mode === 'directLake' ? '% resident' : '% observed';
   const tables = [...vp.tables].sort((a, b) => b.size - a.size).slice(0, 30).map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.rows == null ? 'Not available' : fmtNum(t.rows)}</td><td class="num">${fmtBytes(t.size)}</td><td class="num">${(t.pctOfModel ?? 0).toFixed(1)}%</td></tr>`).join('');
   const cols = vp.topColumns.slice(0, 25).map((c) => `<tr><td>${esc(c.table)}[${esc(c.column)}]</td><td>${esc(c.encoding)}</td><td class="num">${fmtBytes(c.totalSize)}</td><td class="num">${(c.pctOfModel ?? 0).toFixed(1)}%</td></tr>`).join('');
-  const caveat = vp.isDirectLake && vp.caveat ? `<div class="doc-callout">${esc(vp.caveat)}</div>` : '';
-  return `<div class="doc-muted">Total model size: <b>${fmtBytes(vp.modelSize)}</b> across ${fmtNum(vp.columnCount)} columns.</div>` + caveat
-    + `<h3 class="doc-h3">Tables by size</h3><table class="doc-table"><thead><tr><th>Table</th><th class="num">Rows</th><th class="num">Size</th><th class="num">% model</th></tr></thead><tbody>${tables}</tbody></table>`
-    + `<h3 class="doc-h3">Largest columns</h3><table class="doc-table"><thead><tr><th>Column</th><th>Encoding</th><th class="num">Size</th><th class="num">% model</th></tr></thead><tbody>${cols}</tbody></table>`;
+  const fallback = mode === 'unknown' ? 'Storage mode could not be confirmed. Storage sizes and row counts may reflect only data currently in memory, so they are not treated as full model totals.' : '';
+  const caveat = mode !== 'import' && (vp.caveat || fallback) ? `<div class="doc-callout">${esc(vp.caveat || fallback)}</div>` : '';
+  const totalLabel = mode === 'import' ? 'Total model size' : mode === 'directLake' ? 'Resident storage estimate' : 'Observed column storage';
+  return `<div class="doc-muted">${totalLabel}: <b>${fmtBytes(vp.modelSize)}</b> across ${fmtNum(vp.columnCount)} columns.</div>` + caveat
+    + `<h3 class="doc-h3">Tables by size</h3><table class="doc-table"><thead><tr><th>Table</th><th class="num">Rows</th><th class="num">Size</th><th class="num">${shareLabel}</th></tr></thead><tbody>${tables}</tbody></table>`
+    + `<h3 class="doc-h3">Largest columns</h3><table class="doc-table"><thead><tr><th>Column</th><th>Encoding</th><th class="num">Size</th><th class="num">${shareLabel}</th></tr></thead><tbody>${cols}</tbody></table>`;
 }
 
 function prepForAiHtml(p: PrepForAiConfig): string {
@@ -727,9 +731,13 @@ function renderMarkdown(dto: DocModelDto, cfg: DocConfig): string {
     }
   }
   if (cfg.storageStats && dto.storageAvailable && dto.storage && !dto.storage.error) {
-    p('## Storage (VertiPaq)'); p(); p(`Total model size: **${fmtBytes(dto.storage.modelSize)}**.`); p();
-    if (dto.storage.isDirectLake && dto.storage.caveat) { p(`> ${dto.storage.caveat}`); p(); }
-    p('| Table | Rows | Size | % model |'); p('| --- | ---: | ---: | ---: |');
+    const storageMode = dto.storage.storageMode === 'import' || dto.storage.storageMode === 'directLake' ? dto.storage.storageMode : 'unknown';
+    const totalLabel = storageMode === 'import' ? 'Total model size' : storageMode === 'directLake' ? 'Resident storage estimate' : 'Observed column storage';
+    const shareLabel = storageMode === 'import' ? '% model' : storageMode === 'directLake' ? '% resident' : '% observed';
+    const fallback = storageMode === 'unknown' ? 'Storage mode could not be confirmed. Storage sizes and row counts may reflect only data currently in memory, so they are not treated as full model totals.' : '';
+    p('## Storage'); p(); p(`${totalLabel}: **${fmtBytes(dto.storage.modelSize)}**.`); p();
+    if (storageMode !== 'import' && (dto.storage.caveat || fallback)) { p(`> ${dto.storage.caveat || fallback}`); p(); }
+    p(`| Table | Rows | Size | ${shareLabel} |`); p('| --- | ---: | ---: | ---: |');
     [...dto.storage.tables].sort((a, b) => b.size - a.size).slice(0, 30).forEach((t) => p(`| ${mdcell(t.name)} | ${t.rows == null ? 'Not available' : fmtNum(t.rows)} | ${fmtBytes(t.size)} | ${(t.pctOfModel ?? 0).toFixed(1)}% |`)); p();
   }
   return out.join('\n');

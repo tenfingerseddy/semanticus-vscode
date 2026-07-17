@@ -1,6 +1,6 @@
-# Semanticus 1.0.1 support and limitations
+# Semanticus 1.1.0 support and limitations
 
-This is the public support contract for Semanticus 1.0.1. A package is accepted only when its bundled engine is
+This is the public support contract for Semanticus 1.1.0. A package is accepted only when its bundled engine is
 extracted and executed on a matching CI runner. CI does not replace the documented human clean-install and
 live-environment acceptance.
 

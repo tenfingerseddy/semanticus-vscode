@@ -121,6 +121,26 @@ namespace Semanticus.Engine
         public string Probe { get; set; }              // input name carrying the verification value (dax_probe)
         public string Scope { get; set; }              // object | model (rescan kinds)
         public string Intent { get; set; }             // impact_assessment: change | rename | remove | restructure
+
+        // E1 — the typed SHAPE LEDGER over a dax_equivalence proof (docs v5-engine-contract §E1). The comparator
+        // always evaluates the grand total + each single-axis subtotal + the full cross; these declare which of
+        // those evaluated shapes are PINNED (a mismatch FAILS the gate) vs OPEN (a mismatch is RECORDED in the
+        // evidence payload, never fails). Shapes are named canonically: 'grand_total', 'axis:<column>', 'cross'.
+        // Both empty (the default) ⇒ every shape pinned = the current behaviour. A shape is OPEN iff it is listed
+        // in OpenShapes and NOT in PinnedShapes (pinned wins the overlap).
+        public string[] PinnedShapes { get; set; } = Array.Empty<string>();
+        public string[] OpenShapes { get; set; } = Array.Empty<string>();
+        // E1 ADDENDUM — the run-decided partition: names a SAME-STEP input whose ANSWER lists the open shape ids
+        // (the v5 seed derives the partition per run from the requirement's context ledger — it cannot be known at
+        // authoring time). Unioned with the static OpenShapes; a declined/unanswered input = all pinned (fail
+        // closed); an invalid or non-evaluated id in the answer makes the verify `unavailable`, naming the bad id.
+        public string OpenShapesFrom { get; set; }
+
+        // expected_values — names a TEXT input (this or any prior step, same binding rules as OpenShapesFrom) whose
+        // ANSWER carries the LOCKED ANCHORS: a fenced JSON array of {context, expect} the target measure must
+        // reproduce. Applies ONLY to the expected_values kind (parser-guarded); the executor parses it defensively
+        // (malformed ⇒ the verify is `unavailable`, naming the defect) and locks the set at first evaluation.
+        public string Anchors { get; set; }
     }
 
     // ---- run state ------------------------------------------------------------------------------
@@ -138,9 +158,133 @@ namespace Semanticus.Engine
     public sealed class VerifyResult
     {
         public string Kind { get; set; }
-        public string Status { get; set; }             // passed | failed | skipped
+        // E2 three-way-plus outcome (docs v5-engine-contract §E2):
+        //   passed          — verified.
+        //   failed          — evidence produced, the gate was not met. BLOCKS a hard step.
+        //   unavailable     — the verify was applicable but could NOT produce AUTHORITATIVE evidence (offline,
+        //                     missing probe, zero rows compared, candidate drift, degraded-fidelity comparison).
+        //                     BLOCKS a hard step exactly like failed; the Missing field names what was absent.
+        //   not_applicable  — a conditional `when:` did not hold; the verify legitimately did not run and the step
+        //                     advances (the back-compat path for the stock seeds' conditional verifies).
+        //   skipped         — legacy advisory non-blocking skip (kept for perf/optional verifies that honestly
+        //                     cannot run offline but must not block; distinct from unavailable's fail-closed).
+        public string Status { get; set; }
         public string Detail { get; set; }             // evidence / skip reason ("offline" — never silently passed)
-        public VerifyResult Clone() => (VerifyResult)MemberwiseClone();
+        public string Missing { get; set; }            // E2: on `unavailable`, the one thing that was missing (token-lean)
+        // E1 — per-shape outcome of a dax_equivalence proof (null for every other kind): exactly what was proven on
+        // each pinned shape and what was only OBSERVED on each open shape (the tool-result contract, §Appendix).
+        public ShapeVerifyResult[] Shapes { get; set; }
+        // E3(c) — the engine's OWN mismatching contexts (bounded), so adjudication targets engine-reported cells.
+        public MismatchCell[] MismatchCells { get; set; }
+        // DEEP copy: cloned results feed the append-only evidence archive (an audit surface), so nothing nested may
+        // be shared with a live object a later code path could mutate.
+        public VerifyResult Clone() => new VerifyResult
+        {
+            Kind = Kind, Status = Status, Detail = Detail, Missing = Missing,
+            Shapes = Shapes?.Select(s => s.Clone()).ToArray(),
+            MismatchCells = MismatchCells?.Select(c => c.Clone()).ToArray(),
+        };
+    }
+
+    /// <summary>E1 — one evaluated equivalence shape in the verify payload. <see cref="Pinned"/> false = OPEN
+    /// (a mismatch here was recorded, not gated). Canonical <see cref="ShapeId"/>: 'grand_total' | 'axis:&lt;col&gt;' | 'cross'.</summary>
+    public sealed class ShapeVerifyResult
+    {
+        public string ShapeId { get; set; }
+        public bool Pinned { get; set; }
+        public int RowsCompared { get; set; }
+        public int MismatchCount { get; set; }
+        public bool Truncated { get; set; }    // this shape hit the row cap (pinned truncation blocks; open truncation is an observation)
+        public MismatchCell[] Sample { get; set; } = Array.Empty<MismatchCell>();   // bounded sample of this shape's mismatching cells
+        public ShapeVerifyResult Clone() => new ShapeVerifyResult
+        {
+            ShapeId = ShapeId, Pinned = Pinned, RowsCompared = RowsCompared, MismatchCount = MismatchCount,
+            Truncated = Truncated, Sample = Sample.Select(c => c.Clone()).ToArray(),
+        };
+    }
+
+    /// <summary>E1/E3(c) — one engine-reported divergence: the filter context and the two values that differed.</summary>
+    public sealed class MismatchCell
+    {
+        public string Context { get; set; }
+        public string ValueA { get; set; }
+        public string ValueB { get; set; }
+        public MismatchCell Clone() => new MismatchCell { Context = Context, ValueA = ValueA, ValueB = ValueB };
+    }
+
+    /// <summary>E3(a) — a witness-revision receipt: the run-locked witness expression hash changed on a later
+    /// submission (never silently replaced — the change is appended to the run record with before/after hashes).</summary>
+    public sealed class WitnessRevision
+    {
+        public string Probe { get; set; }              // the gate-input name that feeds the dax_equivalence probe
+        public string BeforeHash { get; set; }
+        public string AfterHash { get; set; }
+        public string StepId { get; set; }             // the step whose submission carried the revised witness
+        public string TimestampUtc { get; set; }
+    }
+
+    /// <summary>Blocker-3 receipt — the pinned/open SHAPE PARTITION changed between submissions of the same verify
+    /// (the laundering path: pin a shape, see its mismatch, re-submit with it open). The change is never silent:
+    /// the receipt is appended, THAT submission is refused (`unavailable`), and only the NEXT submission evaluates
+    /// fresh under the new locked partition — prior evidence stays in the run record.</summary>
+    public sealed class PartitionRevision
+    {
+        public string Key { get; set; }                // stepId|verifyOrdinal|probe — which verify's partition (ordinal = parse order within the step)
+        public string Before { get; set; }             // canonical open set (comma-joined, sorted; "" = all pinned)
+        public string After { get; set; }
+        public string StepId { get; set; }             // the step whose submission changed it
+        public string TimestampUtc { get; set; }
+    }
+
+    /// <summary>One changed expected value and its live extract receipt. The raw result is represented by a stable
+    /// hash plus row metadata so the audit proves which live evidence was observed without copying source rows into
+    /// the workflow record.</summary>
+    public sealed class AnchorRevisionChange
+    {
+        public string Context { get; set; }
+        public string OriginalExpect { get; set; }
+        public string CorrectedExpect { get; set; }
+        public string ExtractQuery { get; set; }
+        public int ExtractRowCount { get; set; }
+        public bool ExtractTruncated { get; set; }
+        public string ExtractResultHash { get; set; }
+    }
+
+    /// <summary>expected_values receipt for an ACCEPTED run-level anchor revision. The first anchor set recorded for
+    /// an input is immutable. A later changed set is accepted only after every changed expectation names its accepted
+    /// original, its proposed correction, and a live row-returning extract query. Before/After are canonical anchor-set
+    /// fingerprints, so a pure reorder or re-format is not a change.</summary>
+    public sealed class AnchorRevision
+    {
+        public string Key { get; set; }                // compatibility identity; new run-level receipts use anchorsInput
+        public string AnchorsInput { get; set; }
+        public string BeforeHash { get; set; }         // canonical anchor-set fingerprint before the change
+        public string AfterHash { get; set; }
+        public string StepId { get; set; }             // the step whose submission changed it
+        public string TimestampUtc { get; set; }
+        public AnchorRevisionChange[] Changes { get; set; } = Array.Empty<AnchorRevisionChange>();
+    }
+
+    /// <summary>Mutable run-level lock state for one expected_values binding. InitialHash never changes; CurrentHash
+    /// and CurrentAnchors advance only after a mechanically valid, live-receipted revision is accepted.</summary>
+    public sealed class AnchorRunLock
+    {
+        public string AnchorsInput { get; set; }
+        public string InitialHash { get; set; }
+        public string CurrentHash { get; set; }
+        public string StepId { get; set; }
+        public AnchorGate.Anchor[] CurrentAnchors { get; set; } = Array.Empty<AnchorGate.Anchor>();
+    }
+
+    /// <summary>Blocker-1 receipt — one SUBMISSION's verify evidence, archived append-only on the step. A
+    /// re-submission replaces the CURRENT results (they drive advancement) but may never erase the evidence an
+    /// earlier attempt produced: the mismatch that motivated a partition change must survive into the certificate.</summary>
+    public sealed class VerifyAttempt
+    {
+        public int Ordinal { get; set; }               // 1-based submission ordinal for this step
+        public string TimestampUtc { get; set; }
+        public VerifyResult[] Results { get; set; } = Array.Empty<VerifyResult>();
+        public VerifyAttempt Clone() => new VerifyAttempt { Ordinal = Ordinal, TimestampUtc = TimestampUtc, Results = Results.Select(r => r.Clone()).ToArray() };
     }
 
     public sealed class StepResult
@@ -151,6 +295,11 @@ namespace Semanticus.Engine
         public string Note { get; set; }               // skip reason / failure text
         public Dictionary<string, AnswerValue> Answers { get; set; } = new Dictionary<string, AnswerValue>();
         public VerifyResult[] VerifyResults { get; set; } = Array.Empty<VerifyResult>();
+        // Blocker 1 — APPEND-ONLY evidence history: every submission that produced verify outcomes is archived here
+        // (small DTOs, bounded by the resubmission count; never cleared on re-submit). VerifyResults above stays the
+        // CURRENT state that drives advancement; this is the immutable record get_workflow_run + the terminal run
+        // record surface. Null-able on the wire only via serialization of an empty list (kept always-present here).
+        public List<VerifyAttempt> VerifyHistory { get; set; } = new List<VerifyAttempt>();
         public string EffectiveStrictness { get; set; } // what the gate actually ran at (auditable)
 
         public StepResult Clone()
@@ -161,6 +310,7 @@ namespace Semanticus.Engine
                 Value = kv.Value.Value, Declined = kv.Value.Declined, DeclineReason = kv.Value.DeclineReason
             });
             c.VerifyResults = VerifyResults.Select(v => v.Clone()).ToArray();
+            c.VerifyHistory = VerifyHistory.Select(a => a.Clone()).ToList();
             return c;
         }
     }
@@ -180,11 +330,34 @@ namespace Semanticus.Engine
         public string StartedUtc { get; set; } = DateTime.UtcNow.ToString("o");
         public string FinishedUtc { get; set; }
         public string Origin { get; set; }
+        // Transient origin of the submission currently executing under WorkflowGate. Used by verify-side data reads
+        // so they pass through the same agent QueryData policy as run_dax. Never serialized into the run view.
+        public string SubmissionOrigin { get; set; }
         public string ModelIdentity { get; set; }
         public string ModelName { get; set; }
         public string ModelFingerprint { get; set; }
         public string SessionId { get; set; }
         public StepResult[] Results { get; }
+
+        // E3(a) — the WITNESS LOCK: the first-submitted normalized-expression hash of each dax_equivalence probe
+        // input (keyed by input name), plus every later change as an appended revision receipt. Mutated only under
+        // the engine's _workflowGate (like every other run field), so no internal lock is needed.
+        public Dictionary<string, string> WitnessLocks { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+        public List<WitnessRevision> WitnessRevisions { get; } = new List<WitnessRevision>();
+
+        // Blocker 3 — the PARTITION LOCK: the canonical effective OPEN set per verify (stepId|verifyOrdinal|probe),
+        // locked at the first actually-run comparison; a later submission with a different set appends a receipt and
+        // is refused (see EquivalenceGate.RegisterPartition). Same _workflowGate ownership as the witness lock.
+        public Dictionary<string, string> PartitionLocks { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+        public List<PartitionRevision> PartitionRevisions { get; } = new List<PartitionRevision>();
+
+        // Legacy per-verify anchor locks remain for compatibility with existing run records and the pure lock helper.
+        // Production expected_values execution uses RunAnchorLocks below.
+        public Dictionary<string, string> AnchorLocks { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+        // expected_values run-level lock: the earliest answered anchor binding is the immutable initial set. Current
+        // advances only after a changed set's per-anchor receipts execute successfully against the pinned live model.
+        public Dictionary<string, AnchorRunLock> RunAnchorLocks { get; } = new Dictionary<string, AnchorRunLock>(StringComparer.Ordinal);
+        public List<AnchorRevision> AnchorRevisions { get; } = new List<AnchorRevision>();
 
         public WorkflowRunState(string runId, WorkflowDef def, string settingsStrictness, string globalStrictness = null)
         {
@@ -357,12 +530,37 @@ namespace Semanticus.Engine
         public StepResult[] Steps { get; set; } = Array.Empty<StepResult>();
         public CurrentStepView CurrentStep { get; set; }   // null once terminal
 
+        // E3(a)/blocker-3 — the adjudication RECEIPTS surfaced on get_workflow_run (null when none, to keep the
+        // payload lean): the currently-locked witness hash per probe input, every witness revision, and every
+        // shape-partition revision recorded on this run.
+        public WitnessLockView[] WitnessLocks { get; set; }
+        public WitnessRevision[] WitnessRevisions { get; set; }
+        public PartitionRevision[] PartitionRevisions { get; set; }
+        public AnchorLockView[] AnchorLocks { get; set; }           // expected_values run-level initial/current locks
+        public AnchorRevision[] AnchorRevisions { get; set; }   // expected_values — the anchor-set revision receipts
+
         // Learning Loop L3 (docs/learning-loop-plan.md §3.2): a run that completed with every step
         // passed and at least one REAL verify (not all-skipped/offline) is repeatable — the
         // /distill-workflow hint. Engine-set on the terminal view; the agent still parameterizes + the
         // admission gates guard the library.
         public bool Distillable { get; set; }
         public string DistillableWhy { get; set; }
+    }
+
+    /// <summary>E3(a) — one locked witness on the run view: the probe input name and its current SHA-256 lock hash.</summary>
+    public sealed class WitnessLockView
+    {
+        public string Probe { get; set; }
+        public string Hash { get; set; }
+    }
+
+    /// <summary>The first and currently accepted expected_values fingerprints for one run-level binding.</summary>
+    public sealed class AnchorLockView
+    {
+        public string AnchorsInput { get; set; }
+        public string InitialHash { get; set; }
+        public string CurrentHash { get; set; }
+        public string StepId { get; set; }
     }
 
     /// <summary>Holds the session's live runs and allocates run ids. Access is serialized by the

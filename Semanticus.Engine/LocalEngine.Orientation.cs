@@ -62,15 +62,17 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Active workflow runs + a loaded change-plan's size + a loaded spec's name — each omitted
-        /// when absent. Runs are read under _workflowGate (the store's concurrency owner); plan/spec each own
+        /// when absent. Runs are read under the captured context's workflow gate; plan/spec each own
         /// their own gate, so they're read OUTSIDE it to avoid nesting the locks.</summary>
         private async Task<ActiveWorkBrief> BuildActiveWorkAsync()
         {
+            var context = _sessions.CurrentContext;
             ActiveRunBrief[] runs = null;
-            await _workflowGate.WaitAsync();
+            await context.WorkflowGate.WaitAsync();
             try
             {
-                var active = _workflowRuns.ActiveRuns();
+                EnsureContextCurrent(context, "Active work read");
+                var active = context.WorkflowRuns.ActiveRuns();
                 if (active.Count > 0)
                     runs = active.Select(r => new ActiveRunBrief
                     {
@@ -79,14 +81,28 @@ namespace Semanticus.Engine
                         CurrentStep = r.CurrentStep?.Id,
                     }).ToArray();
             }
-            finally { _workflowGate.Release(); }
+            finally { context.WorkflowGate.Release(); }
 
             int? planItems = null;
-            var plan = await GetPlanAsync();
+            await context.PlanGate.WaitAsync();
+            ChangePlanView plan;
+            try
+            {
+                EnsureContextCurrent(context, "Active work read");
+                plan = BuildView(context.Plans.Current, context.Session?.Revision ?? 0);
+            }
+            finally { context.PlanGate.Release(); }
             if (plan?.Items is { Length: > 0 } items) planItems = items.Length;
 
             string specName = null;
-            var spec = await GetSpecAsync();
+            await context.SpecGate.WaitAsync();
+            SpecView spec;
+            try
+            {
+                EnsureContextCurrent(context, "Active work read");
+                spec = context.Spec.View();
+            }
+            finally { context.SpecGate.Release(); }
             if (spec?.Spec != null) specName = string.IsNullOrWhiteSpace(spec.Spec.Name) ? "(unnamed spec)" : spec.Spec.Name;
 
             if (runs == null && planItems == null && specName == null) return null;

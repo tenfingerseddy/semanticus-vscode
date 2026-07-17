@@ -9,7 +9,7 @@ client selected and operated by the user.
 
 ## Release status
 
-Semanticus 1.0.1 corrects the Marketplace listing and provides five platform-specific packages. Every accepted
+Semanticus 1.1.0 is a feature release across the same five platform-specific packages. Every accepted
 VSIX bundles its engine and is produced only on a matching GitHub Actions runner that extracts and executes that
 engine. Tenant-backed and clean-machine acceptance cannot be replaced by a local build and must be completed
 against the artifact that is published.
@@ -17,7 +17,7 @@ against the artifact that is published.
 ## Install
 
 Install Semanticus from the VS Code Marketplace, which selects the package for the current host. For a manual
-install, choose the matching 1.0.1 VSIX, then in VS Code open **Extensions**, choose **Views and More Actions**,
+install, choose the matching 1.1.0 VSIX, then in VS Code open **Extensions**, choose **Views and More Actions**,
 select **Install from VSIX**, and reload the window. Semanticus includes its .NET engine, so users of an accepted
 package do not need to install a separate .NET runtime.
 
@@ -34,9 +34,9 @@ AI Assistant ---------------------- MCP / stdio -------------+      single-write
 Both doors call the same engine contracts. A successful change broadcasts `model/didChange`, carries its origin,
 and participates in the shared undo history.
 
-## Supported platforms for 1.0.1
+## Supported platforms for 1.1.0
 
-| Platform | 1.0.1 status | Scope |
+| Platform | 1.1.0 status | Scope |
 |---|---|---|
 | Windows 11 x64 | Supported release package | Offline file models, Power BI Desktop discovery, local and remote XMLA, local M preview, VS Code UI and MCP |
 | Windows 11 ARM64 | Supported release package | Offline file models, remote XMLA and Fabric journeys, VS Code UI and MCP |

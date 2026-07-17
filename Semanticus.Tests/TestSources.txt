@@ -13,6 +13,7 @@ ChangePlanDeleteTests.cs
 CloudReportLineageTests.cs
 CloudReportPublicDoorTests.cs
 CompareAuthFallbackTests.cs
+ConnectionAccountHistoryTests.cs
 ConnectionContextTests.cs
 ConnectionPublicDoorTests.cs
 ConnectionRegistryTests.cs
@@ -37,8 +38,10 @@ EntitlementVerifierTests.cs
 EquivalenceMultiShapeTests.cs
 EvidenceLibraryTests.cs
 EvidenceTests.cs
+ExpectedValuesVerifyTests.cs
 ExperienceLogTests.cs
 ExplainValueTests.cs
+FabricContainmentTests.cs
 FabricSpecPublicDoorTests.cs
 FieldParameterTests.cs
 FormatTemplatesTests.cs
@@ -47,6 +50,7 @@ GitPublicOperationTests.cs
 HardMeasureWorkflowTests.cs
 HarnessFixTests.cs
 HarnessReportTests.cs
+HeaderSaveModelFenceTests.cs
 HealthDeltaTests.cs
 HistoryCheckpointTests.cs
 ImpactAssessmentTests.cs
@@ -59,7 +63,9 @@ LayoutSidecarTests.cs
 LicenseEntitlementTests.cs
 LicenseExpiryTests.cs
 LineageTests.cs
+LiveDeployStructureTests.cs
 LiveDeploySyncTests.cs
+MeasureFaithfulFidelityTests.cs
 MeasureReconcilerTests.cs
 MeasureTimingTests.cs
 ModelCompareTests.cs
@@ -90,11 +96,13 @@ ReconcileMappingTests.cs
 ReconcileRunnerTests.cs
 RelationshipIntegrityTests.cs
 RemoveSafeObjectsTests.cs
+RenameLsdlCascadeTests.cs
 ReplacePlanTests.cs
 ReplayCheckTests.cs
 ReportDefinitionReaderTests.cs
 RestorePointTests.cs
 ResultContractTests.cs
+RpcRoleBindingTests.cs
 RunDaxQueryGateTests.cs
 SafeRenameWorkflowTests.cs
 SchemaSyncTests.cs
@@ -102,6 +110,7 @@ SearchReplaceTests.cs
 SecretScrubTests.cs
 SessionLifecycleTests.cs
 SessionObserverTests.cs
+SetSynonymsCollisionTests.cs
 SkillDebtSafetyTests.cs
 SnapshotCleanupTests.cs
 SpecCardinalityTests.cs
@@ -119,6 +128,7 @@ TimeIntelligenceVariantsTests.cs
 TomCalendarAvailabilityTests.cs
 TomVersionPinTests.cs
 ValueBlameTests.cs
+VertiPaqStorageModeTests.cs
 VerifiedEditsAuditTests.cs
 VerifiedModeTests.cs
 VpaxExportTests.cs
@@ -135,6 +145,7 @@ WorkflowOpsTests.cs
 WorkflowProfileTests.cs
 WorkflowSeedLibraryTests.cs
 WorkflowTemplateTests.cs
+WorkflowVerifyEnforcementTests.cs
 WorkflowVerifyExecutorTests.cs
 WorkingCopyTests.cs
 WorkspacePushTests.cs

@@ -55,6 +55,13 @@ export function onPlanChange(fn: (v: unknown) => void): () => void {
   return () => { planListeners.delete(fn); };
 }
 
+export type OperationProgress = { opKey: string; runId: string; done: number; total: number; note?: string };
+const progressListeners = new Set<(v: OperationProgress) => void>();
+export function onProgress(fn: (v: OperationProgress) => void): () => void {
+  progressListeners.add(fn);
+  return () => { progressListeners.delete(fn); };
+}
+
 // The model spec broadcasts separately (spec/didChange) so the Spec tab watches it assemble live as the engine
 // auto-generates it and the human OR the user's Claude refine it on the same session.
 const specListeners = new Set<(v: unknown) => void>();
@@ -124,10 +131,30 @@ export function onNavigate(fn: (m: NavigateMessage) => void): () => void {
   return () => { navigateListeners.delete(fn); };
 }
 
+// The host asks the webview to open the Connections manager (drawer) — e.g. "Manage connections" in the native
+// tree picker. Host→webview, so both doors open the SAME component.
+const openConnectionsListeners = new Set<() => void>();
+export function onOpenConnections(fn: () => void): () => void {
+  openConnectionsListeners.add(fn);
+  return () => { openConnectionsListeners.delete(fn); };
+}
+
+// The host fires 'connectionChanged' when the CONNECTION STATE moves out-of-band from the webview's own RPCs: an
+// MCP-door connect/disconnect (relayed from model/activity), or a reference-model set/clear the host just completed.
+// Studio re-reads its connection context on this so ConnectBar + the Connections drawer never show a stale panel.
+// Distinct from 'reconnected' (which also rejects in-flight requests on a real connection loss) — this is a light
+// "re-read your connection state" nudge with no request-rejection side effect.
+const connectionChangeListeners = new Set<() => void>();
+export function onConnectionChange(fn: () => void): () => void {
+  connectionChangeListeners.add(fn);
+  return () => { connectionChangeListeners.delete(fn); };
+}
+
 // Resolvers for in-flight requestDropTables() calls (host hands back the Model-tree drag stash on drop).
 const dropPending = new Map<number, (tables: string[]) => void>();
 const folderPending = new Map<number, (folder: string | null) => void>();
 const specFilePending = new Map<number, (path: string | null) => void>();
+const reportPathsPending = new Map<number, (paths: string[] | null) => void>();
 
 window.addEventListener('message', (e: MessageEvent) => {
   const msg = e.data;
@@ -147,6 +174,11 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (r) { specFilePending.delete(msg.id); r(typeof msg.path === 'string' ? msg.path : null); }
     return;
   }
+  if (msg.type === 'reportPaths') {
+    const r = reportPathsPending.get(msg.id);
+    if (r) { reportPathsPending.delete(msg.id); r(Array.isArray(msg.paths) ? (msg.paths as string[]) : null); }
+    return;
+  }
   if (msg.type === 'rpcResult') {
     const p = pending.get(msg.id);
     if (p) {
@@ -160,6 +192,9 @@ window.addEventListener('message', (e: MessageEvent) => {
     listeners.forEach((l) => { try { l(n); } catch { /* a view's handler threw; isolate it */ } });
   } else if (msg.type === 'planDidChange') {
     planListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'progressDidChange') {
+    const v = msg.payload as OperationProgress;
+    progressListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'specDidChange') {
     specListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'layoutDidChange') {
@@ -175,6 +210,10 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'navigate') {
     const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'openConnections') {
+    openConnectionsListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'connectionChanged') {
+    connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnected') {
     // The host swapped the engine connection (reconnect, or a new model opened). Requests in flight against the OLD
     // connection will never get an rpcResult, so abandon them, then let subscribers re-read. The rejection copy is
@@ -195,6 +234,8 @@ window.addEventListener('pagehide', () => {
   folderPending.clear();
   for (const [, resolve] of specFilePending) resolve(null);
   specFilePending.clear();
+  for (const [, resolve] of reportPathsPending) resolve(null);
+  reportPathsPending.clear();
 });
 
 // Persisted webview state (survives hide/show + reloads — VS Code serializes it). A single state object is shared
@@ -212,6 +253,46 @@ export function saveState(key: string, value: unknown): void {
 // engine RPC). The host resolves the ref and calls treeView.reveal.
 export function revealInTree(ref: string): void {
   vscode.postMessage({ type: 'revealInTree', ref });
+}
+
+// Selection bus, Studio → Properties: tell the host a Studio navigator focused/selected a model object so
+// the Properties view repopulates for it exactly as a native Model-tree selection would. Never steals focus
+// (unlike revealInTree): the host only re-pushes the grid; Studio keeps the keyboard. `ref` is the engine
+// object ref the navigators already carry ('measure:Table/Name', 'column:Table/Name', 'table:Name', …).
+//
+// A mouse click on a row fires onFocus (focusSelectInProperties) AND then onClick (selectInProperties) for the
+// SAME ref — one intent, two events. `pendingFocusRef` lets the click collapse that redundant second post. The
+// token is one-shot AND self-expiring: a focus that is NOT followed by a click (keyboard focus, or the pointer
+// moving on) must not leave the token set — otherwise it lingers across tab switches / model remounts and later
+// swallows a legitimate click on the same ref. So the token clears on the click that consumes it, on a superseding
+// focus, AND on a short timeout that outlasts a single mouse gesture (focus→click) but nothing longer.
+let pendingFocusRef: string | null = null;
+let pendingFocusTimer: number | null = null;
+function clearPendingFocus(): void {
+  pendingFocusRef = null;
+  if (pendingFocusTimer !== null) { window.clearTimeout(pendingFocusTimer); pendingFocusTimer = null; }
+}
+export function selectInProperties(ref: string | null | undefined): void {
+  if (!ref) return;
+  const fromFocus = ref === pendingFocusRef;   // the mouse-focus that just fired already posted this exact ref
+  clearPendingFocus();
+  if (fromFocus) return;
+  vscode.postMessage({ type: 'selectObject', ref });
+}
+
+// Focus-driven selection: focusing an object row (keyboard tab, or the focus half of a mouse click) selects it
+// in Properties WITHOUT running the row's primary action (insert DAX / preview / pick). This is the ratified
+// "focusing an object row selects it" behavior — a keyboard user can walk rows inspecting each, and only
+// Enter/Space triggers the primary action. ALWAYS posts (focus is a definite, never-stale intent to inspect);
+// records the ref so the click that follows a mouse-focus doesn't double-post it.
+export function focusSelectInProperties(ref: string | null | undefined): void {
+  if (!ref) return;
+  clearPendingFocus();          // supersede any prior, unconsumed focus token before arming a fresh one
+  pendingFocusRef = ref;
+  // Expire the token if no click follows THIS focus within one gesture: a keyboard walk (or a pointer that moved
+  // on) leaves no click to consume it, and a stale token would later swallow a real click on the same ref.
+  pendingFocusTimer = window.setTimeout(clearPendingFocus, 1000);
+  vscode.postMessage({ type: 'selectObject', ref });
 }
 
 // Move keyboard focus to the Model tree (Ctrl+Alt+T in Studio). Webview→host: only the host can move
@@ -255,6 +336,32 @@ export function pickSpecFile(mode: 'open' | 'save', suggestedName = 'model.spec.
 
 export function openLocalModel(): void {
   vscode.postMessage({ type: 'openLocalModel' });
+}
+
+// Native folder selection is owned by the extension host: local report analysis targets real folders on disk
+// (a .pbip's *.Report folder, a definition folder, or a project root), so the webview must never fake the picker.
+// Resolves the chosen folder paths (multi-select), or null if the user cancelled. The free-text input stays the
+// power-user route (paste a .pbip file path or a ;-separated list) — this is the browse convenience beside it.
+// Bounded: the host always answers (null on cancel/error), but if that reply is lost — host reload mid-dialog —
+// the promise must not pin the caller's busy state forever, so a generous timeout rejects and cleans the slot
+// (generous because the dialog legitimately sits open while the user hunts for the folder).
+const PICK_REPORT_PATHS_TIMEOUT_MS = 120_000;
+export function pickReportPaths(): Promise<string[] | null> {
+  const id = ++seq;
+  return new Promise<string[] | null>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      if (reportPathsPending.delete(id)) reject(new Error('Semanticus: the folder dialog did not respond. Close it if it is still open, then try again.'));
+    }, PICK_REPORT_PATHS_TIMEOUT_MS);
+    reportPathsPending.set(id, (paths) => { window.clearTimeout(timer); resolve(paths); });
+    vscode.postMessage({ type: 'pickReportPaths', id });
+  });
+}
+
+// Point the Reference tree (the copy-from model) at a remembered published model — the drawer's "Use as reference"
+// action. Webview→host: the host owns the reference model state (referenceRef) and the native Reference tree. Carries
+// the tenant so a cross-tenant reference targets its own tenant, not the default one.
+export function useAsReference(record: { endpoint: string; database?: string; authMode?: string; tenantId?: string }): void {
+  vscode.postMessage({ type: 'useAsReference', endpoint: record.endpoint, database: record.database, authMode: record.authMode, tenantId: record.tenantId });
 }
 
 // Print / save-as-PDF: window.print() is a no-op inside VS Code's webview host (Chromium suppresses the

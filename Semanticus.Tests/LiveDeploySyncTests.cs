@@ -227,9 +227,12 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void Model_annotations_and_table_detail_rows_metadata_reach_live_and_are_claimed()   // #135
+        public void Table_detail_rows_reach_live_but_a_foreign_annotation_is_never_written()   // #135, revised for deploy MAJOR-4
         {
             var src = NewModel();
+            // Foreign (non-owned, non-audit) annotations are NOT ours to deploy: a stale session value must never
+            // overwrite the live one, and it is never counted as Metadata. Only the generic non-annotation supplement
+            // (here, the detail-rows definition) deploys.
             src.Annotations.Add(new TOM.Annotation { Name = "Owner", Value = "Finance" });
             src.Tables["Sales"].Annotations.Add(new TOM.Annotation { Name = "ToolHint", Value = "keep" });
             src.Tables["Sales"].DefaultDetailRowsDefinition = new TOM.DetailRowsDefinition { Expression = "SELECTCOLUMNS ( Sales, \"Amount\", Sales[Amount] )" };
@@ -237,12 +240,27 @@ namespace Semanticus.Tests
 
             var rep = LiveDeploy.SyncModels(src, live, apply: true);
 
-            Assert.Equal(2, rep.Metadata);   // one model shell + one table shell
-            Assert.Equal("Finance", live.Annotations["Owner"].Value);
-            Assert.Equal("keep", live.Tables["Sales"].Annotations["ToolHint"].Value);
+            Assert.Equal(1, rep.Metadata);   // the table detail-rows shell only — the two foreign annotations do NOT count
+            Assert.False(live.Annotations.Contains("Owner"));                 // foreign — never written
+            Assert.False(live.Tables["Sales"].Annotations.Contains("ToolHint"));   // foreign — never written
             Assert.Equal(src.Tables["Sales"].DefaultDetailRowsDefinition.Expression, live.Tables["Sales"].DefaultDetailRowsDefinition.Expression);
-            Assert.Contains("model", rep.SyncedRefs);
+            Assert.DoesNotContain("model", rep.SyncedRefs);   // no model-level change (foreign annotation isn't one)
             Assert.Contains("table:Sales", rep.SyncedRefs);
+        }
+
+        [Fact]
+        public void A_foreign_annotation_present_live_is_left_untouched_on_deploy()   // deploy MAJOR-4
+        {
+            // Live carries another tool's state; the session carries a STALE value for the same annotation. The deploy
+            // must not overwrite it (and must not count it) — foreign annotations are inert in both directions.
+            var src = NewModel(); src.Annotations.Add(new TOM.Annotation { Name = "SomeOtherTool_State", Value = "stale" });
+            var live = NewModel(); live.Annotations.Add(new TOM.Annotation { Name = "SomeOtherTool_State", Value = "live-truth" });
+
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+
+            Assert.Equal(0, rep.Metadata);
+            Assert.Equal(0, rep.Annotations);
+            Assert.Equal("live-truth", live.Annotations["SomeOtherTool_State"].Value);   // not clobbered by the stale session value
         }
 
         [Fact]
@@ -282,24 +300,26 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void Child_annotations_and_table_data_category_reach_live_and_are_claimed()   // #135
+        public void Table_data_category_reaches_live_but_foreign_child_annotations_are_not_written()   // #135, revised for deploy MAJOR-4
         {
             var src = NewModel();
             src.Tables["Sales"].DataCategory = "Fact";
-            src.Tables["Sales"].Columns["Amount"].Annotations.Add(new TOM.Annotation { Name = "ColumnHint", Value = "currency" });
+            // Owned child annotations (BPA ignore rules) DO deploy on their own channel; a foreign one never does.
+            src.Tables["Sales"].Columns["Amount"].Annotations.Add(new TOM.Annotation { Name = "BestPracticeAnalyzer_IgnoreRules", Value = "{\"RuleIDs\":[\"R\"]}" });
             src.Tables["Sales"].Measures["Total"].Annotations.Add(new TOM.Annotation { Name = "MeasureHint", Value = "trusted" });
             var live = NewModel();
 
             var rep = LiveDeploy.SyncModels(src, live, apply: true);
 
             Assert.Equal(1, rep.DataCategories);
-            Assert.Equal(2, rep.Metadata);
+            Assert.Equal(0, rep.Metadata);          // no generic supplement carries annotations any more
+            Assert.Equal(1, rep.Annotations);       // the owned BPA-ignore annotation deployed on the owned channel
             Assert.Equal("Fact", live.Tables["Sales"].DataCategory);
-            Assert.Equal("currency", live.Tables["Sales"].Columns["Amount"].Annotations["ColumnHint"].Value);
-            Assert.Equal("trusted", live.Tables["Sales"].Measures["Total"].Annotations["MeasureHint"].Value);
-            Assert.Contains("table:Sales", rep.SyncedRefs);
-            Assert.Contains("column:Sales/Amount", rep.SyncedRefs);
-            Assert.Contains("measure:Sales/Total", rep.SyncedRefs);
+            Assert.Equal("{\"RuleIDs\":[\"R\"]}", live.Tables["Sales"].Columns["Amount"].Annotations["BestPracticeAnalyzer_IgnoreRules"].Value);
+            Assert.False(live.Tables["Sales"].Measures["Total"].Annotations.Contains("MeasureHint"));   // foreign — never written
+            Assert.Contains("table:Sales", rep.SyncedRefs);           // DataCategory change
+            Assert.Contains("column:Sales/Amount", rep.SyncedRefs);   // owned-annotation deploy claims the ref
+            Assert.DoesNotContain("measure:Sales/Total", rep.SyncedRefs);   // nothing deployed on it
             Assert.Empty(rep.Unmatched);
         }
 
@@ -317,21 +337,23 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void New_child_annotations_are_carried_before_create_is_claimed()   // #135
+        public void New_objects_carry_owned_annotations_but_not_foreign_ones()   // #135, revised for deploy MAJOR-4
         {
             var src = NewModel();
             var column = new TOM.CalculatedColumn { Name = "Tax", Expression = "Sales[Amount] * 0.1", LineageTag = "tag-tax" };
-            column.Annotations.Add(new TOM.Annotation { Name = "ColumnHint", Value = "derived" });
+            column.Annotations.Add(new TOM.Annotation { Name = "ColumnHint", Value = "derived" });                 // foreign
+            column.Annotations.Add(new TOM.Annotation { Name = "BestPracticeAnalyzer_IgnoreRules", Value = "{\"RuleIDs\":[\"C\"]}" });   // owned
             src.Tables["Sales"].Columns.Add(column);
             var measure = new TOM.Measure { Name = "Average", Expression = "AVERAGE ( Sales[Amount] )", LineageTag = "tag-average" };
-            measure.Annotations.Add(new TOM.Annotation { Name = "MeasureHint", Value = "reviewed" });
+            measure.Annotations.Add(new TOM.Annotation { Name = "MeasureHint", Value = "reviewed" });              // foreign
             src.Tables["Sales"].Measures.Add(measure);
             var live = NewModel();
 
             var rep = LiveDeploy.SyncModels(src, live, apply: true);
 
-            Assert.Equal("derived", live.Tables["Sales"].Columns["Tax"].Annotations["ColumnHint"].Value);
-            Assert.Equal("reviewed", live.Tables["Sales"].Measures["Average"].Annotations["MeasureHint"].Value);
+            Assert.False(live.Tables["Sales"].Columns["Tax"].Annotations.Contains("ColumnHint"));                  // foreign — never carried
+            Assert.Equal("{\"RuleIDs\":[\"C\"]}", live.Tables["Sales"].Columns["Tax"].Annotations["BestPracticeAnalyzer_IgnoreRules"].Value);   // owned — carried on the new object
+            Assert.False(live.Tables["Sales"].Measures["Average"].Annotations.Contains("MeasureHint"));            // foreign — never carried
             Assert.Contains("column:Sales/Tax", rep.SyncedRefs);
             Assert.Contains("measure:Sales/Average", rep.SyncedRefs);
             Assert.Empty(rep.Unmatched);

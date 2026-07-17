@@ -454,17 +454,35 @@ namespace Semanticus.Engine
                 return (Unverified, eq.AuthFailed
                     ? XmlaAuthHint.ProbeHint()
                     : "the comparison failed to run: " + eq.Error);
-            if (eq.MismatchCount > 0)
-            {
-                var samples = string.Join("; ", (eq.Mismatches ?? Array.Empty<EquivalenceMismatch>()).Take(3)
-                    .Select(m => $"{m.Context}: {m.ValueA} vs {m.ValueB}"));
-                return (SilentlyWrong, $"asked two ways, the model gives different answers in {eq.MismatchCount}/{eq.RowsCompared} context(s)" + (samples.Length > 0 ? " — e.g. " + samples : "") + ". At least one phrasing returns a confident, wrong number.");
-            }
-            if (eq.Truncated)
-                return (Unverified, $"the comparison hit the row cap ({eq.RowsCompared} rows) — coverage incomplete, agreement is not a proof.");
-            if (eq.RowsCompared <= 0)
-                return (Unverified, "the comparison returned no rows — nothing was actually compared (check the groupBy columns / filters).");
 
+            // ONE evidence ladder (DaxBench.ClassifyEquivalenceEvidence) grades the comparison — the same policy
+            // optimize_measure/apply_plan enforce, so no consumer invents its own idea of "proof". Only the proven
+            // rung may proceed toward Correct; a proven MISMATCH is the confidently-wrong verdict; everything
+            // degraded/thin/incomplete stays Unverified (high-precision bias, never a fabricated verdict).
+            // EFFECTIVE grid count (trim + drop blanks) — the same normalization query construction applies.
+            var (state, why) = DaxBench.ClassifyEquivalenceEvidence(eq, DaxBench.NormalizeGroupBy(q.GroupBy).Length);
+            switch (state)
+            {
+                case "failed":
+                {
+                    var samples = string.Join("; ", (eq.Mismatches ?? Array.Empty<EquivalenceMismatch>()).Take(3)
+                        .Select(m => $"{m.Context}: {m.ValueA} vs {m.ValueB}"));
+                    return (SilentlyWrong, $"asked two ways, the model gives different answers in {eq.MismatchCount}/{eq.RowsCompared} context(s)" + (samples.Length > 0 ? " — e.g. " + samples : "") + ". At least one phrasing returns a confident, wrong number.");
+                }
+                case "degraded_mismatch":
+                    // NOT a conviction: under a degraded comparison the surrogate itself can cause the divergence
+                    // (calc-group identity on generated names) — an observation to investigate, never SilentlyWrong.
+                    return (Unverified, "difference observed under a degraded comparison — not authoritative: " + why);
+                case "degraded":
+                    return (Unverified, "the two phrasings agree, but the comparison ran with reduced fidelity — " + eq.Fidelity
+                        + " Agreement under degraded evaluation is not proof against the deployed model.");
+                case "thin":
+                    return (Unverified, $"both phrasings agree, but only at the grand total ({eq.RowsCompared} context(s)) — not a per-context proof. Add groupBy columns and re-run.");
+                case "unverified":
+                    return (Unverified, "the comparison did not produce authoritative evidence — " + why);
+            }
+
+            // state == "proven".
             // The phrasings AGREE. That is the moment agreement≠correctness bites: if a trusted answer is on record,
             // the agreement must ALSO reconcile with it — an independent oracle is the ONLY probe that catches two
             // phrasings wrong the same way (a consistency-only check would have passed this). The oracle rides ANY
@@ -489,8 +507,7 @@ namespace Semanticus.Engine
                 return (Correct, $"both phrasings agree across {eq.RowsCompared} context(s), and the answer matches the value you trust.");
             }
 
-            var thin = (q.GroupBy?.Length ?? 0) == 0 ? " (grand-total only — add groupBy columns for a per-context proof)" : "";
-            return (Correct, $"both phrasings agree across {eq.RowsCompared} context(s){thin}.");
+            return (Correct, $"both phrasings agree across {eq.RowsCompared} context(s).");
         }
 
         /// <summary>Tier 3 (refusal): the question is unanswerable from the model. Declining is the CORRECT

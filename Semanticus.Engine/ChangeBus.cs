@@ -19,6 +19,22 @@ namespace Semanticus.Engine
 
         public void PublishPlan(ChangePlanView v) => PlanChanged?.Invoke(v);
 
+        /// <summary>Fired while a long-running operation advances. The RpcServer re-broadcasts this as
+        /// <c>progress/didChange</c> so the UI can show useful progress without treating it as a model edit.</summary>
+        public event Action<OperationProgress> Progress;
+
+        public void PublishProgress(OperationProgress v)
+        {
+            // Progress is observational: a broken listener must never fail the operation or starve healthy listeners.
+            var handlers = Progress;
+            if (handlers == null) return;
+            foreach (var handler in handlers.GetInvocationList())
+            {
+                try { ((Action<OperationProgress>)handler)(v); }
+                catch { /* isolate subscribers */ }
+            }
+        }
+
         /// <summary>Fired when the session's model spec is set/cleared/loaded. The RpcServer re-broadcasts this as
         /// <c>spec/didChange</c> so the Spec tab watches the spec assemble live (by the human OR the user's Claude).</summary>
         public event Action<SpecView> SpecChanged;

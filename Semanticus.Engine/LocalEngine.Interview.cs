@@ -137,7 +137,11 @@ namespace Semanticus.Engine
             return live != null ? LiveIdentityFor(live) : null;   // an attached live connection is the only durable anchor left; else none
         }
 
-        private string OpenModelIdentity() => PaneIdentity(_sessions.Current, _live);
+        private string OpenModelIdentity()
+        {
+            var context = _sessions.CurrentContext;
+            return PaneIdentity(context.Session, context.Live);
+        }
 
         // Whether the identity names an ADDRESS the model merely occupies (a live endpoint|database, OR a file
         // path), as opposed to a content identity. BOTH are subject to a same-address, same-name in-place
@@ -204,7 +208,8 @@ namespace Semanticus.Engine
         private (List<InterviewQuestion> mine, List<InterviewQuestion> other, List<InterviewQuestion> unattributed)
             PartitionByAttribution(IEnumerable<InterviewQuestion> all)
         {
-            var openId = PaneIdentity(_sessions.Current, _live);
+            var context = _sessions.CurrentContext;
+            var openId = PaneIdentity(context.Session, context.Live);
             var mine = new List<InterviewQuestion>();
             var other = new List<InterviewQuestion>();
             var unattr = new List<InterviewQuestion>();
@@ -252,9 +257,10 @@ namespace Semanticus.Engine
         /// one right before execution; a swap in between must abort, not grade against the replacement.</summary>
         private string StabilityRefusal(Session capturedSession, LiveConnection capturedLive)
         {
-            if (!ReferenceEquals(_sessions.Current, capturedSession))
+            var current = _sessions.CurrentContext;
+            if (!ReferenceEquals(current.Session, capturedSession))
                 return "The open model changed while this interview was running, so it was not graded (re-run against the model you intend).";
-            if (!ReferenceEquals(_live, capturedLive))
+            if (!ReferenceEquals(current.Live, capturedLive))
                 return "The live connection changed while this interview was running, so it was not graded (re-run against the connection you intend).";
             return null;
         }
@@ -314,9 +320,10 @@ namespace Semanticus.Engine
             var caveat = address && mine.Count > 0
                 ? " Note: this pack is matched by the model's address (its file path, or its live endpoint and database); a model replaced in place at the same address with the same name is not detected."
                 : "";
-            // P3-F: unattributed questions have no re-bind op yet; point at the honest workaround + the tracking issue.
+            // Unattributed questions have no re-bind op by design (closed as won't-do): the delete + re-add
+            // workaround records the full fresh identity, and a dedicated op earned no demand.
             var rebind = unattr.Count > 0
-                ? " To claim an unattributed question for this model, delete_interview_question and re-add it while this model is open (a dedicated re-bind op is tracked in #164)."
+                ? " To claim an unattributed question for this model, delete_interview_question and re-add it while this model is open."
                 : "";
             return Task.FromResult(new InterviewListResult
             {
@@ -366,8 +373,9 @@ namespace Semanticus.Engine
             // #157: capture the session + live connection ONCE (a swap mid-op must not stamp a mismatched identity —
             // P1-3 save race). scope→file is resolved from the captured session's anchor, and every identity field is
             // derived from these same captured refs.
-            var sess = _sessions.Current;
-            var liveConn = _live;
+            var context = _sessions.CurrentContext;
+            var sess = context.Session;
+            var liveConn = context.Live;
             scope = NormalizeInterviewScope(scope);
             var file = InterviewScopeFile(scope);
             if (file == null)
@@ -394,8 +402,7 @@ namespace Semanticus.Engine
             {
                 // TOCTOU: the label read above awaited on the dispatcher — a session swap could have landed. Refuse to
                 // write a binding for a model that is no longer the one we read (never stamp B's identity into A's pack).
-                if (!ReferenceEquals(_sessions.Current, sess))
-                    throw new InvalidOperationException("The open model changed while saving this question, so it was NOT saved (re-run add_interview_question against the model you intend).");
+                EnsureContextCurrent(context, "Interview question save");
                 // Fail-loud, as promised: Append is best-effort by contract (the run-record paths need that),
                 // so the SAVE path must check it — returning a "saved" question that never hit disk would be
                 // the exact silent failure this op's doc-comment forbids.
@@ -449,8 +456,9 @@ namespace Semanticus.Engine
             string file = null, scope = null;
             // Capture the session + live connection ONCE (P1-3): the whole op — classify, execute, grade — is judged
             // against THESE refs, and a swap in between aborts rather than grading against the replacement.
-            var capturedSession = _sessions.Current;
-            var capturedLive = _live;
+            var capturedContext = _sessions.CurrentContext;
+            var capturedSession = capturedContext.Session;
+            var capturedLive = capturedContext.Live;
             // Read the CURRENT session model name unconditionally (P3, R3): the in-place-replacement witness must
             // cover the disk-path + refusal-tier lane, which has no live connection, so it cannot be gated on _live.
             var currentName = capturedSession == null ? null : await ReadModelNameAsync(capturedSession);
@@ -580,7 +588,10 @@ namespace Semanticus.Engine
                         bool hasOracle = !string.IsNullOrWhiteSpace(q.ExpectedValue) || (q.ExpectedMatrix != null && q.ExpectedMatrix.Length > 0);
                         // ENGINE-constructed probe (BuildParaphraseOracleQuery over the question's own fields) — not
                         // caller-authored DAX, so it deliberately runs ungated (default human origin), not execOrigin.
-                        if (hasOracle && eq != null && string.IsNullOrEmpty(eq.Error) && eq.AllMatch && !eq.Truncated && eq.RowsCompared > 0)
+                        // Only a PROVEN agreement (the shared evidence ladder) reaches the oracle gate in
+                        // ScoreParaphrase — degraded/thin/incomplete evidence scores Unverified, so don't spend the probe.
+                        if (hasOracle && eq != null
+                            && DaxBench.ClassifyEquivalenceEvidence(eq, DaxBench.NormalizeGroupBy(q.GroupBy).Length).State == "proven")
                             oracleProbe = await RunDaxAsync(BuildParaphraseOracleQuery(q), 10000);
                     }
                     (outcome, detail) = InterviewScoring.ScoreParaphrase(q, eq, oracleProbe);
@@ -755,8 +766,9 @@ namespace Semanticus.Engine
                         + (skipped > 0 ? $" {skipped} unreadable interview-store line(s) were skipped." : ""),
                 };
 
-            var capturedSession = _sessions.Current;
-            var capturedLive = _live;
+            var capturedContext = _sessions.CurrentContext;
+            var capturedSession = capturedContext.Session;
+            var capturedLive = capturedContext.Live;
             var currentName = capturedSession == null ? null : await ReadModelNameAsync(capturedSession);
             var evidence = new List<InterviewEvidence>();
             var right = 0; var wrong = 0; var unverified = 0; var chatOnly = 0; var changed = 0;
@@ -843,8 +855,9 @@ namespace Semanticus.Engine
             // Capture the session + live connection ONCE for the whole replay (P1-1/P1-3): grade only against the
             // connection actually attached, and read the current model name once for the in-place-replacement witness
             // (read from the session unconditionally so the witness also covers the disk-path/offline lane).
-            var capturedSession = _sessions.Current;
-            var capturedLive = _live;
+            var capturedContext = _sessions.CurrentContext;
+            var capturedSession = capturedContext.Session;
+            var capturedLive = capturedContext.Live;
             var currentName = capturedSession == null ? null : await ReadModelNameAsync(capturedSession);
 
             var adv = new InterviewGateAdvisory { Questions = live.Count };
@@ -869,7 +882,7 @@ namespace Semanticus.Engine
                 else if (!string.Equals(before, r.Outcome, StringComparison.Ordinal))
                     changes.Add(new InterviewOutcomeDelta
                     { QuestionId = q.Id, Question = q.Question, Before = before, After = r.Outcome, Detail = r.Detail });
-                if (_live != null)
+                if (capturedLive != null && ReferenceEquals(_sessions.CurrentContext, capturedContext))
                     InterviewStore.Append(file, new InterviewStore.Delta
                     {
                         Op = "record-run", Id = q.Id, When = DateTime.UtcNow.ToString("o"), Origin = "deploy-gate",
@@ -878,7 +891,7 @@ namespace Semanticus.Engine
             }
             adv.Changes = changes.ToArray();
             adv.Note = "Advisory only: the interview never blocks a deploy."
-                + (_live == null ? " Offline, so nothing was executed and 'Unverified' is the honest ceiling (open_live/open_local for real evidence; offline outcomes are not recorded)." : "")
+                + (capturedLive == null ? " Offline, so nothing was executed and 'Unverified' is the honest ceiling (open_live/open_local for real evidence; offline outcomes are not recorded)." : "")
                 + (adv.Wrong > 0 ? $" {adv.Wrong} question(s) now come back confidently wrong, e.g. {string.Join("; ", wrongOnes.Take(3))}." : "")
                 + (adv.NeverAsked > 0 ? $" {adv.NeverAsked} question(s) were graded here for the first time (no previous outcome to compare against)." : "")
                 + (adv.NotReplayable > 0 ? $" {adv.NotReplayable} safe-decline question(s) are graded in chat, not replayed here." : "");
@@ -906,8 +919,9 @@ namespace Semanticus.Engine
                     : "";
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = "no saved interview questions to replay for the open model. Save some with add_interview_question (the /interview-model skill authors them) before gating on interview_replay." + strayNote };
             }
-            var capturedSession = _sessions.Current;
-            var capturedLive = _live;
+            var capturedContext = _sessions.CurrentContext;
+            var capturedSession = capturedContext.Session;
+            var capturedLive = capturedContext.Live;
             if (capturedLive == null)
                 return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline — no live connection, the interview was NOT replayed (open_live/open_local and re-submit for real evidence)." };
             var currentName = await ReadModelNameAsync(capturedSession);

@@ -4,7 +4,7 @@ Semanticus brings semantic-model authoring, analysis and proof into one VS Code 
 Properties and Studio yourself, then let your own AI Assistant work through MCP against the same live session. Every
 change is attributed, broadcast and placed on one undo timeline.
 
-Semanticus 1.0.1 corrects the Marketplace listing and adds matching-host packages for five operating-system and
+Semanticus 1.1.0 is a feature release across the matching-host packages for five operating-system and
 architecture targets. Every package bundles its engine and is published only after that engine is extracted and
 executed on the matching CI runner, plus the documented human acceptance checks.
 
@@ -34,7 +34,7 @@ executed on the matching CI runner, plus the documented human acceptance checks.
 
 ## Supported platforms
 
-| Platform | 1.0.1 status | What is supported |
+| Platform | 1.1.0 status | What is supported |
 |---|---|---|
 | Windows 11 x64 | Supported release package | VS Code extension, bundled engine, offline files, Power BI Desktop discovery, local M preview and supported XMLA journeys |
 | Windows 11 ARM64 | Supported release package | VS Code extension, bundled engine, offline files and supported remote XMLA and Fabric journeys |

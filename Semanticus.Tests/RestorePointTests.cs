@@ -180,6 +180,83 @@ namespace Semanticus.Tests
             finally { RestorePointStore.RootOverride = saved; File.Delete(src); try { File.Delete(blocker); } catch { } }
         }
 
+        // ---- MINOR 2: a DeletesRefusedConflict abort must surface the refused ref on Note + FailedRefs, not only Error.
+        [Fact]
+        public async Task A_delete_refused_conflict_abort_surfaces_the_ref_on_note_and_failed_refs()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var src = WriteBim(Db());                                             // source has no measures => Total is a Delete
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(Db(m => Measure(m, "Total", "1", "tag-total")));
+                // The live push aborts with a replacement/endpoint-rename conflict exactly as SyncAndApply builds it:
+                // nothing committed, the refused ref on DeletesRefusedConflict, the prose on Error.
+                engine.WorkspacePushHook = (_, __) => new DeployReport
+                {
+                    Committed = false,
+                    Error = "Delete refused to avoid data loss: measure:Sales/Total. Its replacement did not land in this push. NOTHING was pushed.",
+                    DeletesRefusedConflict = new[] { "measure:Sales/Total" },
+                };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "measure:Sales/Total" }, commit: true, "human");
+
+                Assert.False(r.Applied);
+                // The whole point of MINOR 2: the refused ref reaches the STRUCTURED fields, not only the free-form Error.
+                Assert.Contains(r.FailedRefs, f => f.Contains("measure:Sales/Total"));
+                Assert.Contains("measure:Sales/Total", r.Note);
+                Assert.False(string.IsNullOrEmpty(r.Error));   // the prose is still carried too
+            }
+            finally { File.Delete(src); }
+        }
+
+        // ---- BLOCKER 1 (staging-collision coupling): a same-name in-place re-point whose Create collides at staging
+        // must refuse its paired Delete and abort — never drop the old relationship with no replacement. ----
+        private static TOM.Database RelDb(string fromCol)   // relationship "r": Fact[fromCol] -> Dim[D]
+        {
+            var db = new TOM.Database("t") { CompatibilityLevel = 1600, Model = new TOM.Model() };
+            var dim = new TOM.Table { Name = "Dim", LineageTag = "tag-dim" };
+            dim.Partitions.Add(new TOM.Partition { Name = "Dim", Source = new TOM.MPartitionSource { Expression = "let S = 1 in S" } });
+            dim.Columns.Add(new TOM.DataColumn { Name = "D", DataType = TOM.DataType.Int64, LineageTag = "tag-d" });
+            db.Model.Tables.Add(dim);
+            var fact = new TOM.Table { Name = "Fact", LineageTag = "tag-fact" };
+            fact.Partitions.Add(new TOM.Partition { Name = "Fact", Source = new TOM.MPartitionSource { Expression = "let S = 1 in S" } });
+            fact.Columns.Add(new TOM.DataColumn { Name = "K1", DataType = TOM.DataType.Int64, LineageTag = "tag-k1" });
+            fact.Columns.Add(new TOM.DataColumn { Name = "K2", DataType = TOM.DataType.Int64, LineageTag = "tag-k2" });
+            db.Model.Tables.Add(fact);
+            db.Model.Relationships.Add(new TOM.SingleColumnRelationship
+            {
+                Name = "r", FromColumn = fact.Columns[fromCol], ToColumn = dim.Columns["D"],
+                FromCardinality = TOM.RelationshipEndCardinality.Many, ToCardinality = TOM.RelationshipEndCardinality.One
+            });
+            return db;
+        }
+
+        [Fact]
+        public async Task A_same_name_endpoint_repoint_whose_create_collides_at_staging_refuses_the_paired_delete()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var src = WriteBim(RelDb("K2"));   // session re-points the relationship to Fact[K2] (keeps the name "r")
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(RelDb("K1"));   // live: r = Fact[K1] -> Dim[D]
+                var pushed = false;
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };
+
+                // Select BOTH halves the diff emits: the new-sig Create + the old-sig Delete. Merging the Create into the
+                // snapshot collides with the not-yet-deleted old relationship (same name "r"), so it fails to stage.
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "relationship:Fact[K2]->Dim[D]", "relationship:Fact[K1]->Dim[D]" }, commit: true, "human");
+
+                Assert.False(r.Applied);
+                Assert.False(pushed);                                              // aborted BEFORE the push — endpoint never touched
+                Assert.Contains("could not be staged", r.Error);
+                Assert.Contains(r.FailedRefs, f => f.Contains("relationship:Fact[K1]->Dim[D]"));   // the paired delete refused
+                Assert.Contains("relationship:Fact[K1]->Dim[D]", r.Note);
+            }
+            finally { File.Delete(src); }
+        }
+
         // ---- ...but a push with NO deletes is recoverable by re-pushing, so a failed restore point only warns. ----
         [Fact]
         public async Task Push_without_deletes_still_proceeds_when_the_restore_point_fails_but_says_so()

@@ -208,7 +208,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void Live_origin_write_authority_is_compiled_only_into_the_two_open_paths()
+        public void Live_origin_write_authority_is_compiled_only_into_the_editing_open_paths()
         {
             var setter = typeof(Session).GetProperty(nameof(Session.LiveOrigin))!.SetMethod!;
             var expected = new[] { nameof(LocalEngine.OpenLiveAsync), nameof(LocalEngine.OpenLocalAsync) }
@@ -220,9 +220,10 @@ namespace Semanticus.Tests
                 .OrderBy(MethodKey)
                 .ToArray();
 
-            // LiveOrigin is WRITE authority: it is the deploy-back target, not a query hint. Pin the compiled
-            // call graph so source layout, comments, generated files, and ambient untracked .cs files cannot
-            // manufacture or hide an assignment site.
+            // LiveOrigin is WRITE authority: it is the deploy-back target, not a query hint. ONLY the editing-open paths
+            // (open_live / open_local) may set it. connect_xmla is a QUERY connection and must NEVER rebind it (HIGH 1),
+            // so BindLiveOriginIfCurrent was removed — this pin now proves no assignment site can creep back in via source
+            // layout, comments, generated files, or ambient untracked .cs files.
             Assert.Equal(expected.Select(MethodKey), actual.Select(MethodKey));
         }
 

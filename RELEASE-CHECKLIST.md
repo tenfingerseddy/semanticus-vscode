@@ -6,9 +6,10 @@ that genuinely require a human. The frozen release surface and platform claims a
 [`docs/supported-platforms.md`](docs/supported-platforms.md). The exact execution order is
 [`docs/rc-acceptance.md`](docs/rc-acceptance.md).
 
-> **Status 2026-07-14:** the 1.0.1 listing correction and five-target package set are being cut. Kane uploads the
-> accepted packages through the Marketplace portal. Do not create a release tag or publish while any required
-> automated gate is red or while a mandatory human acceptance step for a selected artifact is failed or incomplete.
+> **Status 2026-07-17:** the 1.1.0 authoring-and-evidence feature roll-up plus hardening pass is being cut on the
+> same five-target package set. Kane uploads the accepted packages through the Marketplace portal. Do not create a
+> release tag or publish while any required automated gate is red or while a mandatory human acceptance step for a
+> selected artifact is failed or incomplete.
 
 ## Phase 0 — before the first published build
 - [x] **License — DECIDED + committed: Elastic License 2.0 (source-available)** (root `LICENSE`; the 2026-07-06
@@ -63,9 +64,9 @@ that genuinely require a human. The frozen release surface and platform claims a
       its comparable baseline needs an investigated and explicitly accepted reason.
 - [ ] **Final RC merge call.** Confirm the chosen SHA is on `origin/main`, all required CI jobs for that exact SHA
       are green, every security-sensitive PR has independent approval, and there are zero open P0/P1 defects.
-- [x] **Version and release notes.** Version 1.0.1 is stamped in `package.json` and `package-lock.json`, with a
-      matching CHANGELOG section for the listing corrections and platform coverage. A published Marketplace version
-      is never reused.
+- [x] **Version and release notes.** Version 1.1.0 is stamped in `package.json` and `package-lock.json`, with a
+      matching CHANGELOG section for the authoring-and-evidence feature roll-up and hardening pass. A published
+      Marketplace version is never reused.
 - [ ] **Code-signing cert** for the `.vsix` (optional for Marketplace; required for some orgs).
 - [ ] Complete the ordered **F5 interaction gate** in `docs/rc-acceptance.md` on the final RC build.
 

@@ -4,6 +4,16 @@ using System.Linq;
 
 namespace Semanticus.Engine
 {
+    public static class VpaqStorageMode
+    {
+        public const string Import = "import";
+        public const string DirectLake = "directLake";
+        public const string Unknown = "unknown";
+
+        public static string Normalize(string mode) =>
+            mode == Import || mode == DirectLake ? mode : Unknown;
+    }
+
     public sealed class VpaqColumn
     {
         public string Table { get; set; }
@@ -27,12 +37,18 @@ namespace Semanticus.Engine
 
     public sealed class VpaqReport
     {
+        // Canonical identity of the live query target that produced this report. LocalEngine captures it from the
+        // same LiveConnection instance used for every DMV read, so a later connection-status refresh cannot retag
+        // the report with another target. The endpoint|database vocabulary matches the webview persistence anchor.
+        public string QueryIdentity { get; set; }
         public long ModelSize { get; set; }
         public int ColumnCount { get; set; }
         public VpaqTable[] Tables { get; set; } = Array.Empty<VpaqTable>();
         public VpaqColumn[] TopColumns { get; set; } = Array.Empty<VpaqColumn>();
-        public bool IsDirectLake { get; set; } // storage figures below are RESIDENT-ONLY (paged-in columns), not model totals
-        public string Caveat { get; set; }     // human-readable note set when IsDirectLake (null otherwise)
+        // Explicit tri-state. Unknown is never treated as Import because the same DMVs can expose only currently
+        // resident data for a model whose mode could not be proven.
+        public string StorageMode { get; set; } = VpaqStorageMode.Unknown;
+        public string Caveat { get; set; }
         public string Error { get; set; }
 
         public static VpaqReport FromError(string e) => new VpaqReport { Error = e };
@@ -45,10 +61,14 @@ namespace Semanticus.Engine
     /// </summary>
     public static class VertiPaq
     {
-        public static VpaqReport Compute(ResultSet segments, ResultSet columns, ResultSet tables, int topN, bool isDirectLake = false)
+        public static VpaqReport Compute(ResultSet segments, ResultSet columns, ResultSet tables, int topN, string storageMode = VpaqStorageMode.Unknown)
         {
             if (!string.IsNullOrEmpty(segments?.Error)) return VpaqReport.FromError(segments.Error);
             if (!string.IsNullOrEmpty(columns?.Error)) return VpaqReport.FromError(columns.Error);
+
+            storageMode = VpaqStorageMode.Normalize(storageMode);
+            var isDirectLake = storageMode == VpaqStorageMode.DirectLake;
+            var rowCountsAreTotals = storageMode == VpaqStorageMode.Import;
 
             var dataByKey = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             {
@@ -100,9 +120,9 @@ namespace Semanticus.Engine
                 Name = g.Key,
                 Size = g.Sum(x => x.TotalSize),
                 Columns = g.Count(),
-                // Direct Lake: ROWS_COUNT is resident-only, so report "unknown" (null) rather than a misleading
-                // partial/zero count. Import: the DMV count (or 0 when the table truly has no rows).
-                Rows = isDirectLake ? (long?)null : (rowsByTable.TryGetValue(g.Key ?? "", out var rc) ? rc : 0),
+                // Row counts are totals only after Import is proven. Direct Lake and unknown mode both report null
+                // rather than silently presenting a resident-only count as the table total.
+                Rows = rowCountsAreTotals ? (rowsByTable.TryGetValue(g.Key ?? "", out var rc) ? rc : 0) : (long?)null,
                 PctOfModel = modelSize > 0 ? Math.Round(100.0 * g.Sum(x => x.TotalSize) / modelSize, 2) : 0,
             }).OrderByDescending(t => t.Size).ToArray();
 
@@ -112,10 +132,12 @@ namespace Semanticus.Engine
                 ColumnCount = cols.Count,
                 Tables = tbls,
                 TopColumns = cols.OrderByDescending(c => c.TotalSize).Take(topN <= 0 ? 25 : topN).ToArray(),
-                IsDirectLake = isDirectLake,
+                StorageMode = storageMode,
                 Caveat = isDirectLake
-                    ? "Direct Lake: storage sizes and row counts reflect only the columns currently resident in memory (paged in by recent queries) — they are partial, not the full-model totals."
-                    : null,
+                    ? "Direct Lake: storage sizes and row counts reflect only the columns currently resident in memory (paged in by recent queries). They are partial, not the full-model totals."
+                    : storageMode == VpaqStorageMode.Unknown
+                        ? "Storage mode could not be confirmed. Storage sizes and row counts may reflect only data currently in memory, so they are not treated as full model totals."
+                        : null,
             };
         }
 

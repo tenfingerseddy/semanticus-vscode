@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, onDidChange, loadState, saveState } from './bridge';
+import { rpc, onDidChange, loadState, saveState, selectInProperties, focusSelectInProperties } from './bridge';
+import { RevealBtn, rowKeyProps } from './objectactions';
 import { uiLabel } from './copy';
 
 // Wire types mirror Semanticus.Engine/Protocol.cs (SearchResult / SearchHit / SearchSpan / FacetCount), camelCase.
@@ -42,6 +43,13 @@ const CLASS_META: Record<string, { label: string; note: string; order: number }>
   DaxReference: { label: 'References (read-only)', note: 'These point at other objects. Rename the object itself to change them safely.', order: 5 },
   DaxCode:      { label: 'Formula code (read-only)', note: 'Functions / operators / numbers: edit the expression directly.', order: 6 },
 };
+
+// The hit kinds whose object refs the selection bus + Reveal-in-tree can actually reach — the same kinds the
+// engine's ObjectRefs.Resolve resolves and the Model tree carries. A 'namedexpression' hit (ref 'namedexpr:…')
+// resolves in NEITHER, so wiring select/reveal on it would blank the grid and dead-end the reveal; those hits
+// stay find-and-replace-only (Replace still works — M replacement goes through a separate path). Kept in sync
+// with the host's SELECTABLE_REF_KINDS allowlist (extension.ts), which rejects anything else at the door.
+const NAVIGABLE_KINDS = new Set(['measure', 'column', 'table', 'hierarchy', 'calcitem', 'partition', 'function', 'role', 'perspective']);
 
 // Result-type filter chips. Each chip is a PREDICATE over a hit rather than a raw facet, because that is how an
 // analyst thinks about a match: "the measure", "its DAX", "the description". Kind chips (Measures/Columns/Tables)
@@ -265,10 +273,16 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
             <div className="flex flex-col">
               {hits.map((h, i) => {
                 const key = h.ref + '|' + h.field + '|' + i;
+                const navigable = NAVIGABLE_KINDS.has(h.kind);   // can the bus/Reveal reach this ref? (namedexpr can't)
                 return (
                   <div key={key} className="border-b last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
-                    <div className="px-3 py-1.5 flex items-center gap-2">
-                      <div className="flex-1 min-w-0">
+                    <div className="group px-3 py-1.5 flex items-center gap-2">
+                      {/* Selection bus: clicking a hit shows its object in the Properties view (focus stays here).
+                          Only for kinds the grid + tree can resolve — otherwise the row is find-and-replace-only. */}
+                      <div className={'flex-1 min-w-0' + (navigable ? ' cursor-pointer' : '')}
+                        onClick={navigable ? () => selectInProperties(h.ref) : undefined}
+                        {...(navigable ? rowKeyProps(() => selectInProperties(h.ref), () => focusSelectInProperties(h.ref)) : {})}
+                        title={navigable ? 'Show in Properties' : undefined}>
                         <div className="text-[12px] truncate" style={{ color: 'var(--sem-fg)' }}>
                           <span style={{ color: 'var(--sem-muted)' }}>{uiLabel(h.kind)}{h.table ? ' · ' + h.table : ''}{h.context && h.field === 'rlsFilter' ? ' · ' + h.context : ''} · </span>
                           {h.name}
@@ -279,6 +293,7 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
                       {/* An EMPTY replacement is legitimate (it deletes the matched text — e.g. clearing part of a
                           description or folder), so the button never dead-ends on it; the one case that can't work
                           (a name that would become empty) is surfaced by the preview panel's plain refusal. */}
+                      {navigable && <RevealBtn objRef={h.ref} className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />}
                       {h.replaceable
                         ? <button onClick={() => void previewReplace(h, key)}
                             title="Preview this change before it happens"

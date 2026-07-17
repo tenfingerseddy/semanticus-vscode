@@ -29,17 +29,15 @@ namespace Semanticus.Engine
         // stage_config allows more; the portal caps at 15k. Refuse past that (nothing is sent).
         private const int AiInstructionsCap = 15000;
 
-        private static readonly CancellationToken DaCt = CancellationToken.None;
-
         // ---- reads (free) --------------------------------------------------------------------------
 
-        public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId)
+        public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) return new DataAgentList { Error = "A workspaceId is required — list_workspaces shows your workspaces and their ids." };
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
-                var items = await DataAgentRest.ListItemsAsync(workspaceId, token, DaCt);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var items = await DataAgentRest.ListItemsAsync(workspaceId, token, cancellationToken);
                 var agents = items.Where(i => DataAgentRest.IsDataAgentType(i.Type))
                     .Select(i => new DataAgentInfo { Id = i.Id, Name = i.DisplayName, Description = i.Description, Type = i.Type, Published = null })
                     .ToArray();
@@ -52,17 +50,17 @@ namespace Semanticus.Engine
                     : null;
                 return new DataAgentList { Agents = agents, ObservedItemTypes = observed, Note = note };
             }
-            catch (Exception ex) { return new DataAgentList { Error = FabricRest.Scrub(ex.Message) }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DataAgentList { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
-        public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId)
+        public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId))
                 return new DataAgentDetail { Error = "A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it." };
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
-                var parts = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, DaCt);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var parts = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var parsed = DataAgentRest.ParseDataAgentParts(parts);
                 var published = parsed.PublishInfo != null;
                 return new DataAgentDetail
@@ -75,7 +73,7 @@ namespace Semanticus.Engine
                     Note = parts.Length == 0 ? "The item has no decodable definition parts (empty or a non-data-agent item)." : null,
                 };
             }
-            catch (Exception ex) { return new DataAgentDetail { Error = FabricRest.Scrub(ex.Message) }; }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DataAgentDetail { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
         // ---- the Semanticus verb: scope the OPEN model into a semantic_model datasource (Pro) ------
@@ -181,7 +179,7 @@ namespace Semanticus.Engine
             => Entitlement.EntitlementGuard.RequirePro(_entitlement, $"{verb} (data-agent writes)",
                 "Browsing data agents stays free (list_data_agents / get_data_agent); configuring and publishing them from here is Pro.");
 
-        public async Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin)
+        public async Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("create_data_agent");
             aiInstructions ??= string.Empty;
@@ -196,22 +194,22 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "create_data_agent:" + name); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
                 var parts = new (string, string)[]
                 {
                     (DataAgentRest.DataAgentJsonPath, JsonSerializer.Serialize(new Dictionary<string, object> { ["$schema"] = DataAgentRest.DataAgentSchema })),
                     (DataAgentRest.DraftStageConfigPath, JsonSerializer.Serialize(new Dictionary<string, object> { ["$schema"] = DataAgentRest.StageConfigSchema, ["aiInstructions"] = aiInstructions })),
                 };
-                var id = await DataAgentRest.CreateItemAsync(workspaceId, name, DataAgentItemType, DataAgentRest.BuildDefinitionJson(parts), token, DaCt);
+                var id = await DataAgentRest.CreateItemAsync(workspaceId, name, DataAgentItemType, DataAgentRest.BuildDefinitionJson(parts), token, cancellationToken);
                 await EmitDataAgentActivity("create_data_agent", true, $"Created data agent '{name}'", id ?? name, origin);
                 return new DataAgentWriteReport { Status = "ok", AgentId = id, Message = $"Created data agent '{name}'" + (id != null ? $" ({id})." : "."), RequestSummary = summary };
             }
-            catch (Exception ex) { return await FailAsync("create_data_agent", name, origin, ex, summary); }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return await FailAsync("create_data_agent", name, origin, ex, summary); }
         }
 
         // READ-MODIFY-WRITE: fetch the current definition, replace ONLY the parts provided (null = keep), re-emit ALL
         // existing parts + the changed ones — never drop an unknown part.
-        public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin)
+        public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("update_data_agent");
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
@@ -243,21 +241,21 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "update_data_agent:" + agentId + "|" + string.Join(",", touched)); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
-                var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, DaCt);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var p in existing) if (!string.IsNullOrEmpty(p.Path)) map[p.Path.Replace('\\', '/')] = p.Content;   // keep ALL existing parts
                 if (aiInstructions != null) map[DataAgentRest.DraftStageConfigPath] = SetStageConfigInstructions(map.TryGetValue(DataAgentRest.DraftStageConfigPath, out var sc) ? sc : null, aiInstructions);
                 if (!string.IsNullOrEmpty(datasourceFolder) && datasourceJson != null) map[DataAgentRest.DraftPrefix + datasourceFolder + "/datasource.json"] = datasourceJson;
                 if (!string.IsNullOrEmpty(datasourceFolder) && fewshotsJson != null) map[DataAgentRest.DraftPrefix + datasourceFolder + "/fewshots.json"] = fewshotsJson;
                 var def = DataAgentRest.BuildDefinitionJson(map.Select(kv => (kv.Key, kv.Value)));
-                var outcome = await DataAgentRest.UpdateDefinitionAsync(workspaceId, agentId, def, token, DaCt);
+                var outcome = await DataAgentRest.UpdateDefinitionAsync(workspaceId, agentId, def, token, cancellationToken);
                 return await FinishWrite("update_data_agent", agentId, origin, outcome, summary, $"Updated data agent {agentId}");
             }
-            catch (Exception ex) { return await FailAsync("update_data_agent", agentId, origin, ex, summary); }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return await FailAsync("update_data_agent", agentId, origin, ex, summary); }
         }
 
-        public async Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin)
+        public async Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("publish_data_agent");
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
@@ -267,16 +265,16 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "publish_data_agent:" + agentId); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
-                var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, DaCt);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var def = DataAgentRest.BuildDefinitionJson(DataAgentRest.BuildPublishParts(existing, description));
-                var outcome = await DataAgentRest.UpdateDefinitionAsync(workspaceId, agentId, def, token, DaCt);
+                var outcome = await DataAgentRest.UpdateDefinitionAsync(workspaceId, agentId, def, token, cancellationToken);
                 return await FinishWrite("publish_data_agent", agentId, origin, outcome, summary, $"Published data agent {agentId}");
             }
-            catch (Exception ex) { return await FailAsync("publish_data_agent", agentId, origin, ex, summary); }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return await FailAsync("publish_data_agent", agentId, origin, ex, summary); }
         }
 
-        public async Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin)
+        public async Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("delete_data_agent");
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
@@ -287,12 +285,12 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployDelete, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "delete_data_agent:" + agentId); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, DaCt, tenantId);
-                await DataAgentRest.DeleteItemAsync(workspaceId, agentId, token, DaCt);
+                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                await DataAgentRest.DeleteItemAsync(workspaceId, agentId, token, cancellationToken);
                 await EmitDataAgentActivity("delete_data_agent", true, $"Deleted data agent {agentId}", agentId, origin);
                 return new DataAgentWriteReport { Status = "ok", AgentId = agentId, Message = $"Deleted data agent {agentId}.", RequestSummary = summary };
             }
-            catch (Exception ex) { return await FailAsync("delete_data_agent", agentId, origin, ex, summary); }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return await FailAsync("delete_data_agent", agentId, origin, ex, summary); }
         }
 
         // ---- write helpers ----

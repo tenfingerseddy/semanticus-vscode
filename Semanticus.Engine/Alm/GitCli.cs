@@ -19,7 +19,11 @@ namespace Semanticus.Engine
     /// </summary>
     internal static class GitCli
     {
-        internal sealed class GitRun { public int ExitCode; public string Stdout; public string Stderr; public bool Ok => ExitCode == 0; }
+        internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(2);
+        internal static readonly TimeSpan TransferTimeout = TimeSpan.FromMinutes(15);
+        private static readonly HashSet<string> TransferVerbs = new(StringComparer.OrdinalIgnoreCase)
+            { "clone", "push", "pull", "fetch" };
+        internal sealed class GitRun { public int ExitCode; public string Stdout; public string Stderr; public bool TimedOut; public bool Ok => ExitCode == 0; }
 
         // A caller can paste an HTTPS URL containing basic-auth credentials. Git echoes that URL in transport
         // failures, so scrub all URI userinfo before ANY stdout/stderr crosses a door. Deliberately consume every
@@ -33,12 +37,34 @@ namespace Semanticus.Engine
 
         // Run `git <args>` in workingDir, capturing stdout/stderr. Throws a clear error if git isn't installed.
         internal static Task<GitRun> RunAsync(string workingDir, params string[] args)
-            => RunAsync(workingDir, CancellationToken.None, args);
+            => RunWithTimeoutAsync(workingDir, TimeoutFor(args), args);
+
+        internal static async Task<GitRun> RunWithTimeoutAsync(string workingDir, TimeSpan timeout, params string[] args)
+        {
+            if (timeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(timeout));
+            using var cts = new CancellationTokenSource(timeout);
+            try { return await RunCoreAsync(workingDir, cts.Token, args).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            { return TimeoutFailure(timeout); }
+        }
 
         // Cancellable overload. When <paramref name="ct"/> fires (a caller timeout or cancellation) the child git
         // process is KILLED — awaiting Task.WaitAsync alone would abandon a git stalled on IO, leaking a zombie that
         // accumulates over many appends — and an OperationCanceledException propagates for the caller to fail soft.
         internal static async Task<GitRun> RunAsync(string workingDir, CancellationToken ct, params string[] args)
+        {
+            var budget = TimeoutFor(args);
+            using var timeout = new CancellationTokenSource(budget);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+            try { return await RunCoreAsync(workingDir, linked.Token, args).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested) { return TimeoutFailure(budget); }
+        }
+
+        internal static TimeSpan TimeoutFor(string[] args)
+            => args != null && args.Any(TransferVerbs.Contains) ? TransferTimeout : DefaultTimeout;
+
+        private static async Task<GitRun> RunCoreAsync(string workingDir, CancellationToken ct, string[] args)
         {
             var psi = new ProcessStartInfo("git")
             {
@@ -50,6 +76,8 @@ namespace Semanticus.Engine
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            psi.Environment["GCM_INTERACTIVE"] = "Never";
             foreach (var a in args) psi.ArgumentList.Add(a);
             using var p = new Process { StartInfo = psi };
             var sb = new StringBuilder();
@@ -77,6 +105,18 @@ namespace Semanticus.Engine
             }
             return new GitRun { ExitCode = p.ExitCode, Stdout = sb.ToString(), Stderr = eb.ToString() };
         }
+
+        private static GitRun TimeoutFailure(TimeSpan timeout) => new()
+        {
+            ExitCode = -1,
+            TimedOut = true,
+            Stderr = $"git did not finish within {FormatTimeout(timeout)} and was stopped. Check the remote and network, then retry.",
+        };
+
+        private static string FormatTimeout(TimeSpan timeout)
+            => timeout.TotalMinutes >= 1 && timeout.TotalMinutes == Math.Truncate(timeout.TotalMinutes)
+                ? $"{timeout.TotalMinutes:0} minute" + (timeout.TotalMinutes == 1 ? "" : "s")
+                : $"{Math.Max(1, Math.Ceiling(timeout.TotalSeconds)):0} second" + (timeout.TotalSeconds <= 1 ? "" : "s");
 
         internal static async Task<bool> IsRepoAsync(string dir)
         {

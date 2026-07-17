@@ -60,6 +60,10 @@
     <PackageReference Include="Microsoft.AnalysisServices.AdomdClient" Version="19.114.0" />
     <PackageReference Include="Microsoft.AnalysisServices" Version="19.114.0" />
     <PackageReference Include="Azure.Identity" Version="1.13.1" />
+    <!-- Local Power BI Desktop display-name capture (Connect/LocalDesktop.cs): msmdsrv -> parent PBIDesktop
+         process mapping needs WMI (the TE2/DAX Studio parity technique). Windows-only at runtime, guarded by
+         OperatingSystem.IsWindows() — connect_local is inherently Windows-only anyway (Desktop is). -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
   <!-- Stock workflow library (docs/pro-mode-spec.md §6): ship the seed *.md beside the binary,

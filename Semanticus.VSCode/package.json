@@ -2,7 +2,7 @@
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
   "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your AI Assistant co-edits the same live model.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -160,20 +160,21 @@
         "category": "Semanticus"
       },
       { "command": "semanticus.newTable", "title": "New Table…", "category": "Semanticus", "icon": "$(add)" },
-      { "command": "semanticus.newCalcTable", "title": "New Calculated Table…", "category": "Semanticus" },
+      { "command": "semanticus.newCalcTable", "title": "New Calculated Table", "category": "Semanticus" },
       { "command": "semanticus.newCalcGroup", "title": "New Calculation Group…", "category": "Semanticus" },
       { "command": "semanticus.newRole", "title": "New Role…", "category": "Semanticus" },
-      { "command": "semanticus.newFunction", "title": "New Function (UDF)…", "category": "Semanticus" },
-      { "command": "semanticus.newMeasure", "title": "New Measure…", "category": "Semanticus" },
+      { "command": "semanticus.newFunction", "title": "New Function (UDF)", "category": "Semanticus" },
+      { "command": "semanticus.newMeasure", "title": "New Measure", "category": "Semanticus" },
       { "command": "semanticus.newFolder", "title": "New Folder…", "category": "Semanticus" },
       { "command": "semanticus.renameFolder", "title": "Rename Folder…", "category": "Semanticus" },
       { "command": "semanticus.moveToFolder", "title": "Move to Folder…", "category": "Semanticus" },
-      { "command": "semanticus.newCalcColumn", "title": "New Calculated Column…", "category": "Semanticus" },
+      { "command": "semanticus.newCalcColumn", "title": "New Calculated Column", "category": "Semanticus" },
       { "command": "semanticus.newHierarchy", "title": "New Hierarchy…", "category": "Semanticus" },
-      { "command": "semanticus.newCalcItem", "title": "New Calculation Item…", "category": "Semanticus" },
+      { "command": "semanticus.newCalcItem", "title": "New Calculation Item", "category": "Semanticus" },
       { "command": "semanticus.hierarchyFromColumns", "title": "New Hierarchy from Selected Columns…", "category": "Semanticus" },
       { "command": "semanticus.newRelationship", "title": "New Relationship from Column…", "category": "Semanticus" },
       { "command": "semanticus.renameObject", "title": "Rename…", "category": "Semanticus" },
+      { "command": "semanticus.renameObjectInputBox", "title": "Rename with Input Box…", "category": "Semanticus" },
       { "command": "semanticus.duplicateObject", "title": "Duplicate…", "category": "Semanticus" },
       { "command": "semanticus.copyObject", "title": "Copy", "category": "Semanticus" },
       { "command": "semanticus.pasteObject", "title": "Paste", "category": "Semanticus" },
@@ -268,6 +269,11 @@
           "when": "view == semanticusModel",
           "group": "navigation@5"
         },
+        {
+          "command": "semanticus.connectClaudeCode",
+          "when": "view == semanticusModel",
+          "group": "navigation@6"
+        },
         { "command": "semanticus.setReferenceModel", "when": "view == semanticusReference", "group": "navigation@0" },
         { "command": "semanticus.refreshReferenceModel", "when": "view == semanticusReference && semanticus.hasReference", "group": "navigation@1" },
         { "command": "semanticus.clearReferenceModel", "when": "view == semanticusReference && semanticus.hasReference", "group": "navigation@2" },
@@ -326,6 +332,7 @@
         { "command": "semanticus.pasteObject", "when": "view == semanticusModel && semanticus.treeClipboard == 'reference' && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem)$/", "group": "2_edit@7" },
         { "command": "semanticus.moveToFolder", "when": "view == semanticusModel && viewItem =~ /^(measure|column|calcColumn|hierarchy)$/", "group": "2_edit@5" },
         { "command": "semanticus.renameObject", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective)$/", "group": "2_edit@8" },
+        { "command": "semanticus.renameObjectInputBox", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective)$/", "group": "2_edit@81" },
         { "command": "semanticus.renameFolder", "when": "view == semanticusModel && viewItem == dfolder", "group": "2_edit@8" },
         { "command": "semanticus.duplicateObject", "when": "view == semanticusModel && viewItem =~ /^(measure|column|calcColumn|hierarchy)$/", "group": "2_edit@9" },
 
@@ -376,7 +383,7 @@
       { "command": "semanticus.undo", "key": "ctrl+z", "mac": "cmd+z", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.redo", "key": "ctrl+shift+z", "mac": "cmd+shift+z", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.redo", "key": "ctrl+y", "when": "focusedView == semanticusModel" },
-      { "command": "semanticus.renameObject", "key": "f2", "when": "focusedView == semanticusModel" },
+      { "command": "semanticus.renameObject", "key": "f2", "when": "focusedView == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective|dfolder)$/" },
       { "command": "semanticus.deleteObject", "key": "delete", "mac": "cmd+backspace", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.newMeasure", "key": "ctrl+alt+n", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.openStudio", "key": "ctrl+alt+s", "when": "focusedView =~ /^semanticus(Model|Reference)$/" },
@@ -393,7 +400,7 @@
         "semanticus.engineDll": {
           "type": "string",
           "default": "",
-          "description": "Dev override: absolute path to a built Semanticus.Engine.dll (run `dotnet build Semanticus.Engine` first, for the F5 flow). Leave EMPTY to use the self-contained engine bundled in the installed extension."
+          "description": "F5 development only: absolute path to a built Semanticus.Engine.dll. Installed extensions ignore this setting and always use their verified bundled engine."
         },
         "semanticus.licenseToken": {
           "type": "string",
@@ -408,7 +415,7 @@
         "semanticus.rebuildEngineOnRestart": {
           "type": "boolean",
           "default": true,
-          "description": "When running 'Restart Engine', rebuild the engine (dotnet build -c Debug) before respawning, so it picks up engine code changes. Turn off to just restart the existing build."
+          "description": "In an F5 development host, rebuild the engine before restarting so code changes are picked up. Installed extensions never rebuild development source."
         },
         "semanticus.dax.maxLineLength": {
           "type": "number",

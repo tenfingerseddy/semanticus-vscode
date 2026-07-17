@@ -25,17 +25,11 @@ namespace Semanticus.Engine
     {
         internal const string BaseUrl = "https://api.powerbi.com/v1.0/myorg/";
 
-        private static HttpClient NewClient(string token)
-        {
-            var http = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(100) };
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            return http;
-        }
-
         internal static async Task<CloudReport[]> ListReportsAsync(string workspaceId, string token, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
-            using var http = NewClient(token);
+            using var http = FabricRest.CreateSharedClient(BaseUrl);
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             var url = "groups/" + Uri.EscapeDataString(workspaceId) + "/reports";
             var r = await FabricRest.SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
             if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));

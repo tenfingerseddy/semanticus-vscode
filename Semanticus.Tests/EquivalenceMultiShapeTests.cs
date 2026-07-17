@@ -49,6 +49,121 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("Date[Year]", qs[0]);
         }
 
+        // ---- (1b) MEASURE-FAITHFUL shape: both candidates DEFINE-d as measures in ONE query (E5 fix) ----
+
+        [Fact]
+        public void Comparison_defines_both_candidates_as_measures_in_one_query()
+        {
+            // Context-transition-sensitive RAW bodies (an implicit-CALCULATE-needing aggregate over a measure): the
+            // comparison must evaluate them as DEPLOYED MEASURES, and BOTH in the SAME DEFINE block so they see an
+            // identical filter context — never as inline extension columns that skip context transition.
+            var a = "AVERAGEX ( VALUES ( 'Date'[Year] ), [Total Sales] )";
+            var b = "SUMX ( VALUES ( 'Date'[Year] ), [Total Sales] ) / COUNTROWS ( VALUES ( 'Date'[Year] ) )";
+            var spec = new DaxQuerySpec { ModelMeasureNames = new[] { "Total Sales" } };
+            var q = DaxBench.BuildComparisonQuery(a, b, new[] { "'Date'[Year]" }, null, spec);
+
+            Assert.StartsWith("DEFINE", q);
+            // Both candidates DEFINE-d on the same host with DISTINCT generated (collision-free) identifiers…
+            var mA = System.Text.RegularExpressions.Regex.Match(q, @"MEASURE 'Date'\[(__smx_[0-9a-f]{8}_A)\] = \(");
+            var mB = System.Text.RegularExpressions.Regex.Match(q, @"MEASURE 'Date'\[(__smx_[0-9a-f]{8}_B)\] = \(");
+            Assert.True(mA.Success && mB.Success, "expected two DEFINE MEASURE lines with generated ids:\n" + q);
+            Assert.NotEqual(mA.Groups[1].Value, mB.Groups[1].Value);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(q, "DEFINE"));  // one DEFINE block => shared context
+            // …while the OUTPUT column aliases stay the stable contract callers parse.
+            Assert.Contains("\"__A\", [" + mA.Groups[1].Value + "]", q);
+            Assert.Contains("\"__B\", [" + mB.Groups[1].Value + "]", q);
+            Assert.DoesNotContain("\"__A\", (\n" + a, q);                     // the old inline extension-column shape is gone
+        }
+
+        [Fact]
+        public void Comparison_raw_expr_gets_define_measure_even_at_the_grand_total()
+        {
+            // The grand-total shape has no grid columns, but a RAW body carries its own table ref, so a host is still
+            // derivable and EVERY shape's comparison is measure-faithful — including the grand total, the shape a
+            // wrong-denominator / over-broad-ALL bug hides in.
+            var spec = new DaxQuerySpec { ModelMeasureNames = new[] { "Base", "Wrong" } };
+            var qs = DaxBench.BuildComparisonQueries("DIVIDE ( SUM ( 'Sales'[Amt] ), [Base] )", "[Wrong]", new[] { "'Date'[Year]" }, null, spec);
+            Assert.Equal(2, qs.Count);                                            // {grand total, 'Date'[Year]}
+            Assert.All(qs, q => Assert.StartsWith("DEFINE", q));                  // no shape falls back to inline
+            Assert.All(qs, q => Assert.Matches(@"MEASURE 'Sales'\[__smx_[0-9a-f]{8}_A\] = \(", q));  // host from the expression's column ref, STABLE across shapes
+        }
+
+        // BLOCKER 3: a candidate that itself references a measure named like a would-be identifier, or a model that
+        // has one, forces a different generated id — never a silent capture.
+        [Fact]
+        public void Comparison_generated_ids_dodge_collisions_from_model_and_candidate_text()
+        {
+            var a = "SUM ( 'Sales'[Amt] )";
+            var b = "SUMX ( 'Sales', 'Sales'[Amt] )";
+            var q1 = DaxBench.BuildComparisonQuery(a, b, Grid2, null, new DaxQuerySpec { ModelMeasureNames = System.Array.Empty<string>() });
+            var id1 = System.Text.RegularExpressions.Regex.Match(q1, @"\[(__smx_[0-9a-f]{8}_A)\]").Groups[1].Value;
+            Assert.NotEmpty(id1);
+
+            // (a) the MODEL owns a measure with that exact name → re-roll
+            var q2 = DaxBench.BuildComparisonQuery(a, b, Grid2, null, new DaxQuerySpec { ModelMeasureNames = new[] { id1 } });
+            Assert.DoesNotContain("MEASURE 'Sales'[" + id1 + "]", q2);
+            Assert.Matches(@"MEASURE 'Sales'\[__smx_[0-9a-f]{8}(_\d+)?_A\]", q2);
+
+            // (b) the CANDIDATE-TEXT guard shares the same re-roll loop proven in (a); since the candidates seed the
+            // id hash, a premeditated text collision is unconstructible — assert the guaranteed PROPERTY instead:
+            // no emitted DEFINE identifier ever appears inside the candidate text it hosts.
+            var bWithRef = b + " + 0 * [" + id1 + "]";
+            var q3 = DaxBench.BuildComparisonQuery(a, bWithRef, Grid2, null,
+                new DaxQuerySpec { ModelMeasureNames = new[] { id1 } });   // classified as a measure so no inline fallback
+            var defined = System.Text.RegularExpressions.Regex.Matches(q3, @"MEASURE 'Sales'\[(__smx_[0-9a-f_]+_[AB])\]");
+            Assert.Equal(2, defined.Count);
+            foreach (System.Text.RegularExpressions.Match d in defined)
+            {
+                Assert.DoesNotContain(d.Groups[1].Value, a);
+                Assert.DoesNotContain(d.Groups[1].Value, bWithRef);
+            }
+        }
+
+        // BLOCKER 2: comparisons cannot shadow ONE deployed identity with TWO bodies — identity semantics are
+        // unknowable, so when the model has calculation groups the result must carry the honest fidelity flag.
+        [Fact]
+        public async Task Comparison_with_calc_groups_surfaces_the_identity_fidelity_flag()
+        {
+            var byShape = new Dictionary<string, ResultSet>
+            {
+                [""] = Res(Array.Empty<string>(), new object[] { 15.0, 15.0 }),
+                ["Date[Year]"] = Res(new[] { "Date[Year]" }, new object[] { 2023, 15.0, 15.0 }),
+                ["Product[Category]"] = Res(new[] { "Product[Category]" }, new object[] { "Bikes", 10.0, 10.0 }),
+                ["Date[Year]|Product[Category]"] = Res(Grid2, new object[] { 2023, "Bikes", 10.0, 10.0 }),
+            };
+            var spec = new DaxQuerySpec { HomeTable = "Sales", ModelMeasureNames = new[] { "Base" }, ModelHasCalcGroups = true };
+            var eq = await DaxBench.VerifyEquivalenceCoreAsync(Fake(byShape), "SUM ( 'Sales'[Amt] )", "[Base] * 1", Grid2, null, 100000, spec);
+            Assert.Null(eq.Error);
+            Assert.True(eq.AllMatch);
+            Assert.NotNull(eq.Fidelity);
+            Assert.Contains("calculation groups", eq.Fidelity);
+
+            // …and WITHOUT calc groups the flag stays null (no noise).
+            var eq2 = await DaxBench.VerifyEquivalenceCoreAsync(Fake(byShape), "SUM ( 'Sales'[Amt] )", "[Base] * 1", Grid2, null, 100000,
+                new DaxQuerySpec { HomeTable = "Sales", ModelMeasureNames = new[] { "Base" } });
+            Assert.Null(eq2.Fidelity);
+        }
+
+        // BLOCKER 1 at the verify level: an unclassifiable bare ref without target identity degrades to inline —
+        // and the result payload SAYS so.
+        [Fact]
+        public async Task Comparison_unqualified_ref_without_identity_degrades_inline_and_discloses()
+        {
+            var byShape = new Dictionary<string, ResultSet>
+            {
+                [""] = Res(Array.Empty<string>(), new object[] { 15.0, 15.0 }),
+                ["Date[Year]"] = Res(new[] { "Date[Year]" }, new object[] { 2023, 15.0, 15.0 }),
+                ["Product[Category]"] = Res(new[] { "Product[Category]" }, new object[] { "Bikes", 10.0, 10.0 }),
+                ["Date[Year]|Product[Category]"] = Res(Grid2, new object[] { 2023, "Bikes", 10.0, 10.0 }),
+            };
+            var spec = new DaxQuerySpec { HomeTable = "Sales", ModelMeasureNames = new[] { "Total Sales" } };   // [Amount] is NOT a measure
+            var eq = await DaxBench.VerifyEquivalenceCoreAsync(Fake(byShape), "SUM ( [Amount] )", "[Total Sales]", Grid2, null, 100000, spec);
+            Assert.Null(eq.Error);
+            Assert.NotNull(eq.Fidelity);
+            Assert.Contains("[Amount]", eq.Fidelity);
+            Assert.DoesNotContain("DEFINE", eq.Query);                        // genuinely fell back to inline
+        }
+
         [Fact]
         public void One_column_grid_is_that_column_plus_the_grand_total_no_duplicate()
         {

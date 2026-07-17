@@ -90,6 +90,12 @@ body {
 }
 .sem-flash { animation: sem-flash-kf 1.1s ease-out 1; }
 
+/* Tab-bar busy affordance: a subtle monochrome ring that spins while a converted surface (Lineage / DAX Lab /
+   Storage) has an op running on ANOTHER tab. Self-defined so it never depends on a utility-class animation. */
+@keyframes sem-spin-kf { to { transform: rotate(360deg); } }
+.sem-spin { animation: sem-spin-kf 0.8s linear infinite; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .sem-spin { animation-duration: 2s; } }
+
 /* React Flow (ER diagram) — follow the VS Code theme instead of its light default. */
 .react-flow { background: var(--sem-bg); }
 .react-flow__controls { box-shadow: none; }

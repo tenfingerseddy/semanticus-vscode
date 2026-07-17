@@ -111,6 +111,82 @@ export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns:
   return <EChart option={option} height={420} />;
 }
 
+// ---- VertiPaq ranked component bars ----------------------------------------------------------
+// The three storage components a column pays for. Same palette as the header composition cards so the
+// legend, the cards, and the bar segments read as one system. Fixed hex (like the treemap) — distinct
+// and legible in both light and dark themes.
+export const VPAQ_COMPONENT_COLORS = { data: '#3fa66d', dict: '#5b8ff9', hash: '#e0a53d' };
+// The neutral remainder shade for a table bar's bytes NOT covered by the scanned columns' component split —
+// the table total is exact but the split is partial, and the gap must be visible, never silently absorbed.
+export const VPAQ_UNATTRIBUTED_COLOR = 'rgba(140,140,160,0.45)';
+
+export interface VpaqBarItem {
+  ref: string; label: string; sublabel?: string;
+  data: number; dict: number; hash: number; total: number;
+  unattributed?: number;   // tables mode only: total minus the scanned columns' component sum (>=0)
+  pctModel: number; pctTable: number;
+}
+
+/** Ranked horizontal stacked bars: the top storage consumers, each split into data / dictionary /
+ *  hash-index bytes (+ an explicit neutral "unattributed" remainder when the split does not cover the
+ *  whole total — tables mode). Length (not area) is the ranking signal, and the stack exposes WHY an
+ *  object is big. Clicking a bar calls onSelect with the object ref (the caller selects + filters).
+ *  Storage mode drives the tooltip vocabulary: resident-only and unknown observations must never be
+ *  presented as a percentage of the full model. */
+export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: { items: VpaqBarItem[]; storageMode?: 'import' | 'directLake' | 'unknown'; onSelect?: (ref: string) => void }) {
+  const muted = cssVar('--sem-muted', '#9aa0aa');
+  const fg = cssVar('--sem-fg', '#ddd');
+  const border = cssVar('--sem-border', 'rgba(140,140,160,0.22)');
+  const rows = useMemo(() => items.slice(0, 12), [items]);
+  const C = VPAQ_COMPONENT_COLORS;
+
+  const option = useMemo<echarts.EChartsCoreOption>(() => {
+    const fmt = (b: number) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1024).toFixed(0) + ' KB');
+    const seg = (name: string, color: string, pick: (r: VpaqBarItem) => number) => ({
+      name, type: 'bar', stack: 'components', barMaxWidth: 20,
+      itemStyle: { color }, emphasis: { focus: 'series' }, data: rows.map(pick),
+    });
+    const hasUnattributed = rows.some((r) => (r.unattributed ?? 0) > 0);
+    const series = [seg('Data', C.data, (r) => r.data), seg('Dictionary', C.dict, (r) => r.dict), seg('Hash indexes', C.hash, (r) => r.hash)];
+    if (hasUnattributed) series.push(seg('Unattributed', VPAQ_UNATTRIBUTED_COLOR, (r) => r.unattributed ?? 0));
+    return {
+      grid: { left: 4, right: 64, top: 6, bottom: 6, containLabel: true },
+      tooltip: {
+        trigger: 'axis', axisPointer: { type: 'shadow' },
+        formatter: (ps: any) => {
+          const it = rows[ps?.[0]?.dataIndex ?? 0]; if (!it) return '';
+          const sub = it.sublabel ? ` <span style="opacity:.65">${esc(it.sublabel)}</span>` : '';
+          const rem = (it.unattributed ?? 0) > 0
+            ? `<br/><span style="color:${VPAQ_UNATTRIBUTED_COLOR}">■</span> Unattributed ${fmt(it.unattributed as number)} (not covered by the scanned columns)`
+            : '';
+          const shares = storageMode === 'directLake'
+            ? `${fmt(it.total)} resident · ${it.pctModel}% of resident storage · ${it.pctTable}% of its table's resident storage`
+            : storageMode === 'unknown'
+              ? `${fmt(it.total)} observed · ${it.pctModel}% of observed storage · ${it.pctTable}% of its table's observed storage`
+              : `${fmt(it.total)} · ${it.pctModel}% of model · ${it.pctTable}% of table`;
+          return `<b>${esc(it.label)}</b>${sub}<br/>${shares}<br/>`
+            + `<span style="color:${C.data}">■</span> Data ${fmt(it.data)} &nbsp; `
+            + `<span style="color:${C.dict}">■</span> Dictionary ${fmt(it.dict)} &nbsp; `
+            + `<span style="color:${C.hash}">■</span> Hash index ${fmt(it.hash)}${rem}`;
+        },
+      },
+      xAxis: { type: 'value', axisLabel: { color: muted, fontSize: 10, formatter: (v: number) => fmt(v) }, splitLine: { lineStyle: { color: border } } },
+      yAxis: {
+        type: 'category', inverse: true, data: rows.map((r) => r.label),
+        axisLabel: { color: fg, fontSize: 11, width: 150, overflow: 'truncate' },
+        axisLine: { lineStyle: { color: border } }, axisTick: { show: false },
+      },
+      series,
+    };
+  }, [rows, storageMode, muted, fg, border, C.data, C.dict, C.hash]);
+
+  const onEvents = useMemo(() => ({
+    click: (p: any) => { const it = rows[p?.dataIndex]; if (it) onSelect?.(it.ref); },
+  }), [rows, onSelect]);
+
+  return <EChart option={option} height={Math.max(140, rows.length * 30 + 28)} onEvents={onEvents} />;
+}
+
 // ---- DAX benchmark bars ---------------------------------------------------------------------
 export function BenchBars({ runsMs }: { runsMs: number[] }) {
   const accent = cssVar('--sem-accent', '#2ED47A');

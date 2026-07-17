@@ -29,7 +29,7 @@ const webRoot = resolve(__dir, '..', '..');          // Semanticus.VSCode/ (so /
 // Keep this in the same reading order as App.tsx: intent groups first, then the three standalone
 // surfaces. `all` is the product-wide visual gate, so an omitted/renamed tab would be a silent coverage hole.
 const STUDIO_TABS = [
-  'Diagram', 'Search', 'Lineage', 'Data', 'Statistics',
+  'Diagram', 'Search', 'Lineage', 'Data', 'Storage',
   'Model Spec', 'Advanced Modelling', 'M Code', 'DAX Lab', 'Change Plan',
   'AI Readiness', 'BPA',
   'Tests', 'Evidence',
@@ -40,6 +40,7 @@ const PROPGRID_SCENARIOS = ['model', 'measure', 'multi', 'column', 'formatexpr',
 const CONNECTION_DRAWER_STATES = [
   { target: 'studio', variant: 'Diagram', drawer: 'open', out: join(__dir, 'shots', 'studio-connections.png') },
   { target: 'studio', variant: 'Diagram', drawer: 'work', out: join(__dir, 'shots', 'studio-connections-work-locally.png') },
+  { target: 'studio', variant: 'Diagram', drawer: 'history', out: join(__dir, 'shots', 'studio-connections-history.png') },
 ];
 
 function findBrowser() {
@@ -109,7 +110,7 @@ async function capture(browser, port, { target, variant, out, drawer }) {
       if (process.env.UISHOT_GRAPH) params.set('g', process.env.UISHOT_GRAPH);
       if (process.env.UISHOT_SUB) params.set('sub', process.env.UISHOT_SUB);
       if (process.env.UISHOT_EXPAND) params.set('expand', process.env.UISHOT_EXPAND);
-      if (process.env.UISHOT_CONN) params.set('conn', '1');   // simulate a live-connected engine (Data/Statistics/Query populate)
+      if (process.env.UISHOT_CONN) params.set('conn', '1');   // simulate a live-connected engine (Data/Storage/Query populate)
       if (process.env.UISHOT_DL) params.set('dl', '1');       // render the model as Direct Lake (resident-only storage + Entity partitions)
       if (process.env.UISHOT_ACT) params.set('act', '1');     // simulate the agent running read ops (live activity feed + reflection)
       if (process.env.UISHOT_VE) params.set('ve', process.env.UISHOT_VE);   // Edit History Verified-Edits chain variant (e.g. UISHOT_VE=broken → tampered chain warning)
@@ -155,6 +156,24 @@ async function capture(browser, port, { target, variant, out, drawer }) {
           });
           if (!clicked) throw new Error('Connections inventory could not find the Work locally action');
           await page.waitForFunction(() => document.body.textContent?.includes('Work locally from'), { timeout: 15000 });
+        }
+        if (drawer === 'history') {
+          // Expand the History panel so the timeline renders for review (it defaults collapsed), then scroll it into
+          // view — it sits at the bottom of the scrolling drawer, below the fold.
+          const clicked = await page.evaluate(() => {
+            const h3 = [...document.querySelectorAll('h3')].find((n) => (n.textContent || '').trim() === 'History');
+            const button = h3?.parentElement?.querySelector('button');
+            if (button) button.click();
+            return !!button;
+          });
+          if (!clicked) throw new Error('Connections drawer could not find the History toggle');
+          await page.waitForFunction(() => (document.body.textContent || '').includes('All connections'), { timeout: 15000 });
+          await new Promise((r) => setTimeout(r, 300));
+          await page.evaluate(() => {
+            const h3 = [...document.querySelectorAll('h3')].find((n) => (n.textContent || '').trim() === 'History');
+            h3?.scrollIntoView({ block: 'start' });
+          });
+          await new Promise((r) => setTimeout(r, 400));
         }
       }
       if (variant.toLowerCase() === 'diagram') {
@@ -339,6 +358,8 @@ if (a.toLowerCase() === 'all') {
           ...PROPGRID_SCENARIOS.map((s) => ({ target: 'propgrid', variant: s })),
           ...CONNECTION_DRAWER_STATES]
          .map((j) => ({ ...j, out: j.out || defaultOut(j.target, j.variant) }));
+} else if (a.toLowerCase() === 'connections') {
+  jobs = [...CONNECTION_DRAWER_STATES];   // just the Connections drawer states (identity bar, records, work-locally)
 } else if (a.toLowerCase() === 'studio') {
   const variant = b || 'Diagram';
   jobs = [{ target: 'studio', variant, out: c ? outOf(c) : defaultOut('studio', variant) }];

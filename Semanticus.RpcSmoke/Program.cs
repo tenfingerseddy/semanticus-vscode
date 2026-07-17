@@ -24,11 +24,12 @@ namespace Semanticus.RpcSmoke
         private static async Task<int> Main()
         {
             var pipeName = "semanticus-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            const string uiChallenge = "rpc-smoke-ui-challenge-0123456789abcdef";
             var sessions = new SessionManager();
             // Smoke harness runs as Pro so it exercises the BULK change-plan apply; the Pro GATE itself is covered
             // by Semanticus.Tests/EntitlementGateTests.
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
-            using var server = new RpcServer(sessions, engine, pipeName);
+            using var server = new RpcServer(sessions, engine, pipeName, uiChallenge);
             using var cts = new CancellationTokenSource();
             var serverTask = server.RunAsync(cts.Token);
 
@@ -38,8 +39,8 @@ namespace Semanticus.RpcSmoke
                 var bim = FindTestBim();
                 Console.WriteLine($"[i] pipe={pipeName}  model={Path.GetFileName(bim)}");
 
-                ui = await Client.ConnectAsync(pipeName);
-                agent = await Client.ConnectAsync(pipeName);
+                ui = await Client.ConnectAsync(pipeName, "human", uiChallenge);
+                agent = await Client.ConnectAsync(pipeName, "agent");
                 Check("two independent clients connected to one engine", ui != null && agent != null);
 
                 // UI opens the model.
@@ -67,10 +68,22 @@ namespace Semanticus.RpcSmoke
                 var agentSees = await agent.Invoke<string>("getDax", measureRef);
                 Check("AGENT reads the UI's edit on the same live session", agentSees == edited);
 
-                // ---- DUAL-DRIVE #2: AGENT edits -> UI must see it live -------------------------
+                // ---- REVISION FENCE (zero-dialog authoring, round 7): the header-save verified-resumption writes carry an
+                // optional expectedRevision (5th positional arg). Prove the new wire shape end-to-end: a STALE revision is
+                // refused engine-side even when the session id matches (the swap fence alone can't see a same-session
+                // wrong-object write), and the CURRENT revision proceeds. Net-zero probe: the stale call must not mutate.
                 var edited2 = "1 + 1 /* edit-by-agent */";
+                var fenceInfo = await agent.Invoke<SessionInfo>("sessionInfo");
+                bool staleRefused = false;
+                try { await agent.Invoke<SetResult>("setDax", measureRef, edited2, "human", fenceInfo.SessionId, fenceInfo.Revision - 1); }
+                catch { staleRefused = true; }
+                Check("setDax with a STALE expectedRevision is refused over the wire", staleRefused);
+                Check("the refused stale-revision write did not mutate", await agent.Invoke<string>("getDax", measureRef) == edited);
+
+                // ---- DUAL-DRIVE #2: AGENT edits -> UI must see it live -------------------------
                 var wait2 = ui.Notify.WaitNextAsync();
-                var set2 = await agent.Invoke<SetResult>("setDax", measureRef, edited2);
+                // The CURRENT revision (+ live session id) passes both fences and lands exactly like the unfenced call.
+                var set2 = await agent.Invoke<SetResult>("setDax", measureRef, edited2, "human", fenceInfo.SessionId, fenceInfo.Revision);
                 var n2 = await wait2.WaitAsync(TimeSpan.FromSeconds(5));
                 Check("UI received model/didChange for agent edit", n2 != null && n2.Deltas.Any(d => d.Ref == measureRef));
                 var uiSees = await ui.Invoke<string>("getDax", measureRef);
@@ -93,15 +106,14 @@ namespace Semanticus.RpcSmoke
                 try { await agent.Invoke<string>("getDax", dupRef); } catch { dupGone = true; }
                 Check("undo removed the pasted copy (one batch incl. its in-batch rename)", dupGone);
 
-                // LEGACY wire shape: the pre-targetRef 3-arg positional call (objRef, newName, origin) — an older
-                // extension bundle attached to a newer engine. targetRef was appended AFTER origin precisely so
-                // this keeps binding origin as origin and duplicating IN PLACE (never an unknown-target failure).
+                // LEGACY wire shape: the pre-targetRef 3-arg positional call (objRef, newName, ignored origin slot).
+                // The positional shape remains compatible, while connection authentication owns the real origin.
                 var waitLegacy = ui.Notify.WaitNextAsync();
-                var legacyRef = await agent.Invoke<string>("duplicateObject", measureRef, "Legacy Dup Smoke", "agent");
+                var legacyRef = await agent.Invoke<string>("duplicateObject", measureRef, "Legacy Dup Smoke", "human");
                 Check("LEGACY 3-arg duplicateObject stays in-place (3rd positional arg not misread as targetRef)",
                     legacyRef == "measure:" + srcTable + "/Legacy Dup Smoke");
                 var nLegacy = await waitLegacy.WaitAsync(TimeSpan.FromSeconds(5));
-                Check("LEGACY 3-arg duplicateObject binds its 3rd positional arg to ORIGIN", nLegacy != null && nLegacy.Origin == "agent");
+                Check("LEGACY 3-arg duplicateObject cannot override the authenticated AGENT origin", nLegacy != null && nLegacy.Origin == "agent");
                 await agent.Invoke<UndoState>("undo");   // net-zero
 
                 // ---- DUAL-DRIVE #3: AGENT runs a READ op -> UI sees it live via model/activity -----
@@ -472,6 +484,22 @@ namespace Semanticus.RpcSmoke
             return null;
         }
 
+        private static async Task ConfirmRpcRoleAsync(Stream stream)
+        {
+            var expected = "SEMANTICUS-RPC/1 accepted";
+            var bytes = new byte[256];
+            var one = new byte[1];
+            var count = 0;
+            while (count < bytes.Length)
+            {
+                if (await stream.ReadAsync(one, 0, 1) == 0) throw new EndOfStreamException("RPC server closed during role handshake.");
+                if (one[0] == (byte)'\n') break;
+                bytes[count++] = one[0];
+            }
+            if (count == bytes.Length || System.Text.Encoding.UTF8.GetString(bytes, 0, count) != expected)
+                throw new InvalidDataException("RPC server rejected the role handshake.");
+        }
+
         /// <summary>A JSON-RPC client over the named pipe that also collects server notifications.</summary>
         private sealed class Client : IDisposable
         {
@@ -484,10 +512,17 @@ namespace Semanticus.RpcSmoke
                 _pipe = pipe; _rpc = rpc; Notify = notify;
             }
 
-            public static async Task<Client> ConnectAsync(string pipeName)
+            public static async Task<Client> ConnectAsync(string pipeName, string role, string challenge = null)
             {
                 var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await pipe.ConnectAsync(5000);
+                var preamble = role == "human"
+                    ? $"SEMANTICUS-RPC/1 human {challenge}\n"
+                    : "SEMANTICUS-RPC/1 agent\n";
+                var bytes = System.Text.Encoding.UTF8.GetBytes(preamble);
+                await pipe.WriteAsync(bytes, 0, bytes.Length);
+                await pipe.FlushAsync();
+                await ConfirmRpcRoleAsync(pipe);
                 var notify = new NotifyCollector();
                 var rpc = new JsonRpc(RpcServer.CreateHandler(pipe));
                 rpc.AddLocalRpcTarget(notify);

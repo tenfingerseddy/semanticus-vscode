@@ -89,6 +89,31 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Model_graph_flags_a_field_parameter_and_leaves_a_plain_calc_table_unmarked()
+        {
+            var (engine, _) = await NewPbiModelAsync();
+            using (engine)
+            {
+                var t = await engine.CreateTableAsync("Sales", "human");
+                var mRef = await engine.CreateMeasureAsync(t, "Total Sales", "1", "human");
+
+                // A real field parameter (carries the ParameterMetadata marker) ...
+                await engine.CreateFieldParameterAsync("My Parameter", new[] { new FieldParameterItem { ObjectRef = mRef } }, "human");
+                // ... and an ORDINARY calculated table (a calc table without the marker must stay plain).
+                await engine.CreateCalculatedTableAsync("Plain Calc", "{1}", "human");
+
+                var graph = await engine.GetModelGraphAsync();
+                var fp = graph.Tables.Single(x => x.Name == "My Parameter");
+                var plain = graph.Tables.Single(x => x.Name == "Plain Calc");
+
+                Assert.True(fp.IsFieldParameter);      // detected — deterministic, metadata-only
+                Assert.True(fp.IsCalculated);          // a field parameter is still a calculated table
+                Assert.False(plain.IsFieldParameter);  // no marker => not a field parameter (no misfire)
+                Assert.True(plain.IsCalculated);
+            }
+        }
+
+        [Fact]
         public async Task Escapes_brackets_and_apostrophes_in_object_names()
         {
             var (engine, sessions) = await NewPbiModelAsync();

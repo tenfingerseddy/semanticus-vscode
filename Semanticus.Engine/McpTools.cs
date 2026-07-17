@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using ModelContextProtocol.Server;
 using Semanticus.Analysis;
@@ -453,8 +454,9 @@ namespace Semanticus.Engine
         public static Task<CloudReport[]> ListReports(IEngine engine,
             [Description("Workspace (group) id")] string workspaceId,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
-            [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null)
-            => engine.ListReportsAsync(workspaceId, authMode, tenantId);
+            [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null,
+            CancellationToken cancellationToken = default)
+            => engine.ListReportsAsync(workspaceId, authMode, tenantId, cancellationToken);
 
         [McpServerTool(Name = "analyze_cloud_reports"), Description("REPORT-AWARE safe-to-remove over CLOUD (published) reports — the Measure-Killer headline against the live service. Fetches each report's PBIR via the Fabric 'Get Report Definition' API, reconciles its field usage to the OPEN model BY NAME, and recomputes safe-to-remove EXCLUDING any field a report uses. reportIds empty = every non-paginated report in the workspace. Behaviour is READ-ONLY (Semanticus never modifies the report), BUT getDefinition requires a WRITE-CAPABLE Fabric scope (Item.ReadWrite.All / Report.ReadWrite.All) + the Contributor role — so you MUST pass consent=true to acknowledge that (tell the user first). Per-report failures (paginated/RDL, a report blocked by an encrypted sensitivity label, a download error) are reported as unreadable with a reason — never silently dropped, so 'safe' is never overstated. A model must be open and must be the one these reports bind to.")]
         public static Task<ReportAnalysisResult> AnalyzeCloudReports(IEngine engine,
@@ -462,8 +464,9 @@ namespace Semanticus.Engine
             [Description("Report ids to analyze; empty = every non-paginated report in the workspace")] string[] reportIds,
             [Description("Must be true to acknowledge getDefinition needs a write-capable Fabric scope + Contributor role (behaviour stays read-only)")] bool consent = false,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
-            [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null)
-            => engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId);
+            [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null,
+            CancellationToken cancellationToken = default)
+            => engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId: null, cancellationToken: cancellationToken);
 
         [McpServerTool(Name = "script_objects"), Description("Script one or MANY objects to text (read-only — never mutates). format: 'dax' (annotated expressions for measures/calc columns/calc tables/calc items/UDFs), 'tmdl' (per-object TMDL — the model's native, readable on-disk format; the preferred export), or 'tmsl' (createOrReplace JSON; TMSL's unit is the table/role, so a child object scripts its containing table — deduped to containers). Pass several refs to capture a whole batch (e.g. all of a table's measures) in one document. Unresolvable refs are skipped.")]
         public static Task<string> ScriptObjects(IEngine engine,
@@ -798,12 +801,12 @@ namespace Semanticus.Engine
             [Description("Default | None | Read")] string permission)
             => engine.SetColumnObjectPermissionAsync(roleName, columnRef, permission, "agent");
 
-        [McpServerTool(Name = "enable_qna"), Description("Enable a Q&A / Copilot linguistic schema (synonyms) on the model by seeding a culture's linguistic metadata. Call once before set_synonyms. Pass null culture for the default (en-US).")]
+        [McpServerTool(Name = "enable_qna"), Description("Enable a Q&A / Copilot linguistic schema (synonyms) on the model by seeding a culture's linguistic metadata. Call once before set_synonyms. Pass null culture for the default (en-US). On an existing schema it self-heals: entities bound to hidden or deleted objects are pruned, and any visible-name collisions Q&A can't distinguish are surfaced as a warning.")]
         public static Task<SetResult> EnableQna(IEngine engine,
             [Description("Culture id (e.g. 'en-US'), or null for default")] string culture = null)
             => engine.EnableQnaAsync(culture, "agent");
 
-        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot/Q&A map natural language to the right field.")]
+        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot/Q&A map natural language to the right field. The linguistic schema requires conceptually UNIQUE names: hidden targets are refused, entities bound to hidden or deleted objects are pruned automatically, and a write that would collide two names under Q&A term matching fails with the objects named.")]
         public static Task<SetResult> SetSynonyms(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Synonym terms")] string[] terms,
@@ -890,12 +893,19 @@ namespace Semanticus.Engine
 
         // ---- Live connectivity (attached-readonly DAX/DMV) -------------------------------------
 
-        [McpServerTool(Name = "connect_xmla"), Description("Connect (read-only) to a Power BI / Fabric / Azure AS XMLA endpoint to run DAX/DMV against the LIVE deployed model while you edit files offline. endpoint e.g. 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>'. authMode: azcli (default, uses your `az login`), interactive (browser), or devicecode.")]
-        public static Task<ConnectionStatus> ConnectXmla(IEngine engine,
+        [McpServerTool(Name = "connect_xmla"), Description("Connect (read-only) to a Power BI / Fabric / Azure AS XMLA endpoint to run DAX/DMV against the LIVE deployed model while you edit files offline. endpoint e.g. 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>'. authMode: azcli (default, uses your `az login`), interactive (browser), or devicecode. tenantId optional — target a specific Entra tenant when your `az login` is a different tenant than the model's (same as open_live). The result's account field names the identity signed in, when known.")]
+        public static async Task<ConnectionStatus> ConnectXmla(IEngine engine,
             [Description("XMLA endpoint, e.g. powerbi://api.powerbi.com/v1.0/myorg/<Workspace>")] string endpoint,
             [Description("Dataset / database name")] string database,
-            [Description("interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env) | azcli | devicecode")] string authMode = "azcli")
-            => engine.ConnectXmlaAsync(endpoint, database, authMode, null);
+            [Description("interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env) | azcli | devicecode")] string authMode = "azcli",
+            [Description("Optional Entra tenant id or domain to authenticate against")] string tenantId = null)
+        {
+            var s = await engine.ConnectXmlaAsync(endpoint, database, authMode, null, tenantId);
+            // Broadcast the connection-state change (HIGH 7): without it, an agent connecting over MCP left the UI door's
+            // identity/sync chip stale. The UI relays this connection-kind activity to a native status refresh.
+            Emit(engine, new ActivityEvent { Kind = "connect_xmla", Origin = "agent", Label = "Connected to a published model for tests and queries", Ok = s?.Connected == true, Result = s });
+            return s;
+        }
 
         [McpServerTool(Name = "open_live"), Description("LOAD the full editable model from a Power BI / Fabric / Azure AS XMLA endpoint into the session, so the WHOLE workbench — AI-readiness scan, BPA, the change-plan, and every edit — operates on the LIVE deployed model. Unlike connect_xmla (which only enables read-only DAX/DMV), this loads the model's metadata via TOM, exactly as Tabular Editor attaches to a deployed model. Edits stay IN-MEMORY and undoable; push them back with deploy_live (the write half — dry-run by default) or persist to a TMDL folder with save_model for review/deployment. endpoint e.g. 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>'. Leave database empty to load the workspace's only/first dataset. authMode: interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env — most reliable for Fabric) | azcli (default) | devicecode. tenantId optional — target a specific Entra tenant when your `az login` is a different tenant than the model's.")]
         public static Task<OpenResult> OpenLive(IEngine engine,
@@ -933,16 +943,25 @@ namespace Semanticus.Engine
         public static Task<LocalInstance[]> ListLocalInstances(IEngine engine) => engine.ListLocalInstancesAsync();
 
         [McpServerTool(Name = "connect_local"), Description("Connect (read-only) to a local Analysis Services instance (an open Power BI Desktop). Pass a Data Source like 'localhost:51234', or leave it empty to auto-pick the running Power BI Desktop instance.")]
-        public static Task<ConnectionStatus> ConnectLocal(IEngine engine,
+        public static async Task<ConnectionStatus> ConnectLocal(IEngine engine,
             [Description("Data source, e.g. 'localhost:51234'; empty = auto-discover")] string dataSource = null,
             [Description("Optional database name")] string database = null)
-            => engine.ConnectLocalAsync(dataSource, database);
+        {
+            var s = await engine.ConnectLocalAsync(dataSource, database);
+            Emit(engine, new ActivityEvent { Kind = "connect_local", Origin = "agent", Label = "Connected to a running local model", Ok = s?.Connected == true, Result = s });   // HIGH 7: keep the UI door's identity/sync chip fresh
+            return s;
+        }
 
         [McpServerTool(Name = "connection_status"), Description("Report the current live connection (connected, kind, data source).")]
         public static Task<ConnectionStatus> ConnectionStatusTool(IEngine engine) => engine.ConnectionStatusAsync();
 
         [McpServerTool(Name = "disconnect"), Description("Close the live connection.")]
-        public static Task<ConnectionStatus> Disconnect(IEngine engine) => engine.DisconnectAsync();
+        public static async Task<ConnectionStatus> Disconnect(IEngine engine)
+        {
+            var s = await engine.DisconnectAsync();
+            Emit(engine, new ActivityEvent { Kind = "disconnect", Origin = "agent", Label = "Closed the live connection", Ok = true, Result = s });   // HIGH 7: broadcast so the UI door's chips refresh
+            return s;
+        }
 
         // ---- live activity: surface the agent's read ops to the human's Studio (best-effort broadcast) ----------
         // The agent already has the FULL result over MCP; we publish a TOKEN-LIGHT, row-capped preview so the human's
@@ -1057,12 +1076,14 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "vpaq_scan"), Description("VertiPaq storage analysis of the connected live model: total model size, per-table sizes, and the biggest columns (data + dictionary + index bytes, % of model, encoding). Use it to find what to drop/hide/optimize. Requires a live connection.")]
+        [McpServerTool(Name = "vpaq_scan"), Description("Storage analysis of the connected live query model. Returns observed column and table bytes, component bytes, encoding, an observed-denominator percentage, and an explicit storageMode. Import mode establishes complete model totals, directLake is resident-only, and unknown leaves completeness unconfirmed. Requires a live connection.")]
         public static async Task<VpaqReport> VpaqScan(IEngine engine,
             [Description("How many top columns to return (default 25)")] int topN = 25)
         {
             var r = await engine.VertiPaqScanAsync(topN);
-            Emit(engine, new ActivityEvent { Kind = "vpaq_scan", Origin = "agent", Label = "Scanned VertiPaq storage",
+            // Kind stays "vpaq_scan" (the reflection key the Storage tab listens on); only the user-facing Label uses
+            // the tab's "Storage" language (no product names in copy — see the copy rulebook).
+            Emit(engine, new ActivityEvent { Kind = "vpaq_scan", Origin = "agent", Label = "Scanned storage",
                 Ok = string.IsNullOrEmpty(r.Error), Error = r.Error, Result = r });
             return r;
         }
@@ -1110,9 +1131,29 @@ namespace Semanticus.Engine
             [Description("Max matrix rows to compare (default 100000)")] int maxRows = 100000)
         {
             var r = await engine.VerifyEquivalenceAsync(exprA, exprB, groupBy, filters, maxRows);
-            Emit(engine, new ActivityEvent { Kind = "verify_equivalence", Origin = "agent", Label = r.AllMatch ? "Verified a rewrite — equivalent" : "Verified a rewrite — NOT equivalent",
+            Emit(engine, new ActivityEvent { Kind = "verify_equivalence", Origin = "agent", Label = EquivalenceLabel(r, groupBy),
                 Query = TruncDax(exprB), Ok = string.IsNullOrEmpty(r.Error), Error = r.Error, Result = r });
             return r;
+        }
+
+        // The activity label follows the ONE evidence ladder (DaxBench.ClassifyEquivalenceEvidence) — "Verified"
+        // is reserved for the proven/failed rungs where the comparison itself is authoritative. Everything else
+        // (zero rows, truncation, thin grid, degraded fidelity, run failure) says what actually happened, so the
+        // feed can't launder a caveat into a proof. Internal for unit tests.
+        internal static string EquivalenceLabel(EquivalenceResult r, string[] groupBy = null)
+        {
+            if (r == null) return "Compared a rewrite";
+            var (state, why) = DaxBench.ClassifyEquivalenceEvidence(r, DaxBench.NormalizeGroupBy(groupBy).Length);
+            static string Short(string s) => string.IsNullOrEmpty(s) ? "" : s.Length > 90 ? s.Substring(0, 87) + "..." : s;
+            return state switch
+            {
+                "proven" => "Verified a rewrite — equivalent",
+                "failed" => "Verified a rewrite — NOT equivalent",
+                "degraded_mismatch" => "Compared a rewrite (degraded) — difference observed, not authoritative",
+                "degraded" => "Compared a rewrite (degraded: " + Short(r.Fidelity) + ") — values matched, NOT verified",
+                "thin" => "Compared a rewrite — matched at the grand total only — NOT verified",
+                _ => "Compared a rewrite — could not verify (" + Short(why) + ")",
+            };
         }
 
         [McpServerTool(Name = "optimize_measure"), Description("VERIFIED EDITS — an evidence-gated way to optimize a measure. Give >=2 candidate DAX rewrites; the engine validates each, checks each returns identical values to the current body across the SUMMARIZECOLUMNS(verifyGroupBy) matrix YOU supply, benchmarks only the ones that matched (warm wall-clock over that same grid — not a server SE/FE trace), and applies the fastest that beats the current body beyond a measured noise band — recording the proof + benchmark as evidence. Equivalence is only as strong as verifyGroupBy: a grand-total-only match is downgraded to unverified (not accepted), so pass representative group-by columns. REFUSES to finalize without >=2 candidates, without a live connection, or with nothing proven (correctness always gates speed — a faster-but-wrong candidate can never win). Prefer this over update_measure for rewrites/optimization. Auto-apply is Pro; on free it returns the full evidence (paused) so you can apply the winner with update_measure. Needs a live connection (open_live / open_local).")]
@@ -1306,7 +1347,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "get_workflow_run"), Description("WORKFLOWS: the live state of a run — per-step status (pending/in_progress/passed/skipped/failed), recorded answers and declines, verify evidence, and the CURRENT step's full instructions + unanswered questions. Omit runId for the most recent run. Free, read-only.")]
+        [McpServerTool(Name = "get_workflow_run"), Description("WORKFLOWS: the live state of a run — per-step status (pending/in_progress/passed/skipped/failed), recorded answers and declines, verify evidence (each verify is one of: passed = proven; failed = evidence produced, gate unmet; unavailable = applicable but no authoritative evidence, blocks a hard step, Missing names what was absent; not_applicable = its when: condition did not hold; skipped = legacy advisory non-blocking skip — with a per-shape equivalence breakdown + engine-reported mismatch cells where present), and any adjudication receipts (witness locks + witness/partition revisions). Plus the CURRENT step's full instructions + unanswered questions. Omit runId for the most recent run. Free, read-only.")]
         public static Task<WorkflowRunView> GetWorkflowRun(IEngine engine,
             [Description("The run id from start_workflow (omit for the most recent run)")] string runId = null)
             => engine.GetWorkflowRunAsync(runId);
@@ -1435,7 +1476,7 @@ namespace Semanticus.Engine
 
         // ---- Learning Loop: knowledge store (L1) + deterministic recall (L2) ----------------------
 
-        [McpServerTool(Name = "get_model_primer"), Description("PRIMER: read the open model's single project orientation document. It is plain Markdown beside the model, travels in source control, and always uses six fixed sections: Overview, Business context, Gotchas, Patterns, Known issues, History. Read this before model work for the declared business context and known traps. Free, read-only.")]
+        [McpServerTool(Name = "get_model_primer"), Description("PRIMER: read the open model's single project orientation document. It is plain Markdown in a .semanticus/primers sidecar — beside the model (travels in source control) for a disk model, or in the workspace for a live/local connection — and always uses six fixed sections: Overview, Business context, Gotchas, Patterns, Known issues, History. Read this before model work for the declared business context and known traps. Free, read-only.")]
         public static async Task<PrimerDocument> GetModelPrimer(IEngine engine)
         {
             var r = await engine.GetPrimerAsync();
@@ -1580,7 +1621,7 @@ namespace Semanticus.Engine
             [Description("true to approve, false to reject, null to leave as-is")] bool? approved = null)
             => engine.SetPlanItemAsync(itemId, after, approved, "agent");
 
-        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included'). For a set_dax rewrite, ALWAYS pass verifyGroupBy so apply_plan PROVES equivalence (and skips it if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename) — it will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan.")]
+        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included') | delete (remove the object) | delete_if_unused (remove ONLY if unused_objects' safe verdict still holds at apply time — recomputed server-side, else the item is skipped with the reason). An identical pending item (same ref+kind+target+after) is deduped: the existing item is returned, not re-added. For a set_dax rewrite, ALWAYS pass verifyGroupBy so apply_plan PROVES equivalence (and skips it if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename) — it will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan.")]
         public static Task<ChangePlanView> AddPlanItem(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Operation kind, e.g. 'set_dax', 'set_description', 'rename'")] string kind,
@@ -1831,6 +1872,7 @@ namespace Semanticus.Engine
             [Description("...or merge FROM this git ref of the open model's repo (e.g. 'main', a commit hash)")] string sourceGitRef = null,
             [Description("Accountable override for the drift guard on a published-model push — the reason you're pushing despite the target having changed since the diff. Recorded in the audit trail.")] string overrideReason = null,
             [Description("Auth mode for a published-model target (default 'azcli'; e.g. 'serviceprincipal', 'interactive')")] string authMode = null,
+            [Description("Optional Entra tenant id or domain for a published-model target. Set it when the target lives in a different tenant than your default az login, so the read AND the write both authenticate against that tenant")] string targetTenantId = null,
             [Description("false = preview (default); true = write the target")] bool commit = false)
         {
             // Reject AMBIGUOUS source/target combos rather than silently picking one by precedence — a caller who set
@@ -1846,7 +1888,7 @@ namespace Semanticus.Engine
                 : !string.IsNullOrWhiteSpace(sourceGitRef) ? new ModelRef { Kind = "gitref", GitRef = sourceGitRef }
                 : new ModelRef { Kind = "session" };
             ModelRef right = !string.IsNullOrWhiteSpace(targetEndpoint)
-                ? new ModelRef { Kind = "workspace", Endpoint = targetEndpoint, Database = targetDatabase, AuthMode = authMode }
+                ? new ModelRef { Kind = "workspace", Endpoint = targetEndpoint, Database = targetDatabase, AuthMode = authMode, TenantId = targetTenantId }
                 : new ModelRef { Kind = "file", Path = targetFile };
             var r = await engine.ApplyDiffAsync(left, right, selectedRefs, commit, "agent", overrideReason);
             var isWs = !string.IsNullOrWhiteSpace(targetEndpoint);
@@ -1857,6 +1899,19 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_connections"), Description("Every live model source this machine has connected to (XMLA endpoints and local running models), newest first. Use this INSTEAD of asking the user to retype an endpoint. Each record carries endpoint, dataset, auth mode, model name, last-used, and the user's target label. Holds NO secrets: authMode is a mode NAME, never a token. 'label' is what the USER declared the environment to be (local | dev | uat | prod); an EMPTY label means the target is treated as PRODUCTION, the strictest reading and the only inference ever made. NEVER guess a label from an endpoint's name. 'workingFolder' is a durable local copy made from that source. 'publishConnectionId' is the separate final XMLA destination when one is linked; a local source does not become a published destination by implication. Existing user-owned local files remain valid sources even though they are not live-connection records. Read-only and free. Next: connection_context for the active edit/query/publish identities, or prepare_working_copy to preview a local workflow.")]
         public static async Task<ModelConnectionRecord[]> ListConnections(IEngine engine)
             => await engine.ListConnectionsAsync();
+
+        [McpServerTool(Name = "list_connection_history"), Description("The device-local connection TIMELINE (connects, opens, account switches and sign-ins), newest first — the same log the Connections drawer shows. Optionally filter to ONE connection id (from list_connections). Each event carries the WHERE (endpoint/dataset), the account UPN in play when known, the outcome (ok — a failed open that changed nothing is still recorded), a short detail note, and a UTC timestamp. Holds NO credentials — never a token or secret. Use it to see who last connected where, or to confirm an account switch actually took effect. Read-only and free. Next: probe_connection_accounts for who the NEXT open will sign in as; list_connections for the target list.")]
+        public static async Task<ConnectionHistoryEvent[]> ListConnectionHistory(IEngine engine,
+            [Description("Only this connection id (from list_connections); omit for the whole timeline")] string connectionId = null,
+            [Description("Most-recent N events to return (default 50)")] int limit = 50)
+        {
+            var all = await engine.ListConnectionHistoryAsync(string.IsNullOrWhiteSpace(connectionId) ? null : connectionId);
+            return limit > 0 && all.Length > limit ? all.Take(limit).ToArray() : all;   // newest-first already — cap keeps the result token-frugal
+        }
+
+        [McpServerTool(Name = "probe_connection_accounts"), Description("For each remembered XMLA target, the account (UPN) the NEXT open will actually sign in AS — a cheap SILENT probe (a local disk read of the saved sign-in, no network, no prompt). A sign-in is remembered per tenant and credential family (interactive / device-code), so 'account' is that identity, which may differ from a target's own last-used one. 'account' is null when it is genuinely UNKNOWN — no saved MSAL record for that tenant and family (for example azcli / service-principal keep none); a null account is unknown, never signed-out. 'previousAccount' surfaces the target's last-used account as provenance ('was' / 'last opened as') — both when a different current account supersedes it AND when the current account is unknown, so a prediction is never invented from the last-used hint. Holds no credential. Use it to show 'as <account>' before connecting, or to confirm which identity a switch left in place. Read-only and free. Next: list_connections for the full target list; list_connection_history for the timeline.")]
+        public static async Task<ConnectionAccountProbe[]> ProbeConnectionAccounts(IEngine engine)
+            => await engine.ProbeConnectionAccountsAsync();
 
         [McpServerTool(Name = "remember_xmla_connection"), Description("Remember an XMLA endpoint in the shared connection registry without connecting to it. Stores endpoint, optional model name and auth MODE only; never a token or secret. New records are unlabelled and therefore treated as production until the human labels them. Use this only when the endpoint is already known, then list_connections to retrieve its id. This does not open, query, edit, or publish a model.")]
         public static async Task<ModelConnectionRecord> RememberXmlaConnection(IEngine engine,
@@ -1982,26 +2037,30 @@ namespace Semanticus.Engine
         // principal (AZURE_CLIENT_ID/SECRET/TENANT env) is the reliable headless path.
         [McpServerTool(Name = "list_workspaces"), Description("List the Fabric workspaces you can access (id, displayName, type, capacity). Live read against api.fabric.microsoft.com using your Entra identity. Read-only.")]
         public static Task<FabricWorkspace[]> ListWorkspaces(IEngine engine,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.ListWorkspacesAsync(authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.ListWorkspacesAsync(authMode, null, cancellationToken);
 
         [McpServerTool(Name = "list_deployment_pipelines"), Description("List the Fabric deployment pipelines you can access (id, displayName, description). Use get_pipeline_stages then get_stage_items to drill into a pipeline's Dev/Test/Prod stages. Live read; read-only.")]
         public static Task<DeploymentPipeline[]> ListDeploymentPipelines(IEngine engine,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.ListDeploymentPipelinesAsync(authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.ListDeploymentPipelinesAsync(authMode, null, cancellationToken);
 
         [McpServerTool(Name = "get_pipeline_stages"), Description("List a deployment pipeline's stages in order (Dev=0, Test=1, Prod=2…) with each stage's assigned workspace. Needs an Admin role on the pipeline. Live read; read-only.")]
         public static Task<PipelineStage[]> GetPipelineStages(IEngine engine,
             [Description("Deployment-pipeline id (from list_deployment_pipelines)")] string pipelineId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.GetPipelineStagesAsync(pipelineId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.GetPipelineStagesAsync(pipelineId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "get_stage_items"), Description("List the items in a pipeline stage (itemType e.g. SemanticModel/Report, with source/target item ids + last deployment time) — use it to resolve the SemanticModel itemId to deploy. Needs Contributor on the stage workspace. Live read; read-only.")]
         public static Task<StageItem[]> GetStageItems(IEngine engine,
             [Description("Deployment-pipeline id")] string pipelineId,
             [Description("Stage id (from get_pipeline_stages)")] string stageId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.GetStageItemsAsync(pipelineId, stageId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.GetStageItemsAsync(pipelineId, stageId, authMode, null, cancellationToken);
 
         // ---- Deployment pipeline: preview + the GATED deploy (write lane) + history -------------------
         [McpServerTool(Name = "preview_deploy"), Description("Preview what promoting a model between pipeline stages WOULD change (New vs Update per item, by source→target pairing) + the readiness gate. Read-only — deploys nothing. ('Update' items may be identical; Different-vs-NoDifference is only known after a real deploy.)")]
@@ -2009,8 +2068,9 @@ namespace Semanticus.Engine
             [Description("Deployment-pipeline id")] string pipelineId,
             [Description("Source stage id (e.g. Dev)")] string sourceStageId,
             [Description("Target stage id (e.g. Test)")] string targetStageId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "deploy_stage"), Description("Promote items between Fabric deployment-pipeline stages. DRY RUN by default (the New/Update preview + the readiness gate); commit=true deploys. An agent may deploy to NON-production stages only — promoting to PRODUCTION needs a human confirming from the Deploy tab with the confirmToken their own dry-run shows. A failing gate blocks unless forceOverride=true. items = source item ids (empty = all supported).")]
         public static async Task<DeployStageReport> DeployStage(IEngine engine,
@@ -2023,9 +2083,10 @@ namespace Semanticus.Engine
             [Description("The confirmToken from a human dry-run (production only; an agent cannot obtain it)")] string confirmToken = null,
             [Description("true = deploy even if the readiness gate fails")] bool forceOverride = false,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
-            [Description("required with forceOverride when the readiness gate fails — recorded in the audit trail")] string overrideReason = null)
+            [Description("required with forceOverride when the readiness gate fails; recorded in the audit trail")] string overrideReason = null,
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.DeployStageAsync(pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, null, "agent", overrideReason);
+            var r = await engine.DeployStageAsync(pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, null, "agent", overrideReason, cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "deploy_stage", Origin = "agent", Label = commit ? (r.Committed ? "Deployed a pipeline stage" : "Deploy refused/failed") : "Previewed a deploy", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2033,21 +2094,24 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "deployment_history"), Description("List a deployment pipeline's recent deployments (status, source→target stages, item counts, who deployed). Read-only.")]
         public static Task<DeploymentHistoryEntry[]> DeploymentHistory(IEngine engine,
             [Description("Deployment-pipeline id")] string pipelineId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.DeploymentHistoryAsync(pipelineId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.DeploymentHistoryAsync(pipelineId, authMode, null, cancellationToken);
 
         // ---- Fabric Git (workspace ⇄ git) — reads + GATED writes ----------------------------------------
         [McpServerTool(Name = "fabric_git_connection"), Description("The workspace's Fabric Git connection: provider (Azure DevOps / GitHub), repo/branch/directory, connection state, last-synced commit. Read-only.")]
         public static Task<FabricGitConnection> FabricGitConnection(IEngine engine,
             [Description("Workspace id")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.FabricGitConnectionAsync(workspaceId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.FabricGitConnectionAsync(workspaceId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "fabric_git_status"), Description("The workspace ⇄ git diff: each changed item (workspace change vs remote change vs conflict), plus the workspace + remote commit hashes. Read-only.")]
         public static Task<FabricGitStatus> FabricGitStatus(IEngine engine,
             [Description("Workspace id")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.FabricGitStatusAsync(workspaceId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.FabricGitStatusAsync(workspaceId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "fabric_git_commit"), Description("Commit the WORKSPACE's changes to git (workspace→git). DRY RUN by default (commit=false reports the pending change count; writes nothing). Pass commit=true to commit. items = item objectIds for a selective commit (empty = all).")]
         public static async Task<FabricGitResult> FabricGitCommit(IEngine engine,
@@ -2055,9 +2119,10 @@ namespace Semanticus.Engine
             [Description("Commit message")] string comment = null,
             [Description("Item objectIds to commit; empty = all workspace changes")] string[] items = null,
             [Description("false = DRY RUN (default); true = commit to git")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.FabricGitCommitAsync(workspaceId, comment, items, commit, authMode, null, "agent");
+            var r = await engine.FabricGitCommitAsync(workspaceId, comment, items, commit, authMode, null, "agent", cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "fabric_git_commit", Origin = "agent", Label = commit ? "Committed workspace to git" : "Previewed a Fabric git commit", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2068,9 +2133,10 @@ namespace Semanticus.Engine
             [Description("PreferRemote (default) | PreferWorkspace")] string conflictPolicy = "PreferRemote",
             [Description("Allow overwriting items that have workspace changes")] bool allowOverride = false,
             [Description("false = DRY RUN (default); true = update the workspace from git")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.FabricGitUpdateAsync(workspaceId, conflictPolicy, allowOverride, commit, authMode, null, "agent");
+            var r = await engine.FabricGitUpdateAsync(workspaceId, conflictPolicy, allowOverride, commit, authMode, null, "agent", cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "fabric_git_update", Origin = "agent", Label = commit ? "Updated workspace from git" : "Previewed a Fabric git update", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2086,9 +2152,10 @@ namespace Semanticus.Engine
             [Description("Directory within the repo (default /)")] string directory = null,
             [Description("A configured-connection id (required for GitHub; optional for ADO which can use automatic creds)")] string connectionId = null,
             [Description("false = DRY RUN (default); true = connect")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.FabricGitConnectAsync(workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, null, "agent");
+            var r = await engine.FabricGitConnectAsync(workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, null, "agent", cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "fabric_git_connect", Origin = "agent", Label = commit ? "Connected workspace to git" : "Previewed a Fabric git connect", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2097,9 +2164,10 @@ namespace Semanticus.Engine
         public static async Task<FabricGitResult> FabricGitDisconnect(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("false = DRY RUN (default); true = disconnect")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.FabricGitDisconnectAsync(workspaceId, commit, authMode, null, "agent");
+            var r = await engine.FabricGitDisconnectAsync(workspaceId, commit, authMode, null, "agent", cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "fabric_git_disconnect", Origin = "agent", Label = commit ? "Disconnected workspace from git" : "Previewed a Fabric git disconnect", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2109,9 +2177,10 @@ namespace Semanticus.Engine
             [Description("Target workspace id")] string workspaceId = null,
             [Description("Target semantic-model item id (in that workspace)")] string itemId = null,
             [Description("false = DRY RUN (default); true = publish (refused for the agent door)")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
         {
-            var r = await engine.CicdPublishAsync(workspaceId, itemId, commit, authMode, null, "agent");
+            var r = await engine.CicdPublishAsync(workspaceId, itemId, commit, authMode, null, "agent", cancellationToken);
             Emit(engine, new ActivityEvent { Kind = "cicd_publish", Origin = "agent", Label = r.Committed ? "Published model to a workspace" : "Previewed a CI/CD publish", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2135,15 +2204,17 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_data_agents"), Description("List the Fabric data agents in a workspace (id, name, description, type). Live read against api.fabric.microsoft.com with your Entra identity; read-only. [verify-at-build]: the item type string isn't documented yet, so this filters items whose type CONTAINS 'dataagent' (case-insensitive) — if none match, ObservedItemTypes lists every item type in the workspace so you can confirm the real one.")]
         public static Task<DataAgentList> ListDataAgents(IEngine engine,
             [Description("Workspace id (from list_workspaces)")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.ListDataAgentsAsync(workspaceId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.ListDataAgentsAsync(workspaceId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "get_data_agent"), Description("Get one data agent's decoded configuration: the draft (and published, if any) stage — aiInstructions, each data source (type, ids, descriptions, the raw elements tree, few-shots), and the publish description. Live read; read-only.")]
         public static Task<DataAgentDetail> GetDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id (from list_data_agents)")] string agentId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.GetDataAgentAsync(workspaceId, agentId, authMode, null);
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.GetDataAgentAsync(workspaceId, agentId, authMode, null, cancellationToken);
 
         [McpServerTool(Name = "generate_data_agent_config"), Description("PRO. Build a complete semantic_model datasource config FROM the open model in one shot — an element tree of every table/column/measure with model descriptions carried and is_selected honoring hidden objects + the Prep-for-AI AI-data-schema exclusions; aiInstructions seeded from the model's LSDL instructions. Returns the JSON for review (feed it to update_data_agent) — writes NOTHING. artifactId/workspaceId come back as placeholders (resolve the real Fabric ids first — see the Note). Like every data-agent write, Pro; list/get stay free.")]
         public static Task<DataAgentConfig> GenerateDataAgentConfig(IEngine engine,
@@ -2156,8 +2227,9 @@ namespace Semanticus.Engine
             [Description("Data agent display name")] string name,
             [Description("AI instructions for the agent (<=15000 chars; empty allowed)")] string aiInstructions = null,
             [Description("false = DRY RUN (default, sends nothing); true = create")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, null, "agent");
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "update_data_agent"), Description("PRO (all data-agent writes are Pro; list/get stay free). Update a data agent's DRAFT — replace only the parts you pass (null = keep). Read-modify-write: fetches the current definition and re-emits ALL existing parts plus your changes (never drops unknown parts). aiInstructions capped at 15000 chars. datasourceJson/fewshotsJson go under the draft/{datasourceFolder}/ folder (folder = 'semantic_model-<name>'). DRY RUN by default: commit=false returns the exact request and changes NOTHING.")]
         public static Task<DataAgentWriteReport> UpdateDataAgent(IEngine engine,
@@ -2168,8 +2240,9 @@ namespace Semanticus.Engine
             [Description("datasource.json content (from generate_data_agent_config); null = keep")] string datasourceJson = null,
             [Description("fewshots.json content; null = keep. NOTE: few-shots aren't supported for semantic-model sources yet ([verify-at-build]).")] string fewshotsJson = null,
             [Description("false = DRY RUN (default, sends nothing); true = update")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, null, "agent");
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "publish_data_agent"), Description("PRO (all data-agent writes are Pro; list/get stay free). Publish a data agent: copy every draft/* part to published/* and write publish_info.json with a description ([verify-at-build] — v1 publishes via the documented definition-write path). DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true publishes.")]
         public static Task<DataAgentWriteReport> PublishDataAgent(IEngine engine,
@@ -2177,16 +2250,18 @@ namespace Semanticus.Engine
             [Description("Data agent item id")] string agentId,
             [Description("Publish description")] string description = null,
             [Description("false = DRY RUN (default, sends nothing); true = publish")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.PublishDataAgentAsync(workspaceId, agentId, description, commit, authMode, null, "agent");
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.PublishDataAgentAsync(workspaceId, agentId, description, commit, authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "delete_data_agent"), Description("PRO (all data-agent writes are Pro; list/get stay free). Delete a Fabric data agent item. DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true deletes it (irreversible).")]
         public static Task<DataAgentWriteReport> DeleteDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id")] string agentId,
             [Description("false = DRY RUN (default, sends nothing); true = delete")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli")
-            => engine.DeleteDataAgentAsync(workspaceId, agentId, commit, authMode, null, "agent");
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.DeleteDataAgentAsync(workspaceId, agentId, commit, authMode, null, "agent", cancellationToken);
     }
 
     /// <summary>Token-light projection of a <see cref="Scorecard"/> for the MCP <c>ai_readiness_summary</c> tool:

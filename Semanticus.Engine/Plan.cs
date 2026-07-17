@@ -37,7 +37,7 @@ namespace Semanticus.Engine
         public string After { get; set; }              // proposed value (null until an AI item is filled)
         public string Status { get; set; }             // proposed | needs_content | approved | rejected | applied | skipped | failed
         public bool Generated { get; set; }            // an AI item whose After was authored by Claude
-        public string VerifyState { get; set; }        // null | verified | unverified | failed  (for set_dax)
+        public string VerifyState { get; set; }        // null | verified | unverified | failed | degraded | degraded_mismatch  (for set_dax; degraded* = fidelity-gated, skipped unless overridden)
         public string[] VerifyGroupBy { get; set; }    // SUMMARIZECOLUMNS matrix for the equivalence gate (set_dax only)
         public string[] VerifyFilters { get; set; }
         public string Note { get; set; }               // apply/verify result note
@@ -80,6 +80,7 @@ namespace Semanticus.Engine
         public int AppliedCount { get; set; }
         public int SkippedCount { get; set; }
         public int FailedCount { get; set; }
+        public int RejectedCount { get; set; }   // structurally rejected pre-mutation (circular rewrite) — NOT overridable, distinct from skipped
         public ChangeItem[] Items { get; set; } = Array.Empty<ChangeItem>();   // the targeted items, final state
         public int BpaViolationsBefore { get; set; }
         public int BpaViolationsAfter { get; set; }

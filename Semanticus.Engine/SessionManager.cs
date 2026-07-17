@@ -12,13 +12,13 @@ namespace Semanticus.Engine
     public sealed class SessionManager : IDisposable
     {
         private int _counter;
-        // volatile: Current is published from the lifecycle path and read from every request thread — without
-        // the fence a request thread could keep seeing the stale session after a swap. Post-swap code must use
-        // the session RETURNED by Publish (its local), never a re-read of Current.
-        private volatile Session _current;
+        // One volatile publication carries the model and every model-scoped store. Readers can capture this
+        // object once and cannot pair a new Session with an old plan/spec/live binding (or the reverse).
+        private volatile SessionContext _current = new SessionContext(null);
 
         public ChangeBus Bus { get; } = new ChangeBus();
-        public Session Current => _current;
+        public Session Current => _current.Session;
+        internal SessionContext CurrentContext => _current;
 
         public SessionManager()
         {
@@ -35,17 +35,16 @@ namespace Semanticus.Engine
         /// Further ambient probes register straight on <see cref="Session.RegisterObserver"/>.</summary>
         public Func<Session, ISessionObserver> ObserverFactory { get; set; }
 
-        public async Task<Session> OpenAsync(string path) => Publish(await BuildOpenAsync(path));
+        public async Task<Session> OpenAsync(string path) => await PublishAsync(await BuildOpenAsync(path)).ConfigureAwait(false);
 
         /// <summary>Create a brand-new, EMPTY model from scratch (no file on disk) and make it the current session.
         /// Mirrors <see cref="OpenAsync"/> but builds the handler with the empty/compat-level constructor on the
         /// single-writer thread. The session has no <see cref="Session.SourcePath"/> until the first save.</summary>
-        public async Task<Session> CreateAsync(string name, int compatibilityLevel) => Publish(await BuildCreateAsync(name, compatibilityLevel));
+        public async Task<Session> CreateAsync(string name, int compatibilityLevel) =>
+            await PublishAsync(await BuildCreateAsync(name, compatibilityLevel)).ConfigureAwait(false);
 
-        /// <summary>Build a fully-loaded replacement session WITHOUT touching <see cref="Current"/> — a bad path or
-        /// parse failure must leave the live session (and its unsaved work) fully intact. The split from
-        /// <see cref="Publish"/> lets the engine invalidate its model-scoped state BETWEEN build-success and
-        /// publication, so no reader can pair the NEW session with the OLD model's state.</summary>
+        /// <summary>Build a fully-loaded replacement session WITHOUT touching <see cref="Current"/>. A bad path or
+        /// parse failure leaves the current context and its unsaved work fully intact.</summary>
         internal async Task<Session> BuildOpenAsync(string path)
         {
             // Normalise a modern TMDL PBIP entry point (.pbip / project folder / .SemanticModel folder) to its inner
@@ -90,7 +89,7 @@ namespace Semanticus.Engine
         }
 
         /// <summary>The FALLIBLE half of publication: create + register the ambient observer on the still-UNPUBLISHED
-        /// session. Runs BEFORE any model-scoped invalidation (LocalEngine step c) so a factory/registration failure
+        /// session. Runs before the atomic context exchange (LocalEngine step c) so a factory/registration failure
         /// leaves the old session — and its stores AND its live connection — fully intact. Deliberately does NOT
         /// dispose <paramref name="next"/>: the caller owns exactly-once disposal of a session that won't publish.</summary>
         internal void AttachObserver(Session next)
@@ -99,16 +98,19 @@ namespace Semanticus.Engine
             if (observer != null) next.RegisterObserver(observer);
         }
 
-        /// <summary>The NO-THROW half of publication: ONLY the volatile flip + the caught old-session disposal.
-        /// Everything fallible (build, result read, observer setup) has already run; the engine's model-scoped
-        /// invalidation sits immediately before this call with no fallible step in between (invalidate-before-
-        /// publish), so no reader can ever pair the NEW session with the OLD model's state. Disposing the replaced
-        /// session must never abort the already-committed swap — caught and logged.</summary>
-        internal Session Commit(Session next)
+        /// <summary>The NO-THROW half of publication: close admission on the old session, drain operations that
+        /// already started, then flip Current and tear the retired session down. A caller that captured the old
+        /// session but had not begun model work is refused; admitted work completes before the replacement becomes
+        /// current. Everything fallible (build, result read, observer setup) has already run.</summary>
+        internal async Task<Session> CommitAsync(Session next)
         {
             var previous = _current;
-            _current = next;                // atomic + volatile: the LAST step of the swap
-            try { previous?.Dispose(); }    // only NOW is the old session (and its dispatcher) torn down
+            var nextContext = new SessionContext(next, previous.WorkflowRuns, previous.WorkflowAux);
+            if (previous.Session != null) await previous.Session.RetireAsync().ConfigureAwait(false);
+            using (await previous.AcquireStateLeaseAsync().ConfigureAwait(false))
+            lock (previous.ReadinessGate)
+                _current = nextContext;     // one atomic publication: session + model state + surviving workflow runs
+            try { previous.DisposeRetired(); }
             catch (Exception ex)
             {
                 try { Console.Error.WriteLine("[session] disposing the replaced session failed (the swap itself is committed): " + ex.Message); } catch { }
@@ -116,18 +118,31 @@ namespace Semanticus.Engine
             return next;
         }
 
-        // Compose for direct SessionManager callers (tests/smokes) — LocalEngine calls the two halves separately,
-        // with its model-scoped invalidation between them (SwapSessionCoreAsync).
-        private Session Publish(Session next)
+        /// <summary>Publish a fully-built context after its predecessor has been retired and drained.</summary>
+        internal SessionContext ExchangeRetiredContext(SessionContext next)
+        {
+            var previous = _current;
+            _current = next;
+            return previous;
+        }
+
+        // Compose for direct SessionManager callers (tests/smokes). LocalEngine coordinates the complete context
+        // exchange itself so it can preserve a newer live-connection intent.
+        private async Task<Session> PublishAsync(Session next)
         {
             try { AttachObserver(next); }
             catch { next.Dispose(); throw; }
-            return Commit(next);
+            return await CommitAsync(next).ConfigureAwait(false);
         }
 
         public Session Require() =>
             Current ?? throw new InvalidOperationException("No model is open. Call 'open' first.");
 
-        public void Dispose() => Current?.Dispose();
+        public void Dispose()
+        {
+            var previous = _current;
+            _current = new SessionContext(null);
+            previous.Dispose();
+        }
     }
 }

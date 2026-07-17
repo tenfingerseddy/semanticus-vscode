@@ -20,7 +20,7 @@ namespace Semanticus.Engine
         private static readonly string[] Strictnesses = { "hard", "warn", "off" };
         private static readonly string[] InputTypes = { "verification", "text", "enum", "number", "objectRef" };
         private static readonly string[] Requireds = { "answer-or-decline", "required", "optional" };
-        private static readonly string[] VerifyKinds = { "dax_probe", "dax_equivalence", "readiness_rescan", "bpa_clean", "benchmark_delta", "workflow_admissible", "interview_replay", "baseline_captured", "impact_assessment", "baseline_exists", "baseline_unchanged", "tests_replay", "plan_item_staged", "plan_item_applied" };
+        private static readonly string[] VerifyKinds = { "dax_probe", "dax_equivalence", "expected_values", "readiness_rescan", "bpa_clean", "benchmark_delta", "workflow_admissible", "interview_replay", "baseline_captured", "impact_assessment", "baseline_exists", "baseline_unchanged", "tests_replay", "plan_item_staged", "plan_item_applied" };
         private static readonly string[] Kinds = { "workflow", "template" };        // §10.3: absent ⇒ workflow
         private static readonly string[] SlotRequireds = { "required", "optional" }; // slots only ever require|optional (never answer-or-decline — that is a gate-input concept)
 
@@ -71,6 +71,7 @@ namespace Semanticus.Engine
                 ParseSteps(lines, i, def);
                 if (string.IsNullOrWhiteSpace(def.Name)) throw new FormatException("frontmatter is missing 'name'.");
                 if (def.Steps.Length == 0) throw new FormatException("no '## Step N:' headings found.");
+                ValidateInputBindings(def);
             }
             catch (Exception ex) { def.Error = ex.Message; }
             return def;
@@ -224,6 +225,36 @@ namespace Semanticus.Engine
             return (gate, ops);
         }
 
+        // openShapesFrom (dax_equivalence) and anchors (expected_values) both bind a TEXT input on the SAME step or
+        // ANY PRIOR step. Resolution is run-wide (AccumulatedAnswers, later answers win) exactly like `probe:`, and a
+        // completed step can never be re-answered (WorkflowRunner.RequireCurrentStep) — so a prior-step binding is
+        // INHERITANCE-ONLY. A dangling name would silently mean "no partition"/"no anchors", so refuse; and the bound
+        // input must be TEXT — the answer is a shape-id list / anchor JSON, so an objectRef/number/enum binding is an
+        // authoring mistake that could only ever fail at run time. Cross-step by design, so it runs AFTER every step
+        // is parsed (never inside a single gate's scope).
+        private static void ValidateInputBindings(WorkflowDef def)
+        {
+            for (int s = 0; s < def.Steps.Length; s++)
+                foreach (var v in def.Steps[s].Gate?.Verify ?? Array.Empty<VerifySpec>())
+                {
+                    ValidateTextBinding(def, s, v.OpenShapesFrom, "openShapesFrom", "the answer is a comma-separated shape-id list");
+                    ValidateTextBinding(def, s, v.Anchors, "anchors", "the answer carries the locked anchor JSON");
+                }
+        }
+
+        private static void ValidateTextBinding(WorkflowDef def, int stepIndex, string name, string key, string why)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            // Latest declaration wins on a same-name clash across steps — mirroring the run-wide answer map.
+            var bound = def.Steps.Take(stepIndex + 1)
+                .SelectMany(st => st.Gate?.Inputs ?? Array.Empty<GateInput>())
+                .LastOrDefault(i => string.Equals(i.Name, name, StringComparison.Ordinal));
+            if (bound == null)
+                throw new FormatException($"Step {def.Steps[stepIndex].Number} gate: {key} '{name}' does not name an input on this or any prior step.");
+            if (!string.Equals(bound.Type, "text", StringComparison.Ordinal))
+                throw new FormatException($"Step {def.Steps[stepIndex].Number} gate: {key} '{name}' must bind a 'text' input (got '{bound.Type}') — {why}.");
+        }
+
         /// <summary>Parse a YAML list of flat maps — `- key: value` items with deeper-indented `key: value`
         /// continuation lines. The ONE shared list shape in the grammar: the gate's inputs:/verify: sections AND a
         /// §10.3 template's frontmatter slots: block both go through here, so the two can never drift.
@@ -306,11 +337,27 @@ namespace Semanticus.Engine
                     case "probe": v.Probe = kv.Value; break;
                     case "scope": v.Scope = RequireEnum(kv.Value, new[] { "object", "model" }, "scope"); break;
                     case "intent": v.Intent = RequireEnum(kv.Value, new[] { "change", "rename", "remove", "restructure" }, "intent"); break;
+                    // E1 — the shape ledger: comma/bracket lists of canonical shape ids, validated so a typo surfaces
+                    // to the author (a mis-named pinned shape would otherwise silently un-arm the gate).
+                    case "pinnedShapes": v.PinnedShapes = RequireShapeIds(ParseInlineList(kv.Value), stepNum); break;
+                    case "openShapes": v.OpenShapes = RequireShapeIds(ParseInlineList(kv.Value), stepNum); break;
+                    // E1 ADDENDUM — the input whose RUN answer lists the open shapes (per-run partition; the seed
+                    // cannot know it at authoring time). Validated below against this step's or any prior step's inputs.
+                    case "openShapesFrom": v.OpenShapesFrom = kv.Value; break;
+                    // expected_values — the text input carrying the locked anchor JSON (same binding rules as
+                    // openShapesFrom; validated against this or any prior step's inputs below).
+                    case "anchors": v.Anchors = kv.Value; break;
                     default: break;
                 }
             if (string.IsNullOrWhiteSpace(v.Kind)) throw new FormatException($"Step {stepNum} gate: a verify entry is missing 'kind'.");
             if (v.When != null && !WhenExpr.IsMatch(v.When))
                 throw new FormatException($"Step {stepNum} gate: when '{v.When}' — only the form 'inputs.<name>.answered' is supported.");
+            if ((v.PinnedShapes.Length > 0 || v.OpenShapes.Length > 0 || !string.IsNullOrWhiteSpace(v.OpenShapesFrom)) && v.Kind != "dax_equivalence")
+                throw new FormatException($"Step {stepNum} gate: pinnedShapes/openShapes/openShapesFrom apply only to a dax_equivalence verify (got '{v.Kind}').");
+            if (!string.IsNullOrWhiteSpace(v.Anchors) && v.Kind != "expected_values")
+                throw new FormatException($"Step {stepNum} gate: anchors applies only to an expected_values verify (got '{v.Kind}').");
+            if (v.Kind == "expected_values" && string.IsNullOrWhiteSpace(v.Anchors))
+                throw new FormatException($"Step {stepNum} gate: an expected_values verify needs an 'anchors: <inputName>' binding to the text input carrying the locked anchor set.");
             return v;
         }
 
@@ -346,6 +393,21 @@ namespace Semanticus.Engine
         {
             if (allowed.Contains(value)) return value;
             throw new FormatException($"{what} '{value}' is not one of: {string.Join(" | ", allowed)}.");
+        }
+
+        // E1 — a shape id is one of the canonical names the comparator produces: 'grand_total', 'cross', or
+        // 'axis:<column>'. Anything else is a typo that would silently mis-classify a shape, so it is refused.
+        // Shared with the run-time openShapesFrom answer validation (EquivalenceGate.ResolveOpenShapes) — one grammar.
+        internal static bool IsShapeId(string id) =>
+            id == "grand_total" || id == "cross"
+            || (id != null && id.StartsWith("axis:", StringComparison.Ordinal) && id.Length > "axis:".Length);
+
+        private static string[] RequireShapeIds(string[] ids, int stepNum)
+        {
+            foreach (var id in ids)
+                if (!IsShapeId(id))
+                    throw new FormatException($"Step {stepNum} gate: shape id '{id}' is not one of 'grand_total' | 'cross' | 'axis:<column>'.");
+            return ids;
         }
     }
 }

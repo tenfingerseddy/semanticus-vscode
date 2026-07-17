@@ -14,7 +14,7 @@ const TABS = [
   { name: 'Optimize', file: '1a-optimize', async after(p) { await sleep(500); } },
   { name: 'BPA', file: '1b-bpa', async after(p) { await sleep(400); } },
   { name: 'Diagram', file: '2-diagram', async after(p) { await p.waitForSelector('.react-flow__node', { timeout: 4000 }).catch(() => {}); await sleep(700); } },
-  { name: 'Statistics', file: '3-statistics', async after(p) { await click(p, 'Scan storage'); await sleep(700); } },
+  { name: 'Storage', file: '3-storage', async after(p) { await click(p, 'Scan storage'); await sleep(700); } },
   { name: 'Data', file: '4-data', async after(p) { await click(p, 'Sales'); await sleep(500); } },
   { name: 'DAX Query', file: '5-daxquery', async after(p) { await click(p, '🐞 Debug'); await sleep(500); } },
   { name: 'DAX Lab', file: '6-daxlab', async after(p) { await click(p, '▶ Benchmark'); await sleep(300); await click(p, '⏱ Profile'); await sleep(300); await click(p, '✓ Verify'); await sleep(500); } },

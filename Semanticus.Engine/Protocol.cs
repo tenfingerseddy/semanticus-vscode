@@ -13,6 +13,7 @@ namespace Semanticus.Engine
         public int Measures { get; set; }
         public string Source { get; set; }
         public bool LiveConnected { get; set; }   // a unified live open (open_local / open_live) also bound the query engine
+        public string Account { get; set; }       // the account (UPN) this open signed in as, when known — null = "account unknown" (azcli/sp/local)
     }
 
     /// <summary>The non-secret coordinates of the live model a session was opened from (open_live/open_local bind it).
@@ -27,8 +28,19 @@ namespace Semanticus.Engine
         public string Database { get; }   // the actual dataset resolved at open time (not the connection-string form)
         public string TenantId { get; }
         public string AuthMode { get; }   // the open's auth mode name (NOT a secret) — reused by deploy to avoid re-prompting
-        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null)
-        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; }
+        public string Account { get; }    // the account (UPN) this live binding authenticated as, when known — the identity a status read reports for a live-bound editing session (null for azcli/sp/local/token = "account unknown")
+        /// <summary>The Power BI Desktop display-name STEM ("Contoso Sales") this LOCAL open resolved to, when
+        /// capturable (LocalDesktop.TryGetIdentity at open_local time). The restart-STABLE identity for a local
+        /// Desktop model: Endpoint (localhost:port) and Database (a per-session GUID) both rotate every Desktop
+        /// restart. Null for cloud XMLA, real SSAS, and uncapturable — those keep the endpoint|database identity.
+        /// Set once at open.</summary>
+        public string LocalName { get; }
+        /// <summary>The full .pbix PATH behind this LOCAL open, when the owning Desktop's command line exposed it
+        /// (double-click/shell opens do; Desktop's own open dialog does not). Stronger than <see cref="LocalName"/>:
+        /// distinct across same-named files. Null for cloud XMLA, real SSAS, and uncapturable. Set once at open.</summary>
+        public string LocalPath { get; }
+        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null, string account = null, string localName = null, string localPath = null)
+        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; Account = account; LocalName = localName; LocalPath = localPath; }
     }
 
     public sealed class TreeNode
@@ -76,6 +88,17 @@ namespace Semanticus.Engine
         /// blast-radius count). Pro-only and threshold-suppressed: null on the free tier and below threshold —
         /// additive, so pre-feature clients simply never see it (see <see cref="HealthDelta"/>).</summary>
         public HealthDelta Health { get; set; }
+    }
+
+    /// <summary>Incremental progress for a long-running read op. Broadcast separately from model changes because
+    /// progress never advances the model revision.</summary>
+    public sealed class OperationProgress
+    {
+        public string OpKey { get; set; }
+        public string RunId { get; set; }
+        public int Done { get; set; }
+        public int Total { get; set; }
+        public string Note { get; set; }
     }
 
     /// <summary>The deterministic health delta ONE committed mutation caused — "spell-check for your model"
@@ -550,6 +573,7 @@ namespace Semanticus.Engine
         public int IncrementalPeriodsOffset { get; set; }       // lag/lead from now to the window head
         public string SourceExpression { get; set; }            // partition M template referencing RangeStart/RangeEnd
         public string PollingExpression { get; set; }           // optional "detect data changes" bookmark M
+        public string WiredDateField { get; set; }              // the SOURCE field the partition's range filter compares (parsed from M); null if none/unparseable
     }
 
     /// <summary>Result of applying an edited DAX script (apply_dax_script): the refs whose expression was applied,
@@ -638,14 +662,21 @@ namespace Semanticus.Engine
         public int NamedExpressions { get; set; }    // shared M expressions / parameters
         public int CalcGroup { get; set; }           // calc-group Precedence + calc-item Ordinal changes — the calc-only props with no generic bucket (calc-item description/expression/format count under the generic buckets)
         public int Metadata { get; set; }            // model/table/column/measure metadata (annotations, detail rows, calc-group selection expressions)
+        public int SortBy { get; set; }              // SortByColumn set/changed/cleared on a matched column (answer-affecting: it re-orders a visual's axis) — bound to the LIVE sort-key column
+        public int Hierarchies { get; set; }         // hierarchies added or re-levelled on a matched table (each hierarchy counts once; a re-level is one change) — levels bound to LIVE columns
+        public int Relationships { get; set; }       // relationships added (new, endpoints resolved in the live tree) or drifted (each changed crossfilter/active/cardinality prop counts once) — matched by ENDPOINTS, never the guid name
+        public int Annotations { get; set; }         // OWNED annotations deployed (finding waivers Semanticus_Waivers + BPA ignore-rules) — a foreign annotation is never counted or touched
         public int Added { get; set; }               // NEW objects created on the live model (measures / calculated columns / calculated tables / named expressions / calculation items)
         public int Deleted { get; set; }             // objects REMOVED from the live model — ONLY the refs a caller explicitly named (selective push); never derived from absence
         public int TotalChanges { get; set; }
         public string[] CalcTablesAdded { get; set; } = System.Array.Empty<string>();  // names of NEW calculated tables created (recalced via a Calculate pass on commit)
+        public string[] DataTablesAdded { get; set; } = System.Array.Empty<string>();  // names of NEW data (Direct Lake) tables created — announced EMPTY until refreshed (their rows are engine-loaded, not carried by a metadata push)
         public string[] SyncedRefs { get; set; } = System.Array.Empty<string>();       // object-level, SOURCE-keyed refs the live deploy ACTUALLY synced (adds + updates) — lets a caller reconcile a local merge against what truly reached the model (a merged object of a type this deploy doesn't carry, e.g. a relationship/role, never appears here). Deletes are tracked in DeletedRefs.
+        public string[] MatchedRefs { get; set; } = System.Array.Empty<string>();       // MINOR 2 (replacement coupling): SOURCE-keyed relationship refs for EVERY relationship matched live, whether or not a write followed — the match is recorded BEFORE the property/annotation sync, so a CHANGED matched relationship appears here AND in SyncedRefs (the two sets overlap by design; the delete-satisfaction guard takes their UNION). What the coupling needs is presence-live, not write-or-not: a paired endpoint-re-point Delete counts a matched replacement as satisfied (a converged, already-present push must not falsely refuse the Delete). Relationship refs only.
         public string[] DeletedRefs { get; set; } = System.Array.Empty<string>();      // the explicitly-named refs that were removed live (part of the same SaveChanges)
         public string[] DeletesAlreadyAbsent { get; set; } = System.Array.Empty<string>(); // named delete refs whose target is genuinely GONE (no object carries the identity AND no same-named object exists) — a benign NO-OP (someone else already removed it)
         public string[] DeletesRefused { get; set; } = System.Array.Empty<string>();        // named delete refs REFUSED: the carried lineage identity no longer resolves live BUT a DIFFERENT object now bears that name — we refused to delete the wrong object (a real signal: re-diff), distinct from an already-absent no-op
+        public string[] DeletesRefusedConflict { get; set; } = System.Array.Empty<string>(); // named delete refs REFUSED because THIS deploy just identity-matched/updated that same live object (the endpoint-rename third-state race) — deleting it would undo the sync, so the whole push aborts (re-diff)
         public string[] Changes { get; set; } = System.Array.Empty<string>();   // sample change log (capped)
         public string[] Unmatched { get; set; } = System.Array.Empty<string>(); // session objects with no live counterpart (left unwritten)
         public string[] LiveOnly { get; set; } = System.Array.Empty<string>();  // live objects (tables/columns/measures) absent from the session (left untouched)
@@ -728,7 +759,7 @@ namespace Semanticus.Engine
     {
         public int Index { get; set; }
         public string Expression { get; set; }
-        public string VerifyState { get; set; }   // pending | invalid | unverified | failed | proven (shares the ApplyPlan vocabulary)
+        public string VerifyState { get; set; }   // pending | invalid | unverified | failed | degraded | degraded_mismatch | proven (shares the ApplyPlan vocabulary; degraded* = fidelity-gated, never auto-applied)
         public EquivalenceResult Equivalence { get; set; }   // null until proven (offline/invalid)
         public BenchmarkResult Benchmark { get; set; }       // null unless it reached the benchmark (proven-equivalent only)
         public string Note { get; set; }
@@ -819,6 +850,7 @@ namespace Semanticus.Engine
         public long Revision { get; set; }
         public bool Changed { get; set; }
         public string NewRef { get; set; }
+        public string Warning { get; set; }   // non-fatal: a culture refused the LSDL rename cascade — null on the clean path
     }
 
     public sealed class SessionInfo
@@ -838,6 +870,8 @@ namespace Semanticus.Engine
         public string LiveDataSource { get; set; } // the attached query engine's data source (null when not connected)
         public string QueryDatabase { get; set; }  // resolved dataset the attached query engine answers from
         public string QueryConnectionId { get; set; } // stable id in the shared connection/permissions registry
+        public string CurrentAccount { get; set; } // the account (UPN) the live-bound/queried model is signed in as — for the status bar's identity chip; null = unknown
+        public string CurrentTenant { get; set; }  // the tenant that account/connection belongs to, when known
     }
 
     // ---- Model graph (powers the ER/relationship diagram + structure overview) -----------------
@@ -849,6 +883,7 @@ namespace Semanticus.Engine
         public bool IsHidden { get; set; }
         public bool IsDateTable { get; set; }     // DataCategory == "Time"
         public bool IsCalculated { get; set; }    // CalculatedTable
+        public bool IsFieldParameter { get; set; } // CalculatedTable carrying the ParameterMetadata marker (a field parameter)
         public int Columns { get; set; }          // excludes the RowNumber column
         public int Measures { get; set; }
         public string[] KeyColumns { get; set; } = System.Array.Empty<string>();
@@ -1058,6 +1093,7 @@ namespace Semanticus.Engine
         public string Description { get; set; }
         public string Expression { get; set; }   // calculated columns only
         public string SortByColumn { get; set; } // the column this column sorts by (null if none)
+        public string SourceColumn { get; set; } // the partition-output name M operates on (data columns; null for calculated) — can differ from Name
     }
 
     /// <summary>A table row for the object browser (get_model_objects) — enough to render a group header + filter it.</summary>

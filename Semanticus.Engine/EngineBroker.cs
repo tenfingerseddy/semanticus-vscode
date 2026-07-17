@@ -70,7 +70,7 @@ namespace Semanticus.Engine
                 if (string.IsNullOrEmpty(info.ProcessStartUtc))
                     info.ProcessStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("o");
                 if (string.IsNullOrEmpty(info.ExePath))
-                    info.ExePath = Process.GetCurrentProcess().MainModule?.FileName ?? Environment.ProcessPath;
+                    info.ExePath = CurrentExecutablePath();
             }
             catch { /* identity stamping is best-effort — a record without it is handled as legacy by IsAlive */ }
             // Atomic publish: write a temp sibling then move-replace, so a concurrent reader (a second VS Code
@@ -121,6 +121,32 @@ namespace Semanticus.Engine
                 return string.Equals(p.ProcessName, Process.GetCurrentProcess().ProcessName, StringComparison.OrdinalIgnoreCase);
             }
             catch { return false; }   // pid gone / access denied / raced exit ⇒ not alive
+        }
+
+        /// <summary>The executable identity of this launch shape: dotnet for a development DLL, or the
+        /// self-contained apphost for a packaged engine.</summary>
+        public static string CurrentExecutablePath()
+        {
+            try { return Process.GetCurrentProcess().MainModule?.FileName ?? Environment.ProcessPath; }
+            catch { return Environment.ProcessPath; }
+        }
+
+        public static bool HasExecutableProvenance(EngineInfo info)
+            => !string.IsNullOrWhiteSpace(info?.ExePath);
+
+        /// <summary>Compares a provenance-bearing workspace owner with the expected launch executable.
+        /// Callers must distinguish a legacy record with no executable provenance from a genuine mismatch.</summary>
+        public static bool ExecutableMatches(EngineInfo info, string expectedPath = null)
+        {
+            if (info == null || string.IsNullOrWhiteSpace(info.ExePath)) return false;
+            try
+            {
+                var expected = expectedPath ?? CurrentExecutablePath();
+                if (string.IsNullOrWhiteSpace(expected)) return false;
+                var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                return string.Equals(Path.GetFullPath(info.ExePath), Path.GetFullPath(expected), comparison);
+            }
+            catch { return false; }
         }
     }
 }

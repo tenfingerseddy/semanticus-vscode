@@ -31,11 +31,12 @@ namespace Semanticus.McpSmoke
             ApprovalLedger.RootOverride = policyRoot;
             ConnectionRegistry.RootOverride = policyRoot;
             var pipeName = "semanticus-mcpsmoke-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            const string uiChallenge = "mcp-smoke-ui-challenge-0123456789abcdef";
             var sessions = new SessionManager();
             // Smoke harness runs as Pro so it exercises the BULK functionality; the Pro GATE itself is covered by
             // Semanticus.Tests/EntitlementGateTests.
             var owner = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
-            using var server = new RpcServer(sessions, owner, pipeName);
+            using var server = new RpcServer(sessions, owner, pipeName, uiChallenge);
             using var cts = new CancellationTokenSource();
             var serverTask = server.RunAsync(cts.Token);
 
@@ -48,7 +49,7 @@ namespace Semanticus.McpSmoke
                 Check("owner opened the model", open.Tables > 0);
                 Console.WriteLine($"[i] owner opened '{open.ModelName}': {open.Tables} tables, {open.Measures} measures");
 
-                ui = await UiClient.ConnectAsync(pipeName);              // the "VS Code UI"
+                ui = await UiClient.ConnectAsync(pipeName, uiChallenge); // the "VS Code UI"
                 claude = await RemoteEngine.ConnectAsync(pipeName);     // the IEngine the --mcp host injects
 
                 // MCP tool: model_overview
@@ -1148,8 +1149,8 @@ namespace Semanticus.McpSmoke
                 Check("MCP submit_workflow_step(step-2, gateless) advances to step-3",
                     wfStep2.CurrentStep != null && wfStep2.CurrentStep.StepId == "step-3");
 
-                // step-3 (hard gate): pass an EXISTING measure as `target`. Expected honesty: dax_probe is SKIPPED (its
-                // when-input verificationValue was declined) and bpa_clean scope:object PASSES (the measure pre-existed,
+                // step-3 (hard gate): pass an EXISTING measure as `target`. Expected honesty: dax_probe is NOT_APPLICABLE
+                // (its when-input verificationValue was declined — E2) and bpa_clean scope:object PASSES (the measure pre-existed,
                 // so its violations were snapshotted at start → none are NEW) → the run COMPLETES. Register the UI's
                 // workflow/didChange waiter BEFORE the completing submit so the dual-drive broadcast is observed live.
                 // The waiter names the event it wants (this run, completed) so a still-in-flight step-2 "active"
@@ -1160,8 +1161,8 @@ namespace Semanticus.McpSmoke
                 var wfDone = await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-3", wfStep3Answers);
                 Check("MCP submit_workflow_step(step-3, existing measure) COMPLETES the run", wfDone.Status == "completed");
                 var wfS3 = wfDone.Steps[2];
-                Check("workflow verify honesty: step-3 dax_probe is SKIPPED (when-input declined) and bpa_clean PASSED (no NEW violations on the pre-existing measure)",
-                    wfS3.VerifyResults.Any(v => v.Kind == "dax_probe" && v.Status == "skipped")
+                Check("workflow verify honesty: step-3 dax_probe is NOT_APPLICABLE (when-input declined) and bpa_clean PASSED (no NEW violations on the pre-existing measure)",
+                    wfS3.VerifyResults.Any(v => v.Kind == "dax_probe" && v.Status == "not_applicable")
                     && wfS3.VerifyResults.Any(v => v.Kind == "bpa_clean" && v.Status == "passed"));
 
                 // DUAL-DRIVE: the UI door saw the SAME completed run live over workflow/didChange (golden rule #2).
@@ -1615,6 +1616,22 @@ namespace Semanticus.McpSmoke
             throw new FileNotFoundException("Could not locate AdventureWorks.bim from " + AppContext.BaseDirectory);
         }
 
+        private static async Task ConfirmRpcRoleAsync(Stream stream)
+        {
+            var expected = "SEMANTICUS-RPC/1 accepted";
+            var bytes = new byte[256];
+            var one = new byte[1];
+            var count = 0;
+            while (count < bytes.Length)
+            {
+                if (await stream.ReadAsync(one, 0, 1) == 0) throw new EndOfStreamException("RPC server closed during role handshake.");
+                if (one[0] == (byte)'\n') break;
+                bytes[count++] = one[0];
+            }
+            if (count == bytes.Length || System.Text.Encoding.UTF8.GetString(bytes, 0, count) != expected)
+                throw new InvalidDataException("RPC server rejected the role handshake.");
+        }
+
         private sealed class UiClient : IDisposable
         {
             private readonly NamedPipeClientStream _pipe;
@@ -1623,10 +1640,14 @@ namespace Semanticus.McpSmoke
 
             private UiClient(NamedPipeClientStream pipe, JsonRpc rpc, NotifyCollector notify) { _pipe = pipe; _rpc = rpc; Notify = notify; }
 
-            public static async Task<UiClient> ConnectAsync(string pipeName)
+            public static async Task<UiClient> ConnectAsync(string pipeName, string challenge)
             {
                 var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await pipe.ConnectAsync(5000);
+                var preamble = System.Text.Encoding.UTF8.GetBytes($"SEMANTICUS-RPC/1 human {challenge}\n");
+                await pipe.WriteAsync(preamble, 0, preamble.Length);
+                await pipe.FlushAsync();
+                await ConfirmRpcRoleAsync(pipe);
                 var notify = new NotifyCollector();
                 var rpc = new JsonRpc(RpcServer.CreateHandler(pipe));
                 rpc.AddLocalRpcTarget(notify);
