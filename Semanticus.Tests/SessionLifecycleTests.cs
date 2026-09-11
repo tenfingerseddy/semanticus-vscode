@@ -216,7 +216,9 @@ namespace Semanticus.Tests
             release.TrySetResult(true);
 
             var result = await query;
-            Assert.Equal("Not connected. Call connect_xmla or connect_local first.", result.Error);
+            Assert.Equal("Not connected. Connect a live model in Connections, then try again.", result.Error);
+            Assert.DoesNotContain("connect_xmla", result.Error);
+            Assert.DoesNotContain("connect_local", result.Error);
             Assert.Empty(result.Rows);
         }
 
@@ -610,7 +612,7 @@ namespace Semanticus.Tests
         {
             var sessions = new SessionManager();
             var session = await sessions.OpenAsync(TestModels.FindBim());
-            session.SeedLiveCredential("k", new ThrowingDisposableCredential());
+            session.SeedLiveCredential("k", nonInteractive: false, new ThrowingDisposableCredential());
 
             Assert.Null(Record.Exception(() => session.Dispose()));   // no-throw, whatever a stage does
             Assert.Null(Record.Exception(() => session.Dispose()));   // and idempotent: a repeat is a clean no-op
@@ -665,7 +667,7 @@ namespace Semanticus.Tests
             session.Dispose();
 
             var offered = new RecordingDisposableCredential();
-            session.SeedLiveCredential("k", offered);
+            session.SeedLiveCredential("k", nonInteractive: false, offered);
             Assert.True(offered.Disposed);                                        // the offer was disposed immediately...
 
             session.CacheLiveToken("k", new Azure.Core.AccessToken("tok", DateTimeOffset.UtcNow.AddHours(1)));
@@ -674,7 +676,7 @@ namespace Semanticus.Tests
             // Round-6 F3: a dead session must not manufacture live credentials at all — an uncached build would
             // have ambiguous ownership (no caller could know to dispose it). The build path refuses honestly.
             Assert.Throws<ObjectDisposedException>(
-                () => session.GetOrBuildLiveCredential("k", () => new RecordingDisposableCredential()));
+                () => session.GetOrBuildLiveCredential("k", false, () => new RecordingDisposableCredential()));
         }
 
         // ---- Round-6 F2 pin: the auth CLEAR is exception-safe — fields are nulled before the credential is
@@ -687,13 +689,13 @@ namespace Semanticus.Tests
             var sessions = new SessionManager();
             var session = await sessions.OpenAsync(TestModels.FindBim());
             session.CacheLiveToken("k", new Azure.Core.AccessToken("tok", DateTimeOffset.UtcNow.AddHours(1)));
-            session.SeedLiveCredential("k", new ThrowingDisposableCredential());
+            session.SeedLiveCredential("k", nonInteractive: false, new ThrowingDisposableCredential());
 
             Assert.Null(Record.Exception(() => session.Dispose()));            // the credential's throw is swallowed
             Assert.False(session.HasLiveCredentialForTest);                    // the FIELD was cleared before the dispose attempt
             Assert.Null(session.TryReuseLiveToken("k", TimeSpan.Zero).Token);  // the token too
             Assert.Throws<ObjectDisposedException>(                            // and the dead session manufactures nothing
-                () => session.GetOrBuildLiveCredential("k", () => new RecordingDisposableCredential()));
+                () => session.GetOrBuildLiveCredential("k", false, () => new RecordingDisposableCredential()));
         }
 
         // ---- Round-6 F1 pin: the dispatcher teardown stage is SERIALIZED. ----

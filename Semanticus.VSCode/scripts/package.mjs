@@ -50,6 +50,19 @@ function cleanEngine() {
   fs.rmSync(engineDir, { recursive: true, force: true });
 }
 
+// THE NOTICES THE RECIPIENT ACTUALLY GETS. THIRD-PARTY-NOTICES.md lives at the repository root, which vsce
+// cannot reach: it packages the extension folder only. Without this copy the .vsix carried NOTICE alone,
+// and NOTICE is a summary. The verbatim licence texts and the two Microsoft EULA links exist nowhere else
+// in the payload. Staged before packaging and removed after, so the working tree stays clean; the file is
+// git-ignored here for the same reason engine/ and dist/ are.
+const stagedNotices = path.join(extRoot, 'THIRD-PARTY-NOTICES.md');
+function stageThirdPartyNotices() {
+  fs.copyFileSync(path.join(repoRoot, 'THIRD-PARTY-NOTICES.md'), stagedNotices);
+}
+function cleanThirdPartyNotices() {
+  fs.rmSync(stagedNotices, { force: true });
+}
+
 function pruneNonProductRuntimeBinaries() {
   for (const name of NON_PRODUCT_RUNTIME_BINARIES) {
     fs.rmSync(path.join(engineDir, name), { force: true });
@@ -83,6 +96,7 @@ async function packageTarget(target, vsce) {
 
   console.log(`\n=== Packaging ${target} (RID ${rid}) ===`);
   cleanEngine();
+  stageThirdPartyNotices();
   // Self-contained publish: bundles the .NET runtime so the user needs no dotnet installed.
   run('dotnet', ['publish', engineCsproj, '-c', 'Release', '-r', rid, '--self-contained', '-o', engineDir]);
   pruneNonProductRuntimeBinaries();
@@ -132,6 +146,7 @@ try {
   for (const t of targets) built.push(await packageTarget(t, vsce));
 } finally {
   cleanEngine();  // never leave a RID-specific engine/ lying around (would ship into the next hand-built vsix)
+  cleanThirdPartyNotices();
 }
 
 console.log('\nDone. Packaged:');

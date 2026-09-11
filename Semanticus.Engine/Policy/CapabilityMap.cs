@@ -79,6 +79,7 @@ namespace Semanticus.Engine
             // (get_agent_policy / the permissions UI) labels them without leaning on the isKnownMutation fallback ---
             ["set_property"] = AgentCapability.EditLocal,
             ["set_properties"] = AgentCapability.EditLocal,
+            ["delete_objects"] = AgentCapability.EditLocal,
         };
 
         /// <summary>The capability an op maps to. An unknown op is <see cref="AgentCapability.Read"/> ONLY if it is not

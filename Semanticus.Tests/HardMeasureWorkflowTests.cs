@@ -43,6 +43,8 @@ namespace Semanticus.Tests
             await WorkflowRunner.SubmitStepAsync(run, "step-2", new Dictionary<string, AnswerValue>
             {
                 ["expectedValues"] = Answer(anchors),
+                ["equivalenceGrid"] = Answer("'Product'[Category]"),
+                ["openGrains"] = Decline("every grain is anchored"),
                 ["externalAnchors"] = Decline("none available"),
                 ["naiveForm"] = Answer("Naive form diverges at the pinned grand total"),
             }, null);
@@ -67,7 +69,7 @@ namespace Semanticus.Tests
         };
 
         [Fact]
-        public async Task Stock_v6_and_featured_v5_template_expose_their_verified_witness_contracts()
+        public async Task Stock_v7_and_featured_v5_template_expose_their_verified_witness_contracts()
         {
             var workspace = Path.Combine(Path.GetTempPath(), "smx-hard-v6-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(workspace);
@@ -78,7 +80,7 @@ namespace Semanticus.Tests
                 var template = await engine.GetWorkflowTemplateAsync("hard-measure");
                 Assert.Null(canonical.Error);
                 Assert.Null(template.Error);
-                Assert.Equal(6, canonical.Version);
+                Assert.Equal(7, canonical.Version);
                 Assert.Equal(5, template.Version);
                 Assert.Equal("Author a hard DAX measure, reconciled against the requirement at every grain", canonical.Title);
                 Assert.Equal(new[] { "measure_goal", "measure_pattern" }, template.Slots.Select(x => x.Name));
@@ -118,17 +120,6 @@ namespace Semanticus.Tests
                     var recollected = workflow.Steps[4].Gate.Inputs.Single(i => i.Name == "witnessDax");
                     Assert.Equal("required", recollected.Required);
 
-                    // Step 6 probes the locked witness with a per-run open-shape partition and fires unconditionally.
-                    var equality = Assert.Single(workflow.Steps[5].Gate.Verify);
-                    Assert.Equal("dax_equivalence", equality.Kind);
-                    Assert.Null(equality.When);
-                    Assert.Equal("witnessDax", equality.Probe);
-                    Assert.Equal("openShapes", equality.OpenShapesFrom);
-                    // the machine partition field and the human certificate are SEPARATE inputs
-                    Assert.Equal("answer-or-decline", workflow.Steps[5].Gate.Inputs.Single(i => i.Name == "openShapes").Required);
-                    Assert.Equal("required", workflow.Steps[5].Gate.Inputs.Single(i => i.Name == "certificate").Required);
-
-                    Assert.DoesNotContain(workflow.Steps[6].Gate.Inputs, i => i.Name == "openShapes");
                 }
 
                 var canonicalInstructions = string.Join("\n", canonical.Steps.Select(x => x.Instructions));
@@ -140,6 +131,11 @@ namespace Semanticus.Tests
 
                 var anchorInput = canonical.Steps[1].Gate.Inputs.Single(i => i.Name == "expectedValues");
                 Assert.Contains("fenced JSON array", anchorInput.Question, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("required", canonical.Steps[1].Gate.Inputs.Single(i => i.Name == "equivalenceGrid").Required);
+                Assert.Equal("answer-or-decline", canonical.Steps[1].Gate.Inputs.Single(i => i.Name == "openGrains").Required);
+                var coverage = Assert.Single(canonical.Steps[1].Gate.Verify);
+                Assert.Equal("anchor_coverage", coverage.Kind);
+                Assert.Equal("expectedValues", coverage.Anchors);
                 var candidateRevision = canonical.Steps[2].Gate.Inputs.Single(i => i.Name == "expectedValues");
                 Assert.Equal("optional", candidateRevision.Required);
                 Assert.Contains("REQUIRED RECEIPT", candidateRevision.Question, StringComparison.OrdinalIgnoreCase);
@@ -154,10 +150,22 @@ namespace Semanticus.Tests
                 Assert.Equal("expectedValues", candidateAnchors.Anchors);
 
                 Assert.Equal(new[] { "witnessDax", "witnessTiming" }, canonical.Steps[3].Gate.Inputs.Select(i => i.Name).ToArray());
+                Assert.Equal("no-bare-measures", canonical.Steps[3].Gate.Inputs.Single(i => i.Name == "witnessDax").DaxPurity);
+                Assert.Equal("no-bare-measures", canonical.Steps[4].Gate.Inputs.Single(i => i.Name == "witnessDax").DaxPurity);
                 var gateWitness = canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "witnessDax");
                 Assert.Equal("required", gateWitness.Required);
+                Assert.Equal("no-bare-measures", gateWitness.DaxPurity);
                 Assert.Contains("Restate the Step-5 witness verbatim", gateWitness.Question, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("may not be declined", gateWitness.Question, StringComparison.OrdinalIgnoreCase);
+                var equality = Assert.Single(canonical.Steps[5].Gate.Verify);
+                Assert.Equal("dax_equivalence", equality.Kind);
+                Assert.Null(equality.When);
+                Assert.Equal("witnessDax", equality.Probe);
+                Assert.Equal("openGrains", equality.OpenShapesFrom);
+                Assert.Equal("countersign", equality.OpenMismatch);
+                Assert.DoesNotContain(canonical.Steps[5].Gate.Inputs, i => i.Name == "openShapes" || i.Name == "equivalenceGrid");
+                Assert.Equal("optional", canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "countersign").Required);
+                Assert.Equal("required", canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "certificate").Required);
 
                 // Step 7 re-proves the latest receipted anchors and witness equality. The equality check inherits
                 // the Step 6 partition, so a performance rewrite cannot quietly re-open a shape it broke.
@@ -175,7 +183,9 @@ namespace Semanticus.Tests
                 var perfEquality = canonical.Steps[6].Gate.Verify.Single(v => v.Kind == "dax_equivalence");
                 Assert.Equal("inputs.perfPass.answered", perfEquality.When);
                 Assert.Equal("witnessDax", perfEquality.Probe);
-                Assert.Equal("openShapes", perfEquality.OpenShapesFrom);
+                Assert.Equal("openGrains", perfEquality.OpenShapesFrom);
+                Assert.Equal("countersign", perfEquality.OpenMismatch);
+                Assert.Equal("optional", canonical.Steps[6].Gate.Inputs.Single(i => i.Name == "countersign").Required);
 
                 // The featured template remains the separately versioned v5 authoring template.
                 Assert.Empty(featured.Steps[2].Gate.Verify);

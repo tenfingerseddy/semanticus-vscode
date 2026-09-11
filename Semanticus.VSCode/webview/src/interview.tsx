@@ -55,7 +55,7 @@ const TIER_NOTE: Record<string, string> = {
   refusal: 'should be safely declined',
 };
 
-export function InterviewCard({ suiteEvidence = [], suiteNote }: { suiteEvidence?: SuiteInterviewEvidence[]; suiteNote?: string }) {
+export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteEvidence?: SuiteInterviewEvidence[]; suiteNote?: string; onNew?: () => void }) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [otherModel, setOtherModel] = useState<Question[]>([]);          // #157: packs authored against a different model
   const [unattributed, setUnattributed] = useState<Question[]>([]);      // #157: legacy packs with no model binding
@@ -121,9 +121,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote }: { suiteEvidence
     try {
       await rpc<Question>('addInterviewQuestion',
         q.question, q.tier, q.query ?? null, q.scalarExpr ?? null, q.paraphraseExpr ?? null,
-        q.groupBy ?? [], q.filters ?? [], value, null, false, q.fixRuleId ?? null, q.seedSource ?? 'user', q.scope ?? 'project', 'human');
-      // The save landed — retire the prior copy so the pack shows one question, now carrying the trusted answer.
-      try { await rpc('deleteInterviewQuestion', q.id, 'human'); } catch { /* the new copy stands regardless */ }
+        q.groupBy ?? [], q.filters ?? [], value, null, false, q.fixRuleId ?? null, q.seedSource ?? 'user', q.scope ?? 'project', 'human', q.id);
       setPinning(null);
       setPinValue('');
       await load();
@@ -144,6 +142,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote }: { suiteEvidence
               {busy.size > 0 ? 'Asking…' : 'Ask all again'}
             </IBtn>
           )}
+          <IBtn onClick={() => onNew?.()} title="Save a new interview question">New question</IBtn>
           <IBtn onClick={() => void load()} title="Re-read the saved questions">Refresh</IBtn>
         </div>
       </div>
@@ -164,8 +163,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote }: { suiteEvidence
 
       {questions.length === 0 ? (
         <div className="mt-2 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-          No questions saved yet. Ask your AI Assistant to <span className="font-medium">interview this model</span>. It proposes the questions
-          your users will ask, checks each answer against a number you trust, and saves the keepers here so every future edit can be re-checked.
+          No questions saved yet. Add one with New question. You can also ask the AI Assistant to draft one; you review it before it is saved.
           One-off checks are free; saving questions is part of Pro.
         </div>
       ) : (
@@ -204,9 +202,12 @@ export function InterviewCard({ suiteEvidence = [], suiteNote }: { suiteEvidence
                       Graded in chat
                     </span>
                   ) : (
+                    <>
                     <IBtn disabled={isBusy} onClick={() => void ask(q)} title="Ask this question and check the answer (free)">
                       {isBusy ? '…' : run ? 'Ask again' : 'Ask'}
                     </IBtn>
+                    <IBtn onClick={() => { if (window.confirm('Delete the question "' + q.question + '"? Past runs keep their record. This cannot be undone.')) void rpc('deleteInterviewQuestion', q.id).then(() => load()); }} title="Delete this question">Delete</IBtn>
+                    </>
                   )}
                 </div>
                 {run?.outcome === 'SilentlyWrong' && (

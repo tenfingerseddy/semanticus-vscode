@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const compiledPath = resolve(root, 'out', 'extension.js');
+assert.ok(existsSync(compiledPath), 'out/extension.js is missing. Run npm run compile first.');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const extension = read('src/extension.ts');
 const compiledExtension = read('out/extension.js');
@@ -20,8 +22,10 @@ assert.match(extension, /registerCommand\('semanticus\.manageLicense',[\s\S]*man
   'the native command must drive the shared management function');
 assert.match(extension, /async function manageLicenseCmd[\s\S]*getEntitlement[\s\S]*manageUrl[\s\S]*\^https:[\s\S]*openExternal/,
   'account management must prefer the engine URL, require HTTPS and open outside the extension');
-assert.match(extension, /Semanticus Pro is active[\s\S]*'Pro options'[\s\S]*manageLicenseCmd\(info\)/,
-  'Show License must route active subscribers to the honest Pro options page');
+assert.match(extension, /Semanticus Pro is active/,
+  'Show License must report an active Pro subscription');
+assert.doesNotMatch(extension, /'Pro options'[\s\S]{0,80}manageLicenseCmd/,
+  'Show License must not send an active Pro subscriber to the marketing page');
 assert.match(extension, /Semanticus is on the free tier[\s\S]*'Upgrade to Pro'[\s\S]*manageLicenseCmd\(info\)/,
   'Show License must route free users to upgrade');
 assert.match(extension, /msg\?\.type === 'manageLicense'[\s\S]*semanticus\.manageLicense/,

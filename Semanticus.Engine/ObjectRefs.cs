@@ -56,7 +56,8 @@ namespace Semanticus.Engine
         {
             if (model == null || string.IsNullOrEmpty(objRef)) return null;
             var sep = objRef.IndexOf(':');
-            if (sep < 0) return null;
+            if (sep < 0)
+                return model.Tables.Contains(objRef) ? model.Tables[objRef] : null;
             var kind = objRef.Substring(0, sep);
             var rest = objRef.Substring(sep + 1);
 

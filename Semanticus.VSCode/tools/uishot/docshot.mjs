@@ -1,19 +1,15 @@
 // One-off: screenshot a standalone exported-doc HTML file (the docrender output) for self-review.
-import puppeteer from 'puppeteer-core';
-import { existsSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { findBrowser, requireSupportedNode } from './browser.mjs';
 
-function findBrowser() {
-  if (process.env.SEMANTICUS_BROWSER && existsSync(process.env.SEMANTICUS_BROWSER)) return process.env.SEMANTICUS_BROWSER;
-  const cacheRoot = join(homedir(), '.cache', 'puppeteer', 'chrome-headless-shell');
-  if (existsSync(cacheRoot)) for (const v of readdirSync(cacheRoot)) {
-    const exe = join(cacheRoot, v, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-    if (existsSync(exe)) return exe;
-  }
-  for (const c of ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe']) if (existsSync(c)) return c;
-  throw new Error('No Chromium found.');
-}
+// THE FLOOR CHECK RUNS BEFORE PUPPETEER IS LOADED, AND THE ORDER IS THE WHOLE POINT. This used to be a
+// static `import puppeteer from 'puppeteer-core'`, which the runtime resolves, parses and evaluates before
+// one line of this file runs. `requireSupportedNode()` therefore could not fire on the Node versions it
+// exists for: on Node 20 the run died inside puppeteer with the opaque error the guard was written to
+// replace, and the guard's message was never reached. A dynamic import after the check is what makes the
+// check reachable. `browser.mjs` imports no puppeteer, so nothing can reorder this again by accident.
+requireSupportedNode();
+const puppeteer = (await import('puppeteer-core')).default;
+
 
 const [, , htmlPath, outPath] = process.argv;
 const browser = await puppeteer.launch({ executablePath: findBrowser(), headless: 'shell', args: ['--no-sandbox'] });

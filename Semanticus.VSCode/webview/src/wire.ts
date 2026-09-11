@@ -28,6 +28,25 @@ export interface ResultSet {
   truncated: boolean;
   elapsedMs: number;
   error?: string;
+  query?: string;
+  cancelled?: boolean;
+}
+
+export function rowAnnouncement(rowCount: number, truncated: boolean): string {
+  if (rowCount === 1 && !truncated) return '1 row';
+  const rows = `${rowCount.toLocaleString()} row${rowCount === 1 ? '' : 's'}`;
+  return truncated ? `${rows} shown. More rows exist.` : rows;
+}
+
+export function timingAnnouncement(ms: number): string {
+  if (ms < 1) return 'under 1 ms';
+  return Number.isInteger(ms) ? `${ms} ms` : `${ms.toFixed(1)} ms`;
+}
+
+export function queryIdentity(query?: string | null): string | null {
+  if (!query || !query.trim()) return null;
+  const one = query.trim().replace(/\s+/g, ' ');
+  return one.length <= 120 ? one : `${one.slice(0, 117)}...`;
 }
 
 // A column row from list_columns (Semanticus.Engine/Protocol.cs ColumnRow). Shared by the Columns audit grid

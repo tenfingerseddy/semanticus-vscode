@@ -9,9 +9,12 @@ import { ResultGrid } from './grid';
 import { DaxEditor, useDaxModelContext, type DaxEditorHandle } from './daxeditor';
 import { FieldsPanel } from './fieldspanel';
 import type { ResultSet } from './wire';
+import { queryIdentity, rowAnnouncement, timingAnnouncement } from './wire';
 import { FieldWells, PivotConfig, EMPTY_CONFIG, buildQuery, buildInstrumentedQuery, seedConfig, filterToDax } from './daxwells';
 import { DaxVisual, VizSwitcher, explainPayloadFromRow, type VizType } from './daxvisual';
 import { ExplainPanel, type ExplainPayload } from './explainpanel';
+import { plainDaxError } from './daxErrorText';
+import { isSignInError, SIGN_IN_AGAIN } from './authcopy';
 
 // DAX Lab — Layout B. A left Fields rail feeds everything by drag; the centre is a Power-BI-style VISUAL (field
 // wells → chart/matrix, with filter context on hover) OR the QUERY editor — both drive one shared query. A
@@ -85,6 +88,8 @@ interface DaxLabTabState {
   setTab: React.Dispatch<React.SetStateAction<WbTab>>;
   res: ResultSet | null;
   setRes: React.Dispatch<React.SetStateAction<ResultSet | null>>;
+  resQuery: string | null;
+  setResQuery: React.Dispatch<React.SetStateAction<string | null>>;
   logs: EvalLogEntry[] | null;
   setLogs: React.Dispatch<React.SetStateAction<EvalLogEntry[] | null>>;
   logNote: string | null;
@@ -133,6 +138,7 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
   const { conn, session } = useConnection();
   const [tab, setTab] = usePersistedState<WbTab>('lab.wbtab', 'result');
   const [res, setRes] = useState<ResultSet | null>(null);
+  const [resQuery, setResQuery] = useState<string | null>(null);
   const [logs, setLogs] = useState<EvalLogEntry[] | null>(null);
   const [logNote, setLogNote] = useState<string | null>(null);
   const [bench, setBench] = useState<BenchmarkResult | null>(null);
@@ -157,10 +163,14 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
 
   // Reflections must share the holder's lifetime too; otherwise an agent result emitted while another tab is visible
   // would still disappear even though human-started promises now survive.
-  useClaudeReflection('run_dax', (e) => { setRes((e.result as ResultSet) ?? null); setLogs(null); setErr(e.error ?? null); setClaudeEvent(e); });
+  useClaudeReflection('run_dax', (e) => {
+    const r = (e.result as ResultSet) ?? null;
+    setRes(r); setResQuery(r?.query ?? e.query ?? null); setLogs(null); setErr(e.error ?? null); setClaudeEvent(e);
+  });
   useClaudeReflection('evaluate_and_log', (e) => {
     const r = e.result as EvalLogResult | undefined; const rows = r?.resultRows ?? [];
-    setRes(r ? { columns: r.resultColumns, rows, rowCount: r.resultRowCount, truncated: (r.resultRowCount ?? rows.length) > rows.length, elapsedMs: r.elapsedMs } : null);
+    setRes(r ? { columns: r.resultColumns, rows, rowCount: r.resultRowCount, truncated: (r.resultRowCount ?? rows.length) > rows.length, elapsedMs: r.elapsedMs, query: e.query } : null);
+    setResQuery(e.query ?? null);
     setLogs(r?.entries ?? null); setLogNote(r?.note ?? null); setErr(e.error ?? null); setClaudeEvent(e); setTab('debug');
   });
   useClaudeReflection('profile_dax', (e) => { if (e.result) { setTimings(e.result as ServerTimings); setClaudeEvent(e); setTab('perf'); } });
@@ -172,7 +182,7 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
 
   return (
     <DaxLabTabStateContext.Provider value={{
-      tab, setTab, res, setRes, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
+      tab, setTab, res, setRes, resQuery, setResQuery, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
       plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
       busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey,
     }}>
@@ -182,16 +192,20 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
 }
 
 export function DaxLabView() {
-  const { conn, session } = useConnection();
+  const { conn, session, connectXmla, busy: connBusy } = useConnection();
   const model = useDaxModelContext();
   const editorRef = useRef<DaxEditorHandle>(null);
+  const runGen = useRef(0);
 
-  const [mode, setMode] = usePersistedState<Mode>('lab.mode', 'visual');
-  const [query, setQuery] = usePersistedState('lab.bq', "EVALUATE\n    TOPN(1000, SUMMARIZECOLUMNS('Date'[Date], \"v\", [Total Sales]))");
-  const [config, setConfig] = usePersistedState<PivotConfig>('lab.config', EMPTY_CONFIG);
+  const persistKey = session?.sessionId ?? 'no-model';
+  const [mode, setMode] = usePersistedState<Mode>('lab.mode.' + persistKey, 'visual');
+  const [query, setQuery] = usePersistedState('lab.bq.' + persistKey, "EVALUATE\n    TOPN(1000, SUMMARIZECOLUMNS('Date'[Date], \"v\", [Total Sales]))");
+  const [config, setConfig] = usePersistedState<PivotConfig>('lab.config.' + persistKey, EMPTY_CONFIG);
+  const wellsTouched = useRef(false);
+  function onWells(next: PivotConfig) { wellsTouched.current = true; setConfig(next); }
   const [viz, setViz] = usePersistedState<VizType>('lab.viz', 'bar');
   const {
-    tab, setTab, res, setRes, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
+    tab, setTab, res, setRes, resQuery, setResQuery, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
     plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
     busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey,
   } = useDaxLabTabState();
@@ -237,18 +251,39 @@ export function DaxLabView() {
   function reveal() { if (wbH < 200) setWbH(280); }
 
   async function runQuery(q: string) {
+    const gen = ++runGen.current;
     setBusy('run'); setErr(null); setLogs(null); setClaudeEvent(null);
-    try { const r = await rpc<ResultSet>('runDax', q, 50000); if (r.error) { setErr(r.error); setRes(null); } else setRes(r); }
-    catch (e) { setErr(String((e as Error).message ?? e)); } finally { setBusy(null); }
+    try {
+      const r = await rpc<ResultSet>('runDax', q, 50000);
+      if (gen !== runGen.current) return;
+      if (r.cancelled) { setErr(r.error || 'The query was stopped.'); return; }
+      if (r.error) { setErr(r.error); setRes(null); setResQuery(null); }
+      else { setRes({ ...r, query: r.query || q }); setResQuery(r.query || q); }
+    } catch (e) {
+      if (gen !== runGen.current) return;
+      setErr(String((e as Error).message ?? e));
+    } finally { if (gen === runGen.current) setBusy(null); }
+  }
+  function stopQuery() {
+    runGen.current++;
+    void rpc('cancelDax').catch(() => { /* the in-flight run still settles */ });
+    setBusy(null);
+    setErr('The query was stopped.');
   }
   function run() { setTab('result'); reveal(); void runQuery(currentQuery()); }
   async function debug(q?: string) {
+    const gen = ++runGen.current;
+    const ran = q ?? currentQuery();
     setTab('debug'); reveal(); setBusy('debug'); setErr(null); setClaudeEvent(null);
     try {
-      const r = await rpc<EvalLogResult>('evaluateAndLog', q ?? currentQuery(), 10000);
-      if (r.error) { setErr(r.error); setRes(null); setLogs(null); }
-      else { setRes({ columns: r.resultColumns, rows: r.resultRows, rowCount: r.resultRowCount, truncated: false, elapsedMs: r.elapsedMs }); setLogs(r.entries); setLogNote(r.note ?? null); }
-    } catch (e) { setErr(String((e as Error).message ?? e)); } finally { setBusy(null); }
+      const r = await rpc<EvalLogResult>('evaluateAndLog', ran, 10000);
+      if (gen !== runGen.current) return;
+      if (r.error) { setErr(r.error); setRes(null); setLogs(null); setResQuery(null); }
+      else { setRes({ columns: r.resultColumns, rows: r.resultRows, rowCount: r.resultRowCount, truncated: false, elapsedMs: r.elapsedMs, query: ran }); setResQuery(ran); setLogs(r.entries); setLogNote(r.note ?? null); }
+    } catch (e) {
+      if (gen !== runGen.current) return;
+      setErr(String((e as Error).message ?? e));
+    } finally { if (gen === runGen.current) setBusy(null); }
   }
   async function call<T>(method: string, set: (v: T | null) => void, b: typeof busy, ...args: unknown[]) {
     setBusy(b); setErr(null); setClaudeEvent(null);
@@ -294,9 +329,10 @@ export function DaxLabView() {
     || (eqEv.contextKey != null && eqEv.contextKey !== execContextKey)
   );
 
-  // Visual mode auto-runs on every well change (like a real Power BI visual).
+  // Visual mode auto-runs on every well change the user makes (like a real Power BI visual). Opening the tab,
+  // switching models, or seeding defaults must not fire an unrequested query against the live endpoint.
   useEffect(() => {
-    if (mode !== 'visual' || !conn?.connected) return;
+    if (mode !== 'visual' || !conn?.connected || !wellsTouched.current) return;
     const q = buildQuery(config);
     const t = setTimeout(() => { void runQuery(q); }, 220);
     return () => clearTimeout(t);
@@ -306,7 +342,7 @@ export function DaxLabView() {
   function switchMode(m: Mode) { if (m === 'query' && mode === 'visual') setQuery(buildQuery(config)); setMode(m); }
   function compareValue(ref: string) { setExprA(ref); setTab('verify'); reveal(); }
   // Reset the wells + editor back to the model's seeded defaults (the runnable starting point).
-  function resetDefault() { const c = seedConfig(model); setConfig(c); setQuery(buildQuery(c)); setExprA(c.values[0]?.ref ?? ''); setExprB(''); }
+  function resetDefault() { wellsTouched.current = true; const c = seedConfig(model); setConfig(c); setQuery(buildQuery(c)); setExprA(c.values[0]?.ref ?? ''); setExprB(''); }
 
   return (
     // Ctrl+Enter (Cmd+Enter on mac) anywhere in the lab = Run — the universal "run the query" gesture. Bubble-phase,
@@ -322,8 +358,10 @@ export function DaxLabView() {
         <span className="font-semibold text-[14px]">DAX Lab</span>
         <Seg value={mode} onChange={switchMode} options={[['visual', 'Visual'], ['query', 'Query']]} />
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={resetDefault} title="Reset the wells & query to the model defaults" className="text-[12px] px-3 py-1.5 rounded-lg" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', cursor: 'pointer' }}>Reset</button>
-          <button disabled={!conn?.connected || idle} onClick={run} className="text-[12.5px] font-semibold px-5 py-1.5 rounded-lg" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer', opacity: conn?.connected ? 1 : 0.5 }}>{busy === 'run' ? 'Running…' : 'Run'}</button>
+          <button onClick={resetDefault} disabled={idle} title="Reset the wells & query to the model defaults" className="text-[12px] px-3 py-1.5 rounded-lg" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', cursor: idle ? 'default' : 'pointer', opacity: idle ? 0.5 : 1 }}>Reset</button>
+          {idle
+            ? <button onClick={stopQuery} title="Stop the running query" aria-label="Stop the running query" className="text-[12.5px] font-semibold px-5 py-1.5 rounded-lg" style={{ background: 'var(--sem-bad)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer' }}>Stop</button>
+            : <button disabled={!conn?.connected} onClick={run} title="Run the query" aria-label="Run the query" className="text-[12.5px] font-semibold px-5 py-1.5 rounded-lg" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer', opacity: conn?.connected ? 1 : 0.5 }}>Run</button>}
         </div>
       </div>
       <div className="px-3 py-1.5 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)' }}><ConnectBar hint="DAX Lab runs, benchmarks & verifies against a live engine." /></div>
@@ -345,11 +383,11 @@ export function DaxLabView() {
           <div className="flex-1 min-h-0 overflow-auto flex flex-col">
             {mode === 'visual' ? (
               <>
-                <FieldWells config={config} onConfig={setConfig} onCompare={compareValue} />
+                <FieldWells config={config} onConfig={onWells} onCompare={compareValue} />
                 <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid var(--sem-border)', borderBottom: '1px solid var(--sem-border)' }}>
                   <VizSwitcher viz={viz} onViz={setViz} />
                   <span className="ml-auto text-[11.5px] tnum" style={{ color: 'var(--sem-muted)' }}>
-                    {res ? `${res.rowCount} rows · ${res.elapsedMs} ms · hover a point for its filter context · right-click a value to explain it` : 'build a visual from the wells above'}
+                    {res ? `${rowAnnouncement(res.rowCount, res.truncated)} · ${timingAnnouncement(res.elapsedMs)} · hover a point for its filter context · right-click a value to explain it` : 'build a visual from the wells above'}
                   </span>
                 </div>
                 <div className="p-3" style={{ height: 380, flex: 'none' }}>
@@ -378,7 +416,7 @@ export function DaxLabView() {
                 // The verify badge follows the STAMPED evidence: only a fresh 'proven' is green 'match', only a
                 // fresh 'failed' is red 'diff' — stale evidence and every degraded/thin/unproven state show amber.
                 const eqV = eqEv ? eqVerdict(eqEv) : null;
-                const badge = t.id === 'result' && res ? String(res.rowCount)
+                const badge = t.id === 'result' && res ? (res.truncated ? `${res.rowCount}+` : String(res.rowCount))
                   : t.id === 'verify' && eqV ? (eqStale ? 'stale' : eqV === 'proven' ? 'match' : eqV === 'failed' ? 'diff' : 'unproven') : null;
                 const badgeColor = eqStale ? 'var(--sem-warn)' : eqV === 'proven' ? 'var(--sem-good)' : eqV === 'failed' ? 'var(--sem-bad)' : 'var(--sem-warn)';
                 return (
@@ -389,10 +427,30 @@ export function DaxLabView() {
               })}
             </div>
             <div className="flex-1 min-h-0 overflow-auto">
-              {err && <div className="p-3"><Banner color="var(--sem-bad)">{err}</Banner></div>}
+              {err && (
+                <div className="p-3">
+                  <Banner color="var(--sem-bad)">{plainDaxError(err)}</Banner>
+                  {isSignInError(err) && session?.liveEndpoint && (
+                    <button type="button" data-testid="signin-again" disabled={connBusy} className="mt-2 text-[12px] px-2 py-1 rounded-md"
+                      style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: connBusy ? 'default' : 'pointer' }}
+                      onClick={() => {
+                        void connectXmla(session.liveEndpoint!, session.liveDatabase ?? '', 'interactive', session.currentTenant ?? null)
+                          .then((r) => { if (r.ok) void runQuery(currentQuery()); else if (r.message) setErr(r.message); });
+                      }}>{SIGN_IN_AGAIN}</button>
+                  )}
+                </div>
+              )}
               {tab === 'result' && (res
-                ? <div className="h-full px-3 pt-2.5 pb-3"><ResultGrid columns={res.columns} rows={res.rows} height="100%"
-                    onCellMenu={mode === 'visual' ? (row, ci) => { const p = explainPayloadFromRow(config, row, ci); if (p) { setExplain(p); return true; } return false; } : undefined} /></div>
+                ? <div className="h-full px-3 pt-2.5 pb-3 flex flex-col min-h-0">
+                    <div className="text-[11px] tnum pb-1.5 shrink-0" style={{ color: 'var(--sem-muted)' }}>
+                      {rowAnnouncement(res.rowCount, res.truncated)} · {timingAnnouncement(res.elapsedMs)}
+                      {queryIdentity(res.query || resQuery) && (
+                        <div className="font-mono truncate" title={res.query || resQuery || undefined}>Result of: {queryIdentity(res.query || resQuery)}</div>
+                      )}
+                    </div>
+                    <ResultGrid columns={res.columns} rows={res.rows} height="100%" truncated={res.truncated}
+                    onCellMenu={mode === 'visual' ? (row, ci) => { const p = explainPayloadFromRow(config, row, ci); if (p) { setExplain(p); return true; } return false; } : undefined} />
+                  </div>
                 : <Empty>{conn?.connected ? 'Run a query (or build a visual) to see rows here.' : 'Choose a test model above to run queries.'}</Empty>)}
               {tab === 'perf' && <PerfTab {...{ runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared, conn, idle, busy, clearCache, runProfile, runPlan, runQuick, runColdWarm, timings, cw, plan, bench, clearMsg }} />}
               {tab === 'plan' && <PlanTab plan={plan} shared={!!shared} connected={!!conn?.connected} idle={idle} busy={busy} clearMsg={clearMsg} onCapture={runPlan} onClearCapture={clearThenPlan} />}
@@ -437,9 +495,9 @@ function PerfTab(p: any) {
       {bench && (
         <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-4 items-center">
           <div className="flex flex-col gap-1.5">
-            <Metric label="first run (cold-ish)" value={`${bench.firstMs} ms`} />
-            <Metric label="warm min (steady state)" value={`${bench.warmMinMs} ms`} accent />
-            <Metric label="warm median" value={`${bench.warmMedianMs} ms`} />
+            <Metric label="first run (cold-ish)" value={timingAnnouncement(bench.firstMs)} />
+            <Metric label="warm min (steady state)" value={timingAnnouncement(bench.warmMinMs)} accent />
+            <Metric label="warm median" value={timingAnnouncement(bench.warmMedianMs)} />
             <Metric label="runs" value={String(bench.runs)} />
           </div>
           <BenchBars runsMs={bench.runsMs} />
@@ -620,10 +678,10 @@ function ColdWarmView({ cw }: { cw: ColdWarmBenchmark }) {
           {([['Cold', cold, 'var(--sem-warn)'], ['Warm', warm, 'var(--sem-good)']] as const).map(([label, s, c]) => (
             <tr key={label}>
               <td className="text-left px-2 py-1 font-medium" style={{ color: c, borderBottom: '1px solid var(--sem-border)' }}>{label}</td>
-              <td className="text-right px-2 py-1 tnum font-semibold" style={{ borderBottom: '1px solid var(--sem-border)' }}>{s.n ? `${s.avgMs.toFixed(1)} ms` : 'Not run'}</td>
+              <td className="text-right px-2 py-1 tnum font-semibold" style={{ borderBottom: '1px solid var(--sem-border)' }}>{s.n ? timingAnnouncement(s.avgMs) : 'Not run'}</td>
               <td className="text-right px-2 py-1 tnum" style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>{s.n ? `±${s.stdDevMs.toFixed(1)}` : 'Not run'}</td>
-              <td className="text-right px-2 py-1 tnum" style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>{s.n ? s.minMs.toFixed(1) : 'Not run'}</td>
-              <td className="text-right px-2 py-1 tnum" style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>{s.n ? s.maxMs.toFixed(1) : 'Not run'}</td>
+              <td className="text-right px-2 py-1 tnum" style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>{s.n ? timingAnnouncement(s.minMs) : 'Not run'}</td>
+              <td className="text-right px-2 py-1 tnum" style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>{s.n ? timingAnnouncement(s.maxMs) : 'Not run'}</td>
             </tr>
           ))}
         </tbody>
@@ -651,8 +709,8 @@ function ColdWarmView({ cw }: { cw: ColdWarmBenchmark }) {
                   <tr key={i}>
                     <td className="text-left px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)' }}>{d.index}</td>
                     <td className="text-left px-2 py-1" style={{ borderBottom: '1px solid var(--sem-border)', color: d.cold ? 'var(--sem-warn)' : 'var(--sem-good)' }}>{d.cold ? 'cold' : 'warm'}</td>
-                    <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)' }}>{d.totalMs}</td>
-                    <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{d.seMs}</td>
+                    <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)' }}>{timingAnnouncement(d.totalMs)}</td>
+                    <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{timingAnnouncement(d.seMs)}</td>
                     <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{d.seQueries}</td>
                   </tr>
                 ))}

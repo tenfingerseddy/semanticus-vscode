@@ -64,4 +64,4 @@ production client models. If anything, this understates the real-world problem.
 
 ## Not scannable (1)
 
-- AllanYiin/TabularModelBook: open_model: open_model failed: Unable to load Tabular Model (Compatibility Level 1200+) from C:\Users\KaneSnyder(nexwave)\Semanticus\tools\readiness-corpus\work\AllanYiin__TabularModelBook\Ch08\Ch08\M
+- AllanYiin/TabularModelBook: open_model: open_model failed: Unable to load Tabular Model (Compatibility Level 1200+) from <repo>\tools\readiness-corpus\work\AllanYiin__TabularModelBook\Ch08\Ch08\M

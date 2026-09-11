@@ -19,7 +19,10 @@ namespace Semanticus.Engine
     /// Read-only (a plain GET). Reuses FabricRest's hardened <see cref="FabricRest.SendAsync(HttpClient,HttpMethod,string,CancellationToken)"/>
     /// (bounded 429/Retry-After backoff, token-scrubbing) so this client is just a base address + a small JSON parse;
     /// the token is the Power BI / XMLA audience (EntraToken.AcquireAsync), distinct from the Fabric audience used by
-    /// getDefinition. The HTTP primitive takes an injected HttpClient so the offline smoke can script the response.
+    /// getDefinition. NOTE: this client is NOT injectable — it builds its own via FabricRest.CreateSharedClient, which
+    /// deliberately bypasses FabricRest.TestClientFactory (that seam is scoped to the Fabric base address). Offline
+    /// coverage of the callers therefore substitutes the DISCOVERY RESULT one level up
+    /// (LocalEngine.CloudReportDiscoveryForTests), not the HTTP response here.
     /// </summary>
     internal static class PowerBiReports
     {
@@ -88,8 +91,8 @@ namespace Semanticus.Engine
             return FabricRest.Scrub(s) + status switch
             {
                 401 => "  [Sign in again, or the token lacks the Power BI scope.]",
-                403 => "  [Authenticated, but you can't list this workspace's reports — you need access to the workspace (a Viewer role is enough for the report list).]",
-                404 => "  [Workspace not found — check the id (a personal 'My workspace' isn't a group).]",
+                403 => "  [Authenticated, but you can't list this workspace's reports: you need access to the workspace (a Viewer role is enough for the report list).]",
+                404 => "  [Workspace not found: check the id (a personal 'My workspace' isn't a group).]",
                 _ => string.Empty,
             };
         }

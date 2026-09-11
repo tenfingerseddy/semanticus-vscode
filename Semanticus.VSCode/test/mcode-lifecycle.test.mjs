@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import {
   createBusyOwnerGate,
@@ -6,11 +9,13 @@ import {
   createRequestGate,
   isMContextCurrent,
   mContextToken,
+  policyFetchAllowed,
   pollingExpressionForSave,
   profileSubjectToken,
   reconcileExternalM,
   reconcileProfileSubject,
   reconcileSaveRevision,
+  reconcileTableSelection,
   serverRevisionMatches,
   transformErrorForAction,
   transformErrorKey,
@@ -281,6 +286,30 @@ import {
   const freshRequest = remounted.begin();
   assert.equal(remounted.isCurrent(freshRequest), true);
   assert.equal(abandoned.isCurrent(oldRequest), false, 'the old instance stays cancelled after remount');
+}
+
+{
+  assert.equal(reconcileTableSelection('Sales', ['Inventory', 'Date']), 'Inventory',
+    'a table from the previous model is dropped');
+  assert.equal(reconcileTableSelection('Sales', ['Sales', 'Date']), 'Sales',
+    'a still-present table is kept');
+  assert.equal(reconcileTableSelection('Sales', []), '',
+    'no tables means no selection');
+  assert.equal(policyFetchAllowed('Sales', ['Inventory']), false,
+    'do not fetch policy for a table the open model does not have');
+  assert.equal(policyFetchAllowed('Sales', ['Sales']), true);
+}
+
+{
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../webview/src/mcode.tsx'), 'utf8');
+  assert.match(src, /reconcileTableSelection/);
+  assert.match(src, /policyFetchAllowed/);
+  assert.doesNotMatch(src, /if \(err\) return <div className="p-4">/,
+    'a stale-table error must not replace the whole M Code tab');
+  // D-158: a table with no M, or an empty query, must not wear a valid M chip.
+  assert.match(src, /hasEditableM/, 'the header chip must know whether there is M to judge');
+  assert.doesNotMatch(src, /\{validity && <span className="ml-auto"/,
+    'the valid M chip must not render from validity alone');
 }
 
 console.log('M Code revision, persistence, error ownership, and cancellation behavior tests passed');

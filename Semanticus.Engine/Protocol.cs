@@ -21,14 +21,21 @@ namespace Semanticus.Engine
     /// no re-auth, like Tabular Editor. Holds NO token or secret (golden rule #1) — only the WHERE (endpoint +
     /// dataset), the tenant, and the auth MODE name (e.g. "interactive"/"serviceprincipal" — not a credential).
     /// The actual token is reused from the session's in-memory live-auth cache (Session.GetOrBuildLiveCredential),
-    /// which keeps one credential per identity so interactive auth renews silently — no second browser prompt.</summary>
+    /// which keeps TWO credentials per identity — one per driver (human / agent) — so interactive auth renews silently
+    /// with no second browser prompt, and an agent can never inherit a prompt-capable instance (T163).</summary>
     public sealed class LiveOrigin
     {
         public string Endpoint { get; }
         public string Database { get; }   // the actual dataset resolved at open time (not the connection-string form)
         public string TenantId { get; }
         public string AuthMode { get; }   // the open's auth mode name (NOT a secret) — reused by deploy to avoid re-prompting
-        public string Account { get; }    // the account (UPN) this live binding authenticated as, when known — the identity a status read reports for a live-bound editing session (null for azcli/sp/local/token = "account unknown")
+        public string Account { get; }    // the account (UPN) this live binding authenticated as, when known — a DISPLAY value a status read reports (null for azcli/sp/local/token = "account unknown"). NEVER an identity key: a UPN can be reassigned to a new principal and renamed on the same one — see HomeAccountId.
+        /// <summary>The STABLE Entra identity of the account this live binding authenticated as (MSAL's home account
+        /// id), when known. This, not <see cref="Account"/>, is what the live-auth cache keys on and what a renewal
+        /// compares: deleting and recreating a user reuses the UPN but never the home account id, and renaming a user
+        /// changes the UPN but not the home account id. Null for azcli / serviceprincipal / token / local, and on
+        /// platforms where no MSAL record persists — which reads as "identity unknown", never as a match.</summary>
+        public string HomeAccountId { get; }
         /// <summary>The Power BI Desktop display-name STEM ("Contoso Sales") this LOCAL open resolved to, when
         /// capturable (LocalDesktop.TryGetIdentity at open_local time). The restart-STABLE identity for a local
         /// Desktop model: Endpoint (localhost:port) and Database (a per-session GUID) both rotate every Desktop
@@ -39,8 +46,8 @@ namespace Semanticus.Engine
         /// (double-click/shell opens do; Desktop's own open dialog does not). Stronger than <see cref="LocalName"/>:
         /// distinct across same-named files. Null for cloud XMLA, real SSAS, and uncapturable. Set once at open.</summary>
         public string LocalPath { get; }
-        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null, string account = null, string localName = null, string localPath = null)
-        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; Account = account; LocalName = localName; LocalPath = localPath; }
+        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null, string account = null, string localName = null, string localPath = null, string homeAccountId = null)
+        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; Account = account; LocalName = localName; LocalPath = localPath; HomeAccountId = homeAccountId; }
     }
 
     public sealed class TreeNode
@@ -538,6 +545,7 @@ namespace Semanticus.Engine
         public Semanticus.Analysis.PrepForAiConfig PrepForAi { get; set; }
         public VpaqReport Storage { get; set; }
         public bool StorageAvailable { get; set; }         // a live connection supplied VertiPaq storage stats
+        public PerspectiveInfo[] Perspectives { get; set; } = System.Array.Empty<PerspectiveInfo>();
     }
 
     public sealed class SetResult
@@ -576,8 +584,8 @@ namespace Semanticus.Engine
         public string WiredDateField { get; set; }              // the SOURCE field the partition's range filter compares (parsed from M); null if none/unparseable
     }
 
-    /// <summary>Result of applying an edited DAX script (apply_dax_script): the refs whose expression was applied,
-    /// and the refs that were skipped (not found, or not a DAX-expression object). Lets the UI report "N applied, M skipped".</summary>
+    /// <summary>Result of applying an edited DAX script (apply_dax_script): the refs whose expression was applied.
+    /// Skipped is empty on success; a missing ref or invalid DAX refuses the whole batch instead of a partial apply.</summary>
     public sealed class ApplyScriptResult
     {
         public long Revision { get; set; }
@@ -679,9 +687,13 @@ namespace Semanticus.Engine
         public string[] DeletesRefusedConflict { get; set; } = System.Array.Empty<string>(); // named delete refs REFUSED because THIS deploy just identity-matched/updated that same live object (the endpoint-rename third-state race) — deleting it would undo the sync, so the whole push aborts (re-diff)
         public string[] Changes { get; set; } = System.Array.Empty<string>();   // sample change log (capped)
         public string[] Unmatched { get; set; } = System.Array.Empty<string>(); // session objects with no live counterpart (left unwritten)
-        public string[] LiveOnly { get; set; } = System.Array.Empty<string>();  // live objects (tables/columns/measures) absent from the session (left untouched)
+        public string[] LiveOnly { get; set; } = System.Array.Empty<string>();  // live objects (tables/columns/measures) absent from the session (left untouched unless ticked)
+        public string MatchNote { get; set; }                                  // honest empty-diff sentence; null when there are adds or edits to publish
         public string[] Conflicts { get; set; } = System.Array.Empty<string>(); // renames skipped because the target name is already taken on live
         public string Error { get; set; }                                       // set if the commit (SaveChanges) failed — nothing was written
+        public string ConfirmToken { get; set; }                                // preview token a commit must echo; binds session, destination, and change set
+        public string ChangeFingerprint { get; set; }                           // hash of each change's before and after; binds the live token to what was reviewed
+        public string RestorePointId { get; set; }                              // the pre-write snapshot this live commit can be rolled back to
     }
 
     public sealed class SafeFixResult
@@ -860,6 +872,7 @@ namespace Semanticus.Engine
         public string ModelName { get; set; }
         public string Source { get; set; }
         public bool HasUnsavedChanges { get; set; }
+        public bool DiskDiverged { get; set; }
         public int Tables { get; set; }
         public int Measures { get; set; }
         public bool LiveBound { get; set; }        // opened from a live XMLA model (open_live) — deploy_live can push back to source
@@ -1135,6 +1148,22 @@ namespace Semanticus.Engine
         public long Revision { get; set; }
         public int Applied { get; set; }
         public Semanticus.Analysis.BpaScorecard Scorecard { get; set; }
+        /// <summary>Auto-fixable findings STILL on the model after the press, each with the reason it survived.
+        /// The sweep verifies against a fresh scan rather than against what the writes returned, so this is the
+        /// press's honest remainder. Empty is the only state in which the button did what it said; a non-empty
+        /// array is the answer to "one press was supposed to clear everything, why is something left?".</summary>
+        public BpaUnfixed[] Unfixed { get; set; } = System.Array.Empty<BpaUnfixed>();
+        public int Remaining { get; set; }            // = Unfixed.Length, so a token-light caller can see it
+    }
+
+    /// <summary>One auto-fixable finding a bpa_fix_all press could not clear, and why.</summary>
+    public sealed class BpaUnfixed
+    {
+        public string RuleId { get; set; }
+        public string RuleName { get; set; }
+        public string ObjectRef { get; set; }
+        public string ObjectName { get; set; }
+        public string Reason { get; set; }
     }
 
     /// <summary>Result of load_bpa_rules / reset_bpa_rules: how the active BPA rule set changed.</summary>

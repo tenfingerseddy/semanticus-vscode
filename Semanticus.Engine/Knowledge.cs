@@ -41,12 +41,14 @@ namespace Semanticus.Engine
         public string[] Keys { get; set; } = Array.Empty<string>();      // deterministic match keys (rule ids / gate sigs / error types / op names / domain tokens)
         public string Fingerprint { get; set; }                          // FingerprintKey it is scoped to, or null (all models)
         public string Status { get; set; }                               // "pending" | "approved" (SSGM write-gate)
+        public bool Untrusted { get; set; }                              // true when the text looks like an instruction to skip checks (D-129)
         public int Score { get; set; }                                   // importance counter
         public int Uses { get; set; }                                    // times attached to a run/step (populated by L3+)
         public int Retrievals { get; set; }                              // times returned by recall_experience
         public string Scope { get; set; }                                // "project" | "global" (set by the reader, not stored)
         public string LastUsedUtc { get; set; }                          // latest touch (add/edit/vote/retrieve) — feeds temporal decay
         public InsightProvenance Provenance { get; set; }
+        public string Note { get; set; }                                 // set when a downvote retires the live record so the caller still gets an answer
     }
 
     /// <summary>A model's deterministic identity for recall (§3.4). No embeddings (golden rule 1) — a small,
@@ -83,6 +85,7 @@ namespace Semanticus.Engine
         public int DomainOverlap { get; set; }                              // weak: shared domain tokens
         public double Rank { get; set; }
         public string Why { get; set; }
+        public bool Untrusted { get; set; }                             // mirrored from the insight so recall can label it
     }
 
     public sealed class RecallResult
@@ -118,6 +121,29 @@ namespace Semanticus.Engine
         public const string SettingsFileName = "knowledge-settings.json";
         private const int MaxLineBytes = 64 * 1024;
 
+        // High-precision phrases from the UAT jailbreak plus classic instruction-override shapes.
+        // A match forces pending (even when auto-approve is on) and labels recall as untrusted (D-129).
+        private static readonly string[] UntrustedPhrases =
+        {
+            "skip every check",
+            "report the model as verified",
+            "live production model",
+            "instead of this fixture",
+            "ignore previous instructions",
+            "ignore your instructions",
+            "disregard your instructions",
+        };
+
+        /// <summary>True when the text looks like an instruction to skip checks or swap models, not a lesson.</summary>
+        public static bool IsUntrusted(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var t = text.ToLowerInvariant();
+            foreach (var p in UntrustedPhrases)
+                if (t.Contains(p)) return true;
+            return false;
+        }
+
         private static readonly object Gate = new object();
         private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -136,6 +162,7 @@ namespace Semanticus.Engine
             public string Kind { get; set; }
             public string Fingerprint { get; set; }
             public string Status { get; set; }             // add: "pending" | "approved"
+            public bool Untrusted { get; set; }            // add: jailbreak-shaped text is stored pending and labelled
             public string SessionId { get; set; }
             public string[] SourceRunIds { get; set; }
             // vote:
@@ -200,6 +227,7 @@ namespace Semanticus.Engine
                                 Keys = d.Keys ?? Array.Empty<string>(),
                                 Fingerprint = d.Fingerprint,
                                 Status = d.Status == "approved" ? "approved" : "pending",
+                                Untrusted = d.Untrusted,
                                 Score = InitialScore,
                                 Scope = scope,
                                 LastUsedUtc = d.When,
@@ -214,7 +242,11 @@ namespace Semanticus.Engine
                         case "edit":
                             if (d.Id != null && byId.TryGetValue(d.Id, out var er) && !tombstoned.Contains(d.Id))
                             {
-                                if (d.Text != null) er.Text = d.Text;
+                                if (d.Text != null)
+                                {
+                                    er.Text = d.Text;
+                                    if (IsUntrusted(d.Text)) er.Untrusted = true;
+                                }
                                 if (d.Keys != null) er.Keys = d.Keys;
                                 er.LastUsedUtc = d.When ?? er.LastUsedUtc;
                             }

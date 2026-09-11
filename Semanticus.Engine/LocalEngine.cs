@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using TabularEditor.TOMWrapper;
 using TabularEditor.TOMWrapper.Serialization;
@@ -16,6 +17,7 @@ using RawAs = Microsoft.AnalysisServices;
 // the Fabric schema->spec mapper, GitCli, and ModelCompare.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.AirSmoke")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.CicdSmoke")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.RpcSmoke")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.Tests")]
 
 namespace Semanticus.Engine
@@ -23,6 +25,7 @@ namespace Semanticus.Engine
     /// <summary>In-process <see cref="IEngine"/> over the local <see cref="SessionManager"/>.</summary>
     public sealed partial class LocalEngine : IEngine, IDisposable
     {
+        internal const string LiveConnectionNeeded = "Not connected. Connect a live model in Connections, then try again.";
         private readonly SessionManager _sessions;
         // The live binding is owned by the atomically-published SessionContext. The shorthand intentionally
         // performs one volatile context read; callers still snapshot the returned reference before use.
@@ -111,6 +114,7 @@ namespace Semanticus.Engine
                 e => { try { PublishActivityAsync(e); } catch { /* ride-along */ } },
                 (correlationId, delta) => _agentHealth.Stash(correlationId, s.Id, delta),
                 () => _entitlement?.IsPro == true);
+            AttachDeployGateTracking();
         }
 
         // Agent-health mailbox: ENGINE-level (not session-level) so a model swap mid-call can neither lose a
@@ -128,6 +132,9 @@ namespace Semanticus.Engine
 
         // Host workspace (the sidecar fallback anchor for live/unsaved sessions — same rule as ExperienceTee).
         private readonly string _workspaceDir;
+        // Disk fingerprint of the last successful open or save. Compared on SessionInfo so a checkout
+        // that changed files is visible to both doors without waiting for the next save.
+        private string _loadedDiskStamp;
 
         // Truly terminal: detach under the gate AND set _liveDisposed, so even a connect that MINTS its intent
         // after this point (the newest ticket) can never publish. The detached connection is disposed OUTSIDE the
@@ -207,8 +214,8 @@ namespace Semanticus.Engine
         public Task<VerifiedModeState> GetVerifiedModeAsync() =>
             Task.FromResult(new VerifiedModeState { Enabled = _verifiedMode, Available = _entitlement?.IsPro ?? false,
                 Note = _verifiedMode
-                    ? "ON — single-edit DAX (set_dax + create measure/calc column/calc table/calc item/function) is strictly validated before it commits: invalid syntax OR an unknown table/column/measure reference is refused. Validity only, not an equivalence/drift proof. Session-scoped (resets on reconnect)."
-                    : "OFF — normal editing." });
+                    ? "ON: DAX writes (set_dax + create measure/calc column/calc table/calc item/function + apply_dax_script) are strictly validated before they commit: invalid syntax OR an unknown table/column/measure reference is refused. Validity only, not an equivalence/drift proof. Session-scoped (resets on reconnect)."
+                    : "OFF: a formula with unclosed brackets is still refused." });
 
         // Turning Verified Mode ON is a Pro feature (thrown before the flip, so free stays intact). Turning it OFF is
         // always allowed. This is the human's switch — the agent operates under whatever mode the human set.
@@ -221,33 +228,243 @@ namespace Semanticus.Engine
             return GetVerifiedModeAsync();
         }
 
-        // When Verified Mode is ON, refuse a mutating DAX edit unless it passes STRICT validation — not merely
-        // balanced brackets (v.Valid) but ZERO diagnostics, so an unknown table/column/measure reference is refused
-        // too (e.g. SUM(Sales[NoSuchColumn]) — brackets balance but the column doesn't exist). The validator is
-        // conservative (masks strings/comments; skips unquoted Word[Col] that may be a VAR table; resolves a bare
-        // [name] against every measure AND column), so a genuinely clean expression yields no diagnostics and passes;
-        // the false-refusal risk is low and this is an opt-in mode the human can turn off. This is VALIDITY only —
-        // NOT an equivalence/drift proof (that's optimize_measure / verify_dax_equivalence). No-op when OFF or the
-        // expression is empty. Deterministic, offline. v1 covers the single-edit DAX ops that call it (below).
-        // Returns whether validation actually RAN AND PASSED — the audit record keys off this return value,
-        // not a re-read of the (volatile, other-door-flippable) mode, so a mid-op toggle can never mint a
-        // "validated" record for an expression that was never checked.
+        // Every DAX write uses the same offline fence, even when Verified Mode is off. The fence rejects malformed
+        // syntax, arity warnings and unknown model references before a setter runs. Verified Mode still controls the
+        // extra audit record, not whether a bad expression may be written. This is validity only, not an equivalence
+        // proof. Empty expressions remain allowed for the create-then-edit flow.
         private async Task<bool> VerifiedGuardAsync(string expression, string what)
         {
-            if (!_verifiedMode || string.IsNullOrWhiteSpace(expression)) return false;
+            if (string.IsNullOrWhiteSpace(expression)) return false;
             var v = await ValidateDaxAsync(expression);
-            var diags = v?.Diagnostics ?? Array.Empty<DaxDiagnostic>();
-            if (v == null || diags.Length > 0)
-            {
-                // Surface the most serious first (a structural error over a reference warning), then how many more.
-                var lead = diags.FirstOrDefault(d => d.Severity == "error") ?? diags.FirstOrDefault();
-                var msg = lead?.Message ?? "invalid DAX";
-                var more = diags.Length > 1 ? $" (+{diags.Length - 1} more)" : "";
-                throw new InvalidOperationException($"Verified Mode (strict DAX): refusing {what} — {msg}{more}. Fix it, or turn Verified Mode off.");
-            }
-            return true;
+            RefuseDaxForWrite(v, expression, what);
+            return _verifiedMode;
         }
 
+        private async Task<bool> FunctionGuardAsync(string expression)
+        {
+            var body = FunctionBodyOrThrow(expression);
+            var v = await ValidateDaxAsync(body);
+            RefuseDaxForWrite(v, body, "this function body");
+            return _verifiedMode;
+        }
+
+        private static string FunctionBodyOrThrow(string expression)
+        {
+            if (string.IsNullOrWhiteSpace(expression))
+                throw new InvalidOperationException("A function body must be a lambda with an arrow, such as (x: INT64) => x + 1.");
+            var arrow = expression.IndexOf("=>", StringComparison.Ordinal);
+            if (arrow <= 0)
+                throw new InvalidOperationException("A function body must be a lambda with an arrow, such as (x: INT64) => x + 1.");
+            var parameters = expression.Substring(0, arrow).Trim();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(parameters, @"^\(\s*(?:[A-Za-z_]\w*(?:\s*:\s*[A-Za-z_]\w*)?\s*(?:,\s*[A-Za-z_]\w*(?:\s*:\s*[A-Za-z_]\w*)?\s*)*)?\)$"))
+                throw new InvalidOperationException("A function body must start with a parameter list in parentheses, followed by =>.");
+            var body = expression.Substring(arrow + 2).Trim();
+            if (body.Length == 0)
+                throw new InvalidOperationException("A function body needs an expression after =>.");
+            return body;
+        }
+
+        private static void RefuseDaxForWrite(DaxValidation v, string expression, string what)
+        {
+            var diags = v?.Diagnostics ?? Array.Empty<DaxDiagnostic>();
+            if (diags.Length > 0)
+            {
+                var lead = diags.FirstOrDefault(d => string.Equals(d.Severity, "error", StringComparison.OrdinalIgnoreCase)) ?? diags[0];
+                var more = diags.Length > 1 ? $" (+{diags.Length - 1} more)" : "";
+                throw new InvalidOperationException($"This is not valid DAX for {what}: {lead?.Message ?? "invalid DAX"}{more}. Fix it before saving.");
+            }
+            var obvious = ObviousDaxProblem(expression);
+            if (obvious != null)
+                throw new InvalidOperationException($"This is not valid DAX for {what}: {obvious} Fix it before saving.");
+        }
+
+        // The offline validator deliberately stays conservative for read-only linting. A write needs one extra guard
+        // for a plain run of words, which is not a DAX expression but otherwise has no brackets, calls or references
+        // for the linter to inspect. This catches the common pasted-text failure without rejecting lambda variables or
+        // string literals used by legitimate expressions.
+        private static string ObviousDaxProblem(string expression)
+        {
+            if (string.IsNullOrWhiteSpace(expression)) return null;
+            if (System.Text.RegularExpressions.Regex.IsMatch(expression.Trim(), @"^(?:[A-Za-z_]\w*\s+){2,}[A-Za-z_]\w*$"))
+                return "It contains words but no DAX expression.";
+            return null;
+        }
+
+        private sealed class NoopMutationException : Exception { }
+
+        private sealed class TmdlValidationException : InvalidOperationException
+        {
+            public string[] Problems { get; }
+            public TmdlValidationException(IEnumerable<string> problems)
+                : base(string.Join(" ", problems)) => Problems = problems.ToArray();
+        }
+
+        private static SetResult Noop(Session s) => new SetResult { Revision = s.Revision, Changed = false };
+
+        private static void RefuseMForWrite(string expression, string what)
+        {
+            if (string.IsNullOrWhiteSpace(expression))
+                throw new ArgumentException("The M expression cannot be empty.");
+            var masked = expression.ToCharArray();
+            var stack = new Stack<(char ch, int pos)>();
+            var inString = false;
+            var inBlockComment = false;
+            for (var i = 0; i < expression.Length; i++)
+            {
+                var c = expression[i];
+                if (inBlockComment)
+                {
+                    if (c == '*' && i + 1 < expression.Length && expression[i + 1] == '/') { inBlockComment = false; i++; }
+                    else if (c != '\n' && c != '\r') masked[i] = ' ';
+                    continue;
+                }
+                if (inString)
+                {
+                    if (c == '"' && i + 1 < expression.Length && expression[i + 1] == '"') { masked[i++] = ' '; masked[i] = ' '; continue; }
+                    if (c == '"') inString = false;
+                    if (c != '\n' && c != '\r') masked[i] = ' ';
+                    continue;
+                }
+                // A quoted value still satisfies an assignment after its contents are masked.
+                if (c == '"') { inString = true; masked[i] = '.'; continue; }
+                if (c == '/' && i + 1 < expression.Length && expression[i + 1] == '/')
+                {
+                    masked[i++] = ' ';
+                    while (i < expression.Length && expression[i] != '\n') masked[i++] = ' ';
+                    i--;
+                    continue;
+                }
+                if (c == '/' && i + 1 < expression.Length && expression[i + 1] == '*')
+                {
+                    inBlockComment = true; masked[i++] = ' '; masked[i] = ' '; continue;
+                }
+                if (c == '(' || c == '[' || c == '{') stack.Push((c, i));
+                else if (c == ')' || c == ']' || c == '}')
+                {
+                    var want = c == ')' ? '(' : c == ']' ? '[' : '{';
+                    if (stack.Count == 0 || stack.Peek().ch != want)
+                        throw new InvalidOperationException($"This {what} is not valid M: unmatched '{c}'. Fix it before saving.");
+                    stack.Pop();
+                }
+            }
+            if (inString) throw new InvalidOperationException($"This {what} is not valid M: the text has an unclosed quote. Fix it before saving.");
+            if (inBlockComment) throw new InvalidOperationException($"This {what} is not valid M: the comment is not closed. Fix it before saving.");
+            if (stack.Count > 0) throw new InvalidOperationException($"This {what} is not valid M: unclosed '{stack.Peek().ch}'. Fix it before saving.");
+            var code = new string(masked);
+            var trimmedCode = code.Trim();
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmedCode, @"^let\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(code, @"\bin\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    throw new InvalidOperationException($"This {what} is not valid M: a let expression needs an 'in' result. Fix it before saving.");
+                if (System.Text.RegularExpressions.Regex.IsMatch(code, @"(?:=|,)\s*in\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    throw new InvalidOperationException($"This {what} is not valid M: a let step is missing its value. Fix it before saving.");
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmedCode,
+                @"(?:<=|>=|<>|=|[+\-*/&]|\b(?:and|or|not|in|then|else)\b)\s*(?:[,)}\]]|$)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                throw new InvalidOperationException($"This {what} is not valid M: the expression is incomplete. Fix it before saving.");
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmedCode, @"^let\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                var inAt = TopLevelMKeyword(code, "in", 3);
+                if (inAt < 0) return; // The clearer missing-result message above already handled this case.
+                var bindings = code.Substring(3, inAt - 3);
+                foreach (var binding in SplitTopLevelM(bindings, ','))
+                {
+                    var equals = TopLevelMCharacters(binding, '=');
+                    var missingSeparator = equals.Skip(1).Any(position =>
+                        System.Text.RegularExpressions.Regex.IsMatch(binding.Substring(0, position).TrimEnd(),
+                            @"(?:[A-Za-z_][A-Za-z0-9_]*|\d+|\)|\]|\})\s+[A-Za-z_][A-Za-z0-9_]*$"));
+                    if (equals.Count == 0 || missingSeparator)
+                        throw new InvalidOperationException($"This {what} is not valid M: each let step needs one name, one '=' and a value, with commas between steps. Fix it before saving.");
+                    if (string.IsNullOrWhiteSpace(binding.Substring(equals[0] + 1)))
+                        throw new InvalidOperationException($"This {what} is not valid M: a let step is missing its value. Fix it before saving.");
+                }
+            }
+
+            // `each` is a function argument in the common selector shape. If the comma before it is deleted,
+            // the expression stays balanced and the old fence cannot tell it from valid whitespace.
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmedCode, @"\b[A-Za-z_][A-Za-z0-9_]*\s+each\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                throw new InvalidOperationException($"This {what} is not valid M: a function argument is missing a comma before 'each'. Fix it before saving.");
+
+            // SelectRows needs a table and a predicate; a field test on its sole bare argument
+            // as in Table.SelectRows(Source [x] = 1) is missing that separator. Elsewhere,
+            // each [x] = 1 and record field comparisons are valid M.
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmedCode,
+                @"\bTable\.SelectRows\(\s*[A-Za-z_][A-Za-z0-9_.]*\s+\[[^\]\r\n]+\]\s*(?:<=|>=|<>|=|<|>)"))
+                throw new InvalidOperationException($"This {what} is not valid M: a comma is missing before the field test. Fix it before saving.");
+        }
+
+        private static int TopLevelMKeyword(string code, string keyword, int start)
+        {
+            var depth = 0;
+            for (var i = Math.Max(0, start); i <= code.Length - keyword.Length; i++)
+            {
+                var c = code[i];
+                if (c == '(' || c == '[' || c == '{') { depth++; continue; }
+                if (c == ')' || c == ']' || c == '}') { depth = Math.Max(0, depth - 1); continue; }
+                if (depth != 0 || !string.Equals(code.Substring(i, keyword.Length), keyword, StringComparison.OrdinalIgnoreCase)) continue;
+                var before = i == 0 ? ' ' : code[i - 1];
+                var after = i + keyword.Length == code.Length ? ' ' : code[i + keyword.Length];
+                if (!char.IsLetterOrDigit(before) && before != '_' && !char.IsLetterOrDigit(after) && after != '_') return i;
+            }
+            return -1;
+        }
+
+        private static List<int> TopLevelMCharacters(string text, char target)
+        {
+            var positions = new List<int>();
+            var depth = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                var c = text[i];
+                if (c == '(' || c == '[' || c == '{') { depth++; continue; }
+                if (c == ')' || c == ']' || c == '}') { depth = Math.Max(0, depth - 1); continue; }
+                if (depth == 0 && c == target
+                    && !(target == '=' && (i + 1 < text.Length && text[i + 1] == '>' || i > 0 && (text[i - 1] == '<' || text[i - 1] == '>' || text[i - 1] == '!'))))
+                    positions.Add(i);
+            }
+            return positions;
+        }
+
+        private static IEnumerable<string> SplitTopLevelM(string text, char separator)
+        {
+            var start = 0;
+            foreach (var position in TopLevelMCharacters(text, separator))
+            {
+                yield return text.Substring(start, position - start);
+                start = position + 1;
+            }
+            yield return text.Substring(start);
+        }
+
+        private static void RefuseDataCategory(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            var known = new[] { "Address", "Barcode", "City", "Continent", "Country", "County", "Image", "ImageUrl", "Latitude", "Longitude", "Organization", "Person", "Place", "PostalCode", "StateOrProvince", "Street", "Time", "Township", "University", "WebUrl" };
+            if (!known.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Data category '{value}' is not recognized. Choose a supported data category or clear the value.");
+        }
+
+        private static string SortByProblem(Column c, string sortByColumn)
+        {
+            if (IsSortByNone(sortByColumn)) return null;
+            var name = sortByColumn.Trim();
+            if (c.Table == null || !c.Table.Columns.Contains(name))
+                return $"Sort-by column '{name}' was not found on the same table as {ObjectRefs.For(c)}. Choose an existing column from that table.";
+            var sort = c.Table.Columns[name];
+            if (ReferenceEquals(c, sort))
+                return $"{ObjectRefs.For(c)} cannot sort by itself. Choose a different column from the same table.";
+            var seen = new HashSet<Column>(ReferenceEqualityComparer.Instance);
+            for (var current = sort; current != null; current = current.SortByColumn)
+            {
+                if (ReferenceEquals(current, c))
+                    return $"Sorting {ObjectRefs.For(c)} by '{name}' would create a sort-by cycle. Choose a column whose sort path does not lead back to it.";
+                if (!seen.Add(current)) break;
+            }
+            return null;
+        }
         // ---- Verified Edits: the append-only audit trail ----------------------------------------------
         // Append a record to the model's audit chain (VerifiedEditsStore — non-undoable, so undo_change from
         // either door can't erase it). Runs on the dispatcher thread AFTER the mutation it records, so a
@@ -336,7 +553,7 @@ namespace Semanticus.Engine
             {
                 SessionId = s.Id, Revision = revision, Origin = origin, Op = op, ObjectRef = objectRef,
                 Verdict = "validated",
-                Summary = "Verified Mode: strict validation passed (zero diagnostics) — validity only, not an equivalence proof",
+                Summary = "Verified Mode: strict validation passed (zero diagnostics): validity only, not an equivalence proof",
                 Evidence = System.Text.Json.JsonSerializer.Serialize(new { mode = "verified", check = "strict-validate" }),
                 BodyHash = VerifiedEditsStore.BodyHash(expression),
             });
@@ -434,20 +651,30 @@ namespace Semanticus.Engine
         //       Alice). Only a fresh sign-in (a pending record to persist) or a live/session-swap winner participates.
         // Kept OUT of _liveGate deliberately (that gate must never wait on file IO — disposing an ADOMD connection can
         // block, and no query may wait on the swap).
-        private void CommitAuthRecordOrdered(EntraToken.PreparedCredential prepared, long ticket, string slot, bool liveSwapWinner)
+        // Persist a live-swap winner's account DECISION, ordered per (family, tenant) slot (#233 HIGH 2 / 2a / 3).
+        // A live-swap WINNER ALWAYS advances the ordered barrier — EVEN a silent reuse (liveSwapWinner with no record) —
+        // so an older pending commit can never land behind a newer winner. What is WRITTEN to the shared default slot is
+        // what stays conditional: a freshly captured record (commitToDefault), OR a saved profile's record
+        // (makeDefaultProfileId). CROSS-PROCESS ORDERING (round-3 sol HIGH): the in-process barrier (_lastAuthCommitBySlot)
+        // orders commits WITHIN one engine only; the extension and MCP engines are SEPARATE processes over one record store,
+        // so a silent winner that advances only its in-memory dict lets an older claim from the OTHER process still win the
+        // durable CAS. The DURABLE per-slot Seq is the sole cross-process authority: a record write already CAS-advances it;
+        // a silent winner does an explicit seq-advance (AdvanceSlotSeqBySlot) so any older claim in any process is refused.
+        private void CommitAuthRecordOrdered(EntraToken.PreparedCredential prepared, long ticket, string slot, bool liveSwapWinner,
+            bool commitToDefault = true, string makeDefaultProfileId = null)
         {
-            // azcli / serviceprincipal / token keep NO saved-account record (slot == null): there is nothing to commit
-            // and nothing another op could commit out of order behind them, so they take no barrier at all (this is also
-            // MORE correct than the old global barrier, where an azcli winner needlessly invalidated an interactive commit).
+            // azcli / serviceprincipal / token keep NO saved-account record (slot == null): nothing to order.
             if (slot == null) return;
-            var hasRecord = prepared != null && prepared.HasPendingRecord;
-            // A silent read-only snapshot (no fresh sign-in, not a swap winner) never touches the barrier (HIGH 2a).
-            if (!hasRecord && !liveSwapWinner) return;
+            var writeCaptured = commitToDefault && prepared != null && prepared.HasPendingRecord;
+            var writeProfile = !string.IsNullOrWhiteSpace(makeDefaultProfileId);
+            // A silent READ-ONLY snapshot (a compare/reference: no write, not a swap winner) never touches the barrier (HIGH 2a).
+            if (!writeCaptured && !writeProfile && !liveSwapWinner) return;
             lock (_authCommitGate)
             {
                 if (!TryAdvanceAuthSlot(slot, ticket)) return;   // an older op resuming after a newer winner already advanced THIS slot — no-op
-                if (hasRecord)
-                    EntraToken.CommitAuthRecord(prepared);       // write UNDER the gate — claim + write are one atomic, ordered step
+                if (writeCaptured) EntraToken.CommitAuthRecord(prepared);              // write UNDER the gate — claim + write CAS-advance the durable Seq
+                else if (writeProfile) EntraToken.SetDefaultProfile(makeDefaultProfileId);   // make-default write CAS-advances the durable Seq
+                else EntraToken.AdvanceSlotSeqBySlot(slot);   // a SILENT winner: advance the DURABLE Seq too, so a cross-process older claim is refused
             }
         }
 
@@ -471,6 +698,18 @@ namespace Semanticus.Engine
             }
         }
         internal long MintAuthIntentForTest() => NewAuthIntent();
+
+        // Test seam (round-11 regression): the EXACT auth-commit call an open_live / connect_xmla WINNER makes, so the
+        // #233 ordering of the Phase 2 gate is provable without a live sign-in. prepared is null (no offline MSAL record),
+        // so this models the SILENT-winner path — the one the Phase 2 draft skipped. A winner ALWAYS advances the barrier
+        // (returns true when THIS ticket won the slot); a make-default onto an existing profile routes the same barrier.
+        internal bool OpenWinnerAuthForTest(long ticket, string slot, bool capturedNew, bool hadDefault, bool makeDefault, string makeDefaultProfileId = null)
+        {
+            CommitAuthRecordOrdered(null, ticket, slot, liveSwapWinner: true,
+                commitToDefault: !hadDefault || makeDefault,
+                makeDefaultProfileId: (makeDefault && !capturedNew && !string.IsNullOrWhiteSpace(makeDefaultProfileId)) ? makeDefaultProfileId : null);
+            return _lastAuthCommitBySlot.TryGetValue(slot, out var a) && a == ticket;
+        }
 
         // Atomically publish <paramref name="next"/> (a fully-opened connection, or null to detach) as _live —
         // but ONLY while <paramref name="ticket"/> is still the newest connection intent (and the optional
@@ -535,24 +774,72 @@ namespace Semanticus.Engine
         // once per open (Interlocked.Exchange), so it never leaks into a later real open.
         internal Func<Task> OpenLiveFailureProbeForTests;
 
+        // Test seam: stand in for a silent token renew + live rebind after an expired-token query (D-017). True means
+        // the next Execute on the same stub is the retry. Null in production runs the real silent path.
+        internal Func<Task<bool>> SilentQueryRenewForTests;
+
         private async Task<ResultSet> ExecuteLiveGuardedAsync(LiveConnection expected, string query, int maxRows,
-            int timeoutSeconds)
+            int timeoutSeconds, CancellationToken cancellationToken = default)
         {
             var hook = System.Threading.Interlocked.Exchange(ref LiveQueryCapturedForTest, null);
             if (hook != null) await hook();
+            var live = expected;
             ResultSet result;
-            try { result = await expected.ExecuteAsync(query, maxRows, timeoutSeconds); }
-            catch (InvalidOperationException) when (!ReferenceEquals(_live, expected))
+            try { result = await live.ExecuteAsync(query, maxRows, timeoutSeconds, cancellationToken); }
+            catch (InvalidOperationException) when (!ReferenceEquals(_live, live))
             {
                 return _live == null
-                    ? ResultSet.FromError("Not connected. Call connect_xmla or connect_local first.")
+                    ? ResultSet.FromError(LiveConnectionNeeded)
                     : ResultSet.FromError(
                         "The live connection changed before the query started. Retry against the current connection.");
             }
-            return ReferenceEquals(_live, expected)
-                ? result
-                : ResultSet.FromError(
+            if (result.AuthFailed)
+            {
+                if (await TrySilentRenewLiveAsync(live).ConfigureAwait(false))
+                {
+                    live = _live ?? live;
+                    result = await live.ExecuteAsync(query, maxRows, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+                }
+                if (result.AuthFailed)
+                {
+                    var id = SignInWait.NewId();
+                    SignInWait.Log(SignInWait.Outcome.Failed, id);
+                    return new ResultSet { Error = XmlaAuthHint.ExpiredTokenHint(id), AuthFailed = true, ElapsedMs = result.ElapsedMs };
+                }
+            }
+            if (!ReferenceEquals(_live, live))
+            {
+                return ResultSet.FromError(
                     "The live connection changed while the query was running. Its stale result was discarded. Retry against the current connection.");
+            }
+            if (result != null && string.IsNullOrEmpty(result.Query)) result.Query = query;
+            return result;
+        }
+
+        // One silent renew after an expired live query. Never pops a chooser: a missing or dead refresh token
+        // returns false so the caller can show Sign in again. Both doors share this because RunDax/PreviewTable do.
+        private async Task<bool> TrySilentRenewLiveAsync(LiveConnection expected)
+        {
+            if (SilentQueryRenewForTests != null) return await SilentQueryRenewForTests().ConfigureAwait(false);
+            if (expected == null || !string.Equals(expected.Kind, "xmla", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!ReferenceEquals(_live, expected)) return false;
+            var session = _sessions.Current;
+            var origin = session?.LiveOrigin;
+            if (origin == null || string.IsNullOrWhiteSpace(origin.Endpoint)) return false;
+            try
+            {
+                var mode = string.IsNullOrWhiteSpace(origin.AuthMode) ? "interactive" : origin.AuthMode;
+                var prepared = await EntraToken.BuildCredentialAsync(mode, origin.TenantId, System.Threading.CancellationToken.None, disableInteractive: true).ConfigureAwait(false);
+                if (prepared?.Credential == null) return false;
+                var tok = await EntraToken.GetTokenAsync(prepared.Credential, System.Threading.CancellationToken.None).ConfigureAwait(false);
+                var cs = LiveConnection.XmlaConnectionString(origin.Endpoint, origin.Database, tok.Token);
+                session.CacheLiveToken(LiveAuthKey(mode, origin.TenantId, prepared.HomeAccountId), tok);
+                return await TryBindLiveAsync("xmla", origin.Endpoint, cs, NewLiveIntent(), session, prepared.Account).ConfigureAwait(false);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // The honest tool-result for a connect/disconnect that completed its work but LOST the intent race:
@@ -562,7 +849,7 @@ namespace Semanticus.Engine
             var cur = _live;
             return cur != null
                 ? new ConnectionStatus { Connected = true, Kind = cur.Kind, DataSource = cur.DataSource,
-                    Message = what + " completed but was superseded by a newer connection request mid-flight — the newer connection remains active. Re-issue the request if you still want this target." }
+                    Message = what + " completed but was superseded by a newer connection request mid-flight. The newer connection remains active. Re-issue the request if you still want this target." }
                 : new ConnectionStatus { Connected = false,
                     Message = what + " completed but was superseded by a newer connection/disconnect request mid-flight; not connected. Re-issue the request if you still want this target." };
         }
@@ -573,17 +860,48 @@ namespace Semanticus.Engine
         internal long MintLiveIntentForTest() => NewLiveIntent();
         internal bool TrySwapLiveForTest(LiveConnection c, long ticket) { var (won, displaced) = SwapLive(c, ticket); SafeDispose(displaced); return won; }
 
-        public async Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null)
+        // Test-only READ-ONLY intent peeks (T193): observe a counter WITHOUT moving it, which no seam above can do ,
+        // MintLiveIntentForTest increments the very counter a "nothing was burned" assertion is measuring, and a
+        // TrySwapLiveForTest win publishes its stub as the session's live connection, mutating the state the same
+        // assertion calls unchanged. Each peek reads its OWN field, and it is the same Interlocked.Read the swap
+        // decision makes below, so a peek observes exactly what SwapLive observes and changes nothing.
+        internal long PeekLiveIntentForTest() => System.Threading.Interlocked.Read(ref _liveIntent);
+        internal long PeekSessionIntentForTest() => System.Threading.Interlocked.Read(ref _sessionIntent);
+        internal long PeekAuthIntentForTest() => System.Threading.Interlocked.Read(ref _authIntent);
+
+        public async Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null,
+            bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human")
         {
-            var ticket = NewLiveIntent();   // intent minted at op START — anything newer supersedes this connect
-            var authTicket = NewAuthIntent();   // separate ticket that orders the saved-account commit barrier only (HIGH 3)
+            // forceReauth (item 8): the query-role account switch — a fresh sign-in for THIS query connection only, without
+            // replacing the editing session. Same wire-compat rule as open_live: a null caller's forced re-sign repoints.
+            var repointDefault = RepointDefaultRule(makeDefault, forceReauth);
             // Reduce a bare address OR a pasted "Data Source=…;Initial Catalog=…" connection string to safe coordinates
             // FIRST: parsing before use fixes the double-prefix (XmlaConnectionString adds its own "Data Source=", so a
-            // pasted one would become "Data Source=Data Source=…") AND drops any pasted credential — we mint our own
+            // pasted one would become "Data Source=Data Source=…") AND drops any pasted credential , we mint our own
             // Entra token; a pasted Password=/token is never trusted, connected with, or persisted.
+            // HOISTED ABOVE THE REFUSAL CHAIN AND THE MINT (T193), same as OpenLiveAsync: parse is pure, so every
+            // coordinate settles before a ticket is burned and nothing observable happens ahead of the refusals.
             var coords = ConnectionInput.Parse(endpoint, database);
+            var rawEndpoint = endpoint;   // classified below: LoopbackIntakeRefusal reads the RAW address, not coords
+            // Phase 2 human-only boundary: an agent may pick a signed-in saved profile, never trigger an interactive
+            // sign-in or repoint the tenant default (mirrors label_connection's refusal). The agent door never passes
+            // forceReauth. AgentInteractiveRefusal additionally refuses an agent interactive/devicecode connect with no
+            // silently-usable account BEFORE any prompt could appear (BLOCKER).
+            // LoopbackIntakeRefusal takes rawEndpoint, so the classifier keeps a URI's authority; see its own comment.
+            // Refused BEFORE the loopback classification and before the mint: a coordinate we cannot normalise has no
+            // single destination to classify, and connecting to the truncated one would be the wrong-destination path.
+            var unsafeCoordinate = UnsafeCoordinateRefusal(coords);
+            if (unsafeCoordinate != null) throw new ArgumentException(unsafeCoordinate, nameof(endpoint));
+            var refusal = LoopbackIntakeRefusal(rawEndpoint)
+                ?? AccountSelectionRefusal(origin, forceReauth, repointDefault, accountProfileId)
+                ?? AgentInteractiveRefusal(origin, authMode, tenantId, accountProfileId)
+                ?? AccountProfileMismatchRefusal(accountProfileId, authMode, tenantId);
+            if (refusal != null) throw new InvalidOperationException(refusal);
             endpoint = coords.Endpoint;
             database = coords.Database;
+            var nonInteractive = !string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase);   // agent: never pop a prompt
+            var ticket = NewLiveIntent();   // intent minted at op START — anything newer supersedes this connect
+            var authTicket = NewAuthIntent();   // separate ticket that orders the saved-account commit barrier only (HIGH 3)
             // The engine acquires an Entra token and injects it (the netcore AS client can't do its own AAD).
             // interactive pops a browser via Azure.Identity; serviceprincipal/azcli/devicecode/token as named.
             // Use BuildCredentialAsync (the SAME persistent-cache path open_live uses) so an interactive sign-in PERSISTS
@@ -599,7 +917,20 @@ namespace Semanticus.Engine
             // the home tenant — that leaves the remembered record's tenant inconsistent with the account actually signed in.
             // RequireTenant refuses it with a sanitized message (never echoing the input, so a secret-shaped tenant can't leak).
             var tenant = XmlaAuthHint.RequireTenant(tenantId);
-            var prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None);
+            // Tenantless request + a selected profile: adopt the profile's tenant so the credential, history, registry,
+            // authKey and default slot all record the ACTUAL tenant honestly (round-3 MEDIUM — the pickers offer these).
+            if (!string.IsNullOrWhiteSpace(accountProfileId) && string.IsNullOrWhiteSpace(tenant))
+                tenant = EntraToken.FindProfile(accountProfileId)?.TenantId;
+            // Was a tenant default already saved? (Read BEFORE the build; the build never writes the default slot.) When
+            // none exists, a first sign-in ESTABLISHES the default exactly as Phase 1 did; when one exists, a per-open
+            // selection leaves it untouched (the Phase 2 promise).
+            var hadDefault = EntraToken.ReadSavedAccount(mode, tenant) != null;
+            // A per-open account selection pins that SAVED profile's record (silent, no prompt, no default change);
+            // otherwise the Phase 1 default-slot credential path (which captures a first sign-in for later silent reuse).
+            var prepared = !string.IsNullOrWhiteSpace(accountProfileId)
+                ? (EntraToken.BuildCredentialForProfile(accountProfileId, disableInteractive: nonInteractive)
+                    ?? throw new InvalidOperationException("That saved account is signed out on this device. Sign in again to use it."))
+                : mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth, disableInteractive: nonInteractive, loginHint: loginHint);
             var cred = prepared?.Credential;
             var token = cred != null
                 ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
@@ -622,16 +953,30 @@ namespace Semanticus.Engine
             var (won, displaced) = SwapLive(conn, ticket);
             SafeDispose(displaced);         // on a win: the replaced connection; on a loss: our own superseded candidate — outcome decided either way
             if (!won) return SupersededStatus("connect_xmla");
-            // WON the race → NOW persist any first-sign-in record (deferred until the win, per HIGH 5), but LINEARIZED
-            // by the auth ticket + PER-SLOT so an older connect resuming after a newer winner already committed in the
-            // SAME (family, tenant) slot can't repoint the saved account behind the live connection (HIGH 2 / HIGH 3).
-            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true);
+            // WON the race → NOW persist the account, deferred until the win (HIGH 5). Phase 2: the DEFAULT slot (the #233
+            // crash-safe pointer an unqualified open pins) is written ONLY when this open ESTABLISHES the default (none
+            // existed) or the human chose make-default — LINEARIZED by the auth ticket + PER-SLOT (HIGH 2 / HIGH 3). A
+            // per-open profile selection never repoints it. The profile store always records the account used.
+            var capturedNew = prepared != null && prepared.HasPendingRecord;
+            // A live-swap WINNER always advances the ordered barrier (even a silent reuse) so an older pending commit can
+            // never land behind it (#233 HIGH 2a); the default slot is written only on establish/repoint, under the barrier.
+            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true,
+                commitToDefault: !hadDefault || repointDefault,
+                makeDefaultProfileId: repointDefault && !capturedNew && !string.IsNullOrWhiteSpace(accountProfileId) ? accountProfileId : null);
+            PersistOpenAccountProfile(prepared, mode, tenant, accountProfileId);
             // connect_xmla is a QUERY connection ONLY. Its credential/tenant/account live on THIS live connection and the
             // remembered record — it must NEVER rebind the editing origin (session.LiveOrigin). Rebinding it (the removed
             // BindLiveOriginIfCurrent call) made a later deploy_live with no endpoint target the *query* model and
             // misreported the relationship as sameInstance (HIGH 1). open_live is the path that binds an editing origin.
+            // A per-open profile SELECTION (or a forced re-sign) that lands on a DIFFERENT account than this target's
+            // last-known one is a "switch" (item 9), a forced same-account re-sign is a "signin", else a plain "connect".
+            // Read the prior account BEFORE RememberConnection overwrites it.
+            var priorAccount = ConnectionRegistry.FindByEndpoint(endpoint, conn.Database)?.LastAccount;
             var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, tenant, authMode, account);   // resolved identity, only after the swap won
-            RecordConnectionHistory(record, "connect", account, endpoint, conn.Database, tenant, ok: true);
+            var accountChanged = !string.Equals(priorAccount, account, StringComparison.OrdinalIgnoreCase);
+            var connectKind = forceReauth ? (accountChanged ? "switch" : "signin")
+                : (!string.IsNullOrWhiteSpace(accountProfileId) && accountChanged ? "switch" : "connect");
+            RecordConnectionHistory(record, connectKind, account, endpoint, conn.Database, tenant, ok: true);
             status.Database = conn.Database; status.ConnectionId = record?.Id; status.Account = account;
             await SafeRebroadcastWorkflowLibraryAsync();   // connection.* changed — activation may re-curate the menu (§10.6)
             return status;
@@ -672,12 +1017,117 @@ namespace Semanticus.Engine
             try { return ConnectionRegistry.Remember(kind, endpoint, database, modelName, tenantId, authMode, lastAccount); } catch { return null; }
         }
 
-        // The timeline KIND for an open: a normal open is "open"; a forced re-auth is a "switch" ONLY when the account
-        // actually changed — re-signing in as the SAME account is a quieter "signin", so a same-account re-sign never
-        // spams the history with a no-op "switch". Pure + offline-unit-testable.
-        internal static string ConnectHistoryKind(bool forceReauth, string priorAccount, string newAccount)
-            => !forceReauth ? "open"
-               : string.Equals(priorAccount, newAccount, StringComparison.OrdinalIgnoreCase) ? "signin" : "switch";
+        // The timeline KIND for an open. A forced re-auth is a "switch" ONLY when the account actually changed — re-signing
+        // in as the SAME account is a quieter "signin", so a same-account re-sign never spams the history with a no-op
+        // "switch". A per-open PROFILE selection (Phase 2, explicitSelection) that lands on a DIFFERENT account than the
+        // target's prior one is a "switch" too (no fresh sign-in happened, but the identity changed for this open); the same
+        // account is a plain "open". Everything else is "open". Pure + offline-unit-testable.
+        internal static string ConnectHistoryKind(bool forceReauth, string priorAccount, string newAccount, bool explicitSelection = false)
+        {
+            if (forceReauth)
+                return string.Equals(priorAccount, newAccount, StringComparison.OrdinalIgnoreCase) ? "signin" : "switch";
+            if (explicitSelection && !string.Equals(priorAccount, newAccount, StringComparison.OrdinalIgnoreCase))
+                return "switch";
+            return "open";
+        }
+
+        // Wire-compat (item 4): whether an open repoints the tenant default. A NULL makeDefault is a LEGACY caller (older
+        // extension / Phase 1) whose forced re-sign still repoints, as it always did; an EXPLICIT false is the Phase 2 "add
+        // a profile without repointing"; explicit true is make-default. Pure + unit-testable.
+        internal static bool RepointDefaultRule(bool? makeDefault, bool forceReauth) => makeDefault ?? forceReauth;
+
+        // The human-only boundary for Phase 2 account selection (mirrors label_connection / ConnectionRegistry.IsHuman:
+        // fail closed on an unrecognised origin). An interactive sign-in (adding/forcing a NEW Microsoft account, forceReauth)
+        // and repointing the tenant default (makeDefault) are HUMAN actions — an agent that could pop a browser or silently
+        // move every model's default has defeated the identity model. Picking an already-signed-in SAVED profile is fine for
+        // an agent (device-local, credential-free, no prompt). Returns a teaching refusal, or null when the action may proceed.
+        internal static string AccountSelectionRefusal(string origin, bool forceReauth, bool makeDefault, string accountProfileId)
+        {
+            if (string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase)) return null;
+            if (forceReauth)
+                return "Signing in a new Microsoft account opens the Microsoft sign-in picker, which is a human action. Ask the user to sign in from Connections, or open with a saved account profile (list_account_profiles).";
+            if (makeDefault)
+                return "Making an account the default repoints every remembered model on that tenant, so it is a human action. Ask the user to set it from Connections.";
+            if (!string.IsNullOrWhiteSpace(accountProfileId) && !EntraToken.ProfileIsSignedIn(accountProfileId))
+                return "That saved account is signed out on this device, so selecting it needs an interactive sign-in, a human action. Ask the user to sign in from Connections, or pick a signed-in profile (list_account_profiles).";
+            return null;
+        }
+
+        // The agent NON-INTERACTIVE boundary (BLOCKER): an agent open/connect with an interactive family (browser /
+        // device code) must NEVER be able to pop a sign-in prompt on the user's machine. It is refused BEFORE any auth
+        // when there is no silently-usable account to reuse: no signed-in selected profile AND no saved tenant default.
+        // Combined with DisableAutomaticAuthentication on agent credentials (a stale cache throws instead of prompting),
+        // the worst case is always an honest refusal, never a surprise browser. Returns a teaching refusal, or null to proceed.
+        internal static string AgentInteractiveRefusal(string origin, string mode, string tenantId, string accountProfileId)
+        {
+            if (string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase)) return null;
+            var family = EntraToken.FamilyOf(mode);
+            if (family == null) return null;   // azcli / serviceprincipal / token never pop an interactive prompt
+            // An explicit profile: AccountSelectionRefusal already refuses a signed-out one; a signed-in one is silent.
+            if (!string.IsNullOrWhiteSpace(accountProfileId)) return null;
+            // A saved tenant default exists → silent reuse (DisableAutomaticAuthentication guards a stale cache).
+            // ReadSavedAccount normalises the tenant the same way RecordPath/RequireTenant do, so the key matches the open path.
+            if (EntraToken.ReadSavedAccount(mode, tenantId) != null) return null;
+            return "Opening a published model with a browser or device-code sign-in is a human action, and this device has no saved account to reuse silently. Ask the user to open it once from Connections (or the model tree), then agents can reuse that saved account. Or use serviceprincipal / azcli, which do not prompt.";
+        }
+
+        // Refuse a selected profile whose (tenant, family) does not match the request (item 5, defense in depth). The
+        // credential authenticates with the PROFILE's family/tenant, but history / authKey / registry / LiveOrigin record
+        // the CALLER's values — a mismatch would make the audit trail lie about who connected where. The UI already filters
+        // to matching profiles; this mirrors that on the engine so an agent or a hand-crafted call can't smuggle a mismatch.
+        // A not-found id is left to BuildCredentialForProfile (its "signed out" handling), so a migration-pending id is not
+        // false-refused. Returns an honest refusal, or null to proceed.
+        internal static string AccountProfileMismatchRefusal(string accountProfileId, string mode, string tenantId)
+        {
+            if (string.IsNullOrWhiteSpace(accountProfileId)) return null;
+            var profile = EntraToken.FindProfile(accountProfileId);
+            if (profile == null) return null;   // not-found → BuildCredentialForProfile handles it (never false-refuse a migration-pending id)
+            var reqFamily = EntraToken.FamilyOf(mode);
+            if (!string.Equals(profile.Family ?? "", reqFamily ?? "", StringComparison.OrdinalIgnoreCase))
+                return $"That saved account signs in a different way ({profile.Family ?? "unknown"}) than this connection ({reqFamily ?? mode}). Pick an account that matches the connection's sign-in method.";
+            var reqTenant = (tenantId ?? "").Trim();
+            var profTenant = (profile.TenantId ?? "").Trim();
+            // A TENANTLESS request adopts the profile's tenant (the pickers offer same-family profiles for a tenantless
+            // target, and the engine records the profile's tenant as the actual — round-3 MEDIUM). Only a GENUINE mismatch,
+            // where the request names a tenant that DIFFERS from the profile's, is refused (the audit-honesty guard).
+            if (reqTenant.Length > 0 && !string.Equals(profTenant, reqTenant, StringComparison.OrdinalIgnoreCase))
+                return $"That saved account belongs to a different tenant ({(string.IsNullOrEmpty(profTenant) ? "none recorded" : profTenant)}) than this connection ({reqTenant}). Open it as an account on this connection's tenant.";
+            return null;
+        }
+
+        // Upsert the account an open/connect actually used into the multi-account profile store (last-use only). NEVER
+        // writes the DEFAULT slot — that is done exclusively by CommitAuthRecordOrdered, UNDER the ordered barrier, so the
+        // default can never move out of ticket order. Best-effort — a profile write NEVER fails an open that already
+        // authorized (the live model is the primary outcome).
+        //  - a freshly CAPTURED sign-in becomes / refreshes a saved profile;
+        //  - a per-open SELECTED profile just gets its last-use touched;
+        //  - a SILENT reuse of the default account keeps that account represented as a profile (idempotent) + touches use.
+        private static void PersistOpenAccountProfile(EntraToken.PreparedCredential prepared, string mode, string tenant,
+            string accountProfileId)
+        {
+            try
+            {
+                var family = EntraToken.FamilyOf(mode);
+                if (family == null) return;   // azcli / serviceprincipal / token keep no switchable record
+                if (prepared != null && prepared.HasPendingRecord)
+                {
+                    var rec = prepared.PendingRecord;   // a fresh sign-in — capture it as a switchable profile
+                    EntraToken.CommitProfile(family, tenant, rec.HomeAccountId, rec.Username, EntraToken.SerializeRecord(rec), markSignIn: true);
+                }
+                else if (!string.IsNullOrWhiteSpace(accountProfileId))
+                {
+                    EntraToken.TouchProfileUse(accountProfileId);
+                }
+                else if (prepared?.ResolvedRecord != null)
+                {
+                    var rec = prepared.ResolvedRecord;   // silent reuse of the default account — keep it a visible profile
+                    // This rewrites the (tiny) profile store on every silent-reuse open to refresh last-use. The cost is a
+                    // single temp+rename of a handful of records, and opens are not high-frequency, so it is accepted (item 16).
+                    EntraToken.CommitProfile(family, tenant, rec.HomeAccountId, rec.Username, EntraToken.SerializeRecord(rec), markSignIn: false);
+                }
+            }
+            catch { /* best-effort: the profile store is a convenience, never a gate on the open */ }
+        }
 
         // Record a FAILED open on ANY open path (MEDIUM 9). Resolves the target's registry record so the event carries a
         // connection id (a per-connection history filter can find it, and failures don't all share the null-id cap), and
@@ -742,13 +1192,51 @@ namespace Semanticus.Engine
 
         // A loopback endpoint is the user's own Power BI Desktop, never a shared server. HOST-exact via
         // LiveDeploy.IsLocalEndpoint — NOT a substring test: "powerbi://.../myorg/prod-localhost-mirror" contains
-        // "localhost" but is a cloud workspace (any scheme ⇒ remote), and mis-reading it as local would ungate prod.
-        private static bool IsLoopbackEndpoint(string endpoint)
-        {
-            var e = endpoint?.Trim() ?? "";
-            if (e.StartsWith("data source=", StringComparison.OrdinalIgnoreCase)) e = e.Substring("data source=".Length).Split(';')[0].Trim();
-            return LiveDeploy.IsLocalEndpoint(e);
-        }
+        // "localhost" but its host is remote, and mis-reading it as local would ungate prod.
+        private static bool IsLoopbackEndpoint(string endpoint) => LiveDeploy.IsLocalEndpoint(endpoint);
+
+        // [T193] The loopback INTAKE refusal, shared by open_live, connect_xmla and remember_xmla_connection. A loopback
+        // address is a local Analysis Services instance (Power BI Desktop or a local SSAS), which has no Entra tenant, so
+        // an Entra credential minted for it can never be honoured. Three rules hold this in place:
+        //   ONE CLASSIFIER, GIVEN THE ADDRESS THE CALLER GAVE. Callers pass their RAW argument, not
+        //   ConnectionInput.Parse(...).Endpoint, and LiveDeploy.IsLocalEndpoint does the parsing itself , so all six
+        //   address aliases (Data Source / DataSource / Server / Address / Addr / Network Address) are still covered,
+        //   AND a URI's authority survives. Handing it the parsed coordinate instead loses that authority, because
+        //   XmlaAuthHint.SafeEndpoint drops everything from the first ';' wholesale: right for a connection-string
+        //   tail, lossy for a URI whose AUTHORITY holds the ';'. In an authority spelled `localhost;@remote-host`
+        //   the ';' makes `localhost` the user-info and the remote host the real one, yet the truncation reduces the
+        //   whole address to the scheme plus `localhost`. That reduction made this refusal call a REMOTE address
+        //   loopback and disagree with the classification pinned as R21-R25 in LocalEndpointTests (which hold the
+        //   literal forms). Two classifiers disagreeing on one string is the defect; there is now one, and it reads
+        //   the raw address.
+        //   ORDER. The refusal is still evaluated BEFORE any intent ticket is minted, because a refusal issued after
+        //   the mint would supersede a concurrent legitimate open (SwapLive compares ticket equality). Refuse, then
+        //   mint. The parse stays above the chain too: it is pure (two strings normalised, no I/O, no state), so
+        //   every coordinate the post-refusal code uses is settled before a ticket is burned.
+        //   REFUSE, never redirect. Routing silently to the local handler writes a different registry kind, binds a
+        //   different identity and rests on a different label base, so it is wrong behaviour wearing a correct face.
+        //   The message names the address SHAPE and the tools that do handle a local instance. It must never claim the
+        //   endpoint is Power BI Desktop: for a loopback SSAS port that is a false statement made by the error text.
+        // [T193 correction] The UNSAFE-COORDINATE intake refusal, shared by open_live, connect_xmla and
+        // remember_xmla_connection. ConnectionInput.Parse fails closed (Safe == false) when it cannot reduce an input to
+        // ONE address: it carried a credential we will not echo back, or its URI authority names two hosts depending on
+        // who reads it (ConnectionInput.HasAmbiguousAuthority). Classifying the raw address is only half a guarantee ,
+        // the code past this point CONNECTS to and PERSISTS coords.Endpoint, so a coordinate that does not agree with
+        // what was classified would mean the gate approved one destination and the connection used another. This is
+        // the refusal that closes that gap, and like the loopback one it is evaluated BEFORE any credential is built,
+        // BEFORE any intent ticket is minted and BEFORE anything is written. REFUSE, never guess: silently picking
+        // either host would retarget a caller who asked for the other. The message never echoes the input, because an
+        // ambiguous authority holds a would-be user-info token and a credential-bearing one holds a secret.
+        private static string UnsafeCoordinateRefusal(ConnectionInput.Coordinates coords) =>
+            coords.Safe ? null : UnsafeCoordinateMessage;
+
+        internal const string UnsafeCoordinateMessage =
+            "Pass the endpoint address on its own. Semanticus could not reduce this input to one safe address, so it will not guess where to connect. Either it carries a credential (Password= / User ID= / token), which is never trusted, connected with, or stored, or its URI authority contains a ';', which makes the host the address reads as different from the host a connection would use. Give the bare workspace address, with no ';' before the first '/', and try again.";
+
+        private static string LoopbackIntakeRefusal(string endpoint) =>
+            IsLoopbackEndpoint(endpoint)
+                ? "That is a loopback address, so it names an Analysis Services instance running on this machine. A local instance has no Entra tenant, so signing in to the cloud can never work against it. Use open_local to open a local instance, or connect_local to query one without editing it."
+                : null;
 
         // The target label a policy gates on. Precedence: an EXPLICIT registry label (a human declaration) beats
         // everything, including the loopback inference — if the user says a target is prod, it is prod; then loopback ⇒
@@ -816,9 +1304,9 @@ namespace Semanticus.Engine
         public Task<ApprovalRecord> ApproveAgentActionAsync(string id, string origin) => Task.FromResult(ApprovalLedger.Approve(id, origin));
         public Task<bool> DenyAgentActionAsync(string id, string origin) => Task.FromResult(ApprovalLedger.Deny(id, origin));
 
-        /// <summary>Every model source this machine has connected to, newest first. Read-only, free, both doors.</summary>
-        public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List()
-            .Where(r => !string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)).ToArray());
+        /// <summary>Every model source this machine has connected to, newest first, including local files.
+        /// Read-only, free, both doors.</summary>
+        public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List().ToArray());
 
         /// <summary>The connection timeline (connects, opens, account switches), newest first — optionally one target.
         /// Device-local, holds no credentials. Read-only, free, both doors.</summary>
@@ -851,6 +1339,176 @@ namespace Semanticus.Engine
             return Task.FromResult(probes.ToArray());
         }
 
+        /// <summary>ADVANCED sign-in prerequisite PREVIEW (read-only): what THIS machine can actually see for a mode
+        /// BEFORE the user tries to connect, so a picker can warn early instead of failing after a real attempt.
+        /// Returns PRESENCE + NAMES ONLY, NEVER a secret value, and NEVER triggers an interactive prompt or a network
+        /// sign-in. 'serviceprincipal'/'sp' reads env-var PRESENCE only, via <see cref="EntraToken.ProbePrerequisites"/>
+        /// (the one source of truth for the accepted names, shared with the real credential build). 'azcli' — also the
+        /// default for an empty mode — runs a short, local `az account show` probe (see <see cref="ProbeAzCliAsync"/>);
+        /// it NEVER runs `az login`. Any other mode (interactive/devicecode/token) has no offline prerequisite worth
+        /// checking, so it reports Ready=true — those modes only fail, if at all, at the real connect.</summary>
+        public async Task<AuthPrerequisites> ProbeAuthPrerequisitesAsync(string mode, string tenantId = null)
+        {
+            var m = (mode ?? "").Trim().ToLowerInvariant();
+            if (m == "serviceprincipal" || m == "sp") return EntraToken.ProbePrerequisites(m, tenantId);
+            if (m == "azcli" || m.Length == 0) return await ProbeAzCliAsync(m.Length == 0 ? "azcli" : m).ConfigureAwait(false);
+            return new AuthPrerequisites { Mode = m, Ready = true, KeyVaultSupported = false };
+        }
+
+        private static readonly TimeSpan AzCliProbeTimeout = TimeSpan.FromSeconds(4);
+
+        // A local, read-only `az account show -o json` probe: presence + identity ONLY (never a token), a SHORT
+        // timeout, and robust to az being missing, hanging, or exiting non-zero — this must never hang or crash the
+        // engine. It NEVER signs anyone in: `az account show` only reads the CLI's own already-signed-in session; we
+        // never invoke `az login`. On Windows `az` resolves to a shim (az.cmd), which Process can't exec directly
+        // without a shell, so route through cmd.exe /c exactly like any other CLI shim on that platform.
+        // az's standard Windows install path (the MSI). Preferred over a bare `az` so a PATH-planted az.cmd cannot be
+        // resolved; falls back to the bare name only when the standard install is absent (a non-standard install), where
+        // the /d + System32-cwd mitigations still hold.
+        private static string ResolveAzCommand()
+        {
+            foreach (var pf in new[] { Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("ProgramFiles(x86)") })
+            {
+                if (string.IsNullOrWhiteSpace(pf)) continue;
+                var cand = System.IO.Path.Combine(pf, "Microsoft SDKs", "Azure", "CLI2", "wbin", "az.cmd");
+                if (System.IO.File.Exists(cand)) return cand;
+            }
+            return "az";
+        }
+
+        private static async Task<AuthPrerequisites> ProbeAzCliAsync(string mode)
+        {
+            System.Diagnostics.Process p = null;
+            try
+            {
+                // Hardening (sol HIGH): the ABSOLUTE System32 cmd.exe (never a ComSpec a user env var could redirect),
+                // AutoRun disabled (/d), a System32 working dir (admin-only, so cwd can't shadow `az`), and az's known
+                // install path preferred over a bare PATH name so a PATH-planted `az.cmd` can't be picked up. `az account
+                // show` only READS the CLI's existing session — it never signs in and never prompts.
+                System.Diagnostics.ProcessStartInfo psi;
+                if (OperatingSystem.IsWindows())
+                {
+                    var cmd = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+                    psi = new System.Diagnostics.ProcessStartInfo(cmd);
+                    psi.ArgumentList.Add("/d");   // no AutoRun (ignore HKCU/HKLM Command Processor\AutoRun)
+                    psi.ArgumentList.Add("/c");
+                    psi.ArgumentList.Add(ResolveAzCommand());   // an absolute az.cmd path when the standard install is present, else the bare name
+                    psi.WorkingDirectory = Environment.SystemDirectory;
+                }
+                else
+                {
+                    psi = new System.Diagnostics.ProcessStartInfo("az");   // POSIX exec of a bare name uses PATH, not cwd - no cwd-shadow vector
+                }
+                psi.ArgumentList.Add("account");
+                psi.ArgumentList.Add("show");
+                psi.ArgumentList.Add("-o");
+                psi.ArgumentList.Add("json");
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+
+                p = new System.Diagnostics.Process { StartInfo = psi };
+                p.Start();
+
+                // ONE deadline over the WHOLE read - process exit AND both pipe drains. A grandchild that inherited the
+                // redirected handles can keep a drain pending after cmd.exe exits, so the reads are cancellable too, not
+                // just the exit wait (sol HIGH: the drains were previously unbounded).
+                using var cts = new System.Threading.CancellationTokenSource(AzCliProbeTimeout);
+                var stdoutTask = p.StandardOutput.ReadToEndAsync(cts.Token);
+                var stderrTask = p.StandardError.ReadToEndAsync(cts.Token);
+                string stdout;
+                try
+                {
+                    await p.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+                    stdout = await stdoutTask.ConfigureAwait(false);
+                    await stderrTask.ConfigureAwait(false);   // drained to avoid a full-pipe stall; az's wording varies by version/locale so we don't surface it
+                }
+                catch (OperationCanceledException)
+                {
+                    try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* already exited — nothing to kill */ }
+                    try { using var reapCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(2)); await p.WaitForExitAsync(reapCts.Token).ConfigureAwait(false); } catch { /* best-effort reap */ }
+                    return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "The Azure CLI did not respond in time. Make sure `az` works from a terminal, then reload." };
+                }
+
+                if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+                    return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "Not signed in to the Azure CLI. Run az login, then reload." };
+
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(stdout);
+                    var root = doc.RootElement;
+                    var account = root.TryGetProperty("user", out var u) && u.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    var tenant = root.TryGetProperty("tenantId", out var t) ? t.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(account))
+                        return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "Not signed in to the Azure CLI. Run az login, then reload." };
+                    return new AuthPrerequisites { Mode = mode, Ready = true, KeyVaultSupported = false, CliAccount = account, CliTenant = tenant };
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "Could not read the Azure CLI session. Run az login, then reload." };
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "Azure CLI not found. Install it and run az login." };
+            }
+            catch (Exception ex)
+            {
+                // Belt-and-braces: this probe must NEVER throw or hang the engine — any unexpected failure reads as "not ready".
+                return new AuthPrerequisites { Mode = mode, Ready = false, KeyVaultSupported = false, Detail = "Could not check the Azure CLI (" + ex.Message + ")." };
+            }
+            finally
+            {
+                try { p?.Dispose(); } catch { /* best-effort */ }
+            }
+        }
+
+        /// <summary>Every saved Microsoft identity on this device (Phase 2), credential-free — the multi-account profile
+        /// store. Migrates the Phase 1 single record into a first profile per remembered (tenant, family), idempotently and
+        /// with NO re-sign-in, so an installed engine gains the list without asking the user to sign in again. Read-only,
+        /// free, both doors.</summary>
+        public Task<AccountProfile[]> ListAccountProfilesAsync()
+        {
+            // Fold each remembered target's Phase 1 default record into the profile list once (idempotent). The registry is
+            // the only place the (tenant, family) pairs live; the auth store can't enumerate them, so migration is driven here.
+            foreach (var pair in ConnectionRegistry.List()
+                         .Where(r => string.Equals(r.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
+                         .Select(r => (mode: r.AuthMode, tenant: r.TenantId))
+                         .Distinct())
+                EntraToken.EnsureMigratedProfile(pair.mode, pair.tenant);
+            return Task.FromResult(EntraToken.ListProfiles().ToArray());
+        }
+
+        /// <summary>Make a saved profile the tenant DEFAULT: the account an UNQUALIFIED open of any model on that tenant will
+        /// use from now on. HUMAN-ONLY (it repoints every remembered model on the tenant — a governance-weight blast radius,
+        /// like label_connection), and broadcast so both doors refresh. Records a switch in the connection history.</summary>
+        public async Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human")
+        {
+            if (!string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Only a human can set the default account. It repoints every remembered model on that tenant, so an agent cannot. Ask the user to set it from Connections.");
+            var profile = EntraToken.FindProfile(profileId)
+                ?? throw new InvalidOperationException("No saved account with that id. Open Connections to see the saved accounts.");
+            var result = EntraToken.SetDefaultProfileResult(profileId);
+            if (result != EntraToken.SetDefaultResult.Ok)
+                throw new InvalidOperationException(result switch   // item 15: teach the RIGHT fix per reason
+                {
+                    EntraToken.SetDefaultResult.NotFound => "No saved account with that id. Open Connections to see the saved accounts.",
+                    EntraToken.SetDefaultResult.SignedOut => "That saved account is signed out on this device. Sign in again before making it the default.",
+                    _ => "The default could not be updated just now (another sign-in or switch won the race). Nothing changed. Try again.",
+                });
+            // History: the tenant default moved to this account (a switch, with the account named). Endpoint/tenant only.
+            RecordConnectionHistory(null, "switch", profile.Username, null, null, profile.TenantId, ok: true,
+                detail: $"made the default account for the {profile.TenantId ?? "current"} tenant");
+            // Broadcast so the hub, the native picker and the Compare picker re-read (dual-drive parity with connect/forget).
+            await PublishActivityAsync(new ActivityEvent
+            {
+                Kind = "set_default_account_profile", Origin = "human",
+                Label = $"Made {profile.Username} the default account", Target = profileId, Ok = true,
+            });
+            return EntraToken.ListProfiles().ToArray();
+        }
+
         public async Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent")
         {
             origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
@@ -863,6 +1521,23 @@ namespace Semanticus.Engine
             if (mode != "azcli" && mode != "interactive" && mode != "serviceprincipal")
                 throw new ArgumentException("Authentication must be azcli, interactive, or serviceprincipal.", nameof(authMode));
             var coords = ConnectionInput.Parse(endpoint.Trim(), database);
+            // [T193] Refuse a loopback one BEFORE Remember and before the activity event, so a new loopback address can
+            // never enter the registry kinded "xmla". This method is the one both doors share, which is why the check
+            // belongs here and not in either door's wrapper. It blocks NEW records only: legacy loopback rows already on
+            // disk are T222's, and are kept inert where they are selected.
+            // BOTH STRINGS, unlike the two open paths, because this route's subject is not what we will connect to but
+            // what we will WRITE DOWN , and a stored row is later routed on its kind and its stored endpoint. The raw
+            // address is classified for the same reason as everywhere else (a URI authority must not be lost), and
+            // coords.Endpoint is classified as well because that is the byte string Remember persists. Since the
+            // normalisation boundary now refuses rather than retargets, an input whose truncated coordinate would be
+            // loopback while its authority is remote never gets this far , UnsafeCoordinateRefusal above stopped it.
+            // The second classification is therefore redundant BY CONSTRUCTION and kept anyway: it is two string
+            // comparisons, and it pins the persisted byte string directly rather than trusting that invariant.
+            // Refused before Remember and before the activity event, so no unresolvable coordinate reaches disk.
+            var unsafeCoordinate = UnsafeCoordinateRefusal(coords);
+            if (unsafeCoordinate != null) throw new ArgumentException(unsafeCoordinate, nameof(endpoint));
+            var loopback = LoopbackIntakeRefusal(endpoint.Trim()) ?? LoopbackIntakeRefusal(coords.Endpoint);
+            if (loopback != null) throw new ArgumentException(loopback, nameof(endpoint));
             var record = ConnectionRegistry.Remember("xmla", coords.Endpoint, string.IsNullOrWhiteSpace(coords.Database) ? null : coords.Database.Trim(),
                 string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim(), authMode: mode);
             await PublishActivityAsync(new ActivityEvent
@@ -984,7 +1659,7 @@ namespace Semanticus.Engine
             return report;
         }
 
-        public async Task<VpaxExportResult> ExportVpaxAsync(string path)
+        public async Task<VpaxExportResult> ExportVpaxAsync(string path, string origin = "human")
         {
             var s = _sessions.Require();
             if (string.IsNullOrWhiteSpace(path)) return new VpaxExportResult { Error = "A target .vpax file path is required." };
@@ -995,13 +1670,15 @@ namespace Semanticus.Engine
             // LiveOrigin (endpoint/database/authMode/tenant — no secret) and the extractor opens its OWN short-lived
             // connection, so it never contends with the engine's single-threaded live connection. ANY failure to read
             // stats degrades gracefully to the metadata-only export below (the export never fails for missing stats).
-            var origin = s.LiveOrigin;
-            if (origin != null && !string.IsNullOrEmpty(origin.Endpoint))
+            var liveOrigin = s.LiveOrigin;
+            if (liveOrigin != null && !string.IsNullOrEmpty(liveOrigin.Endpoint))
             {
                 try
                 {
-                    var token = await EntraToken.AcquireAsync(origin.AuthMode, null, System.Threading.CancellationToken.None, origin.TenantId);
-                    var connStr = LiveConnection.XmlaConnectionString(origin.Endpoint, origin.Database, token);
+                    // T163: the re-auth is a credential build like any other — an agent origin can never construct a
+                    // prompt-capable one, so a stale cache throws and the export degrades to metadata-only below.
+                    var token = await EntraToken.AcquireAsync(liveOrigin.AuthMode, null, System.Threading.CancellationToken.None, liveOrigin.TenantId, DeployGuard.IsAgent(origin));
+                    var connStr = LiveConnection.XmlaConnectionString(liveOrigin.Endpoint, liveOrigin.Database, token);
                     var tables = await s.RunAsync(() => VpaxExport.WriteWithStats(full, s.TomDatabase, connStr, 0));
                     return new VpaxExportResult
                     {
@@ -1015,7 +1692,7 @@ namespace Semanticus.Engine
                     try
                     {
                         var tables = await s.RunAsync(() => VpaxExport.Write(full, s.TomDatabase));
-                        return new VpaxExportResult { Exported = true, Path = full, Tables = tables, Note = "Metadata only — live storage statistics unavailable: " + ex.Message.Split('\n')[0] };
+                        return new VpaxExportResult { Exported = true, Path = full, Tables = tables, Note = "Metadata only. Live storage statistics unavailable: " + ex.Message.Split('\n')[0] };
                     }
                     catch (System.Exception ex2) { return new VpaxExportResult { Error = ex2.Message }; }
                 }
@@ -1047,10 +1724,10 @@ namespace Semanticus.Engine
             return new ConnectionStatus { Connected = false, Message = "Disconnected." };
         }
 
-        public Task<ResultSet> RunDaxAsync(string query, int maxRows, string origin = "human")
+        public Task<ResultSet> RunDaxAsync(string query, int maxRows, string origin = "human", CancellationToken cancellationToken = default)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(ResultSet.FromError("Not connected. Call connect_xmla or connect_local first."));
+            if (live == null) return Task.FromResult(ResultSet.FromError(LiveConnectionNeeded));
             // #129 agent-permissions gate. run_dax maps to QueryCalc (a calculation is allowed everywhere), but a
             // row-returning `EVALUATE <table>` reads real source rows — the SAME QueryData exfiltration surface
             // preview_table gates. Classify the shape and route a row-returning query through the identical
@@ -1065,20 +1742,33 @@ namespace Semanticus.Engine
                     approvalId: out var approvalId, intentBasis: "querydata", consumeGrant: false);
                 if (gate != null) return Task.FromResult(ResultSet.FromRefusal(gate, approvalId));
             }
-            return ExecuteLiveGuardedAsync(live, query, maxRows, 120);
+            return ExecuteLiveGuardedAsync(live, query, maxRows, 120, cancellationToken);
+        }
+
+        public Task<CancelQueryResult> CancelDaxAsync()
+        {
+            var live = _live;
+            if (live == null)
+                return Task.FromResult(new CancelQueryResult { Stopped = false, Message = "No query was running." });
+            var had = live.CancelCurrent();
+            return Task.FromResult(new CancelQueryResult
+            {
+                Stopped = had,
+                Message = had ? ResultSet.StoppedMessage : "No query was running.",
+            });
         }
 
         public Task<ResultSet> RunDmvAsync(string query, int maxRows)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(ResultSet.FromError("Not connected. Call connect_xmla or connect_local first."));
+            if (live == null) return Task.FromResult(ResultSet.FromError(LiveConnectionNeeded));
             return ExecuteLiveGuardedAsync(live, query, maxRows, 120);
         }
 
         public Task<ResultSet> PreviewTableAsync(string table, int topN, string origin = "human")
         {
             var live = _live;
-            if (live == null) return Task.FromResult(ResultSet.FromError("Not connected. Call connect_xmla or connect_local first."));
+            if (live == null) return Task.FromResult(ResultSet.FromError(LiveConnectionNeeded));
             if (string.IsNullOrWhiteSpace(table)) return Task.FromResult(ResultSet.FromError("A table name (or table: ref) is required."));
             // Agent-permissions gate — returning rows IS the action (there is no dry run of a data read), so the
             // preview exemption never applies to QueryData. The grant is a time-boxed session on the TARGET
@@ -1099,7 +1789,7 @@ namespace Semanticus.Engine
         public Task<ResultSet> PivotMeasureAsync(string measureExpr, string[] rowFields, string colField, string[] filters, int maxRows, string origin = "human")
         {
             var live = _live;
-            if (live == null) return Task.FromResult(ResultSet.FromError("Not connected. Call connect_xmla or connect_local first."));
+            if (live == null) return Task.FromResult(ResultSet.FromError(LiveConnectionNeeded));
             if (string.IsNullOrWhiteSpace(measureExpr)) return Task.FromResult(ResultSet.FromError("A measure expression is required."));
             // #129 follow-up: the pivot is a row-returner BY CONSTRUCTION (EVALUATE SUMMARIZECOLUMNS over source
             // grouping columns) — no shape to classify — so every agent call takes the same QueryData gate as
@@ -1122,21 +1812,21 @@ namespace Semanticus.Engine
         public Task<BenchmarkResult> BenchmarkDaxAsync(string query, int runs)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(new BenchmarkResult { Error = "Not connected. Call connect_xmla or connect_local first." });
+            if (live == null) return Task.FromResult(new BenchmarkResult { Error = LiveConnectionNeeded });
             return DaxBench.BenchmarkAsync(live, query, runs);
         }
 
         public Task<ServerTimings> ProfileDaxAsync(string query)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(new ServerTimings { Error = "Not connected. Call connect_xmla or connect_local first." });
+            if (live == null) return Task.FromResult(new ServerTimings { Error = LiveConnectionNeeded });
             return DaxTrace.ProfileAsync(live, query);
         }
 
         public Task<EvalLogResult> EvaluateAndLogAsync(string query, int maxRows, string origin = "human")
         {
             var live = _live;
-            if (live == null) return Task.FromResult(new EvalLogResult { Error = "Not connected. Call connect_xmla or connect_local first." });
+            if (live == null) return Task.FromResult(new EvalLogResult { Error = LiveConnectionNeeded });
             // #129 follow-up: gated UNCONDITIONALLY at agent origin — a row-returner by construction, like
             // pivot_measure. The op's whole purpose is surfacing the EVALUATEANDLOG log channel, and that channel can
             // carry capped row samples of an arbitrary attacker-chosen table REGARDLESS of the outer query shape
@@ -1156,7 +1846,7 @@ namespace Semanticus.Engine
         public async Task<EquivalenceResult> VerifyEquivalenceAsync(string exprA, string exprB, string[] groupBy, string[] filters, int maxRows)
         {
             var live = _live;
-            if (live == null) return new EquivalenceResult { Error = "Not connected. Call connect_xmla or connect_local first." };
+            if (live == null) return new EquivalenceResult { Error = LiveConnectionNeeded };
             // Prove A and B as DEPLOYED MEASURES (DEFINE MEASURE), not inline extension columns — see DaxQuerySpec.
             var spec = await BuildQuerySpecAsync(live, null);
             return await DaxBench.VerifyEquivalenceAsync(live, exprA, exprB, groupBy, filters, maxRows, spec);
@@ -1227,20 +1917,119 @@ namespace Semanticus.Engine
             // case-sensitive (a case-differing path is ambiguity, and ambiguity fails closed to untrusted).
             // Schemeless forms (localhost:56789) are host:port only, safe to fold whole. Anything beyond this
             // (aliases, IP vs name) also stays untrusted: the builder degrades honestly, never rebinds silently.
-            static string Ep(string e)
-            {
-                var s = (e ?? "").Trim().TrimEnd('/');
-                var scheme = s.IndexOf("://", StringComparison.Ordinal);
-                if (scheme < 0) return s.ToLowerInvariant();                    // host:port — no path
-                var pathStart = s.IndexOf('/', scheme + 3);
-                if (pathStart < 0) return s.ToLowerInvariant();                 // scheme://host only
-                return s.Substring(0, pathStart).ToLowerInvariant() + s.Substring(pathStart);
-            }
-            static string Db(string d) => (d ?? "").Trim();
-            var oe = Ep(originEndpoint); var od = Db(originDatabase);
+            var oe = CanonicalEndpoint(originEndpoint); var od = CanonicalDatabase(originDatabase);
             if (oe.Length == 0 || od.Length == 0) return false;
-            return string.Equals(oe, Ep(liveDataSource), StringComparison.Ordinal)
-                && string.Equals(od, Db(liveDatabase), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(oe, CanonicalEndpoint(liveDataSource), StringComparison.Ordinal)
+                && string.Equals(od, CanonicalDatabase(liveDatabase), StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>ONE canonical form for a live endpoint, shared by every comparison that decides whether two
+        /// coordinates name the SAME model (the DaxQuerySpec trust key and the live-auth identity binding). Trim,
+        /// drop a trailing slash, and case-fold ONLY the scheme://host[:port] part — host names are case-insensitive
+        /// but a URL PATH is not guaranteed to be. Schemeless forms (localhost:56789) are host:port only, so they
+        /// fold whole. Deliberately does NOT fold scheme aliases: callers decide what an alias means, because the two
+        /// callers need OPPOSITE failure directions.</summary>
+        internal static string CanonicalEndpoint(string e)
+        {
+            var s = (e ?? "").Trim().TrimEnd('/');
+            var scheme = s.IndexOf("://", StringComparison.Ordinal);
+            if (scheme < 0) return s.ToLowerInvariant();                    // host:port — no path
+            var pathStart = s.IndexOf('/', scheme + 3);
+            if (pathStart < 0) return s.ToLowerInvariant();                 // scheme://host only
+            return s.Substring(0, pathStart).ToLowerInvariant() + s.Substring(pathStart);
+        }
+
+        internal static string CanonicalDatabase(string d) => (d ?? "").Trim();
+
+        /// <summary>The identity-comparison key for an XMLA endpoint: HOST + path (the port is excluded, see below),
+        /// with every difference that does NOT change which server and workspace is named normalised away. Returns null when the endpoint cannot
+        /// be reduced to coordinates we understand (a schemeless host:port, or anything Uri cannot parse) — null means
+        /// "nothing proven", which the classifier treats as BIND, never as different.
+        ///
+        /// SCHEME and PORT are excluded, and neither can ever prove a different model. Maintaining an allow-list of
+        /// scheme aliases was the losing game this replaced: one alias nobody thought of counted as proof and unbound
+        /// the identity check. Excluding them means the plain-and-explicit-443 spelling and the TLS spelling of one host
+        /// and path reduce to the SAME key and therefore BIND —
+        /// the worst case is an honest refusal on an exotic custom-gateway setup, never a silent unbind. (Standard
+        /// Power BI and Azure AS live in different host spaces, so a real collision needs a bespoke gateway.)
+        ///
+        /// System.Uri does dot-segment resolution, host lower-casing, IDN/punycode folding and query/fragment
+        /// separation (measured, not assumed). What it does NOT do, and this adds: AbsolutePath stays URI-ESCAPED
+        /// apart from canonicalised unreserved characters, so each segment is unescaped, Unicode-normalised to NFC and
+        /// re-escaped canonically — otherwise Caf%C3%A9 and Cafe%CC%81 keep different keys and a service that
+        /// normalises the route would look like a different workspace. NFC settles composed vs decomposed forms only;
+        /// it does NOT merge homoglyphs (Latin o and Cyrillic o stay distinct). That is deliberate: to the service they
+        /// ARE different workspace names, so the keys differ and the classification is Different — this is one of the
+        /// few places an unequal key is genuinely proof, not a gap.</summary>
+        internal static string CanonicalXmlaKey(string endpoint)
+        {
+            if (!TryReadXmlaRoute(endpoint, out var host, out var segments)) return null;
+            // The tenant route is compared SEPARATELY (see CanonicalXmlaTenantRoute): it is real identity, because a
+            // workspace is tenant-scoped, but only some spellings of it can be compared at all.
+            if (IsPowerBiRoute(segments)) segments[1] = "*";
+            return host + (segments.Length == 0 ? "" : "/" + string.Join("/", segments));
+        }
+
+        // Split the endpoint into its lower-cased IDN host and canonical path segments, or false when it cannot be
+        // reduced to coordinates we understand (schemeless host:port, an unparseable URI, an undecodable segment).
+        // False means "nothing proven", which every caller turns into a BIND.
+        private static bool TryReadXmlaRoute(string endpoint, out string host, out string[] segments)
+        {
+            host = null; segments = null;
+            var raw = (endpoint ?? "").Trim();
+            if (raw.Length == 0) return false;
+            if (!Uri.TryCreate(raw, UriKind.Absolute, out var u) || string.IsNullOrEmpty(u.Host)) return false;
+            try
+            {
+                // Dropping empty segments collapses duplicate slashes AND any trailing slash. Query and fragment are
+                // discarded: neither selects a workspace. Splitting the ESCAPED path first means a %2F stays inside its
+                // segment and can never act as a delimiter.
+                //
+                // PERCENT POLICY (measured): System.Uri REPAIRS a bare or non-hex '%' into a literal one, so
+                // .../A%ZZ arrives here as .../A%25ZZ and round-trips to the literal name "A%ZZ". There is therefore no
+                // malformed-escape failure to detect, and both spellings converge on one key — an over-bind, which is
+                // the safe direction. The catch below is NOT an escaping validator: it guards Normalize, which throws
+                // on invalid Unicode such as an unpaired surrogate. That too returns false, and false always binds.
+                segments = u.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(seg => Uri.EscapeDataString(Uri.UnescapeDataString(seg).Normalize(System.Text.NormalizationForm.FormC)))
+                    .ToArray();
+            }
+            catch { return false; }
+            // A terminal dot is the DNS root: api.powerbi.com. and api.powerbi.com are the same host, but System.Uri
+            // keeps the dot, so without this the two spellings produced different keys and the classifier UNBOUND the
+            // identity check. Whether the provider accepts that spelling is live-only and unverified, which by the
+            // design rule makes it not proof of a different model. A host that was nothing but dots names nothing.
+            host = u.IdnHost.ToLowerInvariant().TrimEnd('.');
+            if (host.Length == 0) return false;
+            return true;
+        }
+
+        private static bool IsPowerBiRoute(string[] segments)
+            => segments.Length >= 3 && string.Equals(segments[0], "v1.0", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>The TENANT this endpoint's route names, when it names one comparably: a tenant GUID. Returns null
+        /// for "myorg" (which means "whichever tenant the caller signs in to") and for a domain alias (one tenant has
+        /// many verified domains, so two unequal domains do not prove two tenants). Null reads as UNKNOWN and binds.
+        /// This exists because a workspace is TENANT-SCOPED: tenant-a/Finance and tenant-b/Finance are different
+        /// models that share a name, and folding the tenant away entirely made a valid cross-tenant deploy look like
+        /// the source model and get refused.</summary>
+        internal static Guid? CanonicalXmlaTenantRoute(string endpoint)
+        {
+            if (!TryReadXmlaRoute(endpoint, out _, out var segments) || !IsPowerBiRoute(segments)) return null;
+            return Guid.TryParse(Uri.UnescapeDataString(segments[1]), out var g) ? g : (Guid?)null;
+        }
+
+        /// <summary>How a live call's coordinates relate to the model the session was opened from.</summary>
+        internal enum LiveTargetKind
+        {
+            /// <summary>The same model, as far as anything can be PROVEN: the identity is bound and enforced. This is
+            /// the DEFAULT — see <see cref="ClassifyLiveTarget"/>.</summary>
+            Source,
+            /// <summary>Either a PROVEN different workspace or dataset, or a session with NO live origin at all.
+            /// Both resolve their own identity into their own cache slot. When a live origin exists this is reached
+            /// only from valid canonical coordinates on BOTH sides; the no-origin case short-circuits before any key
+            /// is computed, which is safe precisely because there is no source identity there to unbind.</summary>
+            Different,
         }
 
         // Clear the Storage-Engine cache (the cold/warm-benchmark primitive). SAFETY: cache-clear evicts the cache
@@ -1249,13 +2038,13 @@ namespace Semanticus.Engine
         public async Task<ClearCacheResult> ClearCacheAsync(bool confirm)
         {
             var live = _live;
-            if (live == null) return new ClearCacheResult { Error = "Not connected. Call connect_xmla or connect_local first." };
+            if (live == null) return new ClearCacheResult { Error = LiveConnectionNeeded };
             var local = LiveDeploy.IsLocalEndpoint(live.DataSource);
             if (!local && !confirm)
                 return new ClearCacheResult
                 {
                     Cleared = false, Local = false, DataSource = live.DataSource, Database = live.Database,
-                    Error = "Refusing to clear the Storage-Engine cache on a SHARED/cloud endpoint without confirmation — it evicts the cache for ALL users of '"
+                    Error = "Refusing to clear the Storage-Engine cache on a SHARED/cloud endpoint without confirmation: it evicts the cache for ALL users of '"
                             + (string.IsNullOrEmpty(live.Database) ? "this model" : live.Database) + "' (their next queries run cold). Pass confirm=true to proceed.",
                 };
             var r = await DaxCache.ClearAsync(live);
@@ -1269,19 +2058,19 @@ namespace Semanticus.Engine
         public async Task<ColdWarmBenchmark> BenchmarkColdWarmAsync(string query, int runs, bool clearForCold, bool confirm)
         {
             var live = _live;
-            if (live == null) return new ColdWarmBenchmark { Error = "Not connected. Call connect_xmla or connect_local first." };
+            if (live == null) return new ColdWarmBenchmark { Error = LiveConnectionNeeded };
             var local = LiveDeploy.IsLocalEndpoint(live.DataSource);
             var allowClear = clearForCold && (local || confirm);
             var r = await DaxBench.BenchmarkColdWarmAsync(live, query, runs, allowClear);
             if (clearForCold && !allowClear && !local && string.IsNullOrEmpty(r.Error))
-                r.Note = "Cold runs skipped — clearing the cache on a shared/cloud endpoint needs confirm=true (it affects all users). Showing warm-only. " + (r.Note ?? "");
+                r.Note = "Cold runs skipped: clearing the cache on a shared/cloud endpoint needs confirm=true (it affects all users). Showing warm-only. " + (r.Note ?? "");
             return r;
         }
 
         public Task<QueryPlanResult> CaptureQueryPlanAsync(string query)
         {
             var live = _live;
-            if (live == null) return Task.FromResult(new QueryPlanResult { Error = "Not connected. Call connect_xmla or connect_local first." });
+            if (live == null) return Task.FromResult(new QueryPlanResult { Error = LiveConnectionNeeded });
             return DaxTrace.CaptureQueryPlanAsync(live, query);
         }
 
@@ -1308,7 +2097,7 @@ namespace Semanticus.Engine
             // 1) ENFORCE >=2 candidates — the workflow precondition. Thrown before any resolve/mutate.
             var cands = (candidates ?? Array.Empty<string>()).Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()).ToArray();
             if (cands.Length < 2)
-                throw new InvalidOperationException("optimize_measure requires >=2 candidate expressions — author independent rewrites so the engine can prove them equivalent and race them for speed.");
+                throw new InvalidOperationException("optimize_measure requires >=2 candidate expressions. Author independent rewrites so the engine can prove them equivalent and race them for speed.");
 
             var s = _sessions.Require();
 
@@ -1339,7 +2128,7 @@ namespace Semanticus.Engine
             }
             var valid = evid.Where(e => e.VerifyState != "invalid").ToList();
             if (valid.Count < 2)
-                return new OptimizeMeasureResult { Verdict = "insufficient-valid", BaselineExpression = baseline, Candidates = evid.ToArray(), Note = "fewer than 2 candidates are valid DAX — nothing raced." };
+                return new OptimizeMeasureResult { Verdict = "insufficient-valid", BaselineExpression = baseline, Candidates = evid.ToArray(), Note = "fewer than 2 candidates are valid DAX. Nothing raced." };
 
             // 4) Prove + benchmark need a live endpoint. Offline → DEGRADE (evidence-only), never mutate.
             var live = _live;
@@ -1369,7 +2158,7 @@ namespace Semanticus.Engine
                 {
                     "proven" => null,
                     "thin" => why + " (pass verifyGroupBy)",
-                    "degraded" => why + " Not auto-applied — apply explicitly with update_measure if you accept the caveat.",
+                    "degraded" => why + " Not auto-applied. Apply explicitly with update_measure if you accept the caveat.",
                     _ => why,
                 };
             }
@@ -1402,8 +2191,8 @@ namespace Semanticus.Engine
                 // an auto-apply. Say so instead of the generic "fix the rewrites" (they may not be wrong at all).
                 var degradedCount = valid.Count(e => e.VerifyState == "degraded");
                 var summary = degradedCount > 0
-                    ? $"no candidate proved at FULL fidelity — {degradedCount} matched only under degraded evaluation fidelity; nothing auto-applied"
-                    : "no candidate proved equivalent over the supplied matrix — nothing applied";
+                    ? $"no candidate proved at FULL fidelity: {degradedCount} matched only under degraded evaluation fidelity; nothing auto-applied"
+                    : "no candidate proved equivalent over the supplied matrix. Nothing applied";
                 if (recordOutcome)
                     // Revision 0: no mutation backs this record — stamping the CURRENT session revision would
                     // weld the verdict badge onto whatever unrelated edit happens to hold that revision.
@@ -1415,8 +2204,8 @@ namespace Semanticus.Engine
                     });
                 return new OptimizeMeasureResult { Verdict = "none-proven", BaselineExpression = baseline, Candidates = evid.ToArray(),
                     Note = degradedCount > 0
-                        ? $"No candidate proved at FULL fidelity — {degradedCount} candidate(s) matched values but only under degraded evaluation fidelity (see candidate notes). Nothing auto-applied: review the caveat and apply explicitly with update_measure, or fix the fidelity gap (open the model live so the target's identity is known)."
-                        : "No candidate proved equivalent over the supplied matrix — nothing applied. Widen verifyGroupBy or fix the rewrites." };
+                        ? $"No candidate proved at FULL fidelity: {degradedCount} candidate(s) matched values but only under degraded evaluation fidelity (see candidate notes). Nothing auto-applied: review the caveat and apply explicitly with update_measure, or fix the fidelity gap (open the model live so the target's identity is known)."
+                        : "No candidate proved equivalent over the supplied matrix. Nothing applied. Widen verifyGroupBy or fix the rewrites." };
             }
 
             // 6) Benchmark ONLY the proven set + the baseline over the SAME grid the equivalence was proven on — a
@@ -1444,23 +2233,23 @@ namespace Semanticus.Engine
                     await RecordVerifiedEditAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "optimize_measure", ObjectRef = measureRef,   // 0: nothing mutated
-                        Verdict = "proven", Summary = "no proven-equivalent candidate beat the baseline beyond the noise band — kept the original",
+                        Verdict = "proven", Summary = "no proven-equivalent candidate beat the baseline beyond the noise band. Kept the original",
                         Evidence = EvidenceJson(baseOk ? baseMs : (double?)null, baseOk ? band : (double?)null),
                         BodyHash = VerifiedEditsStore.BodyHash(baseline),
                     });
                 return new OptimizeMeasureResult { Verdict = "no-improvement", BaselineExpression = baseline, Candidates = evid.ToArray(),
                     WinnerIndex = winner?.Index ?? -1, WinnerExpression = winner?.Expression,
-                    Note = "No proven-equivalent candidate beat the current body beyond the noise band — kept the original." };
+                    Note = "No proven-equivalent candidate beat the current body beyond the noise band. Kept the original." };
             }
 
             // 8) Dry-run / free-tier gate: never mutate. Return the full evidence so the winner can be applied manually.
             if (!apply)
                 return new OptimizeMeasureResult { Verdict = "dry-run", BaselineExpression = baseline, Candidates = evid.ToArray(),
-                    WinnerIndex = winner.Index, WinnerExpression = winner.Expression, Note = "Dry run — fastest proven-equivalent candidate identified, not applied." };
+                    WinnerIndex = winner.Index, WinnerExpression = winner.Expression, Note = "Dry run: fastest proven-equivalent candidate identified, not applied." };
             if (_entitlement == null || !_entitlement.IsPro)
                 return new OptimizeMeasureResult { Verdict = "paused-free", BaselineExpression = baseline, Candidates = evid.ToArray(),
                     WinnerIndex = winner.Index, WinnerExpression = winner.Expression,
-                    Note = $"Auto-apply is a Pro feature. Candidate {winner.Index} is the fastest proven-equivalent rewrite ({baseMs}ms → {winner.Benchmark.WarmMedianMs}ms warm-median over the verify grid) — apply it with update_measure, or upgrade to auto-apply." };
+                    Note = $"Auto-apply is a Pro feature. Candidate {winner.Index} is the fastest proven-equivalent rewrite ({baseMs}ms → {winner.Benchmark.WarmMedianMs}ms warm-median over the verify grid). Apply it with update_measure, or upgrade to auto-apply." };
 
             // 9) Apply the winner as one undoable revision (broadcasts model/didChange to both doors).
             var applied = false;
@@ -1474,7 +2263,7 @@ namespace Semanticus.Engine
                     case CalculatedTable ct: if (ct.Expression != winner.Expression) { ct.Expression = winner.Expression; applied = true; } break;
                     case CalculationItem ci: if (ci.Expression != winner.Expression) { ci.Expression = winner.Expression; applied = true; } break;
                     case Function f: if (f.Expression != winner.Expression) { f.Expression = winner.Expression; applied = true; } break;
-                    default: throw new InvalidOperationException($"optimize_measure: {measureRef} has no DAX expression — it targets a measure; run list_measures to find one.");
+                    default: throw new InvalidOperationException($"optimize_measure: {measureRef} has no DAX expression. It targets a measure; run list_measures to find one.");
                 }
             });
             await RecordVerifiedEditAsync(s, new VerifiedEditRecord
@@ -1512,7 +2301,7 @@ namespace Semanticus.Engine
             // changes the domain, so the probe would emit silently-wrong ranks. Better to refuse than mislead.
             if (System.Text.RegularExpressions.Regex.IsMatch(expr, @"\b(RANKX|TOPN|RANK|SAMPLE)\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return new ProbeResult { Status = "unfaithful", Fidelity = fid,
-                    Message = "Cannot faithfully probe a rank/TOPN measure: its result depends on the report's full member set + ordering, which a filtered scenario changes — the probe would report wrong values. Verify this one in a real visual." };
+                    Message = "Cannot faithfully probe a rank/TOPN measure: its result depends on the report's full member set + ordering, which a filtered scenario changes. The probe would report wrong values. Verify this one in a real visual." };
 
             var live = _live;
             if (live == null)
@@ -1614,8 +2403,8 @@ namespace Semanticus.Engine
             }
             var flags = new List<string>();
             if (rows.Count > 0 && nonBlank < rows.Count) flags.Add($"blank in {rows.Count - nonBlank} of {rows.Count} rows");
-            if (e.Additivity == "non-additive") flags.Add("Σ(parts) ≠ grand total — non-additive (legitimate for distinct-count/semi-additive; else a bug)");
-            if (e.Truncated) flags.Add($"row cap hit ({rows.Count}) — coverage incomplete");
+            if (e.Additivity == "non-additive") flags.Add("Σ(parts) ≠ grand total: non-additive (legitimate for distinct-count/semi-additive; else a bug)");
+            if (e.Truncated) flags.Add($"row cap hit ({rows.Count}): coverage incomplete");
             if (fidelityNote != null) flags.Add(fidelityNote);   // reduced-fidelity evaluation, disclosed (blocker: honesty over silent wrongness)
             e.Flags = flags.ToArray();
             return e;
@@ -1655,14 +2444,14 @@ namespace Semanticus.Engine
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             if (string.IsNullOrWhiteSpace(objRef))
-                return new BaselineCaptureResult { Status = "error", Message = "objRef is required — the object you are about to change." };
+                return new BaselineCaptureResult { Status = "error", Message = "objRef is required: the object you are about to change." };
             var live = context.Live;
             if (live == null)
-                return new BaselineCaptureResult { Status = "no-connection", Message = "capture_baseline needs a live model (open_live / open_local) — a baseline is measured values, not static metadata." };
+                return new BaselineCaptureResult { Status = "no-connection", Message = "capture_baseline needs a live model (open_live / open_local). A baseline is measured values, not static metadata." };
 
             var (targets, skipped) = await s.ReadAsync(m => Baseline.Targets(m, objRef, includeDependents, maxMeasures));
             if (targets.Count == 0)
-                return new BaselineCaptureResult { Status = "error", Skipped = skipped.ToArray(), Message = $"The blast radius of '{objRef}' contains no measures — nothing to baseline (impact_of shows what it does contain)." };
+                return new BaselineCaptureResult { Status = "error", Skipped = skipped.ToArray(), Message = $"The blast radius of '{objRef}' contains no measures. Nothing to baseline (impact_of shows what it does contain)." };
 
             groupBy = groupBy ?? Array.Empty<string>();
             filters = filters ?? Array.Empty<string>();
@@ -1712,7 +2501,7 @@ namespace Semanticus.Engine
                 // The grand-total-only warning is thin evidence for a RESTRUCTURE compare — but for a certified
                 // total (a labeled capture) a single number at its stated context is exactly the intent, so the
                 // warning would misguide; suppress it there.
-                Message = (groupBy.Length == 0 && string.IsNullOrWhiteSpace(label) ? "Grand-total-only grid — thin coverage; pass groupBy columns for real evidence. " : null)
+                Message = (groupBy.Length == 0 && string.IsNullOrWhiteSpace(label) ? "Grand-total-only grid: thin coverage; pass groupBy columns for real evidence. " : null)
                         + (dropped != null ? $"Oldest capture '{dropped}' was dropped (the store holds {BaselineStore.MaxHeld})." : null)
                         + certifiedNote,
             };
@@ -1741,14 +2530,14 @@ namespace Semanticus.Engine
             // P2-F: a LITERAL time-volatile function (TODAY/NOW/…) re-evaluates to a different window — never certifiable.
             var volatileFn = CertifiedStore.VolatileContext(filters);
             if (volatileFn != null)
-                return $" NOT CERTIFIED: the context uses the literal {volatileFn}() function, which re-evaluates to a different window over time — a certified figure must be a fixed number at a FIXED context. Restate the context with explicit bounds (a fixed date/period), then re-capture.";
+                return $" NOT CERTIFIED: the context uses the literal {volatileFn}() function, which re-evaluates to a different window over time. A certified figure must be a fixed number at a FIXED context. Restate the context with explicit bounds (a fixed date/period), then re-capture.";
 
             // P1-2: only figures that actually EVALUATED are certified; name the ones that failed (fail closed).
             var failed = state.Entries.Where(e => !string.IsNullOrEmpty(e.Error) || e.Rows.Count == 0).ToList();
             var good = state.Entries.Where(e => string.IsNullOrEmpty(e.Error) && e.Rows.Count > 0).ToList();
             string FailList() => string.Join("; ", failed.Select(e => e.Name + (e.Error != null ? " (" + e.Error + ")" : " (no value at its context)")));
             if (good.Count == 0)
-                return $" NOT CERTIFIED: no figure evaluated at its context — {FailList()}. Fix the context and re-capture.";
+                return $" NOT CERTIFIED: no figure evaluated at its context: {FailList()}. Fix the context and re-capture.";
 
             // P1-4: durable LineageTag per figure. P2-F: a context that REFERENCES A MEASURE cannot be proven
             // non-volatile (indirect volatility we cannot see through) — certify it but mark it StabilityProvable=false
@@ -1772,7 +2561,7 @@ namespace Semanticus.Engine
             try { res = await Task.Run(() => CertifiedStore.Upsert(file, label, s.Revision, ctx, certEntries)); }
             catch (Exception ex) { return $" NOT CERTIFIED: the figures could not be persisted ({ex.Message})."; }
             if (res.Refused != null)
-                return " NOT CERTIFIED — " + res.Refused;   // immutability / context mismatch / tamper: loud, never a silent overwrite
+                return " NOT CERTIFIED: " + res.Refused;   // immutability / context mismatch / tamper: loud, never a silent overwrite
 
             // P2-8: anchor the certification (label, contexts, refs, content hash) in the append-only audit trail.
             await RecordVerifiedEditAsync(s, new VerifiedEditRecord
@@ -1789,10 +2578,10 @@ namespace Semanticus.Engine
                 BodyHash = res.Baseline.ContentHash,
             });
 
-            var note = $" Certified {res.Added} figure(s) under '{label}' at their stated context (baseline holds {res.Baseline.Entries.Count}; hash {res.Baseline.ContentHash.Substring(0, 12)}…). A certification is IMMUTABLE — re-certify under a new label (e.g. \"{label} r2\"). compare_baseline(label:\"{label}\") re-checks them after any refresh or edit.";
+            var note = $" Certified {res.Added} figure(s) under '{label}' at their stated context (baseline holds {res.Baseline.Entries.Count}; hash {res.Baseline.ContentHash.Substring(0, 12)}…). A certification is IMMUTABLE. Re-certify under a new label (e.g. \"{label} r2\"). compare_baseline(label:\"{label}\") re-checks them after any refresh or edit.";
             var notProvable = certEntries.Where(e => !e.StabilityProvable).Select(e => e.Name).ToList();
             if (notProvable.Count > 0)
-                note += $" NOTE: {string.Join(", ", notProvable)} — the context references a measure, so its stability cannot be proven; it is certified but re-checked as NOT CHECKABLE, not HELD.";
+                note += $" NOTE: {string.Join(", ", notProvable)}. The context references a measure, so its stability cannot be proven; it is certified but re-checked as NOT CHECKABLE, not HELD.";
             if (failed.Count > 0)
                 note += $" NOT certified (excluded, fix and re-capture): {FailList()}.";
             return note;
@@ -1860,15 +2649,15 @@ namespace Semanticus.Engine
                 Safe = moved == 0 && missing == 0 && unclean == 0 && !truncated,
                 MovedCount = moved, MissingCount = missing, Diffs = diffs.ToArray(),
                 Message = moved == 0 && missing == 0
-                    ? (unclean > 0 ? $"{unclean} measure(s) not comparable — NOT safe by default."
-                       : truncated ? "nothing moved on the compared rows, but coverage was truncated — evidence, not proof."
-                       : $"SAFE — {diffs.Count} downstream measure(s) unchanged across the captured grid.")
-                    : $"IMPACT — {moved} measure(s) moved, {missing} missing, of {diffs.Count} baselined.",
+                    ? (unclean > 0 ? $"{unclean} measure(s) not comparable. NOT safe by default."
+                       : truncated ? "nothing moved on the compared rows, but coverage was truncated: evidence, not proof."
+                       : $"SAFE: {diffs.Count} downstream measure(s) unchanged across the captured grid.")
+                    : $"IMPACT: {moved} measure(s) moved, {missing} missing, of {diffs.Count} baselined.",
             };
             // False-safe guard: this compare reads the LIVE model. A session edit made since capture is only
             // reflected once deployed — "unchanged" must never be misread as validating an undeployed edit.
             if (s.Revision > state.Revision)
-                result.Message += $" NOTE: {s.Revision - state.Revision} session edit(s) since capture — the live model reflects them only if deployed (deploy_live); an undeployed local edit is NOT validated by this compare.";
+                result.Message += $" NOTE: {s.Revision - state.Revision} session edit(s) since capture. The live model reflects them only if deployed (deploy_live); an undeployed local edit is NOT validated by this compare.";
 
             // Audit: a real compare is real evidence (Revision=0 — no backing mutation; the badge must not
             // weld to an unrelated row). Recorded for BOTH verdicts: "safe" is the claim someone ships on.
@@ -1905,7 +2694,7 @@ namespace Semanticus.Engine
                 return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "not-comparable", Note = binding.Error };
             var currentName = binding.Measure?.Name;
             if (currentName == null)
-                return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "missing", RowsCompared = entry.Rows.Count, MismatchCount = entry.Rows.Count, Note = "the measure no longer resolves (deleted or renamed) — every certified number is gone" };
+                return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "missing", RowsCompared = entry.Rows.Count, MismatchCount = entry.Rows.Count, Note = "the measure no longer resolves (deleted or renamed). Every certified number is gone" };
             try
             {
                 var rs = await live.ExecuteAsync(DaxBench.BuildProbeQuery(Baseline.MeasureRefExpr(currentName), groupBy ?? Array.Empty<string>(), filters ?? Array.Empty<string>()), rowCap, 120);
@@ -1935,13 +2724,13 @@ namespace Semanticus.Engine
             var file = CertifiedFilePath();
             var cf = CertifiedStore.Load(file, out var corrupt);
             if (corrupt)
-                return new BaselineCompareResult { Status = "error", Root = label, Message = "The certified-figures store (.semanticus/certified-baselines.json) is present but unreadable — the certified baseline cannot be checked. Repair or move that file, then re-capture the close's figures." };
+                return new BaselineCompareResult { Status = "error", Root = label, Message = "The certified-figures store (.semanticus/certified-baselines.json) is present but unreadable. The certified baseline cannot be checked. Repair or move that file, then re-capture the close's figures." };
             var bl = CertifiedStore.Find(cf, label);
             if (bl == null || bl.Entries.Count == 0)
-                return new BaselineCompareResult { Status = "not-found", Root = label, Message = $"No certified figures under '{label}'. Capture the close's control totals and headline at their stated contexts with capture_baseline(label:\"{label}\") first — that is what a later compare checks against." };
+                return new BaselineCompareResult { Status = "not-found", Root = label, Message = $"No certified figures under '{label}'. Capture the close's control totals and headline at their stated contexts with capture_baseline(label:\"{label}\") first. That is what a later compare checks against." };
             // P1-3: tamper evidence. A file edited after capture without recomputing the hash is a LOUD refusal.
             if (!CertifiedStore.HashMatches(bl))
-                return new BaselineCompareResult { Status = "error", Root = label, CapturedWhen = bl.CapturedUtc, Message = $"The certified baseline '{label}' has been MODIFIED since it was captured (content hash mismatch) — refusing to report it as held or moved against a tampered record. Investigate .semanticus/certified-baselines.json (a prior capture is anchored in the Verified Edits audit trail)." };
+                return new BaselineCompareResult { Status = "error", Root = label, CapturedWhen = bl.CapturedUtc, Message = $"The certified baseline '{label}' has been MODIFIED since it was captured (content hash mismatch): refusing to report it as held or moved against a tampered record. Investigate .semanticus/certified-baselines.json (a prior capture is anchored in the Verified Edits audit trail)." };
 
             var live = _live;
             if (live == null)
@@ -1955,7 +2744,7 @@ namespace Semanticus.Engine
             var ctxDiff = bl.Context?.DiffFrom(curCtx);
             if (ctxDiff != null)
             {
-                var ncMsg = $"NOT CHECKABLE — {ctxDiff}. The certified figures for '{label}' were captured on a different model/context; re-checking them on this connection would compare unlike things. Reconnect to the model they were certified on. " + ToleranceNoteFor(bl.Tolerance);
+                var ncMsg = $"NOT CHECKABLE: {ctxDiff}. The certified figures for '{label}' were captured on a different model/context; re-checking them on this connection would compare unlike things. Reconnect to the model they were certified on. " + ToleranceNoteFor(bl.Tolerance);
                 await RecordVerifiedEditAsync(s, new VerifiedEditRecord
                 {
                     SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "compare_baseline", ObjectRef = label,
@@ -1985,10 +2774,10 @@ namespace Semanticus.Engine
                 Safe = moved == 0 && missing == 0 && unclean == 0 && !truncated,
                 MovedCount = moved, MissingCount = missing, Diffs = diffs.ToArray(),
                 Message = (moved == 0 && missing == 0
-                    ? (unclean > 0 ? $"NOT CHECKABLE — {unclean} of {diffs.Count} certified figure(s) for '{label}' could not be re-checked (identity changed/ambiguous, not durably identified, stability not provable, or errored); {held} held. Not safe by default — see the per-figure notes."
-                       : truncated ? $"the certified figures for '{label}' held on the compared rows, but coverage was truncated — evidence, not proof."
-                       : $"HELD — all {held} certified figure(s) for '{label}' still match what was signed off (captured {bl.CapturedUtc}).")
-                    : $"DRIFT — {moved} certified figure(s) MOVED and {missing} went missing, {held} held, of {diffs.Count} signed off for '{label}'. Investigate each moved number (old→new is in the diff); a refresh, a different security role, or an out-of-tool edit are the usual causes. Detection, not prevention.")
+                    ? (unclean > 0 ? $"NOT CHECKABLE: {unclean} of {diffs.Count} certified figure(s) for '{label}' could not be re-checked (identity changed/ambiguous, not durably identified, stability not provable, or errored); {held} held. Not safe by default. See the per-figure notes."
+                       : truncated ? $"the certified figures for '{label}' held on the compared rows, but coverage was truncated: evidence, not proof."
+                       : $"HELD: all {held} certified figure(s) for '{label}' still match what was signed off (captured {bl.CapturedUtc}).")
+                    : $"DRIFT: {moved} certified figure(s) MOVED and {missing} went missing, {held} held, of {diffs.Count} signed off for '{label}'. Investigate each moved number (old→new is in the diff); a refresh, a different security role, or an out-of-tool edit are the usual causes. Detection, not prevention.")
                     + " " + ToleranceNoteFor(bl.Tolerance) + " " + RlsNote + (shapeNote != null ? " " + shapeNote : ""),
             };
 
@@ -2020,7 +2809,7 @@ namespace Semanticus.Engine
         internal async Task<BaselineDiff> CertifiedDiffOneAsync(LiveConnection live, Session s, CertifiedEntry entry)
         {
             if (!entry.StabilityProvable)
-                return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "not-comparable", Note = "stability not provable — the certified context references a measure, whose own value can move, so this figure cannot be proven HELD" };
+                return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "not-comparable", Note = "stability not provable: the certified context references a measure, whose own value can move, so this figure cannot be proven HELD" };
             var (name, status, idNote) = await s.ReadAsync(m => ResolveCertifiedIdentity(m, entry));
             if (status == "missing")
                 return new BaselineDiff { Ref = entry.Ref, Name = entry.Name, Verdict = "missing", RowsCompared = entry.Cells.Length, MismatchCount = entry.Cells.Length, Note = idNote };
@@ -2050,17 +2839,17 @@ namespace Semanticus.Engine
                 var matches = m.AllMeasures.Where(mm => string.Equals((mm as TabularEditor.TOMWrapper.ILineageTagObject)?.LineageTag, entry.LineageTag, StringComparison.Ordinal)).ToList();
                 if (matches.Count == 0)
                     return ByName() != null
-                        ? (null, "identity-changed", $"the certified measure '{entry.Name}' is gone; a measure at that name now carries a DIFFERENT LineageTag — an impostor at the old name is NOT the certified figure")
+                        ? (null, "identity-changed", $"the certified measure '{entry.Name}' is gone; a measure at that name now carries a DIFFERENT LineageTag. An impostor at the old name is NOT the certified figure")
                         : (null, "missing", "the certified measure no longer exists (its durable LineageTag resolves to nothing)");
                 if (matches.Count > 1)
-                    return (null, "ambiguous", $"the certified LineageTag now resolves to {matches.Count} measures ({string.Join(", ", matches.Take(3).Select(x => x.Name))}) — a clone copied the tag, so identity is ambiguous and cannot be proven");
+                    return (null, "ambiguous", $"the certified LineageTag now resolves to {matches.Count} measures ({string.Join(", ", matches.Take(3).Select(x => x.Name))}). A clone copied the tag, so identity is ambiguous and cannot be proven");
                 var only = matches[0];
                 return string.Equals(only.Name, entry.Name, StringComparison.Ordinal)
                     ? (only.Name, "ok", null)
-                    : (null, "identity-changed", $"the certified LineageTag now belongs to a measure named '{only.Name}', not the certified '{entry.Name}' — identity cannot be proven the same");
+                    : (null, "identity-changed", $"the certified LineageTag now belongs to a measure named '{only.Name}', not the certified '{entry.Name}'. Identity cannot be proven the same");
             }
             return ByName() != null
-                ? (null, "not-durable", "no LineageTag was captured (this model predates lineage tags / CL<1540) — the certified figure's identity cannot be durably proven, so it is not-checkable")
+                ? (null, "not-durable", "no LineageTag was captured (this model predates lineage tags / CL<1540). The certified figure's identity cannot be durably proven, so it is not-checkable")
                 : (null, "missing", "the measure no longer resolves (deleted or renamed)");
         }
 
@@ -2068,14 +2857,20 @@ namespace Semanticus.Engine
         // the build — so anything the user issues WHILE this open runs is a newer intent: a newer connect/
         // disconnect wins the LIVE race, a newer open/create wins the SESSION race (this open then self-aborts).
         // Always minted as ONE ATOMIC PAIR (NewSessionSwapIntents — pair ordering is the c2 soundness premise).
-        public async Task<OpenResult> OpenAsync(string path)
+        public async Task<OpenResult> OpenAsync(string path, bool discardUnsaved = false)
         {
+            _ = discardUnsaved;
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();
-            return (await SwapSessionCoreAsync(() => _sessions.BuildOpenAsync(path), path, liveTicket, sessionTicket)).Result;
+            var result = (await SwapSessionCoreAsync(() => _sessions.BuildOpenAsync(path), path, liveTicket, sessionTicket)).Result;
+            var full = Path.GetFullPath(path);
+            var rec = RememberConnection("file", full, null, result.ModelName);
+            RecordConnectionHistory(rec, "open", null, full, null, null, ok: true);
+            return result;
         }
 
-        public async Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel)
+        public async Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel, bool discardUnsaved = false)
         {
+            _ = discardUnsaved;
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();   // one atomic pair at PUBLIC entry (see OpenAsync)
             // Default to a Direct-Lake-capable, modern compatibility level (the blank ctor defaults to 1200).
             var cl = compatibilityLevel <= 0 ? 1604 : compatibilityLevel;
@@ -2180,13 +2975,46 @@ namespace Semanticus.Engine
                 try { ReleaseSnapshotDir(unless: releaseUnless); }
                 catch (Exception ex) { try { Console.Error.WriteLine("[open] releasing the previous snapshot dir failed (the swap is committed): " + ex.Message); } catch { } }
                 await SafeRebroadcastWorkflowLibraryAsync();                // model.* facts changed — re-curate the menu (§10.6)
+                try { _loadedDiskStamp = ModelDiskStamp(); }
+                catch { _loadedDiskStamp = null; }
                 return (result, published);
             }
             finally { _lifecycleGate.Release(); }
         }
 
-        public async Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false)
+        public async Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false,
+            string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false)
         {
+            _ = discardUnsaved;
+            // Wire-compat (item 4): a NULL makeDefault is a LEGACY caller (older extension / Phase 1) — a forced re-sign
+            // still repoints the tenant default, as it always did. An EXPLICIT false is the Phase 2 "add a profile without
+            // repointing"; explicit true is make-default. One rule covers all three (RepointDefaultRule).
+            var repointDefault = RepointDefaultRule(makeDefault, forceReauth);
+            // Reduce a bare address OR a pasted "Data Source=…;Initial Catalog=…" connection string to safe coordinates
+            // before any use: parsing before use fixes the double-prefix (the snapshot/live connection strings add their
+            // own "Data Source="), pulls out an embedded catalog, and drops any pasted credential (we mint our own token).
+            // HOISTED ABOVE THE REFUSAL CHAIN AND THE MINT (T193): parse is pure , two strings normalised, no I/O and
+            // no state , so every coordinate the post-refusal code uses is settled before a ticket is burned, and
+            // nothing observable happens ahead of the refusals.
+            var coords = ConnectionInput.Parse(endpoint, database);
+            var rawEndpoint = endpoint;   // classified below: LoopbackIntakeRefusal reads the RAW address, not coords
+            // Phase 2 human-only boundary (mirrors label_connection): an agent may pick an already-signed-in saved profile,
+            // but never force an interactive sign-in (forceReauth), repoint the tenant default, or select a signed-out
+            // profile. AgentInteractiveRefusal also refuses an agent interactive/devicecode open with no silently-usable
+            // account BEFORE any prompt could appear (BLOCKER). All checked BEFORE any auth or model export.
+            // LoopbackIntakeRefusal takes rawEndpoint, so the classifier keeps a URI's authority; see its own comment.
+            // Refused BEFORE the loopback classification and before the mint: a coordinate we cannot normalise has no
+            // single destination to classify, and connecting to the truncated one would be the wrong-destination path.
+            var unsafeCoordinate = UnsafeCoordinateRefusal(coords);
+            if (unsafeCoordinate != null) throw new ArgumentException(unsafeCoordinate, nameof(endpoint));
+            var refusal = LoopbackIntakeRefusal(rawEndpoint)
+                ?? AccountSelectionRefusal(origin, forceReauth, repointDefault, accountProfileId)
+                ?? AgentInteractiveRefusal(origin, authMode, tenantId, accountProfileId)
+                ?? AccountProfileMismatchRefusal(accountProfileId, authMode, tenantId);
+            if (refusal != null) throw new InvalidOperationException(refusal);
+            endpoint = coords.Endpoint;
+            database = coords.Database;
+            var nonInteractive = !string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase);   // agent: never pop a prompt
             // Both intent tickets minted at PUBLIC operation entry — before auth, before the snapshot export —
             // as ONE ATOMIC PAIR (pair ordering is the c2 soundness premise). The live ticket is reused for BOTH
             // the swap's drop and the post-open rebind (a disconnect/connect the user issues while this slow open
@@ -2194,12 +3022,6 @@ namespace Semanticus.Engine
             // newer open/create issued meanwhile supersede THIS open.
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();
             var authTicket = NewAuthIntent();   // separate ticket that orders the saved-account commit barrier only (HIGH 3)
-            // Reduce a bare address OR a pasted "Data Source=…;Initial Catalog=…" connection string to safe coordinates
-            // before any use: parsing before use fixes the double-prefix (the snapshot/live connection strings add their
-            // own "Data Source="), pulls out an embedded catalog, and drops any pasted credential (we mint our own token).
-            var coords = ConnectionInput.Parse(endpoint, database);
-            endpoint = coords.Endpoint;
-            database = coords.Database;
             // Read the deployed model's metadata from the live endpoint (TOM Server + the token via
             // Server.AccessToken) into a local .bim snapshot, then open it through the proven file path.
             // Edits are in-memory + undoable; the only persistence is Save() to disk — nothing is pushed
@@ -2218,7 +3040,15 @@ namespace Semanticus.Engine
             // REFUSES it with a sanitized message that never echoes the input, so it can never reach LiveOrigin ->
             // SessionInfo.CurrentTenant. RequireTenant also lowercases the valid form, so the same identity lands on one cache key.
             var tenant = XmlaAuthHint.RequireTenant(tenantId);
-            var authKey = mode + "|" + (tenant ?? "");
+            // Tenantless request + a selected profile: adopt the profile's tenant so the credential, history, registry,
+            // authKey and default slot all record the ACTUAL tenant honestly (round-3 MEDIUM — the pickers offer these).
+            if (!string.IsNullOrWhiteSpace(accountProfileId) && string.IsNullOrWhiteSpace(tenant))
+                tenant = EntraToken.FindProfile(accountProfileId)?.TenantId;
+
+            // Was a tenant default already saved for this (mode, tenant)? Read BEFORE the credential build (the build never
+            // writes the default slot). No default ⇒ a first sign-in ESTABLISHES it (Phase 1 behaviour, preserved); a default
+            // already present ⇒ a per-open selection or "sign in another account" leaves it untouched (the Phase 2 promise).
+            var hadDefault = EntraToken.ReadSavedAccount(mode, tenant) != null;
             // BuildCredentialAsync (vs the sync BuildCredential) captures an interactive sign-in for the encrypted
             // on-disk cache, so later reconnects/restarts acquire silently (no re-prompt). It DEFERS persisting the
             // freshly chosen account until the open below succeeds (PreparedCredential) — so a FAILED open never
@@ -2237,7 +3067,13 @@ namespace Semanticus.Engine
                 // from inside the failure boundary so the honest-attribution path (MED 6) is exercised end-to-end.
                 var probe = System.Threading.Interlocked.Exchange(ref OpenLiveFailureProbeForTests, null);
                 if (probe != null) await probe();
-                prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth);
+                // A per-open account SELECTION pins that saved profile's record and acquires silently (no prompt, no
+                // default change); otherwise the Phase 1 default-slot credential path (which captures a first/forced
+                // sign-in for later silent reuse, deferring its default-slot write until the open authorizes).
+                prepared = !string.IsNullOrWhiteSpace(accountProfileId)
+                    ? (EntraToken.BuildCredentialForProfile(accountProfileId, disableInteractive: nonInteractive)
+                        ?? throw new InvalidOperationException("That saved account is signed out on this device. Sign in again to use it."))
+                    : mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth, disableInteractive: nonInteractive, loginHint: loginHint);
                 cred = prepared?.Credential;
                 tok = cred != null
                     ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
@@ -2276,10 +3112,19 @@ namespace Semanticus.Engine
                     "signed in, but the open was superseded by a newer request; the saved account was left unchanged", ex);
                 throw;
             }
-            // The endpoint authorized AND this open WON the swap → NOW persist any freshly chosen account (deferred commit),
-            // LINEARIZED by the auth ticket + PER-SLOT so a slower open resuming after a newer winner committed in the
-            // SAME (family, tenant) slot can't repoint the saved account behind it (HIGH 2 / HIGH 3).
-            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true);
+            // The endpoint authorized AND this open WON the swap → NOW persist the account (deferred until the win, HIGH 5).
+            // Phase 2: the DEFAULT slot (the #233 crash-safe pointer an unqualified open pins) is written ONLY when this open
+            // ESTABLISHES the default (none existed) or the human chose make-default — LINEARIZED by the auth ticket + PER-SLOT
+            // so a slower open resuming after a newer winner can't repoint it (HIGH 2 / HIGH 3). A per-open profile selection
+            // or a plain "sign in another account" leaves the default untouched. The profile store always records the account.
+            var capturedNew = prepared != null && prepared.HasPendingRecord;
+            // A live-swap WINNER always advances the ordered barrier (even a silent reuse), so an older pending commit can
+            // never land behind it (#233 HIGH 2a). The default slot is written only on establish/repoint: a captured
+            // record, or — a repoint onto an existing profile — that profile's saved record, both under the barrier.
+            CommitAuthRecordOrdered(prepared, authTicket, EntraToken.AuthRecordSlot(mode, tenant), liveSwapWinner: true,
+                commitToDefault: !hadDefault || repointDefault,
+                makeDefaultProfileId: repointDefault && !capturedNew && !string.IsNullOrWhiteSpace(accountProfileId) ? accountProfileId : null);
+            PersistOpenAccountProfile(prepared, mode, tenant, accountProfileId);
             open.Source = $"xmla:{endpoint} -> {snap.DatabaseName} (local snapshot: {snap.BimPath})";
             // The account this sign-in resolved to: the identity the credential was ACTUALLY constructed with (the
             // just-captured record, else the saved record we pinned), read from the SAME once-loaded snapshot the
@@ -2294,18 +3139,19 @@ namespace Semanticus.Engine
             // the real identity even if the query attach below fails. The SESSION the swap returned — never a re-read.
             // Use the VALIDATED tenant (never the raw tenantId): LiveOrigin.TenantId surfaces via SessionInfo.CurrentTenant,
             // so a secret-shaped tenant must never reach it (CRITICAL 1b).
-            session.LiveOrigin = new LiveOrigin(endpoint, snap.DatabaseName, tenant, authMode, account);
+            session.LiveOrigin = new LiveOrigin(endpoint, snap.DatabaseName, tenant, authMode, account, homeAccountId: prepared?.HomeAccountId);
             }
             finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
             // Record the dataset actually resolved, not the caller's possibly-empty argument — the registry is keyed on
             // it, so an empty `database` must not mint a second record for the same model on the next open.
             var record = RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, tenant, authMode, account);
-            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account), account, endpoint, snap.DatabaseName, tenant, ok: true);
+            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account, explicitSelection: !string.IsNullOrWhiteSpace(accountProfileId)), account, endpoint, snap.DatabaseName, tenant, ok: true);
             open.Account = account;
             // Seed the session's live-auth cache with the credential + token we just used, so the first deploy /
             // refresh reuses them with no second prompt and no re-acquisition.
+            var authKey = LiveAuthKey(mode, tenant, prepared?.HomeAccountId);
             session.CacheLiveToken(authKey, tok);
-            if (cred != null) session.SeedLiveCredential(authKey, cred);
+            if (cred != null) SeedLiveCredentialSlots(session, authKey, nonInteractive, cred, prepared, mode, tenant);
             // UNIFIED OPEN: the same model the tree now edits is also the one Studio queries — bind the live query
             // connection too, REUSING the one token from above (so interactive prompts the browser exactly once).
             // Best-effort: the editable session is the primary outcome; if the ADOMD attach fails, leave _live null
@@ -2315,8 +3161,9 @@ namespace Semanticus.Engine
             return open;
         }
 
-        public async Task<OpenResult> OpenLocalAsync(string dataSource, string database)
+        public async Task<OpenResult> OpenLocalAsync(string dataSource, string database, bool discardUnsaved = false)
         {
+            _ = discardUnsaved;
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();   // one atomic pair at PUBLIC entry (see OpenLiveAsync)
             // UNIFIED OPEN for a running Power BI Desktop (local Analysis Services): make the SAME instance both
             // editable in the tree (snapshot its metadata into the session) AND queryable in Studio (bind _live).
@@ -2407,11 +3254,22 @@ namespace Semanticus.Engine
         /// still-valid cached token; otherwise it reuses the one credential instance (interactive renews silently
         /// via its refresh token). Honours an explicit auth mode (e.g. the MCP agent forcing serviceprincipal):
         /// a different identity simply builds + caches its own credential.</summary>
-        private async Task<Azure.Core.AccessToken> AcquireLiveTokenAsync(Session s, string authMode, string rawToken, string tenantId, System.Threading.CancellationToken ct)
+        private async Task<Azure.Core.AccessToken> AcquireLiveTokenAsync(Session s, string authMode, string rawToken, string tenantId, string origin, string endpoint, string database, System.Threading.CancellationToken ct)
         {
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
             var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim().ToLowerInvariant();   // case-insensitive; match the open-time seed key
-            var key = mode + "|" + (tenant ?? "");
+            // The session's identity is reused ONLY for a genuine deploy-to-source / refresh-to-source call. An
+            // EXPLICIT different target is a different model, quite possibly in another tenant with its own saved
+            // account, and it resolves its own identity into its own cache slot. Binding the source identity to every
+            // call refused a working flow: open tenant A as Bob, then deploy to tenant B as B's saved account.
+            // Binding is the DEFAULT: only a PROVEN different workspace or dataset unbinds the identity check. There
+            // is no separate "ambiguous" refusal — an unrecognised form simply binds, and the home-account comparison
+            // below decides. That closes every unanticipated respelling AND removes a refusal that fired on legitimate
+            // calls (a session opened with no tenant, then a deploy naming the real one).
+            var toSource = ClassifyLiveTarget(s, endpoint, database, tenant) == LiveTargetKind.Source;
+            var sourceIdentity = EntraToken.CanonicalHomeAccountId(s.LiveOrigin?.HomeAccountId);
+            var homeAccountId = toSource ? sourceIdentity : null;
+            var key = LiveAuthKey(mode, tenant, homeAccountId);
 
             // An explicitly supplied raw token always wins (the caller wants THAT token) — use and cache it.
             if (mode == "token" && !string.IsNullOrWhiteSpace(rawToken))
@@ -2426,141 +3284,98 @@ namespace Semanticus.Engine
             // token mode with no fresh token and no valid cache: there's no credential to renew from — surface the
             // real "auth mode 'token' requires a raw access token" error rather than silently doing something else.
             if (mode == "token") return await EntraToken.AcquireFullAsync(mode, rawToken, ct, tenant);
-            // Reuse ONE credential per identity (built at open, or lazily here) → interactive renews silently.
-            var cred = s.GetOrBuildLiveCredential(key, () => EntraToken.BuildCredential(mode, tenant));
+            // Reuse ONE credential per identity PER DRIVER (built at open, or lazily here) → interactive renews
+            // silently. The session keeps SEPARATE human and agent credential slots (T163): an agent must never be
+            // handed the human slot, which may be prompt-capable and would pop a browser with no human present when a
+            // refresh token has aged out. An agent builds its own with DisableAutomaticAuthentication, so a stale cache
+            // throws AuthenticationRequiredException instead. The cached ACCESS TOKEN is still shared, so the common
+            // case still rides the human warm token with no extra round trip.
+            var nonInteractive = DeployGuard.IsAgent(origin);
+            var cred = s.GetOrBuildLiveCredential(key, nonInteractive, () =>
+            {
+                // A lazy build reloads the TENANT DEFAULT record. For a TO-SOURCE call whose session opened as a
+                // different principal (a per-open choice, #263), using the default would quietly sign the live write in
+                // as someone else — worse than the prompt this lane exists to prevent, and invisible in the audit trail
+                // because the session still reports the account it opened with. Compared on the STABLE home account id,
+                // never the UPN. An explicit target never reaches this: it has no source identity to contradict.
+                var saved = EntraToken.ReadSavedAccount(mode, tenant);
+                var savedIdentity = EntraToken.CanonicalHomeAccountId(saved?.HomeAccountId);
+                if (toSource && !string.IsNullOrEmpty(homeAccountId) && !string.IsNullOrEmpty(savedIdentity)
+                    && !string.Equals(homeAccountId, savedIdentity, StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        $"This model was opened as {s.LiveOrigin?.Account ?? "another account"}, but the saved sign-in for this tenant is now {saved.Username}. "
+                        + "Semanticus will not run a live write as a different account than the one you opened with. "
+                        + "Open the model again and pick the account you want to use.");
+                LiveCredentialAccountForTests?.Invoke(savedIdentity);
+                return EntraToken.BuildCredential(mode, tenant, disableInteractive: nonInteractive);
+            });
             var tok = await EntraToken.GetTokenAsync(cred, ct);
             s.CacheLiveToken(key, tok);
             return tok;
         }
 
-        // #141: is an agent-authored override of a RED deploy gate refused? A gate that RAN and returned RED
-        // (gate != null && !gate.Pass) is HUMAN-only to clear (Kane's ruling). A scanner FAILURE (gate == null) is NOT
-        // this gate — it proceeds+records elsewhere; a PASSING gate needs no override. Non-human origin fails closed
-        // (only an exact "human" is the authority — see AgentPolicyGuard.IsHuman). Pure + offline-unit-testable.
-        internal static bool IsAgentRedOverrideRefused(DeployGate gate, string origin) =>
-            gate != null && !gate.Pass && !AgentPolicyGuard.IsHuman(origin);
-
-        public async Task<DeployReport> DeployLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human", string overrideReason = null)
+        /// <summary>Does this call target the model the session was opened from? The FAILURE DIRECTION is the whole
+        /// design. <see cref="LiveTargetKind.Different"/> unbinds the wrong-identity check, so WHEN A LIVE ORIGIN
+        /// EXISTS it is returned ONLY when valid canonical coordinates on BOTH sides prove a different workspace or a
+        /// different dataset. Everything else binds: an endpoint form we cannot parse, a spelling nobody anticipated,
+        /// a missing database, any tenant difference. The ONE exception is a session with no live origin (a file-opened
+        /// model), which returns Different before any key is computed — there is no source identity there to unbind, so
+        /// nothing can be skipped. An unnecessary bind costs at most an honest refusal the user clears by reopening the
+        /// model; a missed bind lets an agent write the source model as another principal, silently and unauditably.
+        /// The previous version had this backwards — Different was the fallback, so every unanticipated respelling was
+        /// an escape hatch, and no allow-list of spellings can close that.
+        ///
+        /// The tenantId ARGUMENT is deliberately not consulted: a session opened with no tenantId and a later deploy
+        /// naming the real tenant are the same model, and a GUID and a domain alias name the same tenant, so comparing
+        /// that free-text spelling refused working calls. The tenant ROUTE inside the endpoint is different — that is
+        /// real identity, because a workspace is tenant-scoped — and it is compared separately, GUID to GUID only.</summary>
+        internal static LiveTargetKind ClassifyLiveTarget(Session s, string endpoint, string database, string tenant)
         {
-            // Push the OPEN SESSION's metadata back to the live model (metadata-only, LineageTag-matched). We
-            // serialize the edited session to a temp .bim WITHOUT resetting the undo checkpoint (deploying is not
-            // "saving to file"), then sync it to the live model via Model.SaveChanges. Dry-run unless commit=true.
-            var s = _sessions.Require();
-            // Deploy-to-source: when no endpoint is given, push back to the live model this session was opened
-            // from (open_live/open_local bound the non-secret coordinates). All-or-nothing — an explicit endpoint
-            // uses the explicit args verbatim, so a new endpoint is never silently paired with the bound database.
-            // authMode/tenant fall back to the bound values: the WRITE reuses the SAME identity the model was opened
-            // with (no re-prompt — like Tabular Editor), unless the caller passes an explicit authMode (the MCP door).
-            if (string.IsNullOrWhiteSpace(endpoint))
-            {
-                var src = s.LiveOrigin ?? throw new InvalidOperationException(
-                    "deploy_live: no endpoint given and this session is not live-bound. Open the model with open_live first, or pass an endpoint + database explicitly.");
-                endpoint = src.Endpoint;
-                database = src.Database;
-                if (string.IsNullOrWhiteSpace(tenantId)) tenantId = src.TenantId;
-                // Reuse the SAME auth the model was opened with when the caller gave none (the Save-to-Live UI passes
-                // null) — no re-prompt, like Tabular Editor: the token comes from the session's cached credential
-                // (see AcquireLiveTokenAsync), which renews silently. An explicit authMode (e.g. the MCP agent
-                // forcing serviceprincipal) is still honoured.
-                if (string.IsNullOrWhiteSpace(authMode)) authMode = src.AuthMode;
-            }
-            // An explicit endpoint requires an explicit dataset — deploying to an inferred "first dataset" is
-            // riskier than reading one (open_live can guess; a WRITE must not), so fail clearly instead of letting
-            // FindByName surface a bare "Database '' not found". The deploy-to-source branch always set a concrete
-            // database above, so this only guards the explicit-endpoint call. (Runs before any auth/network.)
-            if (string.IsNullOrWhiteSpace(database))
-                throw new InvalidOperationException(
-                    "deploy_live: a database (dataset) name is required when you pass an explicit endpoint (only deploy-to-source with an empty endpoint can infer it).");
-            // ---- Agent-permissions gate (the deploy_live governance hole, now closed). deploy_stage forbade an agent
-            // promoting to prod; deploy_live never did — an agent could commit an irreversible prod overwrite and clear
-            // a RED readiness gate with its own overrideReason. The connection registry now gives this endpoint the
-            // label the guard needs. Human deploys are never gated here; runs before auth/network (fail fast).
-            if (commit)
-            {
-                // intentBasis = the op name: a deploy_live grant cannot be spent on apply_model_diff (or any sibling
-                // DeployLive op) against the same target. The finer refinement — binding the session fingerprint so an
-                // approve-then-edit-then-push re-asks — waits until the deploy pipeline exposes a cheap revision.
-                var refusal = GuardAgent(AgentCapability.DeployLive, endpoint, database, origin, isCommit: true,
-                    summary: $"deploy the open model to {database} on {endpoint}", intentBasis: "deploy_live");
-                if (refusal != null) throw new InvalidOperationException("deploy_live: " + refusal);
-            }
-            // ---- Accountable checkpoint (Verified Edits). A live COMMIT runs the deploy gate (readiness hard-
-            // gates + blocking BPA errors) — this was THE "enforcement is theater" hole: deploy_live used to bypass
-            // the gate entirely. A RED gate PAUSES the deploy with the reasons; shipping anyway takes an explicit
-            // overrideReason — never a hard wall (Kane's call 2026-07-01) — and the override is appended to the
-            // model's append-only audit chain BEFORE the session is serialized below, so the record travels inside
-            // the very artifact it authorized. Dry-runs are never gated; runs before any auth/network (fail fast).
-            DeployGate gate = null; string gateScanError = null;
-            if (commit)
-            {
-                // The scan failing is NOT a pass — but hard-failing every deploy on a scanner bug would be a
-                // wall. Middle path: proceed, and carry the scrubbed scan error into the deploy's audit record
-                // so a gate-less commit is visible, never silent.
-                try { gate = await DeployGateAsync(null); } catch (Exception ex) { gateScanError = ex.Message; }
-                if (gate != null && !gate.Pass)
-                {
-                    // #141 (Kane's ruling): a gate that RAN and returned RED is HUMAN-only to clear. Even inside a
-                    // granted deploy window an agent-authored overrideReason is refused — the grant approved a PLAN
-                    // ("push these changes"), never "ship even if the gate turns red". Checked BEFORE the missing-reason
-                    // branch so an agent gets ONE clear teaching refusal, not "pass a reason" then "reason refused". A
-                    // scanner FAILURE (gate == null) never enters this block — it still proceeds+records below, unchanged.
-                    if (IsAgentRedOverrideRefused(gate, origin))
-                        throw new InvalidOperationException(
-                            "deploy_live: the deploy gate is RED (" + string.Join("; ", gate.Blockers)
-                            + ") and clearing a red readiness gate is HUMAN-only — an agent cannot override it. The permission "
-                            + "to deploy does not authorize clearing a failed readiness gate. Fix the blockers (apply_safe_fixes "
-                            + "/ apply_fix, then re-run ai_readiness_scan), or ask the user to run deploy_live with overrideReason themselves.");
-                    if (string.IsNullOrWhiteSpace(overrideReason))
-                        throw new InvalidOperationException(
-                            "deploy_live: blocked by the deploy gate — " + string.Join("; ", gate.Blockers)
-                            + ". Fix the blockers, or pass overrideReason to ship anyway (the override is recorded in the model's audit trail).");
-                    await RecordVerifiedEditAsync(s, new VerifiedEditRecord
-                    {
-                        SessionId = s.Id, Revision = 0, Origin = origin, Op = "deploy_live",   // 0: a deploy is not a model mutation
-                        Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                        Summary = $"gate RED ({string.Join("; ", gate.Blockers)}) — override accepted to deploy to {endpoint}/{database}",
-                        Evidence = System.Text.Json.JsonSerializer.Serialize(new { gate.Grade, gate.BpaViolations, gate.BpaBlocking, gate.Blockers }),
-                    });
-                }
-            }
-            // A LOCAL instance (Power BI Desktop, loopback endpoint) deploys with integrated Windows auth — no
-            // token, no secret. A cloud XMLA endpoint needs a bearer token: acquire it FIRST (fail fast — before
-            // writing any temp file). A service principal is the reliable write principal for Fabric.
-            var local = LiveDeploy.IsLocalEndpoint(endpoint);
-            var tok = local
-                ? default
-                : await AcquireLiveTokenAsync(s, authMode, rawToken, tenantId, System.Threading.CancellationToken.None);
-            var bim = Path.Combine(Path.GetTempPath(), "semanticus-deploy", Guid.NewGuid().ToString("N").Substring(0, 8) + ".bim");
-            Directory.CreateDirectory(Path.GetDirectoryName(bim));
-            try
-            {
-                // Serialize the edited session WITHOUT resetting the undo checkpoint (deploying is not "saving to file").
-                await s.RunAsync(() =>
-                {
-                    s.Save(bim, SaveFormat.ModelSchemaOnly, SerializeOptions.Default, resetCheckpoint: false);
-                    return true;
-                });
-                var rep = await Task.Run(() => LiveDeploy.SyncSessionToLive(bim, endpoint, database, tok.Token, tok.ExpiresOn, commit));
-                // Outcome record (local only — the NEXT deploy carries it): a committed ship is an audit event
-                // whether or not the gate was red. Written after the push so a failed sync never logs "deployed".
-                // Caught: the deploy SUCCEEDED — throwing here (e.g. the session was replaced mid-push and its
-                // dispatcher is gone) would misreport a completed live write as a failure; surface it on the
-                // report instead.
-                if (rep != null && rep.Committed)
-                    try
-                    {
-                        await RecordVerifiedEditAsync(s, new VerifiedEditRecord
-                        {
-                            SessionId = s.Id, Revision = 0, Origin = origin, Op = "deploy_live",   // 0: a deploy is not a model mutation
-                            Verdict = "deployed",
-                            Summary = $"deployed to {endpoint}/{database} — {rep.TotalChanges} change(s); gate {(gate == null ? "unavailable" : gate.Pass ? "pass" : "RED (overridden)")}",
-                            Evidence = System.Text.Json.JsonSerializer.Serialize(new { endpoint, database, rep.TotalChanges, gatePass = gate?.Pass, blockers = gate?.Blockers, gateScanError }),
-                        });
-                    }
-                    catch (Exception ex) { rep.Changes = rep.Changes.Append("audit: deployed, but the outcome record could not be written — " + ex.Message).ToArray(); }
-                return rep;
-            }
-            finally { try { File.Delete(bim); } catch { /* temp */ } }
+            var o = s?.LiveOrigin;
+            // No live binding (a file-opened model): there is no session identity to protect, so this is simply a
+            // target of its own. This is the documented exception to "Different needs two valid keys" — it returns
+            // BEFORE any key exists, and is safe because there is no source account here that could be skipped.
+            if (o == null || string.IsNullOrWhiteSpace(o.Endpoint)) return LiveTargetKind.Different;
+            // A blank target is the deploy-to-source / refresh-to-source form (the callers resolve it from LiveOrigin).
+            if (string.IsNullOrWhiteSpace(endpoint)) return LiveTargetKind.Source;
+
+            // NOTHING below may prove Different unless BOTH endpoints reduced to coordinates we understand. An
+            // unparseable or schemeless endpoint proves nothing about the SERVICE, so a differing dataset name cannot
+            // prove a different model on its own — the two names might belong to the very same server.
+            var srcKey = CanonicalXmlaKey(o.Endpoint);
+            var tgtKey = CanonicalXmlaKey(endpoint);
+            if (srcKey == null || tgtKey == null) return LiveTargetKind.Source;
+
+            if (!string.Equals(srcKey, tgtKey, StringComparison.OrdinalIgnoreCase))
+                return LiveTargetKind.Different;   // PROVEN: a different server or workspace
+
+            // A workspace is TENANT-SCOPED, so the same workspace and dataset NAME can exist in two tenants. Two
+            // unequal tenant GUIDs in the route prove that; any other spelling (myorg, a domain alias) is unknown and
+            // therefore binds, consistent with the rest of this classifier.
+            var srcTenantRoute = CanonicalXmlaTenantRoute(o.Endpoint);
+            var tgtTenantRoute = CanonicalXmlaTenantRoute(endpoint);
+            if (srcTenantRoute.HasValue && tgtTenantRoute.HasValue && srcTenantRoute.Value != tgtTenantRoute.Value)
+                return LiveTargetKind.Different;   // PROVEN: two different tenants
+
+            var srcDb = CanonicalDatabase(o.Database);
+            var tgtDb = CanonicalDatabase(database);
+            if (srcDb.Length > 0 && tgtDb.Length > 0 && !string.Equals(srcDb, tgtDb, StringComparison.OrdinalIgnoreCase))
+                return LiveTargetKind.Different;   // PROVEN: a different dataset on the same service
+
+            return LiveTargetKind.Source;
+        }
+
+        // Seed BOTH driver slots from ONE resolved identity. Internal rather than inline because this is the only
+        // place the two slots are established together, and getting it wrong is invisible until a renewal silently
+        // changes who is writing — so it is asserted directly.
+        internal static void SeedLiveCredentialSlots(Session session, string authKey, bool nonInteractive,
+            Azure.Core.TokenCredential opened, EntraToken.PreparedCredential prepared, string mode, string tenant)
+        {
+            session.SeedLiveCredential(authKey, nonInteractive, opened);
+            // The OTHER driver's slot: same pinned record, opposite prompt-capability. Without this it would build
+            // lazily from the tenant DEFAULT and could authenticate as a different principal.
+            var otherSlot = EntraToken.BuildCredentialFromRecord(mode, tenant, prepared?.RecordForSlotSeed, disableInteractive: !nonInteractive);
+            if (otherSlot != null) session.SeedLiveCredential(authKey, !nonInteractive, otherSlot);
         }
 
         // ---- Partition refresh (process) — the data counterpart of deploy_live. Dry-run by default; a live write on commit.
@@ -2570,19 +3385,19 @@ namespace Semanticus.Engine
         private static readonly RefreshTypeInfo[] RefreshTypes = new[]
         {
             new RefreshTypeInfo { Name = "Full", PartitionLevel = true, Recommended = true,
-                Explanation = "Reload the partition's data from source and recalculate everything that depends on it. The complete, safe option — and the default for a single partition." },
+                Explanation = "Reload the partition's data from source and recalculate everything that depends on it. The complete, safe option, and the default for a single partition." },
             new RefreshTypeInfo { Name = "DataOnly", PartitionLevel = true,
-                Explanation = "Reload the partition's data from source but do NOT recalculate — calculated columns, relationships and hierarchies are left stale until a Calculate. Faster; usually paired with a Calculate afterward." },
+                Explanation = "Reload the partition's data from source but do NOT recalculate. Calculated columns, relationships and hierarchies are left stale until a Calculate. Faster; usually paired with a Calculate afterward." },
             new RefreshTypeInfo { Name = "Calculate", PartitionLevel = true,
                 Explanation = "Recalculate calculated columns/tables, relationships and hierarchies where needed, WITHOUT reloading data. Run after a DataOnly refresh or a formula change. Normally issued at table/model level." },
             new RefreshTypeInfo { Name = "ClearValues", PartitionLevel = true,
-                Explanation = "Empty the partition — drop all its data (and dependents), leaving it unprocessed. Frees memory; queries return blank until it is refreshed again. Destructive." },
+                Explanation = "Empty the partition: drop all its data (and dependents), leaving it unprocessed. Frees memory; queries return blank until it is refreshed again. Destructive." },
             new RefreshTypeInfo { Name = "Automatic", PartitionLevel = true,
-                Explanation = "Refresh and recalculate only if the partition is not already up to date (not in a Ready state) — a no-op if it is current ('Process Default')." },
+                Explanation = "Refresh and recalculate only if the partition is not already up to date (not in a Ready state): a no-op if it is current ('Process Default')." },
             new RefreshTypeInfo { Name = "Add", PartitionLevel = true,
                 Explanation = "Append new rows to the partition without reprocessing the existing data, then recalculate dependents. Regular (non-calculated) partitions only; a niche/advanced option for incremental-append (push/streaming) scenarios." },
             new RefreshTypeInfo { Name = "Defragment", PartitionLevel = false,
-                Explanation = "Defragment the TABLE's column dictionaries (clean out values no longer present after partitions were processed independently). A table-level optimization — not valid for a single partition." },
+                Explanation = "Defragment the TABLE's column dictionaries (clean out values no longer present after partitions were processed independently). A table-level optimization, not valid for a single partition." },
             new RefreshTypeInfo { Name = "Indexes", PartitionLevel = false,
                 Explanation = "Rebuild indexes only. Preview-compatibility databases only; rarely needed. Not offered for a single-partition refresh." },
         };
@@ -2595,7 +3410,7 @@ namespace Semanticus.Engine
             var info = RefreshTypes.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"Unknown refresh type '{name}'. Valid for a partition: Full, DataOnly, Calculate, ClearValues, Automatic, Add.");
             if (!info.PartitionLevel)
-                throw new InvalidOperationException($"'{info.Name}' is a table-level operation, not valid for a single partition — run it on the table instead.");
+                throw new InvalidOperationException($"'{info.Name}' is a table-level operation, not valid for a single partition. Run it on the table instead.");
             return info;
         }
 
@@ -2608,7 +3423,7 @@ namespace Semanticus.Engine
             var (tableName, partName) = await s.ReadAsync(m =>
             {
                 if (!(ObjectRefs.Resolve(m, partitionRef) is Partition p))
-                    throw new InvalidOperationException($"{partitionRef} is not a partition — pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
+                    throw new InvalidOperationException($"{partitionRef} is not a partition. Pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
                 return (p.Table?.Name, p.Name);
             });
 
@@ -2648,7 +3463,7 @@ namespace Semanticus.Engine
             // COMMIT (live write): acquire a token (a local loopback instance uses Windows auth — no token), then
             // connect + RequestRefresh + SaveChanges on a background thread. Any failure is reported via rep.Error.
             var local = LiveDeploy.IsLocalEndpoint(endpoint);
-            var tok = local ? default : await AcquireLiveTokenAsync(s, authMode, rawToken, tenantId, System.Threading.CancellationToken.None);
+            var tok = local ? default : await AcquireLiveTokenAsync(s, authMode, rawToken, tenantId, origin, endpoint, database, System.Threading.CancellationToken.None);
             var (committed, error) = await Task.Run(() => LiveRefresh.RefreshPartition(tableName, partName, type.Name, endpoint, database, tok.Token, tok.ExpiresOn));
             rep.Committed = committed; rep.Error = error;
             return rep;
@@ -2764,7 +3579,7 @@ namespace Semanticus.Engine
             return s.ReadAsync(m =>
             {
                 var obj = ObjectRefs.Resolve(m, objRef);
-                if (obj == null) throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
+                if (obj == null) throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
                 var info = new ObjectInfo { Ref = ObjectRefs.For(obj), Name = obj.Name, Kind = ObjectRefs.KindOf(obj) };
                 switch (obj)
                 {
@@ -2816,7 +3631,7 @@ namespace Semanticus.Engine
                     case CalculatedTable ct: return ct.Expression;
                     case CalculationItem ci: return ci.Expression;
                     case Function f: return f.Expression;
-                    default: throw new InvalidOperationException($"getDax: {objRef} has no DAX expression — get_dax reads measures, calculated columns/tables, calculation items and functions. Use get_object for a plain column/table's properties, or list_objects to find a DAX object.");
+                    default: throw new InvalidOperationException($"getDax: {objRef} has no DAX expression. get_dax reads measures, calculated columns/tables, calculation items and functions. Use get_object for a plain column/table's properties, or list_objects to find a DAX object.");
                 }
             });
         }
@@ -2860,35 +3675,44 @@ namespace Semanticus.Engine
             // §9c — update_measure (MCP) and the RPC set_dax BOTH funnel through here, so binding "update_measure"
             // covers the measure-edit path on both doors (the op name Claude knows + what stock workflows declare).
             await EnforceBindingAsync("update_measure", origin);
-            var verified = await VerifiedGuardAsync(expression, "this DAX edit");   // Verified Mode: refuse invalid DAX before it commits
             var s = _sessions.Require();
+            var isFunction = await s.ReadAsync(m => ObjectRefs.Resolve(m, objRef) is Function);
+            var verified = isFunction
+                ? await FunctionGuardAsync(expression)
+                : await VerifiedGuardAsync(expression, "this DAX edit");
             var changed = false;
-            var rev = await s.MutateAsync(origin, "set DAX", m =>
+            long rev;
+            try
             {
-                GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
-                GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): refuse if ANY mutation landed since the caller verified — catches a same-session delete+recreate at this name
-                var obj = ObjectRefs.Resolve(m, objRef);
-                switch (obj)
+                rev = await s.MutateAsync(origin, "set DAX", m =>
                 {
-                    case Measure me:
-                        if (me.Expression != expression) { me.Expression = expression; changed = true; }
-                        break;
-                    case CalculatedColumn cc:
-                        if (cc.Expression != expression) { cc.Expression = expression; changed = true; }
-                        break;
-                    case CalculatedTable ct:
-                        if (ct.Expression != expression) { ct.Expression = expression; changed = true; }
-                        break;
-                    case CalculationItem ci:
-                        if (ci.Expression != expression) { ci.Expression = expression; changed = true; }
-                        break;
-                    case Function f:
-                        if (f.Expression != expression) { f.Expression = expression; changed = true; }
-                        break;
-                    default:
-                        throw new InvalidOperationException($"setDax: {objRef} has no DAX expression — set_dax targets measures, calculated columns/tables, calculation items and functions. To change a data column's type use set_column_data_type; run list_objects to find a DAX object.");
-                }
-            });
+                    GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
+                    GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): refuse if ANY mutation landed since the caller verified — catches a same-session delete+recreate at this name
+                    var obj = ObjectRefs.Resolve(m, objRef);
+                    switch (obj)
+                    {
+                        case Measure me:
+                            if (me.Expression != expression) { me.Expression = expression; changed = true; }
+                            break;
+                        case CalculatedColumn cc:
+                            if (cc.Expression != expression) { cc.Expression = expression; changed = true; }
+                            break;
+                        case CalculatedTable ct:
+                            if (ct.Expression != expression) { ct.Expression = expression; changed = true; }
+                            break;
+                        case CalculationItem ci:
+                            if (ci.Expression != expression) { ci.Expression = expression; changed = true; }
+                            break;
+                        case Function f:
+                            if (f.Expression != expression) { f.Expression = expression; changed = true; }
+                            break;
+                        default:
+                            throw new InvalidOperationException($"setDax: {objRef} has no DAX expression. set_dax targets measures, calculated columns/tables, calculation items and functions. To change a data column's type use set_column_data_type; run list_objects to find a DAX object.");
+                    }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             if (changed) await RecordVerifiedModeEditAsync(verified, s, "set_dax", objRef, expression, rev, origin);
             if (changed) await RecordWorkflowAuthoredMeasureAsync("update_measure", objRef, expression);   // E3(b) drift baseline
             return new SetResult { Revision = rev, Changed = changed };
@@ -3120,6 +3944,7 @@ namespace Semanticus.Engine
                 Readiness = readiness,
                 Bpa = bpa,
                 PrepForAi = prep,
+                Perspectives = BuildPerspectiveInfos(m),
             };
         }
 
@@ -3203,7 +4028,10 @@ namespace Semanticus.Engine
             };
         }
 
-        public async Task<SaveResult> SaveAsync(string path, string format)
+        /// <summary>Test seam: throw after a folder serialize, before the temp tree is swapped in.</summary>
+        internal Exception FailFolderSaveBeforeSwapForTest;
+
+        public async Task<SaveResult> SaveAsync(string path, string format, bool overwrite = false)
         {
             var s = _sessions.Require();
             var fmt = ParseFormat(format);
@@ -3213,35 +4041,254 @@ namespace Semanticus.Engine
             // definition/ folder from open). Non-PBIP paths (a flat folder, a new export dir, a .bim file) pass through.
             var target = string.IsNullOrEmpty(path) ? s.SourcePath : ModelPathResolver.Resolve(Path.GetFullPath(path));
             if (string.IsNullOrEmpty(target))
-                throw new InvalidOperationException("This model has never been saved — pass a path to save_model (a folder for TMDL, or a .bim file).");
+                throw new InvalidOperationException("This model has never been saved. Pass a folder path for TMDL (tabular model definition language), or a .bim file path.");
+            // Overwrite (no path) keeps the source's own format: a .bim stays a .bim. The documented default format is
+            // TMDL, which would otherwise try to write a folder onto the existing .bim file and refuse with "already exists".
+            if (string.IsNullOrEmpty(path))
+                fmt = InferSourceFormat(target);
+            // An explicit path to a .bim FILE (existing or not yet created) must KEEP BIM when format is omitted or
+            // TMDL. TE2's TMDL serializer calls CreateDirectory on the target, which on Linux fails with
+            // "The file '.../model.bim' already exists." when the path is a file (D-032). Infer BIM from the
+            // path BEFORE the TMDL-root coercion so a genuine TMDL tree still wins. A directory whose name ends in
+            // .bim is not a BIM file; a missing path that ends in .bim is, so the first save of a new .bim still
+            // infers ModelSchemaOnly.
+            else if (LooksLikeBimFile(target) && (fmt == SaveFormat.TMDL || string.IsNullOrEmpty(format)))
+                fmt = SaveFormat.ModelSchemaOnly;
             // Write-corruption guard: a folder/JSON ("TabularEditorFolder") save into an EXISTING TMDL tree runs
             // SaveToFolder.RemoveUnusedFiles (recursive delete) and writes database.json + tables/*.json alongside the
             // .tmdl — a corrupt mixed model (verified). Coerce any non-TMDL format to TMDL when the target is an existing
             // TMDL root — covers a PBIP definition/ folder WITH or WITHOUT definition.pbism (so protection never lags the
             // open-resolver) and a flat TMDL folder the engine itself saved. A new/empty export folder isn't a TMDL root,
             // so genuine folder exports are unaffected.
-            if (fmt != SaveFormat.TMDL && ModelPathResolver.IsTmdlRoot(target))
+            else if (fmt != SaveFormat.TMDL && ModelPathResolver.IsTmdlRoot(target))
                 fmt = SaveFormat.TMDL;
+            if (File.Exists(target) && target.EndsWith(".bim", StringComparison.OrdinalIgnoreCase) && fmt == SaveFormat.TMDL)
+                fmt = SaveFormat.ModelSchemaOnly;
+
+            var replacingOpen = string.IsNullOrEmpty(path) || SameSavePath(target, s.SourcePath);
+            var oldSource = s.SourcePath;
+            var folderSave = fmt == SaveFormat.TMDL || fmt == SaveFormat.TabularEditorFolder;
+            string tempDir = null;
             using (await s.AcquireModelFileWriteLeaseAsync())
             {
-                await s.RunAsync(() =>
+                if (replacingOpen && !overwrite && _loadedDiskStamp != null && ModelDiskChanged(_loadedDiskStamp))
+                    throw new InvalidOperationException("The files on disk changed after this model was opened. Saving now would replace those changes. Confirm you want to replace them, or reopen the model first.");
+                try
                 {
-                    s.Save(target, fmt, SerializeOptions.Default, resetCheckpoint: true);
-                    return true;
-                });
-                // Anchor a created (path-less) session to its first explicit save target, so a later save with no
-                // path overwrites the same file (matching file-opened session semantics).
-                if (!string.IsNullOrEmpty(path)) s.SourcePath = target;
+                    if (folderSave)
+                    {
+                        var parent = Directory.Exists(target) ? Directory.GetParent(target)?.FullName : Path.GetDirectoryName(target);
+                        if (string.IsNullOrEmpty(parent)) parent = Path.GetTempPath();
+                        tempDir = Path.Combine(parent, ".semanticus-save-" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(tempDir);
+                        await s.RunAsync(() =>
+                        {
+                            s.Save(tempDir, fmt, SerializeOptions.Default, resetCheckpoint: false);
+                            if (FailFolderSaveBeforeSwapForTest != null) throw FailFolderSaveBeforeSwapForTest;
+                            return true;
+                        });
+                        PreserveUntouchedFiles(target, tempDir, fmt);
+                        SwapFolderSave(target, tempDir);
+                        tempDir = null;
+                        await s.RunAsync(() => { s.MarkSavedToDisk(); return true; });
+                    }
+                    else
+                    {
+                        // A file save used to write straight onto the model file, so a write that failed part-way
+                        // (full disk, lock, quota) left the last good model cut short with nothing to fall back on
+                        // (FAIL-03). Serialize beside it and rename over it instead: same directory, so the move is
+                        // a rename and the target goes old-bytes to new-bytes with nothing in between. The clean bit
+                        // is set only after that move lands, so a failure leaves the session dirty and the old file
+                        // whole. TE2 stamps Model.MetadataSource with the path it was handed when the model has never
+                        // been saved (TabularModelHandler.FileHandling.cs:284); nothing in the repo reads it, and
+                        // SourcePath below is what the session actually follows.
+                        var dir = Path.GetDirectoryName(Path.GetFullPath(target));
+                        if (string.IsNullOrEmpty(dir)) dir = ".";
+                        Directory.CreateDirectory(dir);
+                        var staged = Path.Combine(dir, ".semanticus-save-" + Guid.NewGuid().ToString("N") + Path.GetExtension(target));
+                        try
+                        {
+                            await s.RunAsync(() =>
+                            {
+                                s.Save(staged, fmt, SerializeOptions.Default, resetCheckpoint: false);
+                                return true;
+                            });
+                            File.Move(staged, target, overwrite: true);
+                            await s.RunAsync(() => { s.MarkSavedToDisk(); return true; });
+                        }
+                        finally
+                        {
+                            try { if (File.Exists(staged)) File.Delete(staged); } catch { }
+                        }
+                    }
+                    // Anchor a created (path-less) session to its first explicit save target, so a later save with no
+                    // path overwrites the same file (matching file-opened session semantics).
+                    if (!string.IsNullOrEmpty(path)) s.SourcePath = target;
+                    CarrySidecars(oldSource, target);
+                }
+                finally
+                {
+                    if (tempDir != null) TryDeleteTree(tempDir);
+                }
             }
-            // Number time-machine (feature #3): saving is a checkpoint moment, but NOT a tracked mutation
-            // (no ChangeNotification, no audit record — gap 4), so it gets its own explicit ambient hook.
-            // Expressions only — a save freezes the formula history durably; values ride the deploy
-            // checkpoints (the only moment the live model provably reflects this session's edits).
+            // Saving is not an undoable edit, but both doors must see the dirty flag clear. A ChangeNotification
+            // with empty deltas is the same wire the UI already refreshes on.
+            PublishSaveNotification(s, "save");
+            try { _loadedDiskStamp = ModelDiskStamp(); }
+            catch { _loadedDiskStamp = null; }
             await CaptureVitalsAsync(s, "save_model", "system", Array.Empty<string>(), liveReflectsSession: false);
             var count = Directory.Exists(target)
                 ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count()
                 : 0;
             return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = count };
+        }
+
+        private static bool SameSavePath(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            try
+            {
+                return string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>A folder save serializes a fresh tree and swaps it over the target, so every file the serializer
+        /// did not write went with the old tree. That is how Save Model deleted a note someone had left in the model
+        /// folder (D-228). Only the model definition is the save's to rewrite, so carry anything else across before
+        /// the swap. A definition file the save did NOT write is a table the model no longer has, so it stays gone.
+        /// Engine sidecars and a repository rooted at the model folder are inside this tree too, so they are carried
+        /// across as well. A failed copy is fatal: swapping a partial tree would destroy the last good model.</summary>
+        private static void PreserveUntouchedFiles(string target, string tempDir, SaveFormat fmt)
+        {
+            if ((fmt != SaveFormat.TMDL && fmt != SaveFormat.TabularEditorFolder)
+                || !Directory.Exists(target) || !Directory.Exists(tempDir)) return;
+            foreach (var file in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(target, file).Replace('\\', '/');
+                if (IsDefinitionFile(relative, fmt) || IsSaveTransient(relative) || IsTransientSidecar(relative)) continue;
+                var dest = Path.Combine(tempDir, relative.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(dest)) continue;   // the save wrote this one; its bytes win
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    File.Copy(file, dest, overwrite: false);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    throw new IOException($"Could not preserve '{relative}' while saving. The original model was not replaced.", ex);
+                }
+            }
+        }
+
+        /// <summary>The files a save rewrites. Everything else in the folder belongs to whoever put it there.</summary>
+        private static bool IsDefinitionFile(string relative, SaveFormat fmt)
+        {
+            var normalized = relative.Replace('\\', '/');
+            var slash = normalized.LastIndexOf('/');
+            var name = slash < 0 ? normalized : normalized.Substring(slash + 1);
+            if (fmt == SaveFormat.TMDL)
+                return name.EndsWith(".tmdl", StringComparison.OrdinalIgnoreCase)
+                    || name.EndsWith(".tmd", StringComparison.OrdinalIgnoreCase);
+            if (fmt != SaveFormat.TabularEditorFolder) return false;
+            if (string.Equals(normalized, "database.json", StringComparison.OrdinalIgnoreCase)) return true;
+            var firstSlash = normalized.IndexOf('/');
+            if (firstSlash <= 0 || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return false;
+            var folder = normalized.Substring(0, firstSlash);
+            return new[] { "tables", "relationships", "perspectives", "cultures", "dataSources", "expressions", "roles" }
+                .Contains(folder, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Runtime files in an engine sidecar are recreated by the running engine, not persisted model data.</summary>
+        private static bool IsTransientSidecar(string relative)
+        {
+            var normalized = relative.Replace('\\', '/');
+            if (!normalized.StartsWith(".semanticus/", StringComparison.OrdinalIgnoreCase)) return false;
+            var name = normalized.Substring(normalized.LastIndexOf('/') + 1);
+            return string.Equals(name, "engine.lock", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "engine.json", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "experience.jsonl", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "vitals.jsonl", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void SwapFolderSave(string target, string tempDir)
+        {
+            if (Directory.Exists(target))
+            {
+                var bak = target + ".semanticus-bak-" + Guid.NewGuid().ToString("N");
+                Directory.Move(target, bak);
+                try
+                {
+                    Directory.Move(tempDir, target);
+                    TryDeleteTree(bak);
+                }
+                catch
+                {
+                    TryDeleteTree(target);
+                    try { Directory.Move(bak, target); } catch { }
+                    throw;
+                }
+            }
+            else
+            {
+                var parent = Path.GetDirectoryName(target);
+                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                Directory.Move(tempDir, target);
+            }
+        }
+
+        private static void TryDeleteTree(string dir)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) return;
+                foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                Directory.Delete(dir, true);
+            }
+            catch { }
+        }
+
+        private void CarrySidecars(string oldSource, string newSource)
+        {
+            if (string.IsNullOrEmpty(oldSource) || string.IsNullOrEmpty(newSource) || SameSavePath(oldSource, newSource)) return;
+            try { LayoutStore.CopyForSaveAs(oldSource, newSource); }
+            catch { return; }
+            try { RekeyDiskPrimers(oldSource, newSource); } catch { }
+        }
+
+        private static void RekeyDiskPrimers(string oldSource, string newSource)
+        {
+            var primers = Path.Combine(LayoutStore.DirFor(newSource) ?? "", "primers");
+            if (!Directory.Exists(primers)) return;
+            var oldName = SafeKeyName("disk:" + Sha8(CanonAnchor(oldSource)));
+            var newName = SafeKeyName("disk:" + Sha8(CanonAnchor(newSource)));
+            if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase)) return;
+            foreach (var ext in new[] { ".md", ".identity.json", ".suggestions.json" })
+            {
+                var from = Path.Combine(primers, oldName + ext);
+                var to = Path.Combine(primers, newName + ext);
+                if (File.Exists(from) && !File.Exists(to)) File.Move(from, to);
+            }
+        }
+
+        private void PublishSaveNotification(Session s, string label)
+        {
+            try
+            {
+                _sessions.Bus.Publish(new ChangeNotification
+                {
+                    SessionId = s.Id,
+                    Revision = s.Revision,
+                    Origin = "system",
+                    Label = label,
+                    Deltas = Array.Empty<ChangeDelta>(),
+                    Undo = s.UndoStateNow(),
+                });
+            }
+            catch { }
         }
 
         public Task<SessionInfo> SessionInfoAsync()
@@ -3261,6 +4308,7 @@ namespace Semanticus.Engine
             string currentAccount, currentTenant;
             if (live != null) { currentAccount = live.Account; currentTenant = queryRec?.TenantId; }
             else { currentAccount = origin?.Account; currentTenant = origin?.TenantId; }
+            var diskDiverged = _loadedDiskStamp != null && ModelDiskChanged(_loadedDiskStamp);
             return s.ReadAsync(m => new SessionInfo
             {
                 SessionId = s.Id,
@@ -3268,6 +4316,7 @@ namespace Semanticus.Engine
                 ModelName = m.Database?.Name ?? m.Name,
                 Source = s.SourcePath,
                 HasUnsavedChanges = s.HasUnsavedChanges,
+                DiskDiverged = diskDiverged,
                 Tables = m.Tables.Count,
                 Measures = m.AllMeasures.Count(),
                 LiveBound = origin != null,
@@ -3430,7 +4479,7 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             if (string.IsNullOrEmpty(s.SourcePath))
-                return new SaveLayoutResult { Error = "Save the model to disk first — diagram layout is stored beside the model (.semanticus/layout.json)." };
+                return new SaveLayoutResult { Error = "Save the model to disk first. Diagram layout is stored beside the model (.semanticus/layout.json)." };
 
             var existing = LayoutStore.Read(s.SourcePath);
             var incoming = tables ?? Array.Empty<LayoutNode>();
@@ -3581,15 +4630,19 @@ namespace Semanticus.Engine
 
         public async Task<UndoState> UndoAsync(string origin)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             await s.UndoAsync(origin);
+            await ReconcilePlanAfterHistoryAsync(context, s);
             return await s.ReadAsync(_ => s.UndoStateNow());
         }
 
         public async Task<UndoState> RedoAsync(string origin)
         {
-            var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
             await s.RedoAsync(origin);
+            await ReconcilePlanAfterHistoryAsync(context, s);
             return await s.ReadAsync(_ => s.UndoStateNow());
         }
 
@@ -3607,7 +4660,7 @@ namespace Semanticus.Engine
             var folder = NormalizeFolderPath(displayFolder);   // optional: born filed — create + folder is ONE undo step
             var rev = await s.MutateAsync(origin, $"create measure {name}", m =>
             {
-                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 var me = CreateMeasureCore(t, name, expression);
                 if (folder.Length > 0) me.DisplayFolder = folder;
                 newRef = ObjectRefs.For(me);
@@ -3617,7 +4670,12 @@ namespace Semanticus.Engine
             return newRef;
         }
 
-        private static Measure CreateMeasureCore(Table t, string name, string expression) => t.AddMeasure(name, expression ?? string.Empty);
+        private static Measure CreateMeasureCore(Table t, string name, string expression)
+        {
+            if (!string.IsNullOrWhiteSpace(expression))
+                RefuseDaxForWrite(DaxValidator.Validate(t.Model, expression), expression, "this DAX expression");
+            return t.AddMeasure(name, expression ?? string.Empty);
+        }
 
         /// <summary>Raise the model's compatibility level (one-way upgrade). Required for newer
         /// features like DAX user-defined functions (CL >= 1702). Refuses to lower it.</summary>
@@ -3627,24 +4685,21 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, $"set compatibility level {level}", m =>
             {
-                if (m.Database == null) throw new InvalidOperationException("Model has no database.");
-                var current = m.Database.CompatibilityLevel;
-                if (current == level) return;
-                if (level < current) throw new InvalidOperationException($"Compatibility level can only be raised. It cannot be lowered from {current} to {level}.");
-                m.Database.CompatibilityLevel = level;
-                changed = true;
+                changed = ApplyCompatibilityLevel(m, level.ToString(System.Globalization.CultureInfo.InvariantCulture));
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
 
         public async Task<string> CreateFunctionAsync(string name, string expression, string origin)
         {
-            var verified = await VerifiedGuardAsync(expression, "this new function");   // Verified Mode: refuse invalid DAX before it commits
+            var verified = await FunctionGuardAsync(expression);
             var s = _sessions.Require();
             string newRef = null;
             var rev = await s.MutateAsync(origin, $"create function {name}", m =>
             {
                 if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Function name is required.");
+                if ((m.Database?.CompatibilityLevel ?? 0) < 1702)
+                    throw new InvalidOperationException($"Functions need compatibility level 1702 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}). Raise Compatibility level in Properties, then try again.");
                 if (m.Functions.Contains(name)) throw new InvalidOperationException($"A function named '{name}' already exists.");
                 var f = m.AddFunction(name);
                 if (!string.IsNullOrEmpty(expression)) f.Expression = expression;
@@ -3679,7 +4734,7 @@ namespace Semanticus.Engine
             string newRef = null;
             await s.MutateAsync(origin, $"create column {name}", m =>
             {
-                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 newRef = ObjectRefs.For(CreateColumnCore(t, name, dataType, sourceColumn));
             });
             return newRef;
@@ -3726,7 +4781,11 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             string result = null;
-            await s.MutateAsync(origin, $"create expression {name}", m => result = CreateNamedExpressionCore(m, name, expression));
+            await s.MutateAsync(origin, $"create expression {name}", m =>
+            {
+                if (!string.IsNullOrWhiteSpace(expression)) RefuseMForWrite(expression, "this M expression");
+                result = CreateNamedExpressionCore(m, name, expression);
+            });
             return result;
         }
 
@@ -3734,6 +4793,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("An expression name is required.");
             if (m.Expressions.Contains(name)) throw new InvalidOperationException($"A shared expression named '{name}' already exists.");   // TOM name match is case-insensitive (matches AddExpression)
+            if (!string.IsNullOrWhiteSpace(expression)) RefuseMForWrite(expression, "this M expression");
             var e = m.AddExpression(name);              // Kind defaults to M; the 2nd arg is ignored by the wrapper
             if (!string.IsNullOrEmpty(expression)) e.Expression = expression;
             return e.Name;
@@ -3750,7 +4810,7 @@ namespace Semanticus.Engine
             return s.ReadAsync(m =>
             {
                 var t = ObjectRefs.Resolve(m, tableRef) as Table
-                    ?? throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    ?? throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 return t.Partitions.Select(p => new PartitionInfo
                 {
                     Ref = ObjectRefs.For(p), Table = t.Name, Name = p.Name,
@@ -3765,7 +4825,7 @@ namespace Semanticus.Engine
             return s.ReadAsync(m =>
             {
                 var p = ObjectRefs.Resolve(m, partitionRef) as Partition
-                    ?? throw new InvalidOperationException($"{partitionRef} is not a partition — pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
+                    ?? throw new InvalidOperationException($"{partitionRef} is not a partition. Pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
                 if (p.SourceType != PartitionSourceType.M)
                     throw new InvalidOperationException($"{partitionRef} is a {p.SourceType} partition, not an M (structured) partition.");
                 return p.Expression ?? "";
@@ -3776,16 +4836,21 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
-            var rev = await s.MutateAsync(origin, $"set partition M {partitionRef}", m =>
+            long rev;
+            try
             {
-                var p = ObjectRefs.Resolve(m, partitionRef) as Partition
-                    ?? throw new InvalidOperationException($"{partitionRef} is not a partition — pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
-                if (p.SourceType != PartitionSourceType.M)
-                    throw new InvalidOperationException($"{partitionRef} is a {p.SourceType} partition — only M partitions have an editable M expression.");
-                if (string.IsNullOrWhiteSpace(mExpression))
-                    throw new ArgumentException("The M expression cannot be empty.");
-                if (p.Expression != mExpression) { p.Expression = mExpression; changed = true; }
-            });
+                rev = await s.MutateAsync(origin, $"set partition M {partitionRef}", m =>
+                {
+                    var p = ObjectRefs.Resolve(m, partitionRef) as Partition
+                        ?? throw new InvalidOperationException($"{partitionRef} is not a partition. Pass a 'partition:Table/Name' ref; run list_partitions on the table to see its partitions.");
+                    if (p.SourceType != PartitionSourceType.M)
+                        throw new InvalidOperationException($"{partitionRef} is a {p.SourceType} partition. Only M partitions have an editable M expression.");
+                    RefuseMForWrite(mExpression, "this M expression");
+                    if (p.Expression != mExpression) { p.Expression = mExpression; changed = true; }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             return new SetResult { Revision = rev, Changed = changed };
         }
 
@@ -3813,13 +4878,20 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
-            var rev = await s.MutateAsync(origin, $"update expression {name}", m =>
+            long rev;
+            try
             {
-                var e = m.Expressions.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException($"No shared expression named '{name}'. Create it with create_named_expression first.");
-                if (string.IsNullOrEmpty(expression)) throw new ArgumentException("The expression cannot be empty.");
-                if (e.Expression != expression) { e.Expression = expression; changed = true; }
-            });
+                rev = await s.MutateAsync(origin, $"update expression {name}", m =>
+                {
+                    var e = m.Expressions.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))
+                        ?? throw new InvalidOperationException($"No shared expression named '{name}'. Create it with create_named_expression first.");
+                    if (string.IsNullOrEmpty(expression)) throw new ArgumentException("The expression cannot be empty.");
+                    RefuseMForWrite(expression, "this M expression");
+                    if (e.Expression != expression) { e.Expression = expression; changed = true; }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             return new SetResult { Revision = rev, Changed = changed };
         }
 
@@ -3831,7 +4903,11 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             string newRef = null;
-            await s.MutateAsync(origin, $"create import table {name}", m => newRef = ObjectRefs.For(CreateImportTableCore(m, name, mExpression)));
+            await s.MutateAsync(origin, $"create import table {name}", m =>
+            {
+                if (!string.IsNullOrWhiteSpace(mExpression)) RefuseMForWrite(mExpression, "this M expression");
+                newRef = ObjectRefs.For(CreateImportTableCore(m, name, mExpression));
+            });
             return newRef;
         }
 
@@ -3839,6 +4915,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A table name is required.");
             if (m.Tables.Contains(name)) throw new InvalidOperationException($"A table named '{name}' already exists.");
+            if (!string.IsNullOrWhiteSpace(mExpression)) RefuseMForWrite(mExpression, "this M expression");
             var t = m.AddTable(name);
             var p = t.AddMPartition(TmpPartitionName, mExpression ?? "");   // the real M (Import) partition
             p.Mode = ModeType.Import;
@@ -3859,7 +4936,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A table name is required.");
             if (m.Database.CompatibilityLevel < 1604)
-                throw new InvalidOperationException("Direct Lake needs compatibility level 1604 or higher (create_model defaults to 1604; or raise it with set_compatibility_level).");
+                throw new InvalidOperationException("Direct Lake needs compatibility level 1604 or higher. New models default to 1604. Raise Compatibility level in Properties.");
             if (m.Tables.Contains(name)) throw new InvalidOperationException($"A table named '{name}' already exists.");
             var entity = string.IsNullOrWhiteSpace(entityName) ? name : entityName;
             var t = m.AddTable(name);
@@ -3871,7 +4948,7 @@ namespace Semanticus.Engine
                 var expr = m.Expressions.FirstOrDefault(e => e.Name == sourceName);
                 if (expr != null) p.ExpressionSource = expr;
                 else if (m.DataSources.FirstOrDefault(d => d.Name == sourceName) is StructuredDataSource ds) p.DataSource = ds;
-                else throw new InvalidOperationException($"No shared expression or structured data source named '{sourceName}' was found — create one first (create_named_expression / create_data_source).");
+                else throw new InvalidOperationException($"No shared expression or structured data source named '{sourceName}' was found. Create one first (create_named_expression / create_data_source).");
             }
             p.Mode = ModeType.DirectLake;                                  // per-partition mode (does not throw)
             DropPlaceholderPartitions(t, p);
@@ -3915,10 +4992,10 @@ namespace Semanticus.Engine
                 // a Power BI-mode model at CL>=1400 (TOMWrapper Column.GroupByColumns), and the marker only
                 // round-trips at CL>=1400. Fail loudly rather than emit an inert, half-wired table.
                 if ((m.Database?.CompatibilityLevel ?? 0) < 1400)
-                    throw new InvalidOperationException($"Field parameters require compatibility level 1400 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}; raise it with set_compatibility_level).");
+                    throw new InvalidOperationException($"Field parameters require compatibility level 1400 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}; raise Compatibility level in Properties).");
                 // Compare by name: the Tabular CompatibilityMode enum is distinct from the core one (== won't bind).
                 if (m.Database.CompatibilityMode.ToString() != "PowerBI")
-                    throw new InvalidOperationException("Field parameters are a Power BI feature — they require a Power BI-mode model.");
+                    throw new InvalidOperationException("Field parameters are a Power BI feature. They require a Power BI-mode model.");
 
                 // Resolve each field and build its NAMEOF row: a MEASURE is bare ([Measure], model-unique, the
                 // form Desktop emits); a COLUMN is table-qualified ('Table'[Column]). Order = array position.
@@ -3927,7 +5004,7 @@ namespace Semanticus.Engine
                 {
                     var it = items[i];
                     if (it == null || string.IsNullOrWhiteSpace(it.ObjectRef)) throw new ArgumentException($"Field {i + 1} is missing an object ref.");
-                    var obj = ObjectRefs.Resolve(m, it.ObjectRef) ?? throw new InvalidOperationException($"{it.ObjectRef} not found — a field parameter's fields are measures or columns; run list_measures / list_columns to get their refs.");
+                    var obj = ObjectRefs.Resolve(m, it.ObjectRef) ?? throw new InvalidOperationException($"{it.ObjectRef} not found. A field parameter's fields are measures or columns; run list_measures / list_columns to get their refs.");
                     string nameOf, label = string.IsNullOrWhiteSpace(it.Label) ? null : it.Label.Trim();
                     switch (obj)
                     {
@@ -3935,11 +5012,12 @@ namespace Semanticus.Engine
                         // or a table "O'Brien" would otherwise emit malformed/injectable DAX. Measure = bare [Name].
                         case Measure me: nameOf = $"NAMEOF({me.DaxObjectName})"; label ??= me.Name; break;
                         case Column c: nameOf = $"NAMEOF({c.DaxObjectFullName})"; label ??= c.Name; break;
-                        default: throw new InvalidOperationException($"{it.ObjectRef} ({ObjectRefs.KindOf(obj)}) can't be a field-parameter field — only measures and columns can.");
+                        default: throw new InvalidOperationException($"{it.ObjectRef} ({ObjectRefs.KindOf(obj)}) can't be a field-parameter field. Only measures and columns can.");
                     }
                     rows.Add($"\t(\"{label.Replace("\"", "\"\"")}\", {nameOf}, {i})");   // DAX escapes a quote by doubling it
                 }
-                var dax = $"{name} =\n{{\n{string.Join(",\n", rows)}\n}}";
+                // Partition DAX is the list only. The table already has the name; `Name = { ... }` belongs in a DEFINE, not a partition (D-034).
+                var dax = $"{{\n{string.Join(",\n", rows)}\n}}";
 
                 var ct = (CalculatedTable)CreateCalculatedTableCore(m, name, dax);
 
@@ -3968,7 +5046,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set column data type", m =>
             {
                 if (!(ObjectRefs.Resolve(m, columnRef) is DataColumn c))
-                    throw new InvalidOperationException($"{columnRef} is not a data column — only physical/source columns have a settable data type (a calculated column derives its type from its DAX).");
+                    throw new InvalidOperationException($"{columnRef} is not a data column. Only physical/source columns have a settable data type (a calculated column derives its type from its DAX).");
                 var dt = ParseDataType(dataType);
                 if (c.DataType != dt) { c.DataType = dt; changed = true; }
             });
@@ -4027,10 +5105,18 @@ namespace Semanticus.Engine
             return PublishSpec(context, () => context.Spec.Clear(), "Spec clear");
         }
 
+        // VS Code's save dialog with a .json filter can append a second .json when the typed name already has one.
+        internal static string CollapseDuplicateJsonExtension(string path)
+        {
+            if (path != null && path.EndsWith(".json.json", StringComparison.OrdinalIgnoreCase))
+                return path.Substring(0, path.Length - 5);
+            return path;
+        }
+
         public async Task<SpecView> SaveSpecAsync(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required to save the spec.");
-            var full = Path.GetFullPath(path);
+            var full = Path.GetFullPath(CollapseDuplicateJsonExtension(path.Trim()));
             var context = _sessions.CurrentContext;
             await context.SpecGate.WaitAsync();
             SpecView view;
@@ -4147,7 +5233,11 @@ namespace Semanticus.Engine
                     // Direct Lake it's the entity partition; for Import it's the Item= in the M — so it must NOT by
                     // itself force Direct Lake, or a fabric-import spec would silently build all-Direct-Lake).
                     if (!string.IsNullOrWhiteSpace(st.CalculatedExpression) || role == "calculated")
-                        t = CreateCalculatedTableCore(m, st.Name, string.IsNullOrWhiteSpace(st.CalculatedExpression) ? "ROW(\"_\", BLANK())" : st.CalculatedExpression);
+                    {
+                        var expression = string.IsNullOrWhiteSpace(st.CalculatedExpression) ? "ROW(\"_\", BLANK())" : st.CalculatedExpression;
+                        RefuseDaxForWrite(DaxValidator.Validate(m, expression), expression, "this calculated-table expression");
+                        t = CreateCalculatedTableCore(m, st.Name, expression);
+                    }
                     else if (storage == "directlake")
                         t = CreateDirectLakeTableCore(m, st.Name, st.Entity ?? st.Name, st.Schema ?? spec.Source?.Schema, st.SourceName ?? sourceExprName);
                     else
@@ -4211,11 +5301,14 @@ namespace Semanticus.Engine
                 var mt = m.Tables.FirstOrDefault(x => x.Name == sm.Table);
                 if (mt == null) { errors.Add($"measure {sm.Name}: table '{sm.Table}' not found"); continue; }
                 if (mt.Measures.Contains(sm.Name)) { skipped.Add($"measure:{sm.Table}/{sm.Name}"); continue; }
+                if (string.IsNullOrWhiteSpace(sm.Dax))
+                { errors.Add($"measure {sm.Table}/{sm.Name}: missing DAX"); continue; }
                 try
                 {
                     var me = CreateMeasureCore(mt, sm.Name, sm.Dax);
                     if (!string.IsNullOrWhiteSpace(sm.FormatString)) me.FormatString = sm.FormatString;
                     if (!string.IsNullOrWhiteSpace(sm.DisplayFolder)) me.DisplayFolder = sm.DisplayFolder;
+                    if (!string.IsNullOrWhiteSpace(sm.Description)) me.Description = sm.Description;
                     created.Add($"measure:{sm.Table}/{sm.Name}");
                 }
                 catch (Exception ex) { errors.Add($"measure {sm.Table}/{sm.Name}: {ex.Message}"); }
@@ -4330,30 +5423,36 @@ namespace Semanticus.Engine
 
             // Kimball role classification (mirrors diagram.tsx busMatrixPositions): a table on the ONE side of any
             // relationship is a dimension (incl. snowflake outriggers); a table only ever on the MANY side is a fact;
-            // unrelated tables are isolated. Date/calculated tables are tagged from their metadata.
+            // unrelated tables are isolated. Date wins from metadata. Calculated is last: an Enter Data fact still
+            // reads as fact (relationship role), not calculated.
             var oneSide = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var manySide = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in graph.Relationships) { var (many, one) = RoleOf(r); manySide.Add(many); oneSide.Add(one); }
             string RoleFor(GraphTable t)
             {
                 if (t.IsDateTable) return "date";
-                if (t.IsCalculated) return "calculated";
                 if (oneSide.Contains(t.Name)) return "dimension";
                 if (manySide.Contains(t.Name)) return "fact";
+                if (t.IsCalculated) return "calculated";
                 return "isolated";
             }
             var roleByTable = graph.Tables.ToDictionary(t => t.Name, RoleFor, StringComparer.OrdinalIgnoreCase);
             var colsByTable = cols.GroupBy(c => c.Table, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.OrdinalIgnoreCase);
 
-            var specTables = graph.Tables.Select(t => new SpecTable
+            var specTables = graph.Tables.Select(t =>
             {
-                Name = t.Name,
-                Role = roleByTable.TryGetValue(t.Name, out var rr) ? rr : "isolated",
-                Columns = (colsByTable.TryGetValue(t.Name, out var cc) ? cc : System.Array.Empty<ColumnRow>())
-                    .Where(c => !c.IsCalculated)   // calc columns derive from DAX; the spec carries data/source columns
-                    .Select(c => new SpecColumn { Name = c.Name, DataType = c.DataType, SourceColumn = c.Name, IsKey = c.IsKey, Hidden = c.IsHidden, SummarizeBy = c.SummarizeBy })
-                    .ToArray(),
+                var mt = m.Tables.FirstOrDefault(x => string.Equals(x.Name, t.Name, StringComparison.OrdinalIgnoreCase));
+                return new SpecTable
+                {
+                    Name = t.Name,
+                    Role = roleByTable.TryGetValue(t.Name, out var rr) ? rr : "isolated",
+                    CalculatedExpression = mt is CalculatedTable ct ? ct.Expression : null,
+                    Columns = (colsByTable.TryGetValue(t.Name, out var cc) ? cc : System.Array.Empty<ColumnRow>())
+                        .Where(c => !c.IsCalculated)   // calc columns derive from DAX; the spec carries data/source columns
+                        .Select(c => new SpecColumn { Name = c.Name, DataType = c.DataType, SourceColumn = c.Name, IsKey = c.IsKey, Hidden = c.IsHidden, SummarizeBy = c.SummarizeBy })
+                        .ToArray(),
+                };
             }).ToArray();
 
             // Emit each relationship LITERALLY — From/To ends as TOM has them, plus the real Cardinality token — so a
@@ -4434,7 +5533,7 @@ namespace Semanticus.Engine
             string token;
             try
             {
-                token = await EntraToken.AcquireSqlAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
+                token = await AcquireSqlTokenAsync(authMode, tenantId, origin, System.Threading.CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -4566,7 +5665,7 @@ namespace Semanticus.Engine
         }
 
         private string GitWorkingDir() => GitWorkingDirOrNull()
-            ?? throw new InvalidOperationException("Open or save a model on disk first — source control operates on the open model's folder.");
+            ?? throw new InvalidOperationException("Open or save a model on disk first. Source control operates on the open model's folder.");
 
         public async Task<GitStatus> GitStatusAsync()
         {
@@ -4596,7 +5695,7 @@ namespace Semanticus.Engine
                 return new GitCommitResult
                 {
                     Committed = false, Message = message, Files = pst.Files.Select(f => f.Path).ToArray(), SavedModelFirst = dirty,
-                    Note = dirty ? "Preview — the open model has unsaved edits; commit will save them to disk first." : "Preview — nothing committed.",
+                    Note = dirty ? "Preview: the open model has unsaved edits; commit will save them to disk first." : "Preview: nothing committed.",
                 };
             }
             if (string.IsNullOrWhiteSpace(message)) return new GitCommitResult { Error = "A commit message is required." };
@@ -4609,8 +5708,8 @@ namespace Semanticus.Engine
                 saved = true;
             }
             var add = (files != null && files.Length > 0)
-                ? await GitCli.RunAsync(dir, new[] { "add", "--" }.Concat(files).ToArray())
-                : await GitCli.RunAsync(dir, "add", "-A", ".");
+                ? await GitCli.RunAsync(dir, new[] { "add", "--" }.Concat(files).Concat(LayoutStore.GitAddExcludes).ToArray())
+                : await GitCli.RunAsync(dir, new[] { "add", "-A", "--", "." }.Concat(LayoutStore.GitAddExcludes).ToArray());
             if (!add.Ok) return new GitCommitResult { Error = GitCli.Combine(add), SavedModelFirst = saved };
             var cached = await GitCli.RunAsync(dir, "diff", "--cached", "--name-only");
             var stagedFiles = cached.Ok ? cached.Stdout.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries) : System.Array.Empty<string>();
@@ -4731,7 +5830,7 @@ namespace Semanticus.Engine
                 {
                     Ok = r.Ok,
                     Output = GitCli.Combine(r),
-                    Error = r.Ok ? null : GitCli.Combine(r),
+                    Error = r.Ok ? null : GitCli.Reason(r),
                     Branch = r.Ok ? await GitCurrentBranchAsync(context.Dir) : null,
                     ModelPath = changed ? _sessions.Current?.SourcePath : null,
                     ModelReloadNeeded = changed,
@@ -4746,7 +5845,7 @@ namespace Semanticus.Engine
             if (!confirm)
             {
                 var st = await GitCli.StatusAsync(dir);
-                return new GitActionResult { Ok = true, Output = $"Preview — would push {st.Ahead} commit(s) on '{st.Branch}'" + (st.Upstream != null ? $" to {st.Upstream}" : "") + ". Pass confirm=true to push." };
+                return new GitActionResult { Ok = true, Output = $"Preview: would push {st.Ahead} commit(s) on '{st.Branch}'" + (st.Upstream != null ? $" to {st.Upstream}" : "") + ". Pass confirm=true to push." };
             }
             var args = new System.Collections.Generic.List<string> { "push" };
             if (!string.IsNullOrWhiteSpace(remote)) args.Add(remote);
@@ -4913,13 +6012,19 @@ namespace Semanticus.Engine
                 if (File.Exists(full)) files = new[] { full };
                 else if (Directory.Exists(full))
                 {
+                    // A TMDL root used to hash only *.tmdl, so an edit to anything else the folder holds (a
+                    // diagram layout, definition.pbism, a hand-kept note) was invisible and the save replaced it
+                    // with no prompt (SAVE-08). The save rewrites the WHOLE folder, so the guard watches the whole
+                    // folder. Same rule the non-TMDL branch below already uses.
                     if (ModelPathResolver.IsTmdlRoot(full))
                         files = Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories)
-                            .Where(f => f.EndsWith(".tmdl", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".tmd", StringComparison.OrdinalIgnoreCase))
+                            .Where(f => !IsEngineOrGitSidecar(Path.GetRelativePath(full, f)))
+                            .Where(f => !IsSaveTransient(Path.GetRelativePath(full, f)))
                             .ToArray();
                     else if (File.Exists(Path.Combine(full, "model.bim"))) files = new[] { Path.Combine(full, "model.bim") };
                     else files = Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories)
                         .Where(f => !IsEngineOrGitSidecar(Path.GetRelativePath(full, f)))
+                        .Where(f => !IsSaveTransient(Path.GetRelativePath(full, f)))
                         .ToArray();
                 }
                 else return null;
@@ -4971,6 +6076,15 @@ namespace Semanticus.Engine
             var first = relative.Replace('\\', '/').Split('/')[0];
             return string.Equals(first, ".git", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(first, ".semanticus", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>A save stages a new tree as ".semanticus-save-*" and parks the old one as ".semanticus-bak-*".
+        /// That is the engine's own churn mid-save, never a person's edit, so it must not count as a disk change.</summary>
+        private static bool IsSaveTransient(string relative)
+        {
+            var first = relative.Replace('\\', '/').Split('/')[0];
+            return first.StartsWith(".semanticus-save-", StringComparison.OrdinalIgnoreCase)
+                || first.StartsWith(".semanticus-bak-", StringComparison.OrdinalIgnoreCase);
         }
 
         private (string Full, string Parent, string Anchor, string Error) GitCloneTarget(string directory)
@@ -5191,7 +6305,7 @@ namespace Semanticus.Engine
                 try { return (ModelCompare.LoadRawModelDb(snap.BimPath), r?.Label ?? (string.IsNullOrWhiteSpace(r.Database) ? r.Endpoint : r.Database), wclean); }
                 catch { wclean(); throw; }   // a load failure must not orphan the live snapshot dir (mirror gitref)
             }
-            throw new InvalidOperationException($"Unsupported model ref kind '{kind}' — use session | file | gitref | workspace.");
+            throw new InvalidOperationException($"Unsupported model ref kind '{kind}'. Use session | file | gitref | workspace.");
         }
 
         // origin steers the workspace-target sign-in fallback ONLY: a "human" compare may open an interactive sign-in;
@@ -5208,13 +6322,13 @@ namespace Semanticus.Engine
             finally { lclean(); }
         }
 
-        public async Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null)
+        public async Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null, string confirmToken = null)
         {
             var rkind = (right?.Kind ?? "").Trim().ToLowerInvariant();
-            if (rkind == "session") return await ApplyDiffIntoSessionAsync(left, selectedRefs, commit, origin);   // undoable merge into the open model
+            if (rkind == "session") return await ApplyDiffIntoSessionAsync(left, selectedRefs, commit, origin, confirmToken);   // undoable merge into the open model
             if (rkind == "workspace") return await ApplyDiffToWorkspaceAsync(left, right, selectedRefs, commit, origin, overrideReason);   // selective push to a published model
             if (rkind == "gitref")
-                return new ApplyDiffResult { Error = "apply_diff can't target a 'gitref' — a git ref is history, not a writable target. Check it out (git_checkout), merge the change into the working tree, then git_commit." };
+                return new ApplyDiffResult { Error = "apply_diff can't target a 'gitref'. A git ref is history, not a writable target. Check it out (git_checkout), merge the change into the working tree, then git_commit." };
             if (rkind != "file")
                 return new ApplyDiffResult { Error = "apply_diff target must be 'file' (write to disk), 'session' (merge into the open model), or 'workspace' (push to a published XMLA model)." };
             if (string.IsNullOrWhiteSpace(right.Path)) return new ApplyDiffResult { Error = "The target 'file' ref needs a path." };
@@ -5225,8 +6339,20 @@ namespace Semanticus.Engine
                 var diff = ModelCompare.Diff(ldb.Model, rdb.Model, llabel, right.Label ?? right.Path);
                 var selected = selectedRefs != null && selectedRefs.Length > 0 ? new System.Collections.Generic.HashSet<string>(selectedRefs) : null;
                 var applicable = diff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).Select(i => i.Ref).ToArray();
+                var sessionId = _sessions.Current?.Id;
+                var revision = _sessions.Current?.Revision ?? 0;
+                var targetFull = System.IO.Path.GetFullPath(right.Path);
+                var targetHash = ReviewFence.HashFile(targetFull);
+                var expectedToken = ReviewFence.Mint(sessionId, revision, ReviewFence.FileTargetIdentity(targetFull) + "|" + targetHash, applicable);
                 if (!commit)
-                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, Target = right.Path, Note = "Preview — pass commit=true to write the selected change(s) into the target file." };
+                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, Target = right.Path, ConfirmToken = expectedToken, Note = "These changes are ready. Confirm to write them into the file." };
+
+                if (applicable.Length == 0)
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = right.Path, Note = "Nothing to write. The chosen items already match, or they are gone. The file was not changed." };
+
+                var fence = ReviewFence.Refusal(true, confirmToken, expectedToken);
+                if (fence != null)
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = right.Path, Error = fence };
 
                 // Pro gate — same rule as the session path (:3162): merging MULTIPLE objects in one commit is the
                 // bulk/atomic primitive. Without this, bulk merge-to-file was a free route around the session gate
@@ -5246,7 +6372,7 @@ namespace Semanticus.Engine
                 {
                     var m = vex.Message; if (m.Length > 300) m = m.Substring(0, 300) + "…";
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = outcome.Applied.ToArray(), FailedRefs = failedRefs, Target = right.Path,
-                        Error = "The merge produced an invalid model (" + m + ") — the target was NOT written. Re-run with a selection whose dependencies are included." };
+                        Error = "The merge produced an invalid model (" + m + "). The target was NOT written. Re-run with a selection whose dependencies are included." };
                 }
                 ModelCompare.SaveRawModel(rdb, right.Path);
                 var note = $"Applied {outcome.Applied.Count} change(s) into {right.Path}.";
@@ -5260,7 +6386,7 @@ namespace Semanticus.Engine
         // model — Create/Update copy the source object in via the wrapper API, Delete removes the open-model object —
         // as ONE MutateAsync (one undo step). Reuses the same wrapper-API copy path as cherry_pick (so it's
         // change-tracked + undoable, unlike a raw-TOM apply). Unsupported types surface in FailedRefs, never dropped.
-        private async Task<ApplyDiffResult> ApplyDiffIntoSessionAsync(ModelRef left, string[] selectedRefs, bool commit, string origin)
+        private async Task<ApplyDiffResult> ApplyDiffIntoSessionAsync(ModelRef left, string[] selectedRefs, bool commit, string origin, string confirmToken)
         {
             var (ldb, llabel, lclean) = await ResolveModelRefAsync(left ?? new ModelRef { Kind = "session" }, origin);
             try
@@ -5275,6 +6401,8 @@ namespace Semanticus.Engine
                     .OrderBy(i => i.Action == "Delete" ? 1 : 0)
                     .ThenBy(i => i.Action == "Delete" ? (string.IsNullOrEmpty(i.Table) ? 1 : 0) : (string.IsNullOrEmpty(i.Table) ? 0 : 1)).ToList();
                 var s = _sessions.Require();
+                var applicable = items.Select(i => i.Ref).ToArray();
+                var expectedToken = ReviewFence.Mint(s.Id, s.Revision, ReviewFence.SessionTargetIdentity(), applicable);
                 if (!commit)
                 {
                     var pv = await s.ReadAsync(m =>
@@ -5288,9 +6416,15 @@ namespace Semanticus.Engine
                         }
                         return (ok, fail);
                     });
-                    return new ApplyDiffResult { Applied = false, Count = pv.ok.Count, AppliedRefs = pv.ok.ToArray(), FailedRefs = pv.fail.ToArray(), Target = "open model",
-                        Note = $"Preview — {pv.ok.Count} change(s) would merge into the open model (undoable)" + (pv.fail.Count > 0 ? $"; {pv.fail.Count} cannot" : "") + ". Pass commit=true to apply." };
+                    return new ApplyDiffResult { Applied = false, Count = pv.ok.Count, AppliedRefs = pv.ok.ToArray(), FailedRefs = pv.fail.ToArray(), Target = "open model", ConfirmToken = expectedToken,
+                        Note = $"Preview: {pv.ok.Count} change(s) would merge into the open model (undoable)" + (pv.fail.Count > 0 ? $"; {pv.fail.Count} cannot" : "") + ". Pass commit=true to apply." };
                 }
+                if (items.Count == 0)
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = "open model",
+                        Note = "Nothing to write. The chosen items already match, or they are gone. The open model was not changed." };
+                var fence = ReviewFence.Refusal(true, confirmToken, expectedToken);
+                if (fence != null)
+                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = "open model", Error = fence };
                 // Pro gate: merging MULTIPLE objects into the open model in one undoable batch is the bulk/atomic
                 // primitive (the Pro value); a single-ref merge stays free, and the commit=false preview above is
                 // read-only + free. Thrown before the mutate, so a refusal leaves the model intact.
@@ -5318,367 +6452,6 @@ namespace Semanticus.Engine
                     Note = $"Merged {applied.Count} change(s) into the open model." + (failed.Count > 0 ? $" {failed.Count} could not apply: " + string.Join("; ", failed) : "") };
             }
             finally { lclean(); }
-        }
-
-        // --- Test seams for the workspace (selective-push) target. Live XMLA is not exercised offline, so tests
-        // inject in-memory snapshots (A then B, for the drift check) and a fake push — exercising the merge / validate
-        // / drift / gate / audit legs WITHOUT a real endpoint. Null (production) = the real live path. ---
-        internal Func<Task<RawTom.Database>> WorkspaceSnapshotHook;
-        internal Func<string, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget>, DeployReport> WorkspacePushHook;
-
-        // apply_diff into a PUBLISHED model on an XMLA endpoint — the ALM-Toolkit-style selective push. Merge the
-        // chosen diff items from `left` onto a snapshot of the live target, then push ONLY those objects. Preview + a
-        // single-object push are FREE; a multi-object atomic push is Pro (IDENTICAL rule to the file/session paths).
-        // Deployment itself is never surcharged. A drift guard runs for BOTH tiers (safety is never paywalled): if the
-        // target changed under us between the diff and the commit, we REFUSE unless overrideReason is supplied (the
-        // accountable override, recorded on the audit trail). Explicitly-selected Delete refs ARE pushed (real removals
-        // over XMLA — ALM Toolkit / Tabular Editor do the same; absence still never deletes).
-        private async Task<ApplyDiffResult> ApplyDiffToWorkspaceAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason)
-        {
-            if (string.IsNullOrWhiteSpace(right.Endpoint))
-                return new ApplyDiffResult { Error = "The target 'workspace' ref needs an XMLA endpoint (e.g. powerbi://api.powerbi.com/v1.0/myorg/Workspace)." };
-            if (string.IsNullOrWhiteSpace(right.Database))
-                return new ApplyDiffResult { Error = "The target 'workspace' ref needs a database (dataset) name — a push must name its target dataset explicitly." };
-
-            var cleanups = new System.Collections.Generic.List<Action>();
-            void CleanupAll() { foreach (var c in cleanups) { try { c(); } catch { } } }
-            var (ldb, llabel, lclean) = await ResolveModelRefAsync(left ?? new ModelRef { Kind = "session" }, origin);
-            cleanups.Add(lclean);
-            try
-            {
-                var authMode = string.IsNullOrWhiteSpace(right.AuthMode) ? "azcli" : right.AuthMode;
-                var tlabel = right.Label ?? right.Database;
-
-                // Snapshot the CURRENT deployed metadata (read-only), loaded as raw TOM like a file — "snapshot A".
-                // Capture the EFFECTIVE auth mode it authenticated with, so the eventual push reuses that same proven
-                // credential instead of re-acquiring the mode the endpoint already rejected (see PushWorkspaceAsync).
-                var (adb, effectiveMode) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
-
-                var diff = ModelCompare.Diff(ldb.Model, adb.Model, llabel, tlabel);
-                var selected = selectedRefs != null && selectedRefs.Length > 0 ? new System.Collections.Generic.HashSet<string>(selectedRefs) : null;
-                var selectedItems = diff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).ToList();
-                // RETAG/REPUBLISH: a selected item that exists on both sides under a DIFFERENT lineage tag — Match emits a
-                // Delete + Create pair (sharing a name-based ref). Deleting/replacing would drop the LIVE object and its
-                // data (usually the model was republished under us). REFUSED (both halves) — held OUT of the push pipeline
-                // (so they never count toward the Pro gate / drift / apply) and reported. Deduped by ref.
-                var republishDeleteRefs = selectedItems.Where(i => i.LikelyRepublished).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
-                string RepublishReason(string r) => r + " (refused as a likely republish — a same-named object exists on the target with a DIFFERENT lineage tag; deleting or replacing it would drop the live object and its data. This usually means the model was republished under you. Re-diff against the current model, or push the update instead.)";
-                var applicableItems = selectedItems.Where(i => !i.LikelyRepublished).ToList();
-                var applicable = applicableItems.Select(i => i.Ref).ToArray();
-                var deleteRefs = applicableItems.Where(i => i.Action == "Delete").Select(i => i.Ref).ToArray();
-                var pushRefs = applicableItems.Where(i => i.Action != "Delete").Select(i => i.Ref).ToArray();
-
-                // The preview MUST disclose deletes distinctly — a destructive, irreversible act on a published model
-                // must never be discovered after the fact.
-                string DeleteNote() => deleteRefs.Length == 0 ? "" : $" {deleteRefs.Length} object(s) will be DELETED from the published model: {string.Join(", ", deleteRefs)}.";
-                string RepublishNote() => republishDeleteRefs.Length == 0 ? "" : $" {republishDeleteRefs.Length} selected item(s) will be REFUSED as a likely republish (same name, different lineage tag — deleting would drop live data): {string.Join(", ", republishDeleteRefs)}.";
-
-                if (!commit)
-                {
-                    var note = $"Preview — {pushRefs.Length} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + " Pass commit=true to push.";
-                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs, Target = tlabel, Note = note };
-                }
-
-                // NOTHING TO PUSH: the selection matched no pending difference the push can carry. If the ONLY selection
-                // was a refused republish, say THAT (not "nothing to push"). Either way, no live write happened.
-                if (applicable.Length == 0)
-                {
-                    if (republishDeleteRefs.Length > 0)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = republishDeleteRefs.Select(RepublishReason).ToArray(), Target = tlabel,
-                            Note = "Nothing was pushed." + RepublishNote() };
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
-                        Note = $"Nothing to push — the selection matched no pending difference between the source and {right.Database} on {right.Endpoint}." };
-                }
-
-                // Pro gate — IDENTICAL rule to file/session (applicable.Length > 1): the atomic multi-object push is the
-                // bulk primitive; a single-object push stays free and the preview above is read-only + free. Deletes
-                // gate the same as any object — no extra gate. Thrown before any snapshot mutation → a refusal writes nothing.
-                if (applicable.Length > 1)
-                    Entitlement.EntitlementGuard.RequirePro(_entitlement, "Pushing multiple objects to a published model at once",
-                        "Push one object at a time (pass a single ref in selectedRefs); previewing all changes stays free.");
-
-                // ---- Agent-permissions gate. Same governance the deploy_live hole exposed, on the selective-push path.
-                // A push that DELETES escalates to the delete capability, so a policy can forbid an agent deleting from
-                // prod even where it would permit an update. Runs before the drift snapshot → a refusal writes nothing.
-                {
-                    var cap = deleteRefs.Length > 0 ? AgentCapability.DeployDelete : AgentCapability.DeployLive;
-                    var what = deleteRefs.Length > 0
-                        ? $"push {applicable.Length} change(s) incl. {deleteRefs.Length} delete(s) to {right.Database} on {right.Endpoint}"
-                        : $"push {applicable.Length} change(s) to {right.Database} on {right.Endpoint}";
-                    // intentBasis = the exact ref set (deletes distinguished): the grant authorises THESE objects. An
-                    // agent that re-plans to a different selection — same count, different objects — must re-ask.
-                    var basis = "apply:" + string.Join("\n", applicable.OrderBy(r => r, StringComparer.Ordinal))
-                        + "\n#del:" + string.Join("\n", deleteRefs.OrderBy(r => r, StringComparer.Ordinal));
-                    var refusal = GuardAgent(cap, right.Endpoint, right.Database, origin, isCommit: true, summary: what, intentBasis: basis);
-                    if (refusal != null)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel, Error = refusal };
-                }
-
-                // ---- Drift guard (ALWAYS ON, both tiers). Between the diff and this commit the live target can change
-                // under us. Re-snapshot ("snapshot B" = the CURRENT live state) and compare each ref we're about to
-                // overwrite (adds/updates AND deletes) A-vs-B, restricted to the SELECTED refs; any non-Equal ⇒ someone
-                // edited a ref we intend to change since we diffed. Deletes are irreversible on a published model, so
-                // they are guarded too. Snapshot A stays only the drift BASELINE — we no longer push it (see below).
-                var (bdb, _) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
-                // The RESTORE POINT is snapshot B, and it must be captured HERE: ModelCompare.Apply below merges the
-                // selected changes INTO bdb in place, so serializing it any later would persist the post-push state and
-                // silently make rollback a no-op. Cheap (in-memory) and it also works under the offline test hook.
-                var restoreJson = RawTom.JsonSerializer.SerializeDatabase(bdb);
-                var applicableSet = new System.Collections.Generic.HashSet<string>(applicable, StringComparer.Ordinal);
-                var driftRefs = ModelCompare.Diff(adb.Model, bdb.Model, "before", "now").Items
-                    .Where(i => i.Action != "Equal" && applicableSet.Contains(i.Ref)).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
-
-                if (driftRefs.Length > 0 && string.IsNullOrWhiteSpace(overrideReason))
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
-                        Error = "Drift guard: the target changed under you since the diff — " + string.Join(", ", driftRefs)
-                            + " differ on the live model now. Nothing was pushed. Re-run to diff against the current state, or pass overrideReason to push anyway (the override is recorded in the audit trail)." };
-
-                // CORRECTNESS: merge into snapshot B (the CURRENT live), NEVER the stale A. SyncSessionToLive diffs the
-                // pushed model against the current live and syncs EVERY difference (it is selection-unaware), so pushing
-                // A+selection would REVERT any UNSELECTED object a colleague changed since A — a silent lost update the
-                // drift guard can't catch (it only inspects the selected refs). Merging into B makes "pushed =
-                // current-live + selected changes" literally true, so SyncSessionToLive emits changes ONLY for the
-                // selected objects and unrelated concurrent edits are PRESERVED — the per-object last-writer-wins policy
-                // of docs/op-routing-map.md, with the drift guard as the explicit revision-guard on the objects we touch.
-                // The A-diff drives the preview + the Pro gate count (what the user previewed is what they're gated on);
-                // the B-diff drives what is actually applied.
-                var bdiff = ModelCompare.Diff(ldb.Model, bdb.Model, llabel, tlabel);
-                var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).ToList();
-                // REFUSE retag/republish items (same name, different lineage tag ⇒ Match emits a Delete + Create pair
-                // that SHARE a name-based ref). Both halves are excluded from the push: deleting would drop the live
-                // object + its data, and the paired Create can't add a same-named object while the live one exists. The
-                // safe move is to push an UPDATE or re-diff. Reported (deduped by ref) in FailedRefs.
-                var republishRefsB = bItems.Where(i => i.LikelyRepublished).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
-                var deleteItemsB = bItems.Where(i => i.Action == "Delete" && !i.LikelyRepublished).ToList();
-                var deleteRefsB = deleteItemsB.Select(i => i.Ref).ToArray();   // ref strings — for the preview/summary/evidence only
-                // IDENTITY-carrying delete targets — what the live-delete channel actually resolves by (tag-terminal),
-                // NOT the ref strings (a ref is for reporting, never a resolver). Captured from the B-diff items, whose
-                // Target* identity was recorded at diff time, so the removal lands on the RIGHT object on the third live
-                // state SyncSessionToLive loads — never a same-named impostor.
-                var deleteTargetsB = deleteItemsB.Select(LiveDeleteTarget.FromDiffItem).ToArray();
-                var pushRefsB = bItems.Where(i => i.Action != "Delete" && !i.LikelyRepublished).Select(i => i.Ref).ToArray();
-                // A selected ref that is now Equal on B (a colleague made the same change, or it converged) has no
-                // B-diff entry — it drops out as a NO-OP; report it, don't count it as applied.
-                var bApplicableSet = new System.Collections.Generic.HashSet<string>(bItems.Select(i => i.Ref), StringComparer.Ordinal);
-                var noOpRefs = applicable.Where(r => !bApplicableSet.Contains(r)).ToArray();
-
-                // Merge the selected ADDS/UPDATES into snapshot B (deletes go via the explicit channel, never merged).
-                // ModelCompare.Apply's contract is now null ⇒ all, EMPTY ⇒ none (the old "empty == apply-all" loaded gun
-                // is gone), so a delete-only push (pushRefsB empty) with an empty applySelected would apply nothing
-                // anyway. We still skip the call when there are no adds/updates — no point building the diff apply.
-                var outcome = new ModelCompare.ApplyOutcome();
-                if (pushRefsB.Length > 0)
-                {
-                    var applySelected = new System.Collections.Generic.HashSet<string>(pushRefsB, StringComparer.Ordinal);
-                    outcome = ModelCompare.Apply(ldb.Model, bdb.Model, bdiff, applySelected);
-                }
-                var failed = new System.Collections.Generic.List<string>(outcome.Failed.Select(f => f.Ref + " (" + f.Reason + ")"));
-                // Retag/republish items are refused with a clear, actionable reason (routed to FailedRefs). Never pushed.
-                foreach (var r in republishRefsB) failed.Add(RepublishReason(r));
-
-                // BLOCKER 1 (staging-collision coupling): a relationship Delete whose paired replacement Create was SELECTED
-                // but did NOT stage — an in-place re-point keeps the same endpoint pair on one side so the merged Create
-                // collides with the old relationship still in snapshot B, or the Create was otherwise refused — must NOT
-                // reach the explicit-delete channel: removing the old relationship with no replacement is data loss. Abort
-                // the whole push (atomic, like every delete refusal). A re-point that DID stage (its new endpoints resolve
-                // in B) is carried, and its deploy-time failure is caught downstream by SyncSessionToLive's own coupling.
-                // ROUND 6: this now also covers a CROSS-TABLE re-point (moved endpoint on a different table, or both endpoints
-                // moving) that keeps the relationship NAME. ModelCompare couples such a pair by shared name (SameRelName), so
-                // its Delete carries ReplacementCreateRefs; the merged Create still collides on the duplicate name in snapshot
-                // B and lands in outcome.Failed (not stagedOk), so the check below refuses the Delete — no separate same-name
-                // dependency is needed here because the coupling makes THIS guard fire on exactly that duplicate-name failure.
-                var stagedOk = new System.Collections.Generic.HashSet<string>(outcome.Applied, StringComparer.Ordinal);
-                var pushRefSet = new System.Collections.Generic.HashSet<string>(pushRefsB, StringComparer.Ordinal);
-                // A delete is refused if ANY of its required replacement Creates was selected in this push (pushRefSet) but
-                // failed to stage (not in stagedOk). One ref for a one-to-one re-point; the whole candidate group for an
-                // ambiguous set (then the delete is safe only if every sibling replacement staged too — fail-closed).
-                var replacementUnstaged = deleteItemsB
-                    .Where(di => di.ReplacementCreateRefs != null && di.ReplacementCreateRefs.Any(rc =>
-                                 pushRefSet.Contains(rc)          // the replacement Create was in this selection
-                                 && !stagedOk.Contains(rc)))      // ...but it failed to stage
-                    .Select(di => di.Ref).Distinct(StringComparer.Ordinal).ToArray();
-                if (replacementUnstaged.Length > 0)
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(),
-                        FailedRefs = failed.Concat(replacementUnstaged.Select(r => r + " (delete refused: its replacement relationship could not be staged in this push; removing the old one would leave no relationship. Re-diff.)")).ToArray(),
-                        Target = tlabel, Note = $"Nothing reached {right.Database} on {right.Endpoint}. Delete refused (nothing pushed): {string.Join(", ", replacementUnstaged)}.",
-                        Error = "Delete refused to avoid data loss: " + string.Join(", ", replacementUnstaged) + ". The replacement relationship could not be staged (its old form still occupies the model), so deleting the old one would leave no relationship. NOTHING was pushed. Re-diff against the current model." };
-
-                // Validate the MERGED model in memory BEFORE any live write — the invariant the file branch holds: a
-                // corrupt merge (an orphaned reference from a partial selection) throws here and we refuse to write.
-                try { _ = RawTom.JsonSerializer.SerializeDatabase(bdb); }
-                catch (Exception vex)
-                {
-                    var m = vex.Message; if (m.Length > 300) m = m.Substring(0, 300) + "…";
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = outcome.Applied.ToArray(), FailedRefs = failed.ToArray(), Target = tlabel,
-                        Error = "The merge produced an invalid model (" + m + ") — the target was NOT written. Re-run with a selection whose dependencies are included." };
-                }
-
-                // Serialize the merged model (current-live + selected changes) to a temp .bim and push. SyncSessionToLive
-                // now emits ADDS/UPDATES only for the selected objects (everything else already matches live); the
-                // explicit delete refs remove exactly the ticked objects — all inside one SaveChanges.
-                var bim = CreatePushStagingPath(cleanups);
-                System.IO.File.WriteAllText(bim, RawTom.JsonSerializer.SerializeDatabase(bdb));
-
-                // ---- Accountable drift override (recorded BEFORE the push). Kane ratified the override as ACCOUNTABLE:
-                // you cannot ship past the drift guard without its reason on the audit trail. This MATCHES deploy_live,
-                // which appends the override record BEFORE it deploys, awaited and un-swallowed, so a failed append means
-                // nothing ships. The prior post-success record here could be silently dropped — no session, or the audit
-                // write threw — leaving an override with no record. So: if an override is in play (driftRefs.Length > 0)
-                // we require an open session to carry the trail and write the "overridden" record NOW; if there's no
-                // session, or the record can't be written, we REFUSE the push rather than mutate production
-                // un-accountably. (Trade-off vs the old "no phantom override": if the push then fails, a recorded-but-
-                // unshipped override can exist — the same property deploy_live accepts. An unrecorded SHIPPED override is
-                // the worse outcome, so we prefer this. The non-override "deployed" record still lands post-success below,
-                // where a failed audit write can't misreport an already-succeeded push. A non-override push needs no
-                // session — nothing accountable to record before it — and proceeds as before.)
-                if (driftRefs.Length > 0)
-                {
-                    var osess = _sessions.Current;
-                    if (osess == null)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel,
-                            Error = "Drift override refused: an accountable override needs an open session to record its reason on the audit trail, and none is open. Nothing was pushed. Open the model (open_live / open_local) and retry, or re-run to diff against the current state." };
-                    try
-                    {
-                        await RecordVerifiedEditAsync(osess, new VerifiedEditRecord
-                        {
-                            SessionId = osess.Id, Revision = 0, Origin = origin, Op = "apply_model_diff",   // 0: a push is not a local model mutation
-                            Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                            Summary = $"drift override — pushing {pushRefsB.Length + deleteRefsB.Length} selected change(s) to {right.Endpoint}/{right.Database} despite drift on: {string.Join(", ", driftRefs)}",
-                            Evidence = System.Text.Json.JsonSerializer.Serialize(new { right.Endpoint, right.Database, drifted = driftRefs, willPush = pushRefsB, willDelete = deleteRefsB }),
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel,
-                            Error = "Drift override refused: its reason could not be recorded on the audit trail (" + FabricRest.Scrub(ex.Message) + ") — refusing to push an unrecorded override. Nothing was pushed." };
-                    }
-                }
-
-                // ---- Pre-push RESTORE POINT. A live delete is PERMANENT: RemoveExplicit removes 11 object kinds and
-                // SyncModels can only ever add back measures / calc columns / calc tables / named expressions, so a
-                // relationship, role, perspective, hierarchy, partition, culture, datasource or data table is otherwise
-                // gone for good. Kane's rule (2026-07-09): NO RESTORE POINT, NO DELETE — fail closed. A push with no
-                // deletes is recoverable by re-pushing, so there a failed restore point is a warning, not a refusal.
-                RestorePointRecord restorePoint = null;
-                string restoreError = null;
-                try
-                {
-                    restorePoint = RestorePointStore.Write(right.Endpoint, right.Database, restoreJson, "apply_model_diff",
-                        $"{pushRefsB.Length} change(s), {deleteRefsB.Length} delete(s)", pushRefsB, deleteRefsB);
-                }
-                catch (Exception ex) { restoreError = FabricRest.Scrub(ex.Message); }
-
-                if (restorePoint == null && deleteTargetsB.Length > 0)
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel,
-                        Error = "Delete refused: a restore point could not be written (" + (restoreError ?? "unknown error")
-                            + "), and a delete on a published model cannot be undone without one. Nothing was pushed. Free some disk space under ~/.semanticus/restore and retry, or de-select the deletes to push the remaining changes." };
-
-                var rep = await PushWorkspaceAsync(bim, right.Endpoint, right.Database, effectiveMode, deleteTargetsB, right.TenantId);   // reuse the credential the snapshot proved (P2-5); tenant threaded to the write (HIGH 6)
-                // NOTHING committed (SaveChanges wrote nothing) AND an error ⇒ a true failure; never claim success
-                // (surface it verbatim, incl. a rejected delete-of-a-table-with-dependents, which SaveChanges refuses
-                // atomically). CRITICAL: this branches on rep.Committed, NOT rep.Error. SyncSessionToLive commits in TWO
-                // steps — the metadata SaveChanges (sets Committed=true), then a SECOND SaveChanges that recalcs new
-                // calc-tables. If the recalc fails, rep.Error is set BUT rep.Committed stays TRUE and the metadata is
-                // ALREADY LIVE. Returning "nothing applied" there would understate a production mutation (the worst
-                // tool-result-contract violation) and skip the audit record. So a partial success (Committed==true WITH
-                // an Error) falls THROUGH to the normal reconciliation + audit below; its recalc warning is surfaced on
-                // the result at the end. Only a genuinely-nothing-written failure returns here.
-                if (rep != null && !rep.Committed && rep.Error != null)
-                {
-                    // A delete-refusal abort (drift, or a conflict/replacement) carries its refused refs on the report.
-                    // The old return surfaced them ONLY in the free-form Error; the contract's structured fields
-                    // (FailedRefs + Note) were left empty. Populate both so a caller reading the fields sees the refused
-                    // refs, not just the prose. Nothing was committed, so Applied stays false.
-                    var refusedAll = (rep.DeletesRefused ?? Array.Empty<string>()).Concat(rep.DeletesRefusedConflict ?? Array.Empty<string>()).ToArray();
-                    if (refusedAll.Length == 0)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = failed.ToArray(), Target = tlabel, Error = rep.Error };
-                    var abortFailed = new System.Collections.Generic.List<string>(failed);
-                    foreach (var rr in rep.DeletesRefused ?? Array.Empty<string>())
-                        abortFailed.Add(rr + " (delete refused: identity gone and a different object now bears the name; re-diff)");
-                    foreach (var rr in rep.DeletesRefusedConflict ?? Array.Empty<string>())
-                        abortFailed.Add(rr + " (delete refused: its replacement was not created, or the same object was just updated; re-diff)");
-                    var abortNote = $"Nothing reached {right.Database} on {right.Endpoint}. Delete refused (nothing pushed): {string.Join(", ", refusedAll)}.";
-                    return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = abortFailed.ToArray(), Target = tlabel, Note = abortNote, Error = rep.Error };
-                }
-
-                // RECONCILE the local merge against what the live deploy ACTUALLY synced. outcome.Applied is only what
-                // merged into the temp .bim; SyncSessionToLive carries a SUBSET of object types (e.g. relationships /
-                // roles / perspectives aren't pushed by a metadata deploy) and reports others as Unmatched / Conflicts.
-                // A merged ref counts as APPLIED only if the deploy synced it (rep.SyncedRefs) AND it didn't surface as
-                // unsynced. Everything else the merge claimed moves to FailedRefs with the deploy's own reason — the
-                // result must describe the LIVE model, never overstate success (docs/harness-engineering.md contract).
-                var syncedSet = new System.Collections.Generic.HashSet<string>(rep?.SyncedRefs ?? Array.Empty<string>(), StringComparer.Ordinal);
-                var unsyncedReports = (rep?.Unmatched ?? Array.Empty<string>()).Concat(rep?.Conflicts ?? Array.Empty<string>()).ToArray();
-                var confirmed = new System.Collections.Generic.List<string>();
-                foreach (var appliedRef in outcome.Applied)
-                {
-                    var reportEntry = unsyncedReports.FirstOrDefault(e => DeployEntryConcernsRef(e, appliedRef));
-                    if (reportEntry != null)
-                        failed.Add(appliedRef + " (live deploy did not sync it: " + reportEntry + ")");
-                    else if (syncedSet.Contains(appliedRef))
-                        confirmed.Add(appliedRef);
-                    else
-                        failed.Add(appliedRef + " (merged locally but the live deploy did not carry it — a metadata deploy doesn't push this object type; deploy it via TMDL/XMLA)");
-                }
-
-                // A REFUSED delete (the ticked object's identity is gone AND a different object now bears its name — the
-                // live-delete channel refused to delete the wrong object) is surfaced as a Failed ref with a clear,
-                // actionable reason. It is NOT an applied change and NOT a silent no-op.
-                foreach (var rr in rep?.DeletesRefused ?? Array.Empty<string>())
-                    failed.Add(rr + " (delete refused — the object's lineage identity no longer resolves on the live model and a different object now bears its name; re-diff before deleting)");
-
-                var appliedCount = confirmed.Count + (rep?.Deleted ?? 0);
-                var appliedRefs = confirmed.Concat(rep?.DeletedRefs ?? Array.Empty<string>()).ToArray();
-
-                // Outcome record for a NON-override push (Verdict=deployed). The override's accountable "overridden"
-                // record was written BEFORE the push (above); this post-success record is SKIPPED for the override path,
-                // so a failed override push leaves no phantom "deployed". A failed audit write here can't misreport the
-                // push — it already succeeded — so it's swallowed. Evidence records what CONFIRMED-synced, not what
-                // merely merged locally.
-                var sess = _sessions.Current;
-                if (driftRefs.Length == 0 && sess != null && rep != null && rep.Committed)
-                    try
-                    {
-                        await RecordVerifiedEditAsync(sess, new VerifiedEditRecord
-                        {
-                            SessionId = sess.Id, Revision = 0, Origin = origin, Op = "apply_model_diff",   // 0: a push is not a local model mutation
-                            Verdict = "deployed",
-                            Summary = $"pushed {rep.TotalChanges} change(s) to {right.Endpoint}/{right.Database}",
-                            Evidence = System.Text.Json.JsonSerializer.Serialize(new { right.Endpoint, right.Database, rep.TotalChanges, pushed = confirmed, deleted = rep.DeletedRefs, deletesRefused = rep.DeletesRefused, noOp = noOpRefs, notSynced = failed }),
-                        });
-                    }
-                    catch { /* the push succeeded; a failed audit write must not misreport it */ }
-
-                // APPLIED is truthful — tied to the deploy: either it committed real change(s), or (nothing was left to
-                // change AND nothing failed) it's a clean, verified no-op. A push where everything the merge claimed
-                // failed to reach live is NOT a success.
-                var applied = appliedCount > 0 ? (rep?.Committed == true) : failed.Count == 0;
-                string noteOut;
-                if (appliedCount > 0)
-                    noteOut = $"Pushed {appliedCount} change(s) ({rep?.TotalChanges ?? 0} live edit(s)) to {right.Database} on {right.Endpoint}.";
-                else if (failed.Count > 0)
-                    noteOut = $"Nothing reached {right.Database} on {right.Endpoint}.";
-                else
-                    noteOut = $"No changes were needed on {right.Database} on {right.Endpoint} (already reconciled).";
-                if ((rep?.DeletedRefs.Length ?? 0) > 0) noteOut += $" Deleted: {string.Join(", ", rep.DeletedRefs)}.";
-                if ((rep?.DeletesAlreadyAbsent.Length ?? 0) > 0) noteOut += $" Already absent (no-op): {string.Join(", ", rep.DeletesAlreadyAbsent)}.";
-                if ((rep?.DeletesRefused.Length ?? 0) > 0) noteOut += $" DELETE REFUSED (identity gone and a different object now bears the name; re-diff): {string.Join(", ", rep.DeletesRefused)}.";
-                if ((rep?.DeletesRefusedConflict.Length ?? 0) > 0) noteOut += $" DELETE REFUSED to avoid data loss (its replacement was not created, or the same object was just updated; re-diff): {string.Join(", ", rep.DeletesRefusedConflict)}.";
-                if (noOpRefs.Length > 0) noteOut += $" Already reconciled on the target since the diff — no-op ({noOpRefs.Length}): {string.Join(", ", noOpRefs)}.";
-                if (failed.Count > 0) noteOut += " Not synced: " + string.Join("; ", failed);
-                if (driftRefs.Length > 0) noteOut += $" Drift override accepted for: {string.Join(", ", driftRefs)}.";
-                // Tell the caller how to undo what they just did — a restore point nobody knows about is not a safety net.
-                if (restorePoint != null && applied) noteOut += $" Undo this with rollback_push('{restorePoint.Id}').";
-                else if (restoreError != null) noteOut += $" No restore point was written ({restoreError}) — this push cannot be rolled back.";
-                // PARTIAL SUCCESS (A1): metadata committed but the calc-table recalc failed — the metadata IS live, so
-                // Applied stays truthful, but the recalc warning is surfaced PROMINENTLY (Note + Error) so the caller
-                // knows a new calc table exists-but-is-empty and needs a refresh. Never dropped.
-                var partialErr = (rep != null && rep.Committed && rep.Error != null) ? rep.Error : null;
-                if (partialErr != null) noteOut += " Warning: " + partialErr;
-                return new ApplyDiffResult { Applied = applied, Count = appliedCount, AppliedRefs = appliedRefs, FailedRefs = failed.ToArray(), Target = tlabel, Note = noteOut, Error = partialErr,
-                    RestorePointId = applied ? restorePoint?.Id : null };
-            }
-            finally { CleanupAll(); }
         }
 
         // Does a DeployReport Unmatched/Conflicts entry concern this object ref? Entries read "<ref> (reason…)",
@@ -5773,7 +6546,7 @@ namespace Semanticus.Engine
                 var changed = diff.Items.Where(i => i.Action != "Equal").ToList();
                 // A retag/republish emits a Delete+Create pair sharing a name-based ref: we can neither delete the live
                 // object nor add a same-named one beside it. Excluded from the rollback — and REPORTED, never dropped.
-                var republished = changed.Where(i => i.LikelyRepublished).Select(i => i.Ref + " (republished under us — re-run rollback_push to diff against the current state)")
+                var republished = changed.Where(i => i.LikelyRepublished).Select(i => i.Ref + " (republished under us: re-run rollback_push to diff against the current state)")
                     .Distinct(StringComparer.Ordinal).ToList();
                 var items = changed.Where(i => !i.LikelyRepublished).ToList();
                 var removeItems = items.Where(i => i.Action == "Delete").ToList();
@@ -5782,7 +6555,7 @@ namespace Semanticus.Engine
 
                 if (restoreRefs.Length == 0 && removeRefs.Length == 0 && republished.Count == 0)
                     return new RollbackResult { Applied = false, RestorePointId = rp.Id, Target = tlabel,
-                        Note = $"{tlabel} already matches this restore point — nothing to roll back." };
+                        Note = $"{tlabel} already matches this restore point. Nothing to roll back." };
 
                 if (!commit)
                     return new RollbackResult
@@ -5791,7 +6564,7 @@ namespace Semanticus.Engine
                         RestoredRefs = restoreRefs, RemovedRefs = removeRefs, FailedRefs = republished.ToArray(),
                         RestorePointId = rp.Id, Target = tlabel,
                         Note = $"Dry run. Rolling back to the snapshot taken {rp.CapturedUtc} would restore {restoreRefs.Length} object(s) and REMOVE {removeRefs.Length} object(s) that exist on {tlabel} but not in the snapshot. "
-                             + "Anything added to the target since that snapshot — by this push or by anyone else — is listed under RemovedRefs and WILL be deleted. Review it, then pass commit=true.",
+                             + "Anything added to the target since that snapshot (by this push or by anyone else) is listed under RemovedRefs and WILL be deleted. Review it, then pass commit=true.",
                     };
 
                 // Agent-permissions gate — a rollback is a live write. The dry run above is never gated (preview).
@@ -5813,7 +6586,7 @@ namespace Semanticus.Engine
                 {
                     var m = vex.Message; if (m.Length > 300) m = m.Substring(0, 300) + "…";
                     return new RollbackResult { RestorePointId = rp.Id, Target = tlabel, FailedRefs = failed.ToArray(),
-                        Error = "The restored model is not valid (" + m + ") — the target was NOT written." };
+                        Error = "The restored model is not valid (" + m + "). The target was NOT written." };
                 }
 
                 var bim = CreatePushStagingPath(cleanups);
@@ -5822,11 +6595,11 @@ namespace Semanticus.Engine
                 // identityStrict: the restore point IS a snapshot of this same target, so a non-empty tag that no longer
                 // resolves means the object was republished under us — refuse rather than mutate a same-named impostor.
                 var deleteTargets = removeItems.Select(LiveDeleteTarget.FromDiffItem).ToArray();
-                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets, refTenant);   // reuse the credential the snapshot proved (P2-5); tenant threaded to the write (HIGH 6)
+                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets, DeployGuard.IsAgent(origin), refTenant);   // reuse the snapshot's effective mode (P2-5); tenant threaded (HIGH 6); non-interactive for an agent (round-3)
 
                 if (rep?.Committed != true)
                     return new RollbackResult { RestorePointId = rp.Id, Target = tlabel, FailedRefs = failed.ToArray(),
-                        Error = "Rollback failed — nothing was written to " + tlabel + ". " + (rep?.Error ?? "The target refused the write.") };
+                        Error = "Rollback failed. Nothing was written to " + tlabel + ". " + (rep?.Error ?? "The target refused the write.") };
 
                 var sess = _sessions.Current;
                 if (sess != null)
@@ -5836,7 +6609,7 @@ namespace Semanticus.Engine
                         {
                             SessionId = sess.Id, Revision = 0, Origin = origin, Op = "rollback_push",
                             Verdict = "deployed",
-                            Summary = $"rolled {rp.Endpoint}/{rp.Database} back to restore point {rp.Id} — restored {restoreRefs.Length}, removed {removeRefs.Length}",
+                            Summary = $"rolled {rp.Endpoint}/{rp.Database} back to restore point {rp.Id}: restored {restoreRefs.Length}, removed {removeRefs.Length}",
                             Evidence = System.Text.Json.JsonSerializer.Serialize(new { rp.Endpoint, rp.Database, restorePoint = rp.Id, rp.CapturedUtc, restored = restoreRefs, removed = rep.DeletedRefs, failed }),
                         });
                     }
@@ -5845,7 +6618,7 @@ namespace Semanticus.Engine
                 // `Removed` counts what LIVE actually deleted, not what we planned. A removal the endpoint REFUSED must
                 // therefore land in FailedRefs, or automation comparing the dry run's plan against the commit's result
                 // would read "3 of 5 removed" as a clean success. Surfaced structurally, not only in the note.
-                foreach (var r in rep.DeletesRefused) failed.Add(r + " (remove refused — republished under us; re-run rollback_push)");
+                foreach (var r in rep.DeletesRefused) failed.Add(r + " (remove refused: republished under us; re-run rollback_push)");
 
                 var note = $"Rolled {tlabel} back to the snapshot taken {rp.CapturedUtc}: restored {restoreRefs.Length} object(s), removed {rep.DeletedRefs.Length}.";
                 if (failed.Count > 0) note += " Not restored: " + string.Join("; ", failed);
@@ -5911,10 +6684,15 @@ namespace Semanticus.Engine
             var ticket = NewAuthIntent();
 
             // First attempt: honour the requested mode, reusing the persistent sign-in cache (the same acquisition
-            // connect_xmla / open_live use — a saved interactive/device-code record is served silently).
+            // connect_xmla / open_live use — a saved interactive/device-code record is served silently). For an AGENT the
+            // acquisition is non-interactive: a missing/stale cache throws (routing to the AgentRefusal below), never prompts.
             try
             {
-                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct, tenant, ticket), mode);
+                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct, DeployGuard.IsAgent(origin), tenant, ticket), mode);
+            }
+            catch (SignInException)
+            {
+                throw;   // cancel / timeout already named with a support id; do not open a second chooser
             }
             catch (Exception ex)
             {
@@ -5942,7 +6720,12 @@ namespace Semanticus.Engine
                 await _interactiveAuthGate.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
-                    return (await AcquireAndExportWorkspaceAsync(fbMode, endpoint, database, ct, tenant, ticket), fbMode);
+                    // HUMAN-only branch: the agent was already refused above, so this fallback is the one place a prompt is intended.
+                    return (await AcquireAndExportWorkspaceAsync(fbMode, endpoint, database, ct, disableInteractive: false, tenant, ticket), fbMode);
+                }
+                catch (SignInException)
+                {
+                    throw;   // cancel / timeout already named with a support id (D-014)
                 }
                 catch (Exception ex2)
                 {
@@ -5959,13 +6742,17 @@ namespace Semanticus.Engine
         // One acquire+export attempt in a single auth mode. Uses BuildCredentialAsync (the persistent-cache credential
         // open_live uses), so a saved interactive/device-code sign-in is reused silently and an interactive fallback
         // prompts + persists on first use. The test seam short-circuits both halves so no endpoint is touched offline.
-        private async Task<LiveModelExport.Snapshot> AcquireAndExportWorkspaceAsync(string mode, string endpoint, string database, System.Threading.CancellationToken ct, string tenantId = null, long ticket = 0)
+        // disableInteractive is REQUIRED, never defaulted (T163 round 3): a default of false is fail-OPEN, the exact
+        // shape that let prepare_working_copy attach with human authority. Every caller must state which driver it is.
+        private async Task<LiveModelExport.Snapshot> AcquireAndExportWorkspaceAsync(string mode, string endpoint, string database, System.Threading.CancellationToken ct, bool disableInteractive, string tenantId = null, long ticket = 0)
         {
             if (WorkspaceTokenExportForTests != null) return await WorkspaceTokenExportForTests(mode);
             // Thread the tenant (HIGH 4): a remembered cross-tenant reference/workspace must target ITS tenant, not the
             // default one the current az login happens to be home to. Defer persisting any first-sign-in record until
-            // the export authorizes, so a failed read never leaves a half-written account behind.
-            var prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenantId, ct);
+            // the export authorizes, so a failed read never leaves a half-written account behind. disableInteractive
+            // (agent first-attempt) guarantees the acquisition can never pop a prompt — it throws instead, routing an agent
+            // to the honest AgentRefusal below rather than a surprise browser (BLOCKER, closed on the compare path too).
+            var prepared = mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenantId, ct, disableInteractive: disableInteractive);
             var tok = prepared?.Credential != null
                 ? await EntraToken.GetTokenAsync(prepared.Credential, ct)
                 : await EntraToken.AcquireFullAsync(mode, null, ct, tenantId);
@@ -5983,22 +6770,27 @@ namespace Semanticus.Engine
         // Test-only observer of the EFFECTIVE auth mode the push acquires with — lets a test prove the snapshot->push
         // credential reuse (P2-5) without changing WorkspacePushHook's signature (used by ~30 existing call sites).
         internal Action<string> PushAuthModeForTests;
+        // Test-only observer of whether the push acquires NON-INTERACTIVELY (round-3): an agent-origin push must never be
+        // able to construct a prompt-capable credential. Fired BEFORE the WorkspacePushHook short-circuit so it is testable offline.
+        internal Action<bool> PushDisableInteractiveForTests;
 
         // Push the merged .bim to the live model (adds/updates + the explicit deletes) in one SaveChanges. Test seam:
         // WorkspacePushHook stands in for the live write offline. authMode is the EFFECTIVE mode the pre-push snapshot
         // proved (see SnapshotWorkspaceMetadataAsync): if the snapshot fell back to interactive, this re-acquires with
-        // that mode. NOTE (Windows-only silent reuse): the reuse is silent only where the AuthenticationRecord persists
-        // to the encrypted on-disk cache — Windows (EntraToken.PersistenceSupported). On Linux/macOS the record is not
-        // persisted, so AcquireAsync("interactive") re-prompts here just as open_live's first sign-in does; the write
-        // still uses the RIGHT mode (never the rejected azcli), it just prompts once more on those platforms.
-        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets, string tenantId = null)
+        // that mode. NOTE (silent reuse): the AuthenticationRecord and the MSAL token cache persist on every OS, so a
+        // later AcquireAsync("interactive") reuses the saved account instead of prompting again. The write still uses
+        // the RIGHT mode (never the rejected azcli).
+        // disableInteractive is REQUIRED, never defaulted (T163 round 3) — see AcquireAndExportWorkspaceAsync.
+        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets, bool disableInteractive, string tenantId = null)
         {
             PushAuthModeForTests?.Invoke(authMode);
+            PushDisableInteractiveForTests?.Invoke(disableInteractive);
             if (WorkspacePushHook != null) return WorkspacePushHook(bimPath, deleteTargets);
             // Thread the tenant into the WRITE token too (HIGH 6): the pre-push snapshot read tenant-B, so the push must
             // acquire against tenant-B as well — a default-tenant token here would read one model's diff but write with a
-            // different account/tenant. A null tenant falls back to the current az login exactly as before.
-            var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId);
+            // different account/tenant. A null tenant falls back to the current az login exactly as before. disableInteractive
+            // (agent origin, round-3): the reacquisition can NEVER pop a prompt — a stale cache throws AuthenticationRequiredException.
+            var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId, disableInteractive);
             // identityStrict: TRUE for the selective push — src is snapshot B (the live target seconds ago), so a
             // non-empty tag miss means the object was republished/retagged under us and must NOT be name-mutated.
             // deploy_live (whole-model) leaves it FALSE (its src is an arbitrary session, often untagged).
@@ -6047,7 +6839,7 @@ namespace Semanticus.Engine
                         return (ok, conflicts, fail);
                     });
                     return new CherryPickResult { Applied = false, Count = pv.ok.Count, AppliedRefs = pv.ok.ToArray(), Conflicts = pv.conflicts.ToArray(), FailedRefs = pv.fail.ToArray(), Source = slabel,
-                        Note = $"Preview — {pv.ok.Count} object(s) would copy into the open model" + (pv.conflicts.Count > 0 ? $", {pv.conflicts.Count} overwriting an existing object" : "") + (pv.fail.Count > 0 ? $"; {pv.fail.Count} cannot" : "") + ". Pass commit=true to apply." };
+                        Note = $"Preview: {pv.ok.Count} object(s) would copy into the open model" + (pv.conflicts.Count > 0 ? $", {pv.conflicts.Count} overwriting an existing object" : "") + (pv.fail.Count > 0 ? $"; {pv.fail.Count} cannot" : "") + ". Pass commit=true to apply." };
                 }
                 // Pro gate: copying MULTIPLE objects from another model in one undoable batch is the bulk/atomic
                 // primitive (the Pro value); a single-object copy stays free, and the commit=false preview above is
@@ -6104,10 +6896,10 @@ namespace Semanticus.Engine
                     var sm = src.Tables.Find(table)?.Measures.Find(name);
                     if (sm == null) return (false, false, $"the source has no measure {table}[{name}]");
                     var tt = m.Tables.FirstOrDefault(t => t.Name == table);
-                    if (tt == null) return (false, false, $"the open model has no table '{table}' — copy the table first");
+                    if (tt == null) return (false, false, $"the open model has no table '{table}'. Copy the table first");
                     // Measures and columns share ONE name namespace per table: a same-named column would make
                     // AddMeasure silently auto-rename to "<name> 2", so refuse rather than create a mis-named copy.
-                    if (tt.Columns.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))) return (false, false, $"the open model already has a COLUMN {table}[{name}] — a measure can't share that name");
+                    if (tt.Columns.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))) return (false, false, $"the open model already has a COLUMN {table}[{name}]. A measure can't share that name");
                     return (true, tt.Measures.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)), null);
                 }
                 case "column":
@@ -6117,12 +6909,12 @@ namespace Semanticus.Engine
                     if (sc == null) return (false, false, $"the source has no column {table}[{name}]");
                     if (!(sc is RawTom.CalculatedColumn)) return (false, false, "only CALCULATED columns can be copied between models (data columns come from the source query)");
                     var tt = m.Tables.FirstOrDefault(t => t.Name == table);
-                    if (tt == null) return (false, false, $"the open model has no table '{table}' — copy the table first");
+                    if (tt == null) return (false, false, $"the open model has no table '{table}'. Copy the table first");
                     var ex = tt.Columns.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
                     if (ex != null && !(ex is CalculatedColumn)) return (false, false, $"the open model already has a non-calculated column {table}[{name}]");
                     // Same shared namespace the other way: a same-named measure would make AddCalculatedColumn
                     // silently auto-rename to "<name> 2", so refuse rather than create a mis-named copy.
-                    if (ex == null && tt.Measures.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))) return (false, false, $"the open model already has a MEASURE {table}[{name}] — a column can't share that name");
+                    if (ex == null && tt.Measures.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))) return (false, false, $"the open model already has a MEASURE {table}[{name}]. A column can't share that name");
                     return (true, ex != null, null);
                 }
                 case "calcitem":
@@ -6131,14 +6923,14 @@ namespace Semanticus.Engine
                     var sci = src.Tables.Find(table)?.CalculationGroup?.CalculationItems.Find(name);
                     if (sci == null) return (false, false, $"the source has no calculation item {table}[{name}]");
                     var tt = m.Tables.FirstOrDefault(t => t.Name == table) as CalculationGroupTable;
-                    if (tt == null) return (false, false, $"the open model has no calculation group '{table}' — create it first, then copy its items");
+                    if (tt == null) return (false, false, $"the open model has no calculation group '{table}'. Create it first, then copy its items");
                     return (true, tt.CalculationItems.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)), null);
                 }
                 default:
                     // A whole TABLE (incl. a calculation group) isn't copied into the live session: reconstructing a
                     // table via the wrapper + undoing it trips a vendored-wrapper OLS-on-delete bug. Use "apply to
                     // file" (which clones whole tables via raw TOM) for a whole table/group; copy its sub-objects here.
-                    return (false, false, $"copying a '{kind}' into the open model isn't supported — measures, calculated columns & calculation items copy here; for a whole table or calculation group use 'apply to file' (a file Target) or copy its parts");
+                    return (false, false, $"copying a '{kind}' into the open model isn't supported. Measures, calculated columns & calculation items copy here; for a whole table or calculation group use 'apply to file' (a file Target) or copy its parts");
             }
         }
 
@@ -6227,76 +7019,87 @@ namespace Semanticus.Engine
             finally { cleanup(); }
         }
 
-        // The deploy gate (Semanticus's wedge): BPA + AI-readiness + (optionally) the pending-change count vs a
-        // target. Read-only. A blocked gate is what the cloud deploy ops refuse over unless explicitly overridden.
-        public async Task<DeployGate> DeployGateAsync(ModelRef compareTarget)
+        // The live-auth cache key. Where a STABLE identity is known it is credential-family + tenant + MSAL home
+        // account id: without the identity a per-open account choice (#263) and the tenant DEFAULT shared one key, so a
+        // renewal in the other driver's slot rebuilt from the default record and silently authenticated as a different
+        // person. Keyed on the home account id, NOT the UPN — a deleted-and-recreated user reuses the UPN under a new
+        // principal, and a rename changes the UPN on the same one, so a UPN key both false-matches and false-misses.
+        // Family (not raw mode) because the interactive aliases share one saved-record slot.
+        //
+        // FALLBACK (azcli / serviceprincipal / token, and any platform where no MSAL record persists): there IS no
+        // stable identity to key on, so the key degrades to mode + tenant. That is an "identity unknown" bucket and
+        // must never be read as an identity lock — two different service principals on one tenant share it.
+        internal static string LiveAuthKey(string mode, string tenant, string homeAccountId)
         {
-            _sessions.Require();
-            var bpa = await BpaScanAsync();
-            var card = await AiReadinessScanAsync();
-            var blockers = new System.Collections.Generic.List<string>();
-            if (card.GatedBy != null && card.GatedBy.Length > 0) blockers.AddRange(card.GatedBy);
-            // Error-severity BPA violations that can't be auto-fixed also block — a hard error shipped is a real risk.
-            // WAIVED violations don't count: a waiver is an audited, reasoned acceptance (surfaced, never hidden), and a
-            // gate that re-litigates it defeats the waiver lane. Readiness hard-gates (GatedBy above) stay RAW on
-            // purpose — those are physical floors the waiver doctrine says you can't accept your way past.
-            var blocking = bpa.Violations?.Count(v => v.Severity >= 2 && !v.CanAutoFix && !v.Waived) ?? 0;
-            var waived = bpa.Violations?.Count(v => v.Severity >= 2 && !v.CanAutoFix && v.Waived) ?? 0;
-            if (blocking > 0) blockers.Add($"{blocking} blocking BPA error(s)");
-            var changes = 0;
-            if (compareTarget != null)
-            {
-                // origin "human": a compareTarget only reaches DeployGate from the Studio (the MCP deploy_gate passes
-                // null); a not-signed-in workspace target may therefore sign in interactively. Any failure is swallowed
-                // — the gate still reports BPA/readiness — so an agent could never be popped UI here regardless.
-                try { var d = await CompareModelsAsync(new ModelRef { Kind = "session" }, compareTarget, false, "human"); changes = d.Created + d.Updated + d.Deleted; }
-                catch { /* compare target unavailable — gate still reports BPA/readiness */ }
-            }
-            // The interview leg is ADVISORY by contract: it replays the saved question pack (offline-honest —
-            // Unverified is the ceiling, never a fabricated pass) and reports per-question deltas vs the last
-            // recorded outcomes, but it NEVER lands in Pass/Blockers and its failure never breaks the gate.
-            InterviewGateAdvisory interview = null;
-            try { interview = await InterviewGateAdvisoryAsync(); }
-            catch { /* advisory only — a broken pack/store must not block or distort the gate verdict */ }
-            return new DeployGate
-            {
-                Pass = blockers.Count == 0,
-                Grade = card.Grade,
-                BpaViolations = bpa.ViolationCount,
-                BpaBlocking = blocking,
-                BpaWaivedBlocking = waived,
-                Blockers = blockers.ToArray(),
-                Changes = changes,
-                Interview = interview,
-                Note = (blockers.Count == 0 ? "Gate passed." : "Gate blocked: " + string.Join("; ", blockers))
-                     + (waived > 0 ? $" ({waived} error-severity BPA finding(s) waived — accepted decisions, not blockers; list_waivers shows the reasons.)" : ""),
-            };
+            mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
+            var family = EntraToken.FamilyOf(mode);
+            var identity = EntraToken.CanonicalHomeAccountId(homeAccountId);   // ONE convention, shared with the profile store
+            return family == null || identity == null
+                ? mode + "|" + (tenant ?? "")
+                : family + "|" + (tenant ?? "") + "|" + identity;
+        }
+
+        // Test-only stand-in for the cloud-report DISCOVERY leg (the Power BI token + report list), so the Fabric
+        // acquisition that follows it can be exercised offline. Null in production.
+        internal Func<string, Task<CloudReport[]>> CloudReportDiscoveryForTests;
+
+        // Test-only observer of the STABLE identity (home account id) a freshly built live credential is pinned to,
+        // so a test can prove a renewal never silently switches to the tenant default.
+        internal Action<string> LiveCredentialAccountForTests;
+
+        // The ONE place the ALM / Fabric-Git / cicd lane mints a Fabric-audience token. Centralised so the agent
+        // non-interactive rule cannot be forgotten at one of the fourteen call sites: an agent origin (DeployGuard's
+        // fail-closed test — anything not exactly "human") gets DisableAutomaticAuthentication, so a stale cache
+        // throws AuthenticationRequiredException instead of popping a browser on the user's machine.
+        // laneObserver is a test-only, per-lane view of the SAME computed flag (the data-agent tools use it), so a
+        // lane proves its own wiring without duplicating the rule or the acquisition.
+        private Task<string> AcquireFabricTokenAsync(string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken, Action<bool> laneObserver = null)
+        {
+            var nonInteractive = DeployGuard.IsAgent(origin);
+            laneObserver?.Invoke(nonInteractive);
+            return EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId, nonInteractive);
+        }
+
+        // The ONE place the cloud-report lane mints a Power BI / XMLA-audience token. Consolidated for the same
+        // reason as the Fabric and SQL chokepoints: with a per-call-site flag there were three independent places
+        // that could silently drop it, and only the reachable ones could be tested.
+        private Task<string> AcquireXmlaTokenAsync(string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken)
+        {
+            return EntraToken.AcquireAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
+        }
+
+        // The ONE place the schema / reconcile / test-suite lane mints a SQL-audience token. The audience differs from
+        // XMLA but the PROMPT surface is identical (one credential, one browser), so the agent rule is the same:
+        // DeployGuard's fail-closed test decides, and an agent gets DisableAutomaticAuthentication.
+        private Task<string> AcquireSqlTokenAsync(string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken)
+        {
+            return EntraToken.AcquireSqlAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
         }
 
         // ---- Fabric REST (the cloud ALM lane — read-only discovery) --------------------------------------------
         // Read-only GETs against api.fabric.microsoft.com with the user's own Entra identity (azcli default; SP is
         // the reliable headless path). No live write. Errors (incl. permission gates) surface scrubbed via FabricRest.
-        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.ListWorkspacesAsync(token, cancellationToken);
         }
 
-        public async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.ListDeploymentPipelinesAsync(token, cancellationToken);
         }
 
-        public async Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
         }
 
-        public async Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.GetStageItemsAsync(pipelineId, stageId, token, cancellationToken);
         }
 
@@ -6334,27 +7137,27 @@ namespace Semanticus.Engine
             return System.Text.Json.JsonSerializer.Serialize(body);
         }
 
-        public async Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
             string token; PipelineStage[] stages; StageItem[] srcItems;
             try
             {
                 // The setup reads (token + stage/item GETs) throw on a non-2xx (401/403/404) — catch so the failure
                 // is reported on the DTO's .Error, never thrown across the door (golden rule #2).
-                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
                 srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DeployPreview { PipelineId = pipelineId, SourceStageId = sourceStageId, TargetStageId = targetStageId, Error = FabricRest.Scrub(ex.Message) }; }
             var (isProd, tgtName) = ProdInfo(stages, targetStageId);
             var diffs = DiffFromSource(srcItems);
-            DeployGate gate = null; try { gate = await DeployGateAsync(null); } catch { /* no open model — gate skipped */ }
+            DeployGate gate = null; try { gate = await DeployGateAsync(null, origin); } catch { /* no open model — gate skipped */ }
             return new DeployPreview
             {
                 PipelineId = pipelineId, SourceStageId = sourceStageId, SourceStageName = StageName(stages, sourceStageId),
                 TargetStageId = targetStageId, TargetStageName = tgtName, TargetIsProd = isProd,
                 Items = diffs, NewCount = diffs.Count(d => d.State == "New"), UpdateCount = diffs.Count(d => d.State == "Update"),
-                Gate = gate, Note = "Diff is by source→target pairing; an 'Update' item may be identical — the exact change is confirmed at deploy.",
+                Gate = gate, Note = "Diff is by source→target pairing; an 'Update' item may be identical. The exact change is confirmed at deploy.",
             };
         }
 
@@ -6370,7 +7173,7 @@ namespace Semanticus.Engine
             {
                 // Setup reads throw on a non-2xx — catch so the failure is reported on the DTO (golden rule #2), so the
                 // "any failure is reported on the DTO, never thrown" guarantee below holds for the WHOLE method.
-                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 stages = await FabricRest.GetPipelineStagesAsync(pipelineId, token, cancellationToken);
                 srcItems = await FabricRest.GetStageItemsAsync(pipelineId, sourceStageId, token, cancellationToken);
             }
@@ -6388,7 +7191,7 @@ namespace Semanticus.Engine
                 TargetStageId = targetStageId, TargetStageName = tgtName, TargetIsProd = isProd,
                 ItemCount = chosen.Length, Items = diffs, NewCount = diffs.Count(d => d.State == "New"), UpdateCount = diffs.Count(d => d.State == "Update"),
             };
-            if (chosen.Length > 300) { report.Error = "Fabric caps a single deploy at 300 items — narrow the selection."; report.Plan = "Refused: over the 300-item cap."; return report; }
+            if (chosen.Length > 300) { report.Error = "Fabric caps a single deploy at 300 items. Narrow the selection."; report.Plan = "Refused: over the 300-item cap."; return report; }
 
             // The gate evaluates the locally-OPEN working model (BPA + AI-readiness) — a separate artifact from the
             // Fabric source-stage bytes a pipeline promotes. With no model open there is nothing local to gate, so it
@@ -6396,20 +7199,20 @@ namespace Semanticus.Engine
             // Capture the exact session the gate scans NOW: the override below must be recorded on THIS model, not
             // on whatever the other door may have swapped Current to across the network awaits in between (TOCTOU).
             var gateSession = _sessions.Current;
-            DeployGate gate = null; try { gate = await DeployGateAsync(null); } catch { /* no open model — gate is advisory only */ }
+            DeployGate gate = null; try { gate = await DeployGateAsync(null, origin); } catch { /* no open model — gate is advisory only */ }
             report.Gate = gate;
             var gatePass = gate?.Pass ?? true;
-            var gateNote = gate == null ? " (readiness gate skipped — no local model open; promoting source-stage content as-is)" : "";
+            var gateNote = gate == null ? " (readiness gate skipped: no local model open; promoting source-stage content as-is)" : "";
             var expected = DeployGuard.MintToken(pipelineId, sourceStageId, targetStageId, chosen.Select(i => i.ItemId), DeploySecret);
 
             if (!commit)
             {
                 // Dry-run preview. The prod confirm token is surfaced ONLY to the human door — an agent never receives it.
                 report.ConfirmToken = DeployGuard.SurfaceConfirmToken(isProd, origin) ? expected : null;
-                report.Plan = $"DRY RUN — would deploy {chosen.Length} item(s) {srcName}→{tgtName}; gate {(gatePass ? "pass" : "BLOCKED")}{gateNote}."
+                report.Plan = $"DRY RUN: would deploy {chosen.Length} item(s) {srcName}→{tgtName}; gate {(gatePass ? "pass" : "BLOCKED")}{gateNote}."
                     + (isProd ? (DeployGuard.IsAgent(origin)
-                        ? " Target is PRODUCTION — an agent cannot complete this; a human must deploy it from the Deploy tab."
-                        : " Target is PRODUCTION — re-run with commit=true and the confirmToken above to proceed.") : "");
+                        ? " Target is PRODUCTION. An agent cannot complete this; a human must deploy it from the Deploy tab."
+                        : " Target is PRODUCTION. Re-run with commit=true and the confirmToken above to proceed.") : "");
                 return report;
             }
 
@@ -6427,7 +7230,7 @@ namespace Semanticus.Engine
                 if (gateSession == null || !ReferenceEquals(_sessions.Current, gateSession))
                 {
                     report.Committed = false;
-                    report.Error = "the override cannot be recorded (the local model changed mid-deploy — the session that was gated is no longer current) — promotion refused; re-open the model and retry.";
+                    report.Error = "the override cannot be recorded (the local model changed mid-deploy: the session that was gated is no longer current). Promotion refused; re-open the model and retry.";
                     report.Plan = "Refused: " + report.Error;
                     return report;
                 }
@@ -6435,7 +7238,7 @@ namespace Semanticus.Engine
                 {
                     SessionId = gateSession.Id, Revision = 0, Origin = origin, Op = "deploy_stage",   // 0: a promotion is not a model mutation
                     Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                    Summary = $"gate RED ({string.Join("; ", gate.Blockers ?? Array.Empty<string>())}) — override accepted to promote {srcName}→{tgtName}",
+                    Summary = $"gate RED ({string.Join("; ", gate.Blockers ?? Array.Empty<string>())}): override accepted to promote {srcName}→{tgtName}",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new { pipelineId, sourceStageId, targetStageId, gate.Grade, gate.Blockers }),
                 });
             }
@@ -6462,9 +7265,9 @@ namespace Semanticus.Engine
             return report;
         }
 
-        public async Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
-            var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.ListDeploymentOperationsAsync(pipelineId, token, cancellationToken);
         }
 
@@ -6473,21 +7276,21 @@ namespace Semanticus.Engine
         // workspace role, workspace-not-git-connected) and on a failed LRO; EntraToken.AcquireFabricAsync throws on
         // an auth failure. Every method below CATCHES those and reports the (scrubbed) message on the result DTO's
         // .Error, so a failure is NEVER thrown across the RPC/MCP door (and the MCP Emit still fires with Ok=false).
-        public async Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 return await FabricRest.GetGitConnectionAsync(workspaceId, token, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitConnection { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
-        public async Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 return await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitStatus { Error = FabricRest.Scrub(ex.Message) }; }
@@ -6499,14 +7302,14 @@ namespace Semanticus.Engine
             string token; FabricGitStatus status;
             try
             {
-                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 status = await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitResult { Action = "commit", Direction = "workspace→git", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
             var wsChanges = status.Changes.Count(c => !string.IsNullOrEmpty(c.WorkspaceChange));
             var report = new FabricGitResult { Action = "commit", Direction = "workspace→git", ChangeCount = wsChanges, Conflicts = status.Conflicts };
-            if (!commit) { report.Plan = $"DRY RUN — would commit {wsChanges} workspace change(s) to git."; return report; }
-            if (wsChanges == 0) { report.Plan = "Nothing to commit — the workspace matches git."; report.Committed = false; report.Status = "Succeeded"; return report; }
+            if (!commit) { report.Plan = $"DRY RUN: would commit {wsChanges} workspace change(s) to git."; return report; }
+            if (wsChanges == 0) { report.Plan = "Nothing to commit: the workspace matches git."; report.Committed = false; report.Status = "Succeeded"; return report; }
             // Agent-permissions gate — committing workspace state INTO the team's repo is a shared-state write (and can
             // trigger the team's own CD from that repo). Basis pins the workspace head the human saw approve.
             {
@@ -6550,14 +7353,14 @@ namespace Semanticus.Engine
             string token; FabricGitStatus status;
             try
             {
-                token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 status = await FabricRest.GetGitStatusAsync(workspaceId, token, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new FabricGitResult { Action = "update", Direction = "git→workspace", Error = FabricRest.Scrub(ex.Message), Plan = "Could not read git status." }; }
             var remoteChanges = status.Changes.Count(c => !string.IsNullOrEmpty(c.RemoteChange));
             var report = new FabricGitResult { Action = "update", Direction = "git→workspace", ChangeCount = remoteChanges, Conflicts = status.Conflicts };
-            if (!commit) { report.Plan = $"DRY RUN — would update {remoteChanges} item(s) from git into the workspace" + (status.Conflicts ? " (CONFLICTS present — set a conflict policy)" : "") + "."; return report; }
-            if (remoteChanges == 0) { report.Plan = "Nothing to update — the workspace matches git."; report.Status = "Succeeded"; return report; }
+            if (!commit) { report.Plan = $"DRY RUN: would update {remoteChanges} item(s) from git into the workspace" + (status.Conflicts ? " (CONFLICTS present: set a conflict policy)" : "") + "."; return report; }
+            if (remoteChanges == 0) { report.Plan = "Nothing to update: the workspace matches git."; report.Status = "Succeeded"; return report; }
             // Agent-permissions gate — a PLAIN update rewrites workspace items from git: a live deploy by another door.
             // (The allowOverride data-loss path is hard-refused for agents above, policy or no policy.) Basis pins the
             // git commit being applied, so approving "update to abc123" never authorises a later push to the repo.
@@ -6602,10 +7405,10 @@ namespace Semanticus.Engine
                 return new FabricGitResult { Action = "connect", Plan = "Refused: agent connect.",
                     Error = "An agent cannot connect a workspace to a git repository. A human must confirm this from the Deploy tab." };
             var report = new FabricGitResult { Action = "connect" };
-            if (!commit) { report.Plan = $"DRY RUN — would connect workspace {workspaceId} to {(isGh ? "GitHub" : "AzureDevOps")} {repository}/{branch}."; return report; }
+            if (!commit) { report.Plan = $"DRY RUN: would connect workspace {workspaceId} to {(isGh ? "GitHub" : "AzureDevOps")} {repository}/{branch}."; return report; }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 var details = new System.Collections.Generic.Dictionary<string, object>
                 {
                     ["gitProviderType"] = isGh ? "GitHub" : "AzureDevOps",
@@ -6636,10 +7439,10 @@ namespace Semanticus.Engine
                 return new FabricGitResult { Action = "disconnect", Plan = "Refused: agent disconnect.",
                     Error = "An agent cannot disconnect a workspace from git. A human must confirm this from the Deploy tab." };
             var report = new FabricGitResult { Action = "disconnect" };
-            if (!commit) { report.Plan = $"DRY RUN — would disconnect workspace {workspaceId} from git."; return report; }
+            if (!commit) { report.Plan = $"DRY RUN: would disconnect workspace {workspaceId} from git."; return report; }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 var outcome = await FabricRest.GitDisconnectAsync(workspaceId, token, cancellationToken);
                 report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
                 report.Plan = report.Committed ? "Disconnected the workspace from git." : $"Disconnect {outcome.Status}" + (string.IsNullOrEmpty(outcome.Error) ? "." : ": " + outcome.Error);
@@ -6681,9 +7484,9 @@ namespace Semanticus.Engine
                     var paths = EnumeratePartPaths(root);
                     report.PartCount = paths.Count;
                     report.SampleParts = paths.Take(8).ToArray();
-                    report.Plan = $"DRY RUN — would publish {paths.Count} part(s) from {System.IO.Path.GetFileName(root)}"
+                    report.Plan = $"DRY RUN: would publish {paths.Count} part(s) from {System.IO.Path.GetFileName(root)}"
                         + (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(itemId) ? " (set workspaceId + itemId to target a model)" : $" to workspace {workspaceId} / model {itemId}")
-                        + (dirty ? " — NOTE: the open model has unsaved edits NOT yet on disk; save the model first so they're included." : "") + ".";
+                        + (dirty ? ". NOTE: the open model has unsaved edits NOT yet on disk; save the model first so they're included." : "") + ".";
                     return report;
                 }
                 if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(itemId)) { report.Error = "workspaceId and itemId are required to publish."; report.Plan = "Refused: missing target."; return report; }
@@ -6695,7 +7498,7 @@ namespace Semanticus.Engine
                 report.PartCount = parts.Count;
                 report.SampleParts = parts.Take(8).Select(p => p.path).ToArray();
                 if (parts.Count == 0) { report.Error = "No definition files found under the model folder to publish."; return report; }
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 var body = System.Text.Json.JsonSerializer.Serialize(new { definition = new { parts = parts.Select(p => new { p.path, p.payload, p.payloadType }) } });
                 var outcome = await FabricRest.UpdateSemanticModelDefinitionAsync(workspaceId, itemId, body, token, cancellationToken);
                 report.Committed = outcome.Status == "Succeeded"; report.Status = outcome.Status; report.OperationId = outcome.OperationId; report.Error = outcome.Error;
@@ -6719,7 +7522,7 @@ namespace Semanticus.Engine
             // corrupt the emitted file or, worse, silently mis-parse (e.g. a bare "2026" / "true" coerces to a non-string
             // key that fabric-cicd's string lookup never matches → the find/replace silently skips and the dev id ships).
             if (!System.Text.RegularExpressions.Regex.IsMatch(env, @"^[A-Za-z0-9_.\-]+$"))
-                return new CicdScaffold { Error = "Invalid environment name — use letters, digits, '_', '.', '-' only (it becomes a YAML key)." };
+                return new CicdScaffold { Error = "Invalid environment name. Use letters, digits, '_', '.', '-' only (it becomes a YAML key)." };
             var wsId = string.IsNullOrWhiteSpace(workspaceId) ? "00000000-0000-0000-0000-000000000000" : workspaceId.Trim();
             var files = new System.Collections.Generic.List<CicdFile>
             {
@@ -6843,7 +7646,7 @@ namespace Semanticus.Engine
             string newRef = null;
             var rev = await s.MutateAsync(origin, $"create calculated column {name}", m =>
             {
-                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 if (t.Columns.Contains(name)) throw new InvalidOperationException($"Table '{t.Name}' already has a column '{name}'.");
                 newRef = ObjectRefs.For(t.AddCalculatedColumn(name, expression ?? string.Empty));
             });
@@ -6858,8 +7661,8 @@ namespace Semanticus.Engine
             string newRef = null;
             await s.MutateAsync(origin, "create relationship", m =>
             {
-                if (!(ObjectRefs.Resolve(m, fromColumnRef) is Column from)) throw new InvalidOperationException($"{fromColumnRef} is not a column (the many / foreign-key side) — pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
-                if (!(ObjectRefs.Resolve(m, toColumnRef) is Column to)) throw new InvalidOperationException($"{toColumnRef} is not a column (the one / lookup side) — pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
+                if (!(ObjectRefs.Resolve(m, fromColumnRef) is Column from)) throw new InvalidOperationException($"{fromColumnRef} is not a column (the many / foreign-key side). Pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
+                if (!(ObjectRefs.Resolve(m, toColumnRef) is Column to)) throw new InvalidOperationException($"{toColumnRef} is not a column (the one / lookup side). Pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
                 newRef = ObjectRefs.For(CreateRelationshipCore(m, from, to, crossFilter, isActive));
             });
             return newRef;
@@ -6876,10 +7679,12 @@ namespace Semanticus.Engine
                 cf = parsed;
             }
             var (fromCard, toCard) = ParseSpecCardinality(cardinality);   // null/manyToOne = today's Many→One default
-            // Two ACTIVE relationships on the same column pair is an invalid model — require the new one be inactive.
-            if ((isActive ?? true) && m.Relationships.OfType<SingleColumnRelationship>().Any(r => r.IsActive &&
-                    ((r.FromColumn == from && r.ToColumn == to) || (r.FromColumn == to && r.ToColumn == from))))
-                throw new InvalidOperationException("An active relationship already exists between these columns; pass isActive=false to add an inactive one.");
+            GuardRelationshipCompatibility(from, to);
+            if (m.Relationships.OfType<SingleColumnRelationship>().Any(r =>
+                    (ReferenceEquals(r.FromColumn, from) && ReferenceEquals(r.ToColumn, to))
+                    || (ReferenceEquals(r.FromColumn, to) && ReferenceEquals(r.ToColumn, from))))
+                throw new InvalidOperationException("A relationship already exists between these columns.");
+            if (isActive ?? true) GuardNoOtherActiveOnTablePair(m, from, to);
             var rel = m.AddRelationship();
             rel.FromColumn = from;   // From end (FK side under the default many→one)
             rel.ToColumn = to;       // To end (lookup side under the default many→one)
@@ -6919,6 +7724,95 @@ namespace Semanticus.Engine
             return "manyToMany";                                 // many & many
         }
 
+        private const string SortByNoneToken = "(none)";
+        private const string ReportRenameWarning = "Names in reports are not rewritten. Update any report that uses this name.";
+
+        private static string PlainColumnType(DataType t) => t switch
+        {
+            DataType.Int64 => "whole number",
+            DataType.String => "text",
+            DataType.DateTime => "date",
+            DataType.Boolean => "true/false",
+            DataType.Decimal => "decimal",
+            DataType.Double => "decimal number",
+            DataType.Binary => "binary",
+            _ => t.ToString(),
+        };
+
+        private static void GuardRelationshipCompatibility(Column from, Column to)
+        {
+            if (from.DataType == to.DataType) return;
+            throw new InvalidOperationException(
+                $"A relationship needs two columns of the same type. {from.Name} is a {PlainColumnType(from.DataType)} and {to.Name} is {PlainColumnType(to.DataType)}.");
+        }
+
+        private static bool SameTablePair(Table a, Table b, Table c, Table d) =>
+            (ReferenceEquals(a, c) && ReferenceEquals(b, d)) || (ReferenceEquals(a, d) && ReferenceEquals(b, c));
+
+        private static void GuardNoOtherActiveOnTablePair(Model m, Column from, Column to, SingleColumnRelationship except = null)
+        {
+            var fromTable = from?.Table; var toTable = to?.Table;
+            if (fromTable == null || toTable == null) return;
+            if (m.Relationships.OfType<SingleColumnRelationship>().Any(r =>
+                    r.IsActive && !ReferenceEquals(r, except)
+                    && SameTablePair(r.FromTable, r.ToTable, fromTable, toTable)))
+                throw new InvalidOperationException(
+                    $"An active relationship already exists between {fromTable.Name} and {toTable.Name}. Turn that one off first, or add this one as inactive.");
+        }
+
+        private static void GuardSummarizeBy(Column c, AggregateFunction agg)
+        {
+            if (agg == AggregateFunction.None || agg == AggregateFunction.Default
+                || agg == AggregateFunction.Count || agg == AggregateFunction.DistinctCount)
+                return;
+            var numeric = c.DataType == DataType.Int64 || c.DataType == DataType.Decimal || c.DataType == DataType.Double;
+            if (numeric) return;
+            if (c.DataType == DataType.DateTime && (agg == AggregateFunction.Min || agg == AggregateFunction.Max)) return;
+            var allowed = c.DataType == DataType.DateTime ? "Min, Max, Count, DistinctCount, or None" : "Count, DistinctCount, or None";
+            throw new InvalidOperationException(
+                $"{agg} is for number columns. This column is {PlainColumnType(c.DataType)}, so pick {allowed}.");
+        }
+
+        private static string[] SummarizeByOptionsFor(DataType t)
+        {
+            if (t == DataType.Int64 || t == DataType.Decimal || t == DataType.Double)
+                return new[] { "Default", "None", "Sum", "Min", "Max", "Count", "Average", "DistinctCount" };
+            if (t == DataType.DateTime)
+                return new[] { "Default", "None", "Min", "Max", "Count", "DistinctCount" };
+            return new[] { "Default", "None", "Count", "DistinctCount" };
+        }
+
+        private static bool IsSortByNone(string value) =>
+            string.IsNullOrWhiteSpace(value) || string.Equals(value.Trim(), SortByNoneToken, StringComparison.OrdinalIgnoreCase);
+
+        private static bool ApplySortByColumn(Column c, string sortByColumn)
+        {
+            if (IsSortByNone(sortByColumn))
+            {
+                if (c.SortByColumn == null) return false;
+                c.SortByColumn = null;
+                return true;
+            }
+            var problem = SortByProblem(c, sortByColumn);
+            if (problem != null) throw new InvalidOperationException(problem);
+            var name = sortByColumn.Trim();
+            var sort = c.Table.Columns[name];
+            if (c.SortByColumn == sort) return false;
+            c.SortByColumn = sort;
+            return true;
+        }
+
+        private static bool RenameTouchesReports(ITabularNamedObject obj) =>
+            obj is Table || obj is Column || obj is Measure || obj is Hierarchy;
+
+        private static string JoinWarnings(List<CascadeWarning> cascade, string extra)
+        {
+            var parts = new List<string>();
+            if (cascade != null) foreach (var w in cascade) if (!string.IsNullOrEmpty(w.Text)) parts.Add(w.Text);
+            if (!string.IsNullOrEmpty(extra)) parts.Add(extra);
+            return parts.Count == 0 ? null : string.Join(" ", parts);
+        }
+
         public async Task<string> CreateHierarchyAsync(string tableRef, string name, string[] levelColumns, string origin)
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A hierarchy name is required.");
@@ -6926,9 +7820,9 @@ namespace Semanticus.Engine
             string newRef = null;
             await s.MutateAsync(origin, $"create hierarchy {name}", m =>
             {
-                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 var cols = levelColumns ?? Array.Empty<string>();
-                foreach (var c in cols) if (!t.Columns.Contains(c)) throw new InvalidOperationException($"Table '{t.Name}' has no column '{c}' for a hierarchy level — run list_columns on '{t.Name}' to see its columns, then pass existing column names.");
+                foreach (var c in cols) if (!t.Columns.Contains(c)) throw new InvalidOperationException($"Table '{t.Name}' has no column '{c}' for a hierarchy level. Run list_columns on '{t.Name}' to see its columns, then pass existing column names.");
                 newRef = ObjectRefs.For(t.AddHierarchy(name, null, cols));
             });
             return newRef;
@@ -6942,7 +7836,7 @@ namespace Semanticus.Engine
             await s.MutateAsync(origin, $"create calculation group {name}", m =>
             {
                 if ((m.Database?.CompatibilityLevel ?? 0) < 1470)
-                    throw new InvalidOperationException($"Calculation groups require compatibility level 1470 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}; raise it with set_compatibility_level).");
+                    throw new InvalidOperationException($"Calculation groups require compatibility level 1470 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}; raise Compatibility level in Properties).");
                 if (m.Tables.Contains(name)) throw new InvalidOperationException($"A table named '{name}' already exists.");
                 newRef = ObjectRefs.For(m.AddCalculationGroup(name));
             });
@@ -6959,7 +7853,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"create calculation item {name}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, calcGroupRef) is CalculationGroupTable cg))
-                    throw new InvalidOperationException($"{calcGroupRef} is not a calculation group — run list_calculation_groups to see them; create one with create_calculation_group first.");
+                    throw new InvalidOperationException($"{calcGroupRef} is not a calculation group. Run list_calculation_groups to see them; create one with create_calculation_group first.");
                 if (cg.CalculationItems.Contains(name)) throw new InvalidOperationException($"Calculation group '{cg.Name}' already has an item '{name}'.");
                 newRef = ObjectRefs.For(cg.AddCalculationItem(name, expression ?? string.Empty));
             });
@@ -7013,10 +7907,10 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"{(include ? "add to" : "remove from")} perspective {perspectiveRef}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, perspectiveRef) is Perspective p))
-                    throw new InvalidOperationException($"{perspectiveRef} is not a perspective — run get_perspectives to see them; create one with create_perspective.");
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
+                    throw new InvalidOperationException($"{perspectiveRef} is not a perspective. Run get_perspectives to see them; create one with create_perspective.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
                 if (!(obj is ITabularPerspectiveObject po))
-                    throw new InvalidOperationException($"{objRef} ({ObjectRefs.KindOf(obj)}) can't be put in a perspective — only tables, columns, measures and hierarchies can.");
+                    throw new InvalidOperationException($"{objRef} ({ObjectRefs.KindOf(obj)}) can't be put in a perspective. Only tables, columns, measures and hierarchies can.");
                 // Setting a table cascades to its columns/measures/hierarchies (PerspectiveTableIndexer).
                 po.InPerspective[p] = include;
             });
@@ -7024,13 +7918,16 @@ namespace Semanticus.Engine
         }
 
         public Task<PerspectiveInfo[]> GetPerspectivesAsync() =>
-            _sessions.Require().ReadAsync(m => m.Perspectives.Select(p => new PerspectiveInfo
+            _sessions.Require().ReadAsync(BuildPerspectiveInfos);
+
+        private static PerspectiveInfo[] BuildPerspectiveInfos(Model m) =>
+            m.Perspectives.Select(p => new PerspectiveInfo
             {
                 Ref = ObjectRefs.For(p),
                 Name = p.Name,
                 Description = p.Description,
                 Members = PerspectiveObjects(m).Where(o => o.InPerspective[p]).Select(o => ObjectRefs.For((ITabularObject)o)).ToArray(),
-            }).ToArray());
+            }).ToArray();
 
         // Every object that can be a perspective member: each table + its columns/measures/hierarchies.
         private static IEnumerable<ITabularPerspectiveObject> PerspectiveObjects(Model m)
@@ -7050,13 +7947,27 @@ namespace Semanticus.Engine
         public async Task<SetResult> SetCalcItemFormatStringAsync(string calcItemRef, string formatExpression, string origin)
         {
             var s = _sessions.Require();
-            var rev = await s.MutateAsync(origin, $"set calc-item format string {calcItemRef}", m =>
+            var changed = false;
+            long rev;
+            try
             {
-                if (!(ObjectRefs.Resolve(m, calcItemRef) is CalculationItem ci))
-                    throw new InvalidOperationException($"{calcItemRef} is not a calculation item — run list_calculation_groups to see items; create one with create_calculation_item.");
-                ci.FormatStringExpression = string.IsNullOrWhiteSpace(formatExpression) ? null : formatExpression.Trim();
-            });
-            return new SetResult { Revision = rev, Changed = true };
+                rev = await s.MutateAsync(origin, $"set calc-item format string {calcItemRef}", m =>
+                {
+                    if (!(ObjectRefs.Resolve(m, calcItemRef) is CalculationItem ci))
+                        throw new InvalidOperationException($"{calcItemRef} is not a calculation item. Run list_calculation_groups to see items; create one with create_calculation_item.");
+                    var next = string.IsNullOrWhiteSpace(formatExpression) ? null : formatExpression.Trim();
+                    if (next != null)
+                        RefuseDaxForWrite(DaxValidator.Validate(m, next), next, "this format expression");
+                    if (!string.Equals(ci.FormatStringExpression ?? string.Empty, next ?? string.Empty, StringComparison.Ordinal))
+                    {
+                        ci.FormatStringExpression = next;
+                        changed = true;
+                    }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
+            return new SetResult { Revision = rev, Changed = changed };
         }
 
         /// <summary>Set a calculation group's precedence (an integer; a HIGHER precedence is applied first when
@@ -7067,7 +7978,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"set calc-group precedence {calcGroupRef}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, calcGroupRef) is CalculationGroupTable cg))
-                    throw new InvalidOperationException($"{calcGroupRef} is not a calculation group — run list_calculation_groups to see them; create one with create_calculation_group.");
+                    throw new InvalidOperationException($"{calcGroupRef} is not a calculation group. Run list_calculation_groups to see them; create one with create_calculation_group.");
                 cg.CalculationGroupPrecedence = precedence;
             });
             return new SetResult { Revision = rev, Changed = true };
@@ -7084,6 +7995,29 @@ namespace Semanticus.Engine
             {
                 var obj = ObjectRefs.Resolve(m, objRef);
                 DeleteResolvedObject(m, obj, objRef);
+            });
+            return new SetResult { Revision = rev, Changed = true };
+        }
+
+        public async Task<SetResult> DeleteObjectsAsync(string[] objRefs, string origin)
+        {
+            if (objRefs == null || objRefs.Length == 0)
+                throw new InvalidOperationException("delete_objects: pass at least one object ref. Run list_objects or search_model to find refs.");
+            if (objRefs.Length == 1)
+                return await DeleteObjectAsync(objRefs[0], origin);
+            var s = _sessions.Require();
+            var unique = objRefs.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().ToArray();
+            var exists = await s.ReadAsync(m => unique.Where(r => ObjectRefs.Resolve(m, r) != null).ToArray());
+            if (exists.Length == 0) return new SetResult { Revision = s.Revision, Changed = false };
+            if (exists.Length == 1) return await DeleteObjectAsync(exists[0], origin);
+            var rev = await s.MutateAsync(origin, $"delete {exists.Length} objects", m =>
+            {
+                foreach (var r in exists)
+                {
+                    var obj = ObjectRefs.Resolve(m, r);
+                    if (obj == null) continue;   // a parent in this batch may already have removed a child
+                    DeleteResolvedObject(m, obj, r);
+                }
             });
             return new SetResult { Revision = rev, Changed = true };
         }
@@ -7108,6 +8042,10 @@ namespace Semanticus.Engine
                     "Can't delete this table: the model was upgraded across compatibility level 1400 while it had existing roles, " +
                     "and TOMWrapper left those roles' object-level security uninitialized (a known vendored limitation). " +
                     "Reopen/reload the model, then delete it.");
+            // TOMWrapper's Delete() on a calculated-table column is a silent no-op (CanDelete is false). A
+            // confirm that consumes a revision and leaves the column in place is a fake delete. Refuse instead.
+            if (obj is CalculatedTableColumn)
+                throw new InvalidOperationException("This column is made by the table's formula. Change the formula instead of deleting the column.");
             obj.Delete();
         }
 
@@ -7117,14 +8055,14 @@ namespace Semanticus.Engine
             string newRef = null;
             await s.MutateAsync(origin, $"duplicate {objRef}", m =>
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
 
                 // Optional paste-target CONTAINER (the tree's copy/paste). Resolving to the source's own container
                 // collapses to the classic beside-the-original duplicate, so a caller can always pass its selection.
                 ITabularNamedObject target = null;
                 if (!string.IsNullOrWhiteSpace(targetRef))
                     target = ObjectRefs.Resolve(m, targetRef) ?? throw new InvalidOperationException(
-                        $"{targetRef} not found — pass a table ref (e.g. 'table:Sales') to copy into, or omit targetRef to duplicate beside the original.");
+                        $"{targetRef} not found. Pass a table ref (e.g. 'table:Sales') to copy into, or omit targetRef to duplicate beside the original.");
 
                 ITabularObject copy;
                 switch (obj)
@@ -7146,22 +8084,22 @@ namespace Semanticus.Engine
                     // Columns and hierarchies stay on their own table: a column's data (source binding / row
                     // context) and a hierarchy's levels only exist there — a cross-table clone would dangle.
                     case CalculatedTableColumn ctc:
-                        RefuseCrossTable(target, ctc.Table, "a calc-table column", "it is produced by its table's DAX expression — duplicate it on its own table, or copy the expression into the target table's DAX");
+                        RefuseCrossTable(target, ctc.Table, "a calc-table column", "it is produced by its table's DAX expression. Duplicate it on its own table, or copy the expression into the target table's DAX");
                         copy = ctc.Clone(newName); break;
                     case CalculatedColumn cc:
-                        RefuseCrossTable(target, cc.Table, "a column", "a column's data lives in its own table — duplicate it there, or create a new calculated column on the target table");
+                        RefuseCrossTable(target, cc.Table, "a column", "a column's data lives in its own table. Duplicate it there, or create a new calculated column on the target table");
                         copy = cc.Clone(newName); break;
                     case DataColumn dc:
-                        RefuseCrossTable(target, dc.Table, "a column", "a data column is bound to its own table's source query — duplicate it there, or add the column in the target table's source");
+                        RefuseCrossTable(target, dc.Table, "a column", "a data column is bound to its own table's source query. Duplicate it there, or add the column in the target table's source");
                         copy = dc.Clone(newName); break;
                     case Hierarchy h:
-                        RefuseCrossTable(target, h.Table, "a hierarchy", "its levels are built from its own table's columns — duplicate it there, or create a new hierarchy on the target table from that table's columns");
+                        RefuseCrossTable(target, h.Table, "a hierarchy", "its levels are built from its own table's columns. Duplicate it there, or create a new hierarchy on the target table from that table's columns");
                         copy = h.Clone(newName); break;
                     case CalculationItem ci:
                     {
                         var tg = target == null || ReferenceEquals(target, ci.CalculationGroupTable) ? null
                             : target as CalculationGroupTable ?? throw new InvalidOperationException(
-                                $"Can't paste a calculation item onto {ObjectRefs.KindOf(target)} '{target.Name}' — the target must be a calculation group (pass its 'table:' ref).");
+                                $"Can't paste a calculation item onto {ObjectRefs.KindOf(target)} '{target.Name}'. The target must be a calculation group (pass its 'table:' ref).");
                         if (tg == null) { copy = ci.Clone(newName); break; }
                         var final = UniqueCopyName(string.IsNullOrEmpty(newName) ? ci.Name : newName,
                             n => tg.CalculationItems.Any(x => NameEq(x.Name, n)));
@@ -7172,7 +8110,7 @@ namespace Semanticus.Engine
                     }
                     case Table t:   // Table, CalculatedTable (incl. field parameters), CalculationGroupTable — Clone dispatches internally
                         if (target != null && !ReferenceEquals(target, t)) throw new InvalidOperationException(
-                            "Tables, calculation groups and field parameters duplicate at model scope — omit targetRef.");
+                            "Tables, calculation groups and field parameters duplicate at model scope. Omit targetRef.");
                         copy = t.Clone(newName); break;
                     default:
                         throw new InvalidOperationException($"Duplicate is not supported for {ObjectRefs.KindOf(obj)} (supported: measure, calculated/data/calc-table column, hierarchy, calculation item, table / calculated table / field parameter, calculation group).");
@@ -7189,7 +8127,7 @@ namespace Semanticus.Engine
         {
             if (target == null || ReferenceEquals(target, source)) return null;
             if (target is Table t) return t;
-            throw new InvalidOperationException($"Can't paste {what} onto {ObjectRefs.KindOf(target)} '{target.Name}' — the target must be a table (pass a 'table:' ref).");
+            throw new InvalidOperationException($"Can't paste {what} onto {ObjectRefs.KindOf(target)} '{target.Name}'. The target must be a table (pass a 'table:' ref).");
         }
 
         private static void RefuseCrossTable(ITabularNamedObject target, Table source, string what, string why)
@@ -7232,7 +8170,7 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
                 if (!(obj is IDaxObject dep)) return System.Array.Empty<DependentInfo>();
                 return dep.ReferencedBy.OfType<ITabularNamedObject>()
                     .Select(o => new DependentInfo { Ref = ObjectRefs.For(o), Name = o.Name, Kind = ObjectRefs.KindOf(o) })
@@ -7248,7 +8186,7 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
                 if (!(obj is IDaxDependantObject dep)) return System.Array.Empty<DependentInfo>();
                 return dep.DependsOn.Keys.OfType<ITabularNamedObject>()
                     .Select(o => new DependentInfo { Ref = ObjectRefs.For(o), Name = o.Name, Kind = ObjectRefs.KindOf(o) })
@@ -7307,13 +8245,13 @@ namespace Semanticus.Engine
 
         /// <summary>Read-only: list the published reports in a Fabric/Power BI workspace (id, name, datasetId,
         /// reportType, webUrl) so a caller can pick the ones that bind to the open model's dataset. Non-admin path.</summary>
-        public async Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             workspaceId = workspaceId.Trim();
             try
             {
-                var token = await EntraToken.AcquireAsync(authMode, null, cancellationToken, tenantId).ConfigureAwait(false);
+                var token = await AcquireXmlaTokenAsync(authMode, tenantId, origin, cancellationToken).ConfigureAwait(false);
                 return await PowerBiReports.ListReportsAsync(workspaceId, token, cancellationToken).ConfigureAwait(false);
             }
             // Golden Rule #1: an Azure.Identity auth failure (or any REST throw) must NOT cross a door un-scrubbed —
@@ -7329,13 +8267,13 @@ namespace Semanticus.Engine
         /// Report.ReadWrite.All) + Contributor; <paramref name="consent"/> must be true to acknowledge that. Per-report
         /// failures (paginated/RDL, a sensitivity-label block, a fetch error) are recorded as unreadable, never thrown —
         /// the verdict degrades to a model-aware-but-incomplete caveat rather than silently overstating "safe".</summary>
-        public async Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, System.Threading.CancellationToken cancellationToken = default)
+        public async Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (!consent)
                 throw new InvalidOperationException(
                     "Reading a published report's definition uses the Fabric Get Report Definition API, which requires a " +
-                    "WRITE-capable scope (Item.ReadWrite.All / Report.ReadWrite.All) and the Contributor role on the workspace — " +
+                    "WRITE-capable scope (Item.ReadWrite.All / Report.ReadWrite.All) and the Contributor role on the workspace, " +
                     "even though Semanticus only READS the definition and never modifies the report. Re-run with consent=true to " +
                     "acknowledge and proceed.");
 
@@ -7351,8 +8289,16 @@ namespace Semanticus.Engine
             string fabricToken;
             try
             {
-                var pbiToken = await EntraToken.AcquireAsync(authMode, null, ct, tenantId).ConfigureAwait(false);
-                var all = await PowerBiReports.ListReportsAsync(workspaceId, pbiToken, ct).ConfigureAwait(false);
+                // The discovery seam stands in for the whole Power BI leg (token + list). Without it that leg throws
+                // first for an agent, so the SECOND, Fabric-audience acquisition below is unreachable in any offline
+                // test and a regression there would survive the whole suite. The Power BI leg itself is covered
+                // separately by the list_reports acquisition test.
+                var all = CloudReportDiscoveryForTests != null
+                    ? await CloudReportDiscoveryForTests(workspaceId).ConfigureAwait(false)
+                    : await PowerBiReports.ListReportsAsync(
+                        workspaceId,
+                        await AcquireXmlaTokenAsync(authMode, tenantId, origin, ct).ConfigureAwait(false),
+                        ct).ConfigureAwait(false);
                 byId = all.Where(r => !string.IsNullOrEmpty(r.Id))
                     .GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -7363,11 +8309,10 @@ namespace Semanticus.Engine
                     ? reportIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
                     : byId.Values.Where(r => !string.Equals(r.ReportType, "PaginatedReport", StringComparison.OrdinalIgnoreCase)).Select(r => r.Id).ToList();
 
-                fabricToken = await EntraToken.AcquireFabricAsync(authMode, null, ct, tenantId).ConfigureAwait(false);
+                fabricToken = await AcquireFabricTokenAsync(authMode, tenantId, origin, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not ArgumentException && !ct.IsCancellationRequested) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
 
-            var parsed = new List<(string path, string error, Lineage.ReportDefinitionReader.ParseResult result)>();
             var total = wanted.Count;
             var operationRunId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId;
             void PublishProgress(int done, string note = null) => _sessions.Bus.PublishProgress(new OperationProgress
@@ -7378,44 +8323,63 @@ namespace Semanticus.Engine
                 Total = total,
                 Note = note,
             });
+            PublishProgress(0);
 
-            for (var i = 0; i < wanted.Count; i++)
-            {
-                var id = wanted[i];
-                byId.TryGetValue(id, out var meta);
-                var name = string.IsNullOrEmpty(meta?.Name) ? id : meta.Name;
-                var empty = new Lineage.ReportDefinitionReader.ParseResult();
-                PublishProgress(i, name);
-
-                if (meta == null)
-                {
-                    parsed.Add((name, "Report id not found in this workspace.", empty));
-                }
-                else if (string.Equals(meta.ReportType, "PaginatedReport", StringComparison.OrdinalIgnoreCase))
-                {
-                    parsed.Add((name, "Paginated (RDL) report — its field usage is not parsed.", empty));
-                }
-                else
-                {
-                    try
-                    {
-                        var parts = await FabricRest.GetReportDefinitionAsync(workspaceId, id, "PBIR", fabricToken, ct).ConfigureAwait(false);
-                        var pr = Lineage.ReportDefinitionReader.Parse(parts.Select(p => (p.Path, p.Content)));   // path carries page/visual ids
-                        pr.DefinitionFound = parts.Length > 0;
-                        parsed.Add(parts.Length > 0
-                            ? (name, (string)null, pr)
-                            : (name, "getDefinition returned no PBIR parts (a PBIRLegacy report, or download disabled).", pr));
-                    }
-                    catch (Exception ex) when (!ct.IsCancellationRequested)
-                    {
-                        parsed.Add((name, FabricRest.Scrub(ex.Message), empty));   // sensitivity-label block / 403 / transport — fail-loud, keep the batch going
-                    }
-                }
-            }
-
+            var parsed = await FetchCloudReportPartsAsync(workspaceId, wanted, byId, fabricToken, ct,
+                onReportDone: (done, name) => PublishProgress(done, name)).ConfigureAwait(false);
             var result = await s.ReadAsync(m => Lineage.LineageGraph.AnalyzeReports(m, parsed)).ConfigureAwait(false);
             PublishProgress(total);
             return result;
+        }
+
+        /// <summary>Bounded-parallel (degree 4) fetch of each report's PBIR via Fabric getDefinition, preserving the
+        /// caller's <paramref name="wanted"/> order (indexed slots, no lock) and the per-report fail-loud "unreadable"
+        /// capture so one blocked report never aborts the batch. Each getDefinition is itself hard-bounded by the
+        /// interactive budget (FabricRest.PollBudget.InteractiveRead), so a stuck report fails fast instead of hanging;
+        /// degree 4 stays inside SendAsync's 429 backoff. A genuine <paramref name="ct"/> cancel aborts the whole
+        /// fan-out and propagates. Internal + static so the offline test drives it through FabricRest.TestClientFactory
+        /// without the live token acquisition the public entry point does first. <paramref name="budgetOverride"/> is a
+        /// test seam only. <paramref name="onReportDone"/> fires as each report FINISHES (completion order, not
+        /// <paramref name="wanted"/> order — a parallel fan-out has no single "current" report) with the Interlocked
+        /// completion count and the finished report's name; it feeds the caller's progress channel.</summary>
+        internal static async Task<List<(string path, string error, Lineage.ReportDefinitionReader.ParseResult result)>> FetchCloudReportPartsAsync(
+            string workspaceId, IReadOnlyList<string> wanted, IReadOnlyDictionary<string, CloudReport> byId, string fabricToken,
+            System.Threading.CancellationToken ct, FabricRest.PollBudget? budgetOverride = null, Action<int, string> onReportDone = null)
+        {
+            var slots = new (string path, string error, Lineage.ReportDefinitionReader.ParseResult result)[wanted.Count];
+            var completed = 0;
+            await Parallel.ForEachAsync(
+                Enumerable.Range(0, wanted.Count),
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Math.Max(wanted.Count, 1), 1, 4), CancellationToken = ct },
+                async (i, token) =>
+                {
+                    var id = wanted[i];
+                    byId.TryGetValue(id, out var meta);
+                    var name = string.IsNullOrEmpty(meta?.Name) ? id : meta.Name;
+                    var empty = new Lineage.ReportDefinitionReader.ParseResult();
+
+                    if (meta == null) { slots[i] = (name, "Report id not found in this workspace.", empty); }
+                    else if (string.Equals(meta.ReportType, "PaginatedReport", StringComparison.OrdinalIgnoreCase))
+                    { slots[i] = (name, "Paginated (RDL) report: its field usage is not parsed.", empty); }
+                    else
+                    {
+                        try
+                        {
+                            var parts = await FabricRest.GetReportDefinitionAsync(workspaceId, id, "PBIR", fabricToken, token, budgetOverride).ConfigureAwait(false);
+                            var pr = Lineage.ReportDefinitionReader.Parse(parts.Select(p => (p.Path, p.Content)));   // path carries page/visual ids
+                            pr.DefinitionFound = parts.Length > 0;
+                            slots[i] = parts.Length > 0
+                                ? (name, (string)null, pr)
+                                : (name, "getDefinition returned no PBIR parts (a PBIRLegacy report, or download disabled).", pr);
+                        }
+                        catch (Exception ex) when (!token.IsCancellationRequested)
+                        {
+                            slots[i] = (name, FabricRest.Scrub(ex.Message), empty);   // sensitivity-label block / 403 / transport — fail-loud, keep the batch going
+                        }
+                    }
+                    onReportDone?.Invoke(System.Threading.Interlocked.Increment(ref completed), name);
+                }).ConfigureAwait(false);
+            return slots.ToList();
         }
 
         /// <summary>Script one or many objects to text (read-only — never mutates). format: 'dax' (annotated
@@ -7513,13 +8477,13 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Apply an edited DAX script (the 'dax' output of script_objects, with "// @object &lt;ref&gt;" headers)
-        /// back to the model: each block's expression is set on its object in ONE undoable, broadcast batch. Refs that
-        /// don't resolve or aren't DAX-expression objects are skipped and reported (never silently dropped).</summary>
+        /// back to the model: each block's expression is set on its object in ONE undoable, broadcast batch. All-or-nothing:
+        /// a missing ref or invalid DAX refuses the whole script and writes nothing. Verified Mode also refuses unknown refs.</summary>
         public async Task<ApplyScriptResult> ApplyDaxScriptAsync(string script, string origin)
         {
             var blocks = ParseDaxScript(script);
             if (blocks.Count == 0)
-                throw new InvalidOperationException("apply_dax_script: no '// @object <ref>' blocks found — script with format='dax' first, then edit and apply.");
+                throw new InvalidOperationException("apply_dax_script: no '// @object <ref>' blocks found. Script with format='dax' first, then edit and apply.");
 
             // Pro gate: applying a MULTI-object DAX script in one atomic batch is the bulk primitive; a single-block
             // script (one object) stays free. Thrown before the mutate, so a refusal leaves the model intact.
@@ -7528,24 +8492,50 @@ namespace Semanticus.Engine
                     "Apply one object's DAX at a time (update_measure / set_dax).");
 
             var applied = new List<string>();
-            var skipped = new List<string>();
             var s = _sessions.Require();
             var rev = await s.MutateAsync(origin, "apply DAX script", m =>
             {
+                var problems = new List<string>();
+                var writes = new List<(ITabularNamedObject obj, string objRef, string expr)>();
                 foreach (var (objRef, expr) in blocks)
                 {
-                    switch (ObjectRefs.Resolve(m, objRef))
+                    var resolved = ObjectRefs.Resolve(m, objRef);
+                    switch (resolved)
                     {
-                        case Measure me: me.Expression = expr; applied.Add(objRef); break;
-                        case CalculatedColumn cc: cc.Expression = expr; applied.Add(objRef); break;
-                        case CalculatedTable ct: ct.Expression = expr; applied.Add(objRef); break;
-                        case CalculationItem ci: ci.Expression = expr; applied.Add(objRef); break;
-                        case Function f: f.Expression = expr; applied.Add(objRef); break;
-                        default: skipped.Add($"{objRef}: unresolved or not a DAX-expression object — only measures, calculated columns/tables, calculation items and functions carry DAX. Fix the '// @object <ref>' header (list_objects shows valid refs) and re-apply."); break;
+                        case Measure me: writes.Add((me, objRef, expr)); break;
+                        case CalculatedColumn cc: writes.Add((cc, objRef, expr)); break;
+                        case CalculatedTable ct: writes.Add((ct, objRef, expr)); break;
+                        case CalculationItem ci: writes.Add((ci, objRef, expr)); break;
+                        case Function f: writes.Add((f, objRef, expr)); break;
+                        default:
+                            problems.Add($"{objRef}: unresolved or not a DAX-expression object. Only measures, calculated columns/tables, calculation items and functions carry DAX. Fix the '// @object <ref>' header (list_objects shows valid refs) and re-apply.");
+                            continue;
                     }
+                    if (string.IsNullOrWhiteSpace(expr)) continue;
+                    try
+                    {
+                        var body = resolved is Function ? FunctionBodyOrThrow(expr) : expr;
+                        var v = DaxValidator.Validate(m, body);
+                        RefuseDaxForWrite(v, body, "this DAX edit");
+                    }
+                    catch (InvalidOperationException ex) { problems.Add($"{objRef}: {ex.Message}"); }
+                }
+                if (problems.Count > 0)
+                    throw new InvalidOperationException("Nothing was written. " + string.Join(" ", problems));
+                foreach (var (obj, objRef, expr) in writes)
+                {
+                    switch (obj)
+                    {
+                        case Measure me: me.Expression = expr; break;
+                        case CalculatedColumn cc: cc.Expression = expr; break;
+                        case CalculatedTable ct: ct.Expression = expr; break;
+                        case CalculationItem ci: ci.Expression = expr; break;
+                        case Function f: f.Expression = expr; break;
+                    }
+                    applied.Add(objRef);
                 }
             });
-            return new ApplyScriptResult { Revision = rev, Applied = applied.ToArray(), Skipped = skipped.ToArray() };
+            return new ApplyScriptResult { Revision = rev, Applied = applied.ToArray(), Skipped = Array.Empty<string>() };
         }
 
         /// <summary>Parse a DAX script into (ref, expression) blocks. A header line "// @object &lt;ref&gt;" starts a block;
@@ -7590,47 +8580,75 @@ namespace Semanticus.Engine
             var applied = new List<string>();
             var skipped = new List<string>();
             var s = _sessions.Require();
-            var rev = await s.MutateAsync(origin, "apply TMDL script", m =>
+            long rev;
+            try
             {
-                // Resolve + validate every child before the first write. Store strings only: each top-level apply
-                // Reinit invalidates wrapper instances, but the prepared partial documents remain safe.
-                var measures = new List<(string objRef, string table, string content)>();
-                foreach (var doc in docs.Where(d => d.ObjectRef != null))
+                rev = await s.MutateAsync(origin, "apply TMDL script", m =>
                 {
-                    if (TryPrepareMeasureTmdl(m, doc.ObjectRef, doc.Content, out var table, out var content, out var error))
-                        measures.Add((doc.ObjectRef, table, content));
-                    else
-                        skipped.Add($"{doc.ObjectRef}: {error}");
-                }
+                    // Resolve + validate every child before the first write. Store strings only: each top-level apply
+                    // Reinit invalidates wrapper instances, but the prepared partial documents remain safe.
+                    var measures = new List<(string objRef, string table, string content)>();
+                    var validationProblems = new List<string>();
+                    foreach (var doc in docs.Where(d => d.ObjectRef != null))
+                    {
+                        if (TryPrepareMeasureTmdl(m, doc.ObjectRef, doc.Content, out var table, out var content, out var error))
+                        {
+                            try { ValidateTmdlDaxExpressions(m, content, doc.ObjectRef); }
+                            catch (InvalidOperationException ex) { validationProblems.Add($"{doc.ObjectRef}: {ex.Message}"); }
+                            measures.Add((doc.ObjectRef, table, content));
+                        }
+                        else
+                            skipped.Add($"{doc.ObjectRef}: {error}");
+                    }
 
-                var topLevel = docs.Where(d => d.LogicalPath != null).ToList();
-                var topPaths = new HashSet<string>(topLevel.Select(d => d.LogicalPath), StringComparer.OrdinalIgnoreCase);
-                foreach (var doc in topLevel)
-                {
-                    try { TmdlApplier.Apply(m, doc.LogicalPath, doc.Content); applied.Add(doc.LogicalPath); }
-                    catch (Exception ex) { skipped.Add($"{doc.LogicalPath}: {OneLine(ex.Message)}"); }
-                }
+                    var topLevel = docs.Where(d => d.LogicalPath != null).ToList();
+                    var topPaths = new HashSet<string>(topLevel.Select(d => d.LogicalPath), StringComparer.OrdinalIgnoreCase);
+                    foreach (var doc in topLevel)
+                    {
+                        try { ValidateTmdlDaxExpressions(m, doc.Content, doc.LogicalPath); }
+                        catch (InvalidOperationException ex) { validationProblems.Add($"{doc.LogicalPath}: {ex.Message}"); }
+                    }
+                    if (validationProblems.Count > 0)
+                        throw new TmdlValidationException(validationProblems);
 
-                foreach (var group in measures.GroupBy(x => x.table, StringComparer.OrdinalIgnoreCase))
-                {
-                    var path = "./tables/" + group.Key;
-                    if (topPaths.Contains(path))
+                    foreach (var doc in topLevel)
                     {
-                        foreach (var item in group) skipped.Add($"{item.objRef}: the same script also contains its whole table; apply one scope at a time.");
-                        continue;
+                        try { TmdlApplier.Apply(m, doc.LogicalPath, doc.Content); applied.Add(doc.LogicalPath); }
+                        catch (Exception ex) { skipped.Add($"{doc.LogicalPath}: {OneLine(ex.Message)}"); }
                     }
-                    var partial = BuildPartialTableTmdl(group.Key, group.Select(x => x.content));
-                    try
+
+                    foreach (var group in measures.GroupBy(x => x.table, StringComparer.OrdinalIgnoreCase))
                     {
-                        TmdlApplier.Apply(m, path, partial);
-                        applied.AddRange(group.Select(x => x.objRef));
+                        var path = "./tables/" + group.Key;
+                        if (topPaths.Contains(path))
+                        {
+                            foreach (var item in group) skipped.Add($"{item.objRef}: the same script also contains its whole table; apply one scope at a time.");
+                            continue;
+                        }
+                        var partial = BuildPartialTableTmdl(group.Key, group.Select(x => x.content));
+                        try
+                        {
+                            TmdlApplier.Apply(m, path, partial);
+                            applied.AddRange(group.Select(x => x.objRef));
+                        }
+                        catch (Exception ex)
+                        {
+                            foreach (var item in group) skipped.Add($"{item.objRef}: {OneLine(ex.Message)}");
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        foreach (var item in group) skipped.Add($"{item.objRef}: {OneLine(ex.Message)}");
-                    }
-                }
-            });
+
+                    // A skipped document can follow a document that already applied successfully. Treat any
+                    // skip as a batch failure so the dispatcher rolls back every earlier TMDL write as well.
+                    if (skipped.Count > 0)
+                        throw new TmdlValidationException(skipped);
+                });
+            }
+            catch (TmdlValidationException ex)
+            {
+                // Validation runs inside the tracked batch, so the dispatcher rolls back before this result is
+                // returned. Keep the script surface's existing skipped-result contract without consuming a revision.
+                return new ApplyScriptResult { Revision = s.Revision, Applied = Array.Empty<string>(), Skipped = ex.Problems };
+            }
             return new ApplyScriptResult { Revision = rev, Applied = applied.ToArray(), Skipped = skipped.ToArray() };
         }
 
@@ -7710,6 +8728,76 @@ namespace Semanticus.Engine
             }
             Flush();
             return result;
+        }
+
+        private static void ValidateTmdlDaxExpressions(Model model, string content, string scope)
+        {
+            var lines = (content ?? string.Empty).Replace("\r\n", "\n").Split('\n');
+            var tableName = scope != null && scope.StartsWith("./tables/", StringComparison.OrdinalIgnoreCase)
+                ? StripTmdlName(scope.Substring("./tables/".Length)) : null;
+            var table = tableName == null ? null : model.Tables.FirstOrDefault(t => string.Equals(t.Name, tableName, StringComparison.OrdinalIgnoreCase));
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+                var trimmed = line.TrimStart();
+                if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^(measure|column|calculationItem)\b")) continue;
+                var declaration = System.Text.RegularExpressions.Regex.Match(trimmed,
+                    @"^(measure|column|calculationItem)\s+('(?:''|[^'])*'|[^=\s]+)");
+                var equals = line.IndexOf('=');
+                if (equals < 0) continue;
+
+                var expression = line.Substring(equals + 1).Trim();
+                if (expression.StartsWith("```", StringComparison.Ordinal))
+                {
+                    var body = new List<string>();
+                    var closing = false;
+                    for (var j = i + 1; j < lines.Length; j++)
+                    {
+                        if (lines[j].Trim() == "```") { i = j; closing = true; break; }
+                        body.Add(lines[j].TrimStart());
+                    }
+                    if (!closing)
+                        throw new InvalidOperationException($"This TMDL expression for {scope} is not valid DAX: the code block is not closed. Fix it before saving.");
+                    expression = string.Join("\n", body).Trim();
+                }
+                else if (expression.Length == 0)
+                {
+                    var indent = line.Length - trimmed.Length;
+                    var body = new List<string>();
+                    var j = i + 1;
+                    for (; j < lines.Length; j++)
+                    {
+                        var next = lines[j];
+                        if (next.Trim().Length == 0) { body.Add(string.Empty); continue; }
+                        var nextTrimmed = next.TrimStart();
+                        var nextIndent = next.Length - nextTrimmed.Length;
+                        if (nextIndent <= indent || IsTmdlSibling(nextTrimmed)) break;
+                        body.Add(next.Substring(Math.Min(indent + 1, nextIndent)));
+                    }
+                    i = j - 1;
+                    expression = string.Join("\n", body).Trim();
+                }
+
+                var existing = table == null || !declaration.Success ? null : declaration.Groups[1].Value switch
+                {
+                    "measure" => table.Measures.FirstOrDefault(x => string.Equals(x.Name, StripTmdlName(declaration.Groups[2].Value), StringComparison.OrdinalIgnoreCase))?.Expression,
+                    "column" => (table.Columns.FirstOrDefault(x => string.Equals(x.Name, StripTmdlName(declaration.Groups[2].Value), StringComparison.OrdinalIgnoreCase)) as CalculatedColumn)?.Expression,
+                    _ => (table as CalculationGroupTable)?.CalculationGroup?.CalculationItems.FirstOrDefault(x => string.Equals(x.Name, StripTmdlName(declaration.Groups[2].Value), StringComparison.OrdinalIgnoreCase))?.Expression,
+                };
+                if (!string.IsNullOrWhiteSpace(expression) && !string.Equals(existing, expression, StringComparison.Ordinal))
+                    RefuseDaxForWrite(DaxValidator.Validate(model, expression), expression, $"the TMDL expression for {scope}");
+            }
+        }
+
+        private static bool IsTmdlSibling(string trimmed)
+        {
+            return System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[A-Za-z_][A-Za-z0-9_]*:")
+                || System.Text.RegularExpressions.Regex.IsMatch(trimmed,
+                    @"^(measure|column|table|partition|calculationItem|calculationGroup|hierarchy|level|role|changedProperty|extendedProperty|relationship|variation|kpi|detailRowsDefinition|formatStringDefinition|defaultDetailRowsDefinition|refreshPolicy|expression|ref|member|perspective)\b")
+                || System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^annotation\s+[A-Za-z0-9_.]+\s*=")
+                || System.Text.RegularExpressions.Regex.IsMatch(trimmed,
+                    @"^(isHidden|isDefault|isKey|isNullable|isAvailableInMDX|isAvailableInMdx|isPrivate|isProcessed|showAllValues|isUnique)\s*$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
 
         private static bool TryPrepareMeasureTmdl(Model model, string objRef, string content,
@@ -7804,35 +8892,93 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
                 var props = ReflectProperties(obj);
-                EnrichProperties(m, obj, props);
-                return props;
+                return EnrichProperties(m, obj, props);
             });
+        }
+
+        private static void ValidatePropertyWrite(Model model, object obj, string propertyName, string value)
+        {
+            if (string.Equals(propertyName, "DataCategory", StringComparison.Ordinal) && obj is Column)
+            {
+                RefuseDataCategory(value);
+                return;
+            }
+            if (string.Equals(propertyName, "FormatStringExpression", StringComparison.Ordinal) && (obj is Measure or CalculationItem))
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    RefuseDaxForWrite(DaxValidator.Validate(model, value), value, "this format expression");
+                return;
+            }
+            if (string.Equals(propertyName, "FormatString", StringComparison.Ordinal) && (obj is Measure or Column))
+            {
+                var problem = FormatStringRules.Problem(value);
+                if (problem != null) throw new InvalidOperationException(problem);
+                return;
+            }
+            if (string.Equals(propertyName, "Expression", StringComparison.Ordinal))
+            {
+                if (obj is Partition partition && partition.SourceType == PartitionSourceType.M)
+                {
+                    RefuseMForWrite(value, "this M expression");
+                    return;
+                }
+                var body = obj is Function ? FunctionBodyOrThrow(value) : value;
+                if (obj is Measure or CalculatedColumn or CalculatedTable or CalculationItem or Function)
+                    RefuseDaxForWrite(DaxValidator.Validate(model, body), body, "this DAX edit");
+            }
         }
 
         public async Task<SetResult> SetObjectPropertyAsync(string objRef, string propertyName, string value, string origin)
         {
             var s = _sessions.Require();
             var changed = false;
+            var reportWarn = false;
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
-            var rev = await s.MutateAsync(origin, $"set {propertyName}", m =>
+            long rev;
+            try
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found — check the ref with get_object, or run list_objects / search_model to find it.");
-                var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
-                        ?? throw new InvalidOperationException($"{ObjectRefs.KindOf(obj)} has no property '{propertyName}' — run get_properties on {objRef} to see its settable property names.");
-                if (!p.CanWrite) throw new InvalidOperationException($"Property '{propertyName}' is read-only.");
-                var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
-                var next = ConvertPropertyValue(pt, value, propertyName);
-                var current = p.GetValue(obj);
-                if (Equals(current, next)) return;   // already the target value — honest no-op
-                // The property grid's rename path: a Name write must go through the ONE rename seam — the reflected
-                // setter still runs AutoFixup, but only Session.Rename cascades the rename into the LSDL.
-                if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
-                    changed = s.Rename(named, newName);
-                else { p.SetValue(obj, next); changed = true; }   // wrapper setter tracks the change
-            }, cascade);
-            return new SetResult { Revision = rev, Changed = changed, Warning = cascade.Count > 0 ? string.Join(" ", cascade.Select(w => w.Text)) : null };
+                rev = await s.MutateAsync(origin, $"set {propertyName}", m =>
+                {
+                    var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to see it.");
+                    if (string.Equals(propertyName, "SortByColumn", StringComparison.Ordinal) && obj is Column sortCol)
+                    {
+                        changed = ApplySortByColumn(sortCol, value);
+                        if (!changed) throw new NoopMutationException();
+                        return;
+                    }
+                    if (string.Equals(propertyName, "CompatibilityLevel", StringComparison.Ordinal) && obj is Model)
+                    {
+                        changed = ApplyCompatibilityLevel(m, value);
+                        if (!changed) throw new NoopMutationException();
+                        return;
+                    }
+                    ValidatePropertyWrite(m, obj, propertyName, value);
+                    var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                            ?? throw new InvalidOperationException($"{ObjectRefs.KindOf(obj)} has no property '{propertyName}'. Run get_properties on {objRef} to see its settable property names.");
+                    if (!p.CanWrite) throw new InvalidOperationException($"Property '{propertyName}' is read-only.");
+                    var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+                    var next = ConvertPropertyValue(pt, value, propertyName);
+                    var current = p.GetValue(obj);
+                    if (Equals(current, next) && !(p.Name == "Ordinal" && obj is CalculationItem)) throw new NoopMutationException();   // already the target value
+                    if (p.Name == "SummarizeBy" && obj is Column sumCol && next is AggregateFunction agg)
+                        GuardSummarizeBy(sumCol, agg);
+                    // The property grid's rename path: a Name write must go through the ONE rename seam. The reflected
+                    // setter still runs AutoFixup, but only Session.Rename cascades the rename into the LSDL.
+                    if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
+                    {
+                        changed = s.Rename(named, newName);
+                        if (changed && RenameTouchesReports(named)) reportWarn = true;
+                    }
+                    else if (p.Name == "Ordinal" && obj is CalculationItem ci && next is int ord)
+                        changed = MoveCalculationItem(ci, ord);
+                    else { p.SetValue(obj, next); changed = true; }   // wrapper setter tracks the change
+                    if (!changed) throw new NoopMutationException();
+                }, cascade);
+            }
+            catch (NoopMutationException) { return Noop(s); }
+            return new SetResult { Revision = rev, Changed = changed, Warning = JoinWarnings(cascade, reportWarn ? ReportRenameWarning : null) };
         }
 
         /// <summary>Set ONE property to ONE value across N objects as a SINGLE atomic gesture — the multi-select
@@ -7850,71 +8996,93 @@ namespace Semanticus.Engine
         public async Task<SetResult> SetObjectPropertiesAsync(string[] objRefs, string propertyName, string value, string origin)
         {
             if (objRefs == null || objRefs.Length == 0)
-                throw new InvalidOperationException("set_properties: pass at least one object ref — run list_objects / search_model to find refs, then get_properties on one to see its settable property names.");
+                throw new InvalidOperationException("set_properties: pass at least one object ref. Run list_objects / search_model to find refs, then get_properties on one to see its settable property names.");
             // One ref is not a batch — delegate so behavior (errors, exception types, no audit record) is
             // byte-identical to set_property; the batch machinery below only ever engages at N >= 2.
             if (objRefs.Length == 1)
                 return await SetObjectPropertyAsync(objRefs[0], propertyName, value, origin);
             if (string.IsNullOrEmpty(propertyName))
-                throw new InvalidOperationException("set_properties: propertyName is required — run get_properties on one of the objects to see the exact settable property names.");
+                throw new InvalidOperationException("set_properties: propertyName is required. Run get_properties on one of the objects to see the exact settable property names.");
             var s = _sessions.Require();
             var changedRefs = new List<string>();
             var warnings = new List<string>();   // non-fatal LSDL-cascade advisories from Name writes
+            var reportWarn = false;
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
-            var rev = await s.MutateAsync(origin, $"set {propertyName} on {objRefs.Length} objects", m =>
+            long rev;
+            try
             {
-                // PASS 1 — resolve EVERY ref against the pre-gesture model and refuse duplicates by RESOLVED OBJECT
-                // IDENTITY (never string compare: refs are name concats and name lookup is case-insensitive, so two
-                // spellings can be one object). A duplicate would double-apply the write — and a Name change on the
-                // first occurrence would leave the second spelling resolving stale mid-batch. Resolving everything
-                // up front also means a pass-2 rename can never invalidate a later ref's resolution.
-                var targets = new List<(string r, ITabularNamedObject obj)>(objRefs.Length);
-                var seen = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
-                foreach (var r in objRefs)
+                rev = await s.MutateAsync(origin, $"set {propertyName} on {objRefs.Length} objects", m =>
                 {
-                    var obj = ObjectRefs.Resolve(m, r) ?? throw new InvalidOperationException($"{r} not found — run list_objects / search_model to find the exact ref. Nothing was changed (the batch is all-or-nothing).");
-                    if (!seen.TryAdd(obj, r))
-                        throw new InvalidOperationException($"{r} resolves to the same object as '{seen[obj]}' — each object may appear ONCE per batch (a duplicate would double-apply the write). Remove the duplicate ref and re-run. Nothing was changed (the batch is all-or-nothing).");
-                    targets.Add((r, obj));
-                }
-                // PASS 2 — reflect + convert + set PER object; any failure names THIS object and aborts the batch —
-                // MutateAsync's rollback-on-throw then reverts every object already set, so partial failure =
-                // exactly-pre-gesture state (never a half-applied write, never an orphan undo). The get/set
-                // reflection calls are guarded too: a setter's own validation throw (e.g. renaming to a duplicate
-                // Name) must surface its REAL reason with the failing ref, never a bare TargetInvocationException.
-                foreach (var (r, obj) in targets)
-                {
-                    var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
-                            ?? throw new InvalidOperationException($"{r}: {ObjectRefs.KindOf(obj)} has no property '{propertyName}' — run get_properties on {r} to see its settable property names. Nothing was changed (the batch is all-or-nothing).");
-                    if (!p.CanWrite) throw new InvalidOperationException($"{r}: property '{propertyName}' is read-only. Nothing was changed (the batch is all-or-nothing).");
-                    var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
-                    object next;
-                    try { next = ConvertPropertyValue(pt, value, propertyName); }
-                    catch (Exception ex) { throw new InvalidOperationException($"{r}: '{value}' is not a valid value for '{propertyName}' ({pt.Name}) — {ex.Message} Nothing was changed (the batch is all-or-nothing)."); }
-                    object current;
-                    try { current = p.GetValue(obj); }
-                    catch (Exception ex)
+                    // PASS 1 — resolve EVERY ref against the pre-gesture model and refuse duplicates by RESOLVED OBJECT
+                    // IDENTITY (never string compare: refs are name concats and name lookup is case-insensitive, so two
+                    // spellings can be one object). A duplicate would double-apply the write — and a Name change on the
+                    // first occurrence would leave the second spelling resolving stale mid-batch. Resolving everything
+                    // up front also means a pass-2 rename can never invalidate a later ref's resolution.
+                    var targets = new List<(string r, ITabularNamedObject obj)>(objRefs.Length);
+                    var seen = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
+                    foreach (var r in objRefs)
                     {
-                        var real = (ex as TargetInvocationException)?.InnerException ?? ex;
-                        throw new InvalidOperationException($"{r}: reading '{propertyName}' failed — {real.Message} Nothing was changed (the batch is all-or-nothing).", real);
+                        var obj = ObjectRefs.Resolve(m, r) ?? throw new InvalidOperationException($"{r} not found. Run list_objects / search_model to find the exact ref. Nothing was changed (the batch is all-or-nothing).");
+                        if (!seen.TryAdd(obj, r))
+                            throw new InvalidOperationException($"{r} resolves to the same object as '{seen[obj]}'. Each object may appear ONCE per batch (a duplicate would double-apply the write). Remove the duplicate ref and re-run. Nothing was changed (the batch is all-or-nothing).");
+                        targets.Add((r, obj));
                     }
-                    if (Equals(current, next)) continue;   // already the target value — an honest no-op for THIS object
-                    try
+                    // PASS 2 — reflect + convert + set PER object; any failure names THIS object and aborts the batch —
+                    // MutateAsync's rollback-on-throw then reverts every object already set, so partial failure =
+                    // exactly-pre-gesture state (never a half-applied write, never an orphan undo).
+                    foreach (var (r, obj) in targets)
                     {
-                        // Name writes route through the ONE rename seam so the LSDL cascade follows (the reflected
-                        // setter would still AutoFixup the DAX but orphan the linguistic schema).
-                        if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
-                            s.Rename(named, newName);      // refused cultures retry at batch end; survivors drained below
-                        else p.SetValue(obj, next);        // wrapper setter tracks the change
+                        if (string.Equals(propertyName, "SortByColumn", StringComparison.Ordinal))
+                        {
+                            if (!(obj is Column sortCol))
+                                throw new InvalidOperationException($"{r}: {ObjectRefs.KindOf(obj)} has no property 'SortByColumn'. Nothing was changed (the batch is all-or-nothing).");
+                            try { if (ApplySortByColumn(sortCol, value)) changedRefs.Add(r); }
+                            catch (Exception ex) { throw new InvalidOperationException($"{r}: setting 'SortByColumn' failed. {ex.Message} Nothing was changed (the batch is all-or-nothing).", ex); }
+                            continue;
+                        }
+                        ValidatePropertyWrite(m, obj, propertyName, value);
+                        var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                                ?? throw new InvalidOperationException($"{r}: {ObjectRefs.KindOf(obj)} has no property '{propertyName}'. Run get_properties on {r} to see its settable property names. Nothing was changed (the batch is all-or-nothing).");
+                        if (!p.CanWrite) throw new InvalidOperationException($"{r}: property '{propertyName}' is read-only. Nothing was changed (the batch is all-or-nothing).");
+                        var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+                        object next;
+                        try { next = ConvertPropertyValue(pt, value, propertyName); }
+                        catch (Exception ex) { throw new InvalidOperationException($"{r}: '{value}' is not a valid value for '{propertyName}' ({pt.Name}). {ex.Message} Nothing was changed (the batch is all-or-nothing)."); }
+                        object current;
+                        try { current = p.GetValue(obj); }
+                        catch (Exception ex)
+                        {
+                            var real = (ex as TargetInvocationException)?.InnerException ?? ex;
+                            throw new InvalidOperationException($"{r}: reading '{propertyName}' failed. {real.Message} Nothing was changed (the batch is all-or-nothing).", real);
+                        }
+                        if (Equals(current, next) && !(p.Name == "Ordinal" && obj is CalculationItem)) continue;   // already the target value
+                        try
+                        {
+                            if (p.Name == "SummarizeBy" && obj is Column sumCol && next is AggregateFunction agg)
+                                GuardSummarizeBy(sumCol, agg);
+                            // Name writes route through the ONE rename seam so the LSDL cascade follows.
+                            if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
+                            {
+                                s.Rename(named, newName);      // refused cultures retry at batch end; survivors drain below
+                                if (RenameTouchesReports(named)) reportWarn = true;
+                            }
+                            else if (p.Name == "Ordinal" && obj is CalculationItem ci && next is int ord)
+                            {
+                                if (!MoveCalculationItem(ci, ord)) continue;
+                            }
+                            else p.SetValue(obj, next);        // wrapper setter tracks the change
+                        }
+                        catch (Exception ex)
+                        {
+                            var real = (ex as TargetInvocationException)?.InnerException ?? ex;
+                            throw new InvalidOperationException($"{r}: setting '{propertyName}' failed. {real.Message} Nothing was changed (the batch is all-or-nothing).", real);
+                        }
+                        changedRefs.Add(r);
                     }
-                    catch (Exception ex)
-                    {
-                        var real = (ex as TargetInvocationException)?.InnerException ?? ex;
-                        throw new InvalidOperationException($"{r}: setting '{propertyName}' failed — {real.Message} Nothing was changed (the batch is all-or-nothing).", real);
-                    }
-                    changedRefs.Add(r);
-                }
-            }, cascade);
+                    if (changedRefs.Count == 0) throw new NoopMutationException();
+                }, cascade);
+            }
+            catch (NoopMutationException) { return Noop(s); }
             warnings.AddRange(cascade.Select(w => w.Text));   // survivors of the batch-end cascade retry (Name writes only)
             // ONE "batch" audit record for a genuine multi-object gesture that ACTUALLY changed something (attempted
             // >= 2 is guaranteed by the delegation above; a no-op writes nothing; a rolled-back batch never reaches
@@ -7930,6 +9098,7 @@ namespace Semanticus.Engine
                         : $"set {propertyName} = '{value}' on {changedRefs.Count} of {objRefs.Length} objects in one atomic change (the rest already had the value)",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new { property = propertyName, value, attempted = objRefs.Length, refs = objRefs, changed = changedRefs.Count, changedRefs }),
                 }, vitalsChangedRefs: changedRefs.ToArray());
+            if (reportWarn) warnings.Add(ReportRenameWarning);
             return new SetResult { Revision = rev, Changed = changedRefs.Count > 0, Warning = warnings.Count > 0 ? string.Join(" ", warnings) : null };
         }
 
@@ -7973,7 +9142,7 @@ namespace Semanticus.Engine
         /// <summary>Post-reflection PREFILLS: decorate specific descriptors with model-derived pick lists and honest
         /// gating, so the grid offers real choices instead of blank text boxes. Same payload over RPC and MCP
         /// (get_properties) — no new op, agents keep their list-op parity.</summary>
-        private static void EnrichProperties(Model m, object obj, ObjectProperty[] props)
+        private static ObjectProperty[] EnrichProperties(Model m, object obj, ObjectProperty[] props)
         {
             // Display folder: the folders already in use — the object's own table first, then the rest of the model —
             // so filing a measure/column autocompletes to existing structure instead of near-duplicate spellings.
@@ -8021,6 +9190,73 @@ namespace Semanticus.Engine
                     fx.Hint = $"Dynamic format expressions need model compatibility level 1601 or higher; this model is {cl}.";
                 }
             }
+
+            if (obj is Column col)
+            {
+                var sum = System.Array.Find(props, p => p.Name == "SummarizeBy");
+                if (sum != null)
+                {
+                    var opts = new List<string>(SummarizeByOptionsFor(col.DataType));
+                    if (!string.IsNullOrEmpty(sum.Value) && !opts.Contains(sum.Value, StringComparer.OrdinalIgnoreCase))
+                        opts.Insert(0, sum.Value);
+                    sum.Options = opts.ToArray();
+                    sum.DisplayName = "Default summarization";
+                }
+                var sortNames = (col.Table?.Columns ?? Enumerable.Empty<Column>())
+                    .Where(x => x.Type != ColumnType.RowNumber && !ReferenceEquals(x, col))
+                    .Select(x => x.Name)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                sortNames.Insert(0, SortByNoneToken);
+                var sort = new ObjectProperty
+                {
+                    Name = "SortByColumn",
+                    DisplayName = "Sort by column",
+                    Category = "Basic",
+                    Description = "The column whose values set the sort order of this column.",
+                    Kind = "enum",
+                    Value = col.SortByColumn?.Name ?? SortByNoneToken,
+                    Options = sortNames.ToArray(),
+                    ReadOnly = false,
+                };
+                props = props.Concat(new[] { sort })
+                    .OrderBy(d => d.Category, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(d => d.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            if (obj is Model)
+            {
+                var current = m.Database?.CompatibilityLevel ?? 0;
+                var compatibility = new ObjectProperty
+                {
+                    Name = "CompatibilityLevel",
+                    DisplayName = "Compatibility level",
+                    Category = "Basic",
+                    Description = "The model's compatibility level. Raising it is one-way. Calendars need 1701. Functions need 1702.",
+                    Kind = "number",
+                    Value = current.ToString(),
+                    ReadOnly = false,
+                    Hint = "Raising this cannot be undone. Older tools may no longer open the model.",
+                };
+                props = props.Concat(new[] { compatibility })
+                    .OrderBy(d => d.Category, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(d => d.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            return props;
+        }
+
+        private static bool ApplyCompatibilityLevel(Model m, string value)
+        {
+            if (m.Database == null) throw new InvalidOperationException("This model has no database.");
+            if (!int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var level))
+                throw new InvalidOperationException($"'{value}' is not a valid compatibility level.");
+            var current = m.Database.CompatibilityLevel;
+            if (current == level) return false;
+            if (level < current)
+                throw new InvalidOperationException($"Compatibility level can only be raised. It cannot be lowered from {current} to {level}.");
+            m.Database.CompatibilityLevel = level;
+            return true;
         }
 
         /// <summary>Distinct display folders in use: the home table's first (alphabetical), then the rest of the
@@ -8064,7 +9300,7 @@ namespace Semanticus.Engine
         public async Task<SetResult> SetDisplayFolderAsync(string[] refs, string folder, string origin)
         {
             if (refs == null || refs.Length == 0)
-                throw new InvalidOperationException("set_display_folder: pass at least one measure/column/hierarchy ref — run list_measures or list_columns to find refs (each row shows its current display folder).");
+                throw new InvalidOperationException("set_display_folder: pass at least one measure/column/hierarchy ref. Run list_measures or list_columns to find refs (each row shows its current display folder).");
             var target = NormalizeFolderPath(folder);
             var s = _sessions.Require();
             var changed = false;
@@ -8075,13 +9311,13 @@ namespace Semanticus.Engine
             {
                 foreach (var r in refs)
                 {
-                    var obj = ObjectRefs.Resolve(m, r) ?? throw new InvalidOperationException($"{r} not found — run list_objects or search_model to find the exact ref. Nothing was moved (the batch is all-or-nothing).");
+                    var obj = ObjectRefs.Resolve(m, r) ?? throw new InvalidOperationException($"{r} not found. Run list_objects or search_model to find the exact ref. Nothing was moved (the batch is all-or-nothing).");
                     switch (obj)
                     {
                         case Measure me: if (me.DisplayFolder != target) { me.DisplayFolder = target; changed = true; } break;
                         case Column c: if (c.DisplayFolder != target) { c.DisplayFolder = target; changed = true; } break;
                         case Hierarchy h: if (h.DisplayFolder != target) { h.DisplayFolder = target; changed = true; } break;
-                        default: throw new InvalidOperationException($"{r} is a {ObjectRefs.KindOf(obj)} — only measures, columns and hierarchies have a display folder. Pick refs from list_measures / list_columns. Nothing was moved (the batch is all-or-nothing).");
+                        default: throw new InvalidOperationException($"{r} is a {ObjectRefs.KindOf(obj)}. Only measures, columns and hierarchies have a display folder. Pick refs from list_measures / list_columns. Nothing was moved (the batch is all-or-nothing).");
                     }
                 }
             });
@@ -8093,13 +9329,13 @@ namespace Semanticus.Engine
             var from = NormalizeFolderPath(fromPath);
             var to = NormalizeFolderPath(toPath);
             if (from.Length == 0)
-                throw new InvalidOperationException("rename_display_folder: fromPath is required — the folder path exactly as it appears on the members' display folder (list_measures shows each measure's folder).");
+                throw new InvalidOperationException("rename_display_folder: fromPath is required. The folder path exactly as it appears on the members' display folder (list_measures shows each measure's folder).");
             var s = _sessions.Require();
             var members = 0;
             var rev = await s.MutateAsync(origin, $"rename folder {from} to {(to.Length == 0 ? "(no folder)" : to)}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    throw new InvalidOperationException($"{tableRef} is not a table — pass 'table:Name'; run list_objects to see the model's tables.");
+                    throw new InvalidOperationException($"{tableRef} is not a table. Pass 'table:Name'; run list_objects to see the model's tables.");
 
                 // "Fin" matches "Fin" and "Fin\Sub" but never "Finance" — the separator guards the prefix.
                 // Members' STORED paths get the SAME normalization as the inputs (trim + strip stray leading/
@@ -8118,14 +9354,22 @@ namespace Semanticus.Engine
                 foreach (var c in t.Columns) { var next = Rewrite(c.DisplayFolder); if (next != null) { c.DisplayFolder = next; members++; } }
                 foreach (var h in t.Hierarchies) { var next = Rewrite(h.DisplayFolder); if (next != null) { h.DisplayFolder = next; members++; } }
                 if (members == 0)
-                    throw new InvalidOperationException($"No measures, columns or hierarchies on '{t.Name}' are in folder '{from}' — a folder exists only through its members' display folder paths. Run list_measures (or get_properties on a member) to see the folders in use.");
+                    throw new InvalidOperationException($"No measures, columns or hierarchies on '{t.Name}' are in folder '{from}'. A folder exists only through its members' display folder paths. Run list_measures (or get_properties on a member) to see the folders in use.");
             });
             return new FolderRenameResult { Revision = rev, Members = members, From = from, To = to };
         }
 
         private static object ConvertPropertyValue(Type pt, string value, string propName)
         {
-            if (pt == typeof(string)) return value ?? string.Empty;
+            if (pt == typeof(string))
+            {
+                if (string.Equals(propName, "FormatString", StringComparison.Ordinal))
+                {
+                    var problem = FormatStringRules.Problem(value);
+                    if (problem != null) throw new InvalidOperationException(problem);
+                }
+                return value ?? string.Empty;
+            }
             if (pt == typeof(bool)) return bool.Parse(value);
             if (pt.IsEnum) return Enum.Parse(pt, value, true);
             if (pt == typeof(int)) return int.Parse(value);
@@ -8133,6 +9377,25 @@ namespace Semanticus.Engine
             if (pt == typeof(double)) return double.Parse(value);
             if (pt == typeof(decimal)) return decimal.Parse(value);
             throw new InvalidOperationException($"Property '{propName}' has a type the grid can't edit ({pt.Name}).");
+        }
+
+        /// <summary>CalculationItem.Ordinal's generated setter cancels undo and writes the new ordinal BEFORE
+        /// FixItemOrder snapshots the old order, so a reflected set_property cannot be undone. Call FixItemOrder
+        /// without that pre-write so the vendored undo action captures the real previous order.</summary>
+        private static bool MoveCalculationItem(CalculationItem ci, int ordinal)
+        {
+            var cg = ci.CalculationGroupTable ?? throw new InvalidOperationException("This calculation item has no group.");
+            var ordered = cg.CalculationItems.OrderBy(x => x.Ordinal).ToList();
+            if (ordered.Count == 0) return false;
+            var target = ordinal < 0 ? 0 : (ordinal > ordered.Count - 1 ? ordered.Count - 1 : ordinal);
+            var currentIndex = ordered.IndexOf(ci);
+            if (currentIndex == target && cg.CalculationItems.All(x => x.Ordinal >= 0))
+                return false;
+            if (cg.CalculationItems.Any(x => x.Ordinal < 0))
+                cg.CompactLevelOrdinals();
+            if (ci.Ordinal == target) return true;
+            cg.FixItemOrder(ci, target);
+            return true;
         }
 
         public Task<TreeNode[]> ListFunctionsAsync()
@@ -8147,18 +9410,41 @@ namespace Semanticus.Engine
         public async Task<RenameResult> RenameObjectAsync(string objRef, string newName, string origin, string expectedSession = null, long? expectedRevision = null)
         {
             var s = _sessions.Require();
+            var context = _sessions.CurrentContext;
             var changed = false;
-            string newRef = null;
+            var rehearsing = DryRunScope.Current != null;
+            string oldRef = null, newRef = null;
+            var aliasedRuns = new List<WorkflowRunState>();
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
-            var rev = await s.MutateAsync(origin, "rename", m =>
+            var reportWarn = false;
+            await context.WorkflowGate.WaitAsync();
+            try
             {
-                GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
-                GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): a recovery-path rename is fenced on the revision re-read as stable across the probes
-                var obj = ObjectRefs.Resolve(m, objRef) as TabularNamedObject ?? throw new InvalidOperationException($"{objRef} not found or not renameable — rename_object takes a named object (table, column, measure, hierarchy, role); run list_objects or search_model to find its exact ref.");
-                changed = s.Rename(obj, newName); // the FormulaFixup contract seam: rewrites all DAX / RLS references + cascades the LSDL
-                newRef = ObjectRefs.For(obj);
-            }, cascade);
-            return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef, Warning = cascade.Count > 0 ? string.Join(" ", cascade.Select(w => w.Text)) : null };
+                EnsureContextCurrent(context, "Rename");
+                var rev = await s.MutateAsync(origin, "rename", m =>
+                {
+                    GuardExpectedModel(s, expectedSession);   // CRITICAL 1: refuse (atomically, before mutating) if the model swapped since the caller checked
+                    GuardExpectedRevision(s, expectedRevision);   // CRITICAL (r7): a recovery-path rename is fenced on the revision re-read as stable across the probes
+                    var obj = ObjectRefs.Resolve(m, objRef) as TabularNamedObject ?? throw new InvalidOperationException($"{objRef} not found or not renameable. rename_object takes a named object (table, column, measure, hierarchy, role); run list_objects or search_model to find its exact ref.");
+                    if (obj is Measure target)
+                    {
+                        oldRef = ObjectRefs.For(target);
+                        foreach (var run in context.WorkflowRuns.ActiveRuns())
+                        {
+                            if (run.CoverageSurface == null) continue;
+                            var currentTarget = LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run));
+                            if (ReferenceEquals(ObjectRefs.Resolve(m, currentTarget), target)) aliasedRuns.Add(run);
+                        }
+                    }
+                    changed = s.Rename(obj, newName); // the FormulaFixup contract seam: rewrites all DAX / RLS references + cascades the LSDL
+                    if (changed && RenameTouchesReports(obj)) reportWarn = true;
+                    newRef = ObjectRefs.For(obj);
+                }, cascade);
+                if (changed && !rehearsing && oldRef != null && !string.Equals(oldRef, newRef, StringComparison.Ordinal))
+                    foreach (var run in aliasedRuns) run.ObjectRefAliases[oldRef] = newRef;
+                return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef, Warning = JoinWarnings(cascade, reportWarn ? ReportRenameWarning : null) };
+            }
+            finally { context.WorkflowGate.Release(); }
         }
 
         // ---- Find & Replace (Phase 2, one-by-one, free) ------------------------------------------------------
@@ -8201,19 +9487,19 @@ namespace Semanticus.Engine
                     Before = ctx.Raw, After = ctx.New, Replacements = ctx.Count,
                     Warnings = ctx.Warnings.ToArray(), Note = ctx.Note, References = ctx.RefCount,
                     Preview = true, Changed = false, Revision = s.Revision,
-                    Blocked = ctx.Block ?? (!ctx.Replaceable ? "This match isn't safely replaceable — rename the referenced object instead." : null),
+                    Blocked = ctx.Block ?? (!ctx.Replaceable ? "This match isn't safely replaceable. Rename the referenced object instead." : null),
                 };
                 if (pv.Blocked == null && ctx.IsDax && ctx.Count > 0)
                 {
                     var pvv = await ValidateDaxAsync(ctx.New);   // the apply would refuse a non-parsing rewrite — say so now
                     if (pvv == null || !pvv.Valid)
-                        pv.Blocked = "The edited DAX would no longer parse — this replacement would be refused.";
+                        pv.Blocked = "The edited DAX would no longer parse. This replacement would be refused.";
                 }
                 return pv;
             }
 
             if (ctx.Block != null) throw new InvalidOperationException(ctx.Block);   // engine-side hard block (references/code/RLS)
-            if (!ctx.Replaceable) throw new InvalidOperationException("This match isn't safely replaceable — rename the referenced object instead.");
+            if (!ctx.Replaceable) throw new InvalidOperationException("This match isn't safely replaceable. Rename the referenced object instead.");
 
             var result = new ReplaceResult
             {
@@ -8236,9 +9522,10 @@ namespace Semanticus.Engine
                 if (v == null || !v.Valid)
                 {
                     var msg = v?.Diagnostics?.FirstOrDefault(d => d.Severity == "error")?.Message;
-                    throw new InvalidOperationException($"The edited DAX would no longer parse{(msg != null ? " (" + msg + ")" : "")} — the replacement was refused so the model stays valid.");
+                    throw new InvalidOperationException($"The edited DAX would no longer parse{(msg != null ? " (" + msg + ")" : "")}. The replacement was refused so the model stays valid.");
                 }
             }
+            if (ctx.IsM) RefuseMForWrite(ctx.New, "this M expression");
 
             // Pass 2 (mutate): re-resolve and apply. One undoable step; broadcasts model/didChange (dual-drive).
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
@@ -8260,6 +9547,11 @@ namespace Semanticus.Engine
         {
             var p = obj?.GetType().GetProperty(prop, BindingFlags.Public | BindingFlags.Instance);
             if (p == null || !p.CanWrite) throw new InvalidOperationException($"{ObjectRefs.KindOf(obj as ITabularObject)} has no editable '{prop}'.");
+            if (string.Equals(prop, "FormatString", StringComparison.Ordinal))
+            {
+                var problem = FormatStringRules.Problem(value);
+                if (problem != null) throw new InvalidOperationException(problem);
+            }
             if (Equals(p.GetValue(obj) as string, value)) return false;
             p.SetValue(obj, value); return true;   // wrapper setter tracks the change
         }
@@ -8278,12 +9570,12 @@ namespace Semanticus.Engine
                         ?? throw new InvalidOperationException($"No shared expression named '{name}'.");
                 ctx.IsNamedExpr = true; ctx.IsM = true; ctx.MatchClass = "MExpression";
                 ctx.Raw = e.Expression ?? ""; ctx.New = matcher.Apply(ctx.Raw, req.Replace, req.Span, out ctx.Count);
-                ctx.Note = "M is not covered by reference fixup — this is a literal edit; verify the query still works.";
+                ctx.Note = "M is not covered by reference fixup. This is a literal edit; verify the query still works.";
                 return ctx;
             }
 
             var obj = ObjectRefs.Resolve(m, req.Ref)
-                ?? throw new InvalidOperationException($"{req.Ref} not found — run search_model / list_objects to find its exact ref.");
+                ?? throw new InvalidOperationException($"{req.Ref} not found. Run search_model / list_objects to find its exact ref.");
 
             switch (field)
             {
@@ -8293,8 +9585,8 @@ namespace Semanticus.Engine
                     if (obj is IDaxObject dxo) ctx.RefCount = dxo.ReferencedBy.Count;   // blast radius for the preview line
                     if (ctx.Count > 0)
                     {
-                        if (string.IsNullOrWhiteSpace(ctx.New)) { ctx.Replaceable = false; ctx.Block = "The new name would be empty — an object must have a name."; break; }
-                        if (SiblingHasName(obj, ctx.New)) { ctx.Block = $"A sibling named '{ctx.New}' already exists — pick a different replacement (names must be unique)."; break; }
+                        if (string.IsNullOrWhiteSpace(ctx.New)) { ctx.Replaceable = false; ctx.Block = "The new name would be empty. An object must have a name."; break; }
+                        if (SiblingHasName(obj, ctx.New)) { ctx.Block = $"A sibling named '{ctx.New}' already exists. Pick a different replacement (names must be unique)."; break; }
                         AddMReferenceWarnings(m, obj.Name, ctx.Warnings);   // FormulaFixup won't rewrite M — warn loudly
                     }
                     break;
@@ -8325,23 +9617,23 @@ namespace Semanticus.Engine
                     {
                         ctx.Replaceable = false; ctx.MatchClass = bad;
                         ctx.Block = bad == DaxMatchClassifier.Reference
-                            ? "That match is a reference to another object inside the DAX — a text replace would break the formula. Rename the referenced object instead (its references update automatically). If you meant a string literal or comment, target that exact occurrence."
+                            ? "That match is a reference to another object inside the DAX. A text replace would break the formula. Rename the referenced object instead (its references update automatically). If you meant a string literal or comment, target that exact occurrence."
                             : "That match is part of the DAX code (a function, operator, or number), not editable text. Edit the expression directly to change it.";
                         break;
                     }
                     ctx.MatchClass = classes.Count == 1 ? classes[0] : DaxMatchClassifier.Literal;
                     ctx.New = matcher.Apply(ctx.Raw, req.Replace, req.Span, out ctx.Count);
-                    ctx.Note = "This edits text inside a DAX string literal/comment — it changes what the expression returns (validated for syntax, not equivalence).";
+                    ctx.Note = "This edits text inside a DAX string literal/comment. It changes what the expression returns (validated for syntax, not equivalence).";
                     break;
                 }
 
                 case ModelSearch.FM:
                 {
                     if (!(obj is Partition p)) throw new InvalidOperationException($"{req.Ref} is not an M partition.");
-                    if (p.SourceType != PartitionSourceType.M) throw new InvalidOperationException($"{req.Ref} is a {p.SourceType} partition — only M partitions have an editable expression.");
+                    if (p.SourceType != PartitionSourceType.M) throw new InvalidOperationException($"{req.Ref} is a {p.SourceType} partition. Only M partitions have an editable expression.");
                     ctx.IsM = true; ctx.MatchClass = "MExpression";
                     ctx.Raw = p.Expression ?? ""; ctx.New = matcher.Apply(ctx.Raw, req.Replace, req.Span, out ctx.Count);
-                    ctx.Note = "M is not covered by reference fixup — this is a literal edit; verify the query still works.";
+                    ctx.Note = "M is not covered by reference fixup. This is a literal edit; verify the query still works.";
                     break;
                 }
 
@@ -8359,11 +9651,11 @@ namespace Semanticus.Engine
 
                 case ModelSearch.FRls:
                     ctx.Replaceable = false; ctx.MatchClass = DaxMatchClassifier.Reference;
-                    ctx.Block = "Security filters are not directly replaceable in this version. Rename the referenced table or column — its references, including security filters, update automatically.";
+                    ctx.Block = "Security filters are not directly replaceable in this version. Rename the referenced table or column. Its references, including security filters, update automatically.";
                     break;
 
                 default:
-                    throw new InvalidOperationException($"Unsupported replace field '{field}' — use one of: name, description, expression, displayFolder, formatString, mExpression, synonyms.");
+                    throw new InvalidOperationException($"Unsupported replace field '{field}'. Use one of: name, description, expression, displayFolder, formatString, mExpression, synonyms.");
             }
             return ctx;
         }
@@ -8375,6 +9667,7 @@ namespace Semanticus.Engine
             {
                 var name = req.Ref.Substring("namedexpr:".Length);
                 var e = m.Expressions.First(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                RefuseMForWrite(ctx.New, "this M expression");
                 e.Expression = ctx.New;
                 return;
             }
@@ -8382,7 +9675,7 @@ namespace Semanticus.Engine
 
             if (ctx.IsRename) { s.Rename((TabularNamedObject)obj, ctx.New); ctx.NewRef = ObjectRefs.For(obj); return; }   // the seam cascades the LSDL; refused cultures surface post-batch
             if (ctx.IsDax) { SetDaxOn(obj, ctx.New); return; }
-            if (ctx.IsM) { ((Partition)obj).Expression = ctx.New; return; }
+            if (ctx.IsM) { RefuseMForWrite(ctx.New, "this M expression"); ((Partition)obj).Expression = ctx.New; return; }
             if (ctx.IsSyn)
             {
                 var cult = m.Cultures.Contains(ctx.Culture) ? m.Cultures[ctx.Culture] : m.Cultures.FirstOrDefault();
@@ -8437,10 +9730,10 @@ namespace Semanticus.Engine
             foreach (var t in m.Tables)
                 foreach (var p in t.Partitions.Where(p => p.SourceType == PartitionSourceType.M))
                     if (Mentions(p.Expression))
-                        warnings.Add($"M partition '{t.Name}/{p.Name}' mentions '{oldName}' — the rename will NOT update M; edit it manually if it references this object.");
+                        warnings.Add($"M partition '{t.Name}/{p.Name}' mentions '{oldName}'. The rename will NOT update M; edit it manually if it references this object.");
             foreach (var e in m.Expressions)
                 if (Mentions(e.Expression))
-                    warnings.Add($"Shared M expression '{e.Name}' mentions '{oldName}' — the rename will NOT update M; edit it manually if it references this object.");
+                    warnings.Add($"Shared M expression '{e.Name}' mentions '{oldName}'. The rename will NOT update M; edit it manually if it references this object.");
         }
 
         private static int WholeWordIndex(string text, string word)
@@ -8496,7 +9789,7 @@ namespace Semanticus.Engine
             var s = context.RequireSession();
             var live = context.Live;
             if (live == null)
-                throw new InvalidOperationException("Not connected to a live model. Connect first (connect_xmla / connect_local) — the live scan reads per-column cardinality (COLUMNSTATISTICS) for the Q&A-index rules.");
+                throw new InvalidOperationException("Not connected to a live model. Connect first (connect_xmla / connect_local). The live scan reads per-column cardinality (COLUMNSTATISTICS) for the Q&A-index rules.");
             var rs = await live.ExecuteAsync("EVALUATE COLUMNSTATISTICS()", 5_000_000, 180);
             if (!string.IsNullOrEmpty(rs.Error))
                 throw new InvalidOperationException("COLUMNSTATISTICS failed on the live model: " + rs.Error);
@@ -8507,7 +9800,7 @@ namespace Semanticus.Engine
                 // On Direct Lake, COLUMNSTATISTICS cardinality is resident-only, so the cardinality-gated rules
                 // (Q&A 5M-unique ceiling / CopilotLimits) under-count — a clean result here is not a guarantee.
                 if (DirectLakeInfo.IsModelDirectLake(m))
-                    card.Caveat = "Direct Lake: per-column cardinality (COLUMNSTATISTICS) reflects only resident columns, so the scale / Q&A-index rules (e.g. CopilotLimits) may under-count — a clean result here is not a guarantee until the model is fully reframed.";
+                    card.Caveat = "Direct Lake: per-column cardinality (COLUMNSTATISTICS) reflects only resident columns, so the scale / Q&A-index rules (e.g. CopilotLimits) may under-count. A clean result here is not a guarantee until the model is fully reframed.";
                 return card;
             });
             SetReadinessGrade(context, scanned.Grade, "Live AI Readiness scan");   // cache for the model.readinessGrade activation fact (D2)
@@ -8573,7 +9866,10 @@ namespace Semanticus.Engine
             // Resolve + parse OFF the dispatcher (file / HTTP IO) so a slow URL never blocks edits. Parse throws
             // on malformed JSON — surfaced to the caller, not silently ignored.
             var json = await ResolveRuleSourceAsync(source);
-            var loaded = Semanticus.Analysis.BpaRuleSet.Parse(json);
+            var (loaded, duplicateIds) = Semanticus.Analysis.BpaRuleSet.ParseDetailed(json);
+            if (duplicateIds.Length > 0)
+                throw new InvalidOperationException(
+                    $"This rule set lists the same id more than once ({string.Join(", ", duplicateIds)}). Each rule needs its own id. Nothing was saved.");
             if (loaded.Count == 0)
                 throw new InvalidOperationException("No valid rules found in the source (a rule set is a JSON array; each rule needs an \"ID\").");
 
@@ -8644,7 +9940,7 @@ namespace Semanticus.Engine
                 return await http.GetStringAsync(s);
             }
             if (File.Exists(s)) return File.ReadAllText(s);
-            throw new FileNotFoundException($"{what} source not found — not inline JSON, an http(s) URL, or an existing file: {s}");
+            throw new FileNotFoundException($"{what} source not found: not inline JSON, an http(s) URL, or an existing file: {s}");
         }
 
         // ---- Custom AI-readiness rules (the readiness mirror of load_bpa_rules) -------------------
@@ -8685,7 +9981,7 @@ namespace Semanticus.Engine
             });
             if (problems.Count > 0)
                 throw new InvalidOperationException(
-                    $"Custom readiness rules were NOT loaded — {problems.Count} rule(s) failed validation:\n - " +
+                    $"Custom readiness rules were NOT loaded. {problems.Count} rule(s) failed validation:\n - " +
                     string.Join("\n - ", problems) +
                     "\nFix the rules and load again. validate_rule previews compile + a test run against the open model without saving.");
 
@@ -8746,7 +10042,7 @@ namespace Semanticus.Engine
             if (kind != "bpa" && kind != "readiness")
                 throw new ArgumentException("kind must be 'bpa' (Best Practice Analyzer) or 'readiness' (AI-readiness). Then pass the rule JSON (one object or an array) in rules.");
             if (string.IsNullOrWhiteSpace(rules))
-                throw new ArgumentException("rules is required: inline JSON — one rule object or an array (the same schema load_bpa_rules / load_readiness_rules accept).");
+                throw new ArgumentException("rules is required: inline JSON, one rule object or an array (the same schema load_bpa_rules / load_readiness_rules accept).");
 
             var s = _sessions.Require();
             var isBpa = kind == "bpa";
@@ -8771,16 +10067,16 @@ namespace Semanticus.Engine
                 }
                 catch (System.Text.Json.JsonException ex)
                 {
-                    throw new InvalidOperationException($"The rules JSON does not parse ({ex.Message}). Pass one rule object or an array of rules — the same schema load_bpa_rules / load_readiness_rules accept.");
+                    throw new InvalidOperationException($"The rules JSON does not parse ({ex.Message}). Pass one rule object or an array of rules, the same schema load_bpa_rules / load_readiness_rules accept.");
                 }
                 var allValid = checks.Count > 0 && checks.All(c => c.Valid);
                 return new RuleValidationResult
                 {
                     Kind = kind, RuleCount = checks.Count, AllValid = allValid, Rules = checks.ToArray(),
                     Note = checks.Count == 0
-                        ? "No rules found in the JSON — a rule set is an array of rule objects (each with an \"ID\")."
+                        ? "No rules found in the JSON. A rule set is an array of rule objects (each with an \"ID\")."
                         : allValid
-                            ? $"All {checks.Count} rule(s) compile. This was a preview only — save with {(isBpa ? "load_bpa_rules" : "load_readiness_rules")} (merge by default)."
+                            ? $"All {checks.Count} rule(s) compile. This was a preview only. Save with {(isBpa ? "load_bpa_rules" : "load_readiness_rules")} (merge by default)."
                             : "Fix the rules with errors, then validate again. Nothing was saved.",
                 };
             });
@@ -8841,12 +10137,17 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"BPA fix {ruleId}", m =>
             {
                 var rule = GetBpaRules(m).FirstOrDefault(r => string.Equals(r.ID, ruleId, StringComparison.OrdinalIgnoreCase))
-                           ?? throw new InvalidOperationException($"Unknown BPA rule '{ruleId}' — run bpa_scan to see the rule ids in force, or load_bpa_rules to add a rule set.");
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
+                           ?? throw new InvalidOperationException($"Unknown BPA rule '{ruleId}'. Run bpa_scan to see the rule ids in force, or load_bpa_rules to add a rule set.");
+                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
                 changed = BpaAnalyzer.ApplyFix(m, rule, obj);
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
+
+        /// <summary>How many scan-and-fix passes one "Fix all" press may take. Two or three is the normal count
+        /// (the pre-press scan, then the pass that clears whatever the first pass's own fixes created); the cap
+        /// only exists so a rule set that keeps producing new auto-fixable objects on every write cannot spin.</summary>
+        private const int MaxFixAllSweeps = 5;
 
         public async Task<BpaFixAllResult> BpaFixAllAsync(string origin)
         {
@@ -8855,22 +10156,59 @@ namespace Semanticus.Engine
             Entitlement.EntitlementGuard.RequirePro(_entitlement, "Fixing all BPA violations at once",
                 "Fix violations one at a time with bpa_fix.");
             var applied = 0;
+            var reasons = new Dictionary<string, string>(StringComparer.Ordinal);   // ruleId␟objectRef -> why it survived
             var rev = await s.MutateAsync(origin, "BPA: apply all auto-fixes", m =>
             {
                 var rules = GetBpaRules(m);
-                var card = BpaAnalyzer.Analyze(m, rules);
-                foreach (var v in card.Violations.Where(v => v.CanAutoFix && !v.Waived))   // never auto-fix a finding you've accepted
+                // A FIX CAN CREATE A FINDING, so applying one snapshot is not "fix all". Hiding a foreign-key
+                // column is exactly what makes that same column qualify for ISAVAILABLEINMDX_FALSE_NONATTRIBUTE_COLUMNS,
+                // and the scan taken before the first write could not have listed it. Sweep to a FIXED POINT
+                // instead: re-scan after each pass and keep going while the pass changed the model.
+                //
+                // `attempted` is what makes that terminate: a rule+object pair is fixed at most once per press,
+                // so two rules whose fixes undo each other settle after one round each rather than ping-ponging,
+                // and MaxFixAllSweeps is the backstop for a rule that keeps finding fresh objects to fix.
+                var attempted = new HashSet<string>(StringComparer.Ordinal);
+                for (var sweep = 0; sweep < MaxFixAllSweeps; sweep++)
                 {
-                    var rule = rules.FirstOrDefault(r => string.Equals(r.ID, v.RuleId, StringComparison.OrdinalIgnoreCase));
-                    var obj = ObjectRefs.Resolve(m, v.ObjectRef);
-                    if (rule != null && obj != null)
+                    var card = BpaAnalyzer.Analyze(m, rules);
+                    var changed = 0;
+                    foreach (var v in card.Violations.Where(v => v.CanAutoFix && !v.Waived))   // never auto-fix a finding you've accepted
                     {
-                        try { if (BpaAnalyzer.ApplyFix(m, rule, obj)) applied++; } catch { /* skip a bad fix, continue */ }
+                        var key = v.RuleId + "␟" + v.ObjectRef;
+                        if (!attempted.Add(key)) continue;
+                        var rule = rules.FirstOrDefault(r => string.Equals(r.ID, v.RuleId, StringComparison.OrdinalIgnoreCase));
+                        if (rule == null) { reasons[key] = "the rule is no longer in the loaded rule set, so there is no fix to apply."; continue; }
+                        var obj = ObjectRefs.Resolve(m, v.ObjectRef);
+                        if (obj == null) { reasons[key] = "the object this finding points at could not be found on the model."; continue; }
+                        try
+                        {
+                            if (BpaAnalyzer.ApplyFix(m, rule, obj)) { applied++; changed++; }
+                            else reasons[key] = "this rule has no fix that can be applied to this object.";
+                        }
+                        catch (Exception ex) { reasons[key] = ex.Message; }   // recorded, never swallowed: the finding is named below
                     }
+                    if (changed == 0) break;
                 }
             });
             var after = await s.ReadAsync(m => BpaAnalyzer.Analyze(m, GetBpaRules(m)));
-            return new BpaFixAllResult { Revision = rev, Applied = applied, Scorecard = after };
+
+            // VERIFY against the model, never against what the writes reported. Whatever is still advertised as
+            // auto-fixable after the sweep is a finding the press did not clear, and it is named with the reason:
+            // a fix whose write succeeds but does not address the rule's own predicate (a custom rule that sets an
+            // unrelated property) used to be counted as applied and said nothing anywhere.
+            var unfixed = after.Violations.Where(v => v.CanAutoFix && !v.Waived).Select(v => new BpaUnfixed
+            {
+                RuleId = v.RuleId,
+                RuleName = v.RuleName,
+                ObjectRef = v.ObjectRef,
+                ObjectName = v.ObjectName,
+                Reason = reasons.TryGetValue(v.RuleId + "␟" + v.ObjectRef, out var why)
+                    ? why
+                    : "the fix was applied and the finding is still here, so this rule's fix does not clear its own finding.",
+            }).ToArray();
+
+            return new BpaFixAllResult { Revision = rev, Applied = applied, Scorecard = after, Unfixed = unfixed, Remaining = unfixed.Length };
         }
 
         // ---- Finding waivers (accepted findings) — both BPA + AI-readiness ----
@@ -8885,7 +10223,7 @@ namespace Semanticus.Engine
             system = (system ?? "").Trim().ToLowerInvariant();
             if (system != "bpa" && system != "air") throw new ArgumentException("system must be 'bpa' or 'air'.");
             if (string.IsNullOrWhiteSpace(ruleId)) throw new ArgumentException("A rule id is required.");
-            if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A reason is required to waive a finding (it's an audited, accepted decision — not a silent suppression).");
+            if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A reason is required to waive a finding (it's an audited, accepted decision, not a silent suppression).");
             bool ruleLevel = WaiverStore.IsRuleLevel(objRef);
             if (ruleLevel)   // waiving an entire rule (every instance) at once is the bulk primitive — the Pro value
                 Entitlement.EntitlementGuard.RequirePro(_entitlement, "Waiving an entire rule (all instances) at once",
@@ -8969,8 +10307,8 @@ namespace Semanticus.Engine
             return s.ReadAsync(m =>
             {
                 var rule = GetBpaRules(m).FirstOrDefault(r => string.Equals(r.ID, ruleId, StringComparison.OrdinalIgnoreCase))
-                           ?? throw new InvalidOperationException($"Unknown BPA rule '{ruleId}' — run bpa_scan to see the rule ids in force, or load_bpa_rules to add a rule set.");
-                var g = BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
+                           ?? throw new InvalidOperationException($"Unknown BPA rule '{ruleId}'. Run bpa_scan to see the rule ids in force, or load_bpa_rules to add a rule set.");
+                var g = BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
                 var loc = string.IsNullOrEmpty(g.Table) ? g.Name : $"{g.Kind} [{g.Table}].[{g.Name}]";
                 var prompt =
                     $"Using the Semanticus MCP, fix this Best Practice Analyzer violation on {loc}.\n" +
@@ -9034,7 +10372,7 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
-                var g = BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
+                var g = BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
                 return BuildFixPrompt(ruleId, g);
             });
         }
@@ -9094,7 +10432,7 @@ namespace Semanticus.Engine
                     tool = "verify_dax_equivalence";
                     prompt = $"Using the Semanticus MCP, rewrite the DAX of {loc} to fix rule {ruleId} ({RuleGuidance(ruleId)})." +
                              (string.IsNullOrWhiteSpace(g.Expression) ? "" : $" Current DAX: {g.Expression}.") +
-                             $" Then PROVE the rewrite with verify_dax_equivalence (old body vs new body) — if it is NOT proven equivalent, report the difference instead of applying (some of these rewrites legitimately change blank/zero semantics; the human decides). Only after a proven-equivalent verdict, apply with update_measure/set_dax on objRef \"{g.ObjectRef}\".";
+                             $" Then PROVE the rewrite with verify_dax_equivalence (old body vs new body). If it is NOT proven equivalent, report the difference instead of applying (some of these rewrites legitimately change blank/zero semantics; the human decides). Only after a proven-equivalent verdict, apply with update_measure/set_dax on objRef \"{g.ObjectRef}\".";
                     break;
                 default:
                     tool = "get_grounding";
@@ -9108,10 +10446,10 @@ namespace Semanticus.Engine
         {
             switch (ruleId)
             {
-                case "BP-DAX-IFERROR": return "replace the IFERROR/ISERROR trap by avoiding the error at source — DIVIDE for division, SEARCH/FIND's 4th argument for not-found, COALESCE or input validation otherwise";
+                case "BP-DAX-IFERROR": return "replace the IFERROR/ISERROR trap by avoiding the error at source: DIVIDE for division, SEARCH/FIND's 4th argument for not-found, COALESCE or input validation otherwise";
                 case "BP-DAX-IFERROR-DIV": return "replace the IFERROR-guarded division with DIVIDE(numerator, denominator, alternate)";
                 case "BP-DAX-IFERROR-SEARCH": return "pass SEARCH/FIND's 4th NotFoundValue argument, or use CONTAINSSTRING for a boolean test";
-                case "BP-DAX-ISBLANK-EQ": return "use NOT ISBLANK(x) instead of x <> BLANK() — note = BLANK() also matches 0 via coercion, so equivalence must be checked";
+                case "BP-DAX-ISBLANK-EQ": return "use NOT ISBLANK(x) instead of x <> BLANK(). Note = BLANK() also matches 0 via coercion, so equivalence must be checked";
                 case "BP-DAX-DIV-GUARD": return "replace the hand-rolled zero/blank guard with DIVIDE(numerator, denominator, alternate)";
                 default: return "see the finding message";
             }
@@ -9120,7 +10458,7 @@ namespace Semanticus.Engine
         public Task<GroundingBundle> GetGroundingAsync(string objRef)
         {
             var s = _sessions.Require();
-            return s.ReadAsync(m => BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name)."));
+            return s.ReadAsync(m => BuildGrounding(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name)."));
         }
 
         // validate_dax: offline syntactic + reference check against the open model (read-only). No live engine needed.
@@ -9190,24 +10528,28 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
-            var rev = await s.MutateAsync(origin, "set column metadata", m =>
+            long rev;
+            try
             {
-                if (!(ObjectRefs.Resolve(m, objRef) is Column c)) throw new InvalidOperationException($"{objRef} is not a column — pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
-                if (isHidden.HasValue && c.IsHidden != isHidden.Value) { c.IsHidden = isHidden.Value; changed = true; }
-                if (!string.IsNullOrEmpty(summarizeBy) && Enum.TryParse<AggregateFunction>(summarizeBy, true, out var agg) && c.SummarizeBy != agg) { c.SummarizeBy = agg; changed = true; }
-                if (dataCategory != null && c.DataCategory != dataCategory) { c.DataCategory = dataCategory; changed = true; }
-                if (sortByColumn != null)
+                rev = await s.MutateAsync(origin, "set column metadata", m =>
                 {
-                    if (string.IsNullOrWhiteSpace(sortByColumn))
-                        throw new ArgumentException("The sort-by column name cannot be empty.");
-                    if (c.Table == null || !c.Table.Columns.Contains(sortByColumn))
-                        throw new InvalidOperationException($"Sort-by column '{sortByColumn}' was not found on the same table as {objRef}. Choose an existing column from that table.");
-                    var sort = c.Table.Columns[sortByColumn];
-                    if (ReferenceEquals(c, sort))
-                        throw new InvalidOperationException($"{objRef} cannot sort by itself. Choose a different column from the same table.");
-                    if (c.SortByColumn != sort) { c.SortByColumn = sort; changed = true; }
-                }
-            });
+                    if (!(ObjectRefs.Resolve(m, objRef) is Column c)) throw new InvalidOperationException($"{objRef} is not a column. Pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
+                    if (isHidden.HasValue && c.IsHidden != isHidden.Value) { c.IsHidden = isHidden.Value; changed = true; }
+                    if (!string.IsNullOrEmpty(summarizeBy) && Enum.TryParse<AggregateFunction>(summarizeBy, true, out var agg) && c.SummarizeBy != agg)
+                    {
+                        GuardSummarizeBy(c, agg);
+                        c.SummarizeBy = agg; changed = true;
+                    }
+                    if (dataCategory != null)
+                    {
+                        RefuseDataCategory(dataCategory);
+                        if (c.DataCategory != dataCategory) { c.DataCategory = dataCategory; changed = true; }
+                    }
+                    if (sortByColumn != null) changed |= ApplySortByColumn(c, sortByColumn);
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             return new SetResult { Revision = rev, Changed = changed };
         }
 
@@ -9215,26 +10557,89 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
-            var rev = await s.MutateAsync(origin, "set measure format", m =>
+            long rev;
+            try
             {
-                if (!(ObjectRefs.Resolve(m, objRef) is Measure me)) throw new InvalidOperationException($"{objRef} is not a measure — pass a 'measure:Table/Name' ref; run list_measures to see the model's measures.");
-                if (me.FormatString != formatString) { me.FormatString = formatString; changed = true; }
-            });
+                rev = await s.MutateAsync(origin, "set measure format", m =>
+                {
+                    if (!(ObjectRefs.Resolve(m, objRef) is Measure me)) throw new InvalidOperationException($"{objRef} is not a measure. Pass a 'measure:Table/Name' ref; run list_measures to see the model's measures.");
+                    var problem = FormatStringRules.Problem(formatString);
+                    if (problem != null) throw new InvalidOperationException(problem);
+                    if (me.FormatString != formatString) { me.FormatString = formatString; changed = true; }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             return new SetResult { Revision = rev, Changed = changed };
         }
 
+        /// <summary>Mark a table as the model's date table: <c>DataCategory = "Time"</c> AND the date column flagged
+        /// <c>IsKey</c>. Both halves are required — that pair IS the definition a marked date table is checked against
+        /// (MODEL_SHOULD_HAVE_A_DATE_TABLE tests <c>DataCategory == "Time" &amp;&amp; Columns.Any(IsKey == true &amp;&amp;
+        /// DataType == "DateTime")</c>), and setting only the category left the op's own name unfulfilled: the model
+        /// looked marked and still failed the rule. They go in ONE MutateAsync batch, so it is one undo entry and one
+        /// model/didChange on both doors; a half-marked table is not a state this op can leave behind, on undo or on
+        /// failure (MutateAsync rolls the whole batch back on a throw). The marking itself lives in
+        /// <see cref="MarkDateTableCore"/> so the plan door applies the SAME contract (F-029).</summary>
         public async Task<SetResult> MarkDateTableAsync(string tableRef, string dateColumn, string origin)
         {
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "mark date table", m =>
             {
-                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
-                if (!string.IsNullOrEmpty(dateColumn) && !t.Columns.Contains(dateColumn))
-                    throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}' — run list_columns on '{t.Name}' to see its columns, then pass an existing column name.");
-                if (!string.Equals(t.DataCategory, "Time", StringComparison.OrdinalIgnoreCase)) { t.DataCategory = "Time"; changed = true; }
+                if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                changed = MarkDateTableCore(t, dateColumn).Changed;
             });
             return new SetResult { Revision = rev, Changed = changed };
+        }
+
+        /// <summary>The ONE definition of "marked as the model's date table", shared by the direct op
+        /// (<see cref="MarkDateTableAsync"/>) and apply_plan's <c>mark_date_table</c> item — the two doors had drifted
+        /// into two different marks (F-029: the plan door set only <c>DataCategory</c>, so the item reported success
+        /// while MODEL_SHOULD_HAVE_A_DATE_TABLE stayed violated and the deploy gate stayed red). Must be called
+        /// inside a <c>MutateAsync</c> batch, so both halves are one undo entry and one model/didChange.
+        ///
+        /// Resolves the date column BEFORE writing anything, so a refusal leaves the table untouched rather than
+        /// category-set-but-unkeyed. That ordering is load-bearing on the PLAN door specifically: ApplyPlanAsync's
+        /// per-item catch sits INSIDE the single batch, so it marks one item failed and lets its siblings commit —
+        /// nothing rolls this item back, and a half-written mark would persist. Omitting the column is allowed only
+        /// when the choice is unambiguous. Returns whether anything actually changed, so an already-marked table
+        /// reports no invented change on either door. <paramref name="fixHint"/> appends the caller's
+        /// how-to-recover sentence to a refusal (the plan door points at set_plan_item, not at the op's arguments).
+        /// Takes the ALREADY-RESOLVED table, not the model + ref, so each door keeps its own door-correct bad-ref
+        /// copy (the same split ResolveSchemaTarget / ApplyAiDataSchema uses); also returns the column it keyed, so
+        /// a caller that omitted the choice can report which one was resolved instead of leaving it a guess.</summary>
+        private static (bool Changed, string KeyColumn) MarkDateTableCore(Table t, string dateColumn, string fixHint = null)
+        {
+            Column key;
+            var dateCols = t.Columns.Where(c => c.DataType == DataType.DateTime).ToList();
+            if (!string.IsNullOrWhiteSpace(dateColumn))
+            {
+                if (!t.Columns.Contains(dateColumn))
+                    throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}'. Run list_columns on '{t.Name}' to see its columns, then pass an existing column name." + fixHint);
+                key = t.Columns[dateColumn];
+                // A non-date key would satisfy nothing and quietly mis-shape the model, so refuse instead.
+                if (key.DataType != DataType.DateTime)
+                    throw new InvalidOperationException($"Column '{dateColumn}' on '{t.Name}' is {key.DataType}, not DateTime, so it cannot be the date table's key. "
+                        + (dateCols.Count > 0
+                            ? $"Date columns on this table: {string.Join(", ", dateCols.Select(c => c.Name))}."
+                            : $"'{t.Name}' has no DateTime column; add one (or change this column's data type) before marking it as a date table.") + fixHint);
+            }
+            else if (dateCols.Count == 1) key = dateCols[0];
+            else if (dateCols.Count == 0)
+                throw new InvalidOperationException($"'{t.Name}' has no DateTime column, so it cannot be marked as a date table. Add a date column first, then mark the table." + fixHint);
+            else
+                throw new InvalidOperationException($"'{t.Name}' has {dateCols.Count} DateTime columns, so the date key is ambiguous: pass dateColumn to choose one of {string.Join(", ", dateCols.Select(c => c.Name))}." + fixHint);
+
+            var changed = false;
+            // Exact, NOT OrdinalIgnoreCase: both real rules compare the stored category to "Time" case-sensitively
+            // (MODEL_SHOULD_HAVE_A_DATE_TABLE and DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE), and the
+            // public property writer stores whatever string the caller typed. An ignore-case test therefore left a
+            // lowercase "time" in place and called the table marked, while both findings stayed open and the deploy
+            // gate stayed red -- and with the date column already the key, both doors reported no change at all.
+            if (!string.Equals(t.DataCategory, "Time", StringComparison.Ordinal)) { t.DataCategory = "Time"; changed = true; }
+            if (!key.IsKey) { key.IsKey = true; changed = true; }
+            return (changed, key.Name);
         }
 
         public async Task<SetResult> SetRelationshipAsync(string relationshipName, string crossFilteringBehavior, bool? isActive, string origin)
@@ -9244,7 +10649,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set relationship", m =>
             {
                 var rel = m.Relationships.OfType<SingleColumnRelationship>().FirstOrDefault(r => r.Name == relationshipName)
-                          ?? throw new InvalidOperationException($"Relationship '{relationshipName}' not found — run get_model_summary (or list_objects) to see relationship names; create one with create_relationship.");
+                          ?? throw new InvalidOperationException($"Relationship '{relationshipName}' not found. Run get_model_summary (or list_objects) to see relationship names; create one with create_relationship.");
                 if (crossFilteringBehavior != null)
                 {
                     if (!Enum.TryParse<CrossFilteringBehavior>(crossFilteringBehavior, true, out var cf)
@@ -9253,7 +10658,11 @@ namespace Semanticus.Engine
                         throw new InvalidOperationException("Cross-filter direction must be single direction or both directions.");
                     if (rel.CrossFilteringBehavior != cf) { rel.CrossFilteringBehavior = cf; changed = true; }
                 }
-                if (isActive.HasValue && rel.IsActive != isActive.Value) { rel.IsActive = isActive.Value; changed = true; }
+                if (isActive.HasValue && rel.IsActive != isActive.Value)
+                {
+                    if (isActive.Value) GuardNoOtherActiveOnTablePair(m, rel.FromColumn, rel.ToColumn, rel);
+                    rel.IsActive = isActive.Value; changed = true;
+                }
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -9267,7 +10676,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set relationship cardinality", m =>
             {
                 var rel = m.Relationships.OfType<SingleColumnRelationship>().FirstOrDefault(r => r.Name == relationshipName)
-                          ?? throw new InvalidOperationException($"Relationship '{relationshipName}' not found — run get_model_summary (or list_objects) to see relationship names; create one with create_relationship.");
+                          ?? throw new InvalidOperationException($"Relationship '{relationshipName}' not found. Run get_model_summary (or list_objects) to see relationship names; create one with create_relationship.");
                 RelationshipEndCardinality Parse(string v, RelationshipEndCardinality current)
                 {
                     if (string.IsNullOrWhiteSpace(v)) return current;
@@ -9291,7 +10700,7 @@ namespace Semanticus.Engine
             return s.ReadAsync(m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 var on = t.EnableRefreshPolicy;
                 var rangeM = FirstRangeFilteringM(t);
                 string wiredField = null;
@@ -9326,11 +10735,11 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set incremental refresh policy", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
 
                 var cl = m.Database?.CompatibilityLevel ?? 0;
                 if (cl < 1450)
-                    throw new InvalidOperationException($"Incremental refresh requires compatibility level 1450 or higher (this model is {cl}; raise it with set_compatibility_level).");
+                    throw new InvalidOperationException($"Incremental refresh requires compatibility level 1450 or higher (this model is {cl}; raise Compatibility level in Properties).");
 
                 // Omitted args are PRESERVED on an existing policy; the hard defaults (store 5 years, refresh last 10
                 // days, Import) apply only when CREATING one — matching the null=leave-unchanged convention of the
@@ -9343,6 +10752,11 @@ namespace Semanticus.Engine
                 var inP = incrementalPeriods ?? (exists ? t.IncrementalPeriods : 10);
                 var inOff = incrementalPeriodsOffset ?? (exists ? t.IncrementalPeriodsOffset : 0);
                 if (rwP < 1 || inP < 1) throw new InvalidOperationException("Rolling-window and incremental periods must be >= 1.");
+                if (PeriodsInDays(rwP, rwG) > MaxWindowDays || PeriodsInDays(inP, inG) > MaxWindowDays)
+                    throw new InvalidOperationException("The store window and the refresh window cannot be longer than 1000 years. Check the numbers, then try again.");
+                if (!RefreshWindowFitsArchive(rwP, rwG, inP, inG))
+                    throw new InvalidOperationException(
+                        $"The refresh window ({inP} {inG.ToString().ToLowerInvariant()}s) is wider than the store window ({rwP} {rwG.ToString().ToLowerInvariant()}s). Shrink refresh, or store at least as far back as you refresh.");
                 var refMode = exists ? t.Mode : RefreshPolicyMode.Import;
                 if (!string.IsNullOrEmpty(mode))
                 {
@@ -9399,15 +10813,14 @@ namespace Semanticus.Engine
                 if (pollingExpression != null)
                 {
                     var pe = pollingExpression.Length == 0 ? null : pollingExpression;
+                    if (pe != null) RefuseMForWrite(pe, "this polling M expression");
                     if (t.PollingExpression != pe) { t.PollingExpression = pe; changed = true; }
                 }
 
-                // Capture the table's range-filtering M as the policy's partition template (only if unset).
-                if (string.IsNullOrEmpty(t.SourceExpression))
-                {
-                    var tmpl = FirstRangeFilteringM(t);
-                    if (tmpl != null) { t.SourceExpression = tmpl; changed = true; }
-                }
+                // Capture the table's current range-filtering M as the policy's partition template.
+                // Re-read on every save so a later partition-M correction is not left behind as a stale copy.
+                var tmpl = FirstRangeFilteringM(t);
+                if (tmpl != null && t.SourceExpression != tmpl) { t.SourceExpression = tmpl; changed = true; }
             });
             return new SetResult { Revision = rev, Changed = changed, Warning = warning };
         }
@@ -9419,12 +10832,37 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "remove incremental refresh policy", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 // EnableRefreshPolicy=false nulls RefreshPolicy (undoable via the same SetValue path). Don't clear scalars.
                 if (t.EnableRefreshPolicy) { t.EnableRefreshPolicy = false; changed = true; }
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
+
+        // Convert a (periods, granularity) pair to days so store 5 years vs refresh 10 years can be compared.
+        // Month = 30 and Year = 365 are the same approximations Power BI documents for the containment check.
+        /// <summary>The longest window a policy may ask for, in days. A refresh or store window is how far back the
+        /// model keeps or re-reads history; a thousand years is far past any calendar a model can carry, so a count
+        /// past this is a mistyped number, not a policy. Without a bound the day count wraps (see
+        /// <see cref="PeriodsInDays"/>) and a wild number is either accepted or refused with a message that
+        /// contradicts the digits on screen.</summary>
+        private const long MaxWindowDays = 365_000;   // 1000 years
+
+        internal static bool RefreshWindowFitsArchive(int storePeriods, RefreshGranularityType storeGran, int refreshPeriods, RefreshGranularityType refreshGran)
+            => PeriodsInDays(storePeriods, storeGran) >= PeriodsInDays(refreshPeriods, refreshGran);
+
+        // Days, in 64-bit. Widened BEFORE the multiply: as 32-bit ints the product ran straight past int.MaxValue,
+        // and 5,900,000 years of 365 days each wrapped to a NEGATIVE day count, so a store window millions of
+        // years wide compared as narrower than a ten day refresh window. (Widening the result is not enough: the
+        // int multiply wraps first, which is why each arm casts the operand.)
+        private static long PeriodsInDays(int periods, RefreshGranularityType gran) => gran switch
+        {
+            RefreshGranularityType.Day => periods,
+            RefreshGranularityType.Month => (long)periods * 30,
+            RefreshGranularityType.Quarter => (long)periods * 90,
+            RefreshGranularityType.Year => (long)periods * 365,
+            _ => periods,
+        };
 
         private static RefreshGranularityType ParseGranularity(string s, RefreshGranularityType dflt)
         {
@@ -9463,7 +10901,7 @@ namespace Semanticus.Engine
             {
                 var dateCol = t.Columns.FirstOrDefault(c => c.Name == dateColumn);
                 if (dateCol == null)
-                    throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}' — run list_columns on '{t.Name}' to see its columns, then pass an existing column name.");
+                    throw new InvalidOperationException($"Date column '{dateColumn}' not found on table '{t.Name}'. Run list_columns on '{t.Name}' to see its columns, then pass an existing column name.");
                 // A calculated column is DEFINITIVELY unavailable to M (it exists only after load), whatever the
                 // existing filter says — reject before any parse, on every path, same message as the authoring path.
                 if (!(dateCol is DataColumn))
@@ -9553,26 +10991,36 @@ namespace Semanticus.Engine
         public async Task<SetResult> DeleteRoleAsync(string name, string origin)
         {
             var s = _sessions.Require();
-            var changed = false;
+            // Resolve first: deleting a missing role is a true net-zero (no revision bump, no broadcast).
+            var exists = await s.ReadAsync(m => FindRole(m, name) != null);
+            if (!exists) return new SetResult { Revision = s.Revision, Changed = false };
             var rev = await s.MutateAsync(origin, "delete role", m =>
             {
                 var role = FindRole(m, name);
-                if (role != null) { role.Delete(); changed = true; }
+                if (role != null) role.Delete();
             });
-            return new SetResult { Revision = rev, Changed = changed };
+            return new SetResult { Revision = rev, Changed = true };
         }
 
         public async Task<SetResult> SetRolePermissionAsync(string name, string modelPermission, string origin)
         {
             var s = _sessions.Require();
             var changed = false;
-            var rev = await s.MutateAsync(origin, "set role permission", m =>
+            var p = ParsePermission(modelPermission);
+            try
             {
-                var role = FindRole(m, name) ?? throw new InvalidOperationException($"Role '{name}' not found — run list_roles to see roles; create one with create_role.");
-                var p = ParsePermission(modelPermission);
-                if (role.ModelPermission != p) { role.ModelPermission = p; changed = true; }
-            });
-            return new SetResult { Revision = rev, Changed = changed };
+                var rev = await s.MutateAsync(origin, "set role permission", m =>
+                {
+                    var role = FindRole(m, name) ?? throw new InvalidOperationException($"Role '{name}' not found. Run list_roles to see roles; create one with create_role.");
+                    if (role.ModelPermission != p) { role.ModelPermission = p; changed = true; }
+                    if (!changed) throw new NoopMutationException();
+                });
+                return new SetResult { Revision = rev, Changed = changed };
+            }
+            catch (NoopMutationException)
+            {
+                return Noop(s);
+            }
         }
 
         /// <summary>Set (or clear) a table's RLS row-filter DAX for a role. An empty/null filter removes the filter
@@ -9581,28 +11029,42 @@ namespace Semanticus.Engine
         public async Task<SetTablePermissionResult> SetTablePermissionAsync(string roleName, string tableRef, string filterDax, string origin)
         {
             var s = _sessions.Require();
+            if (!string.IsNullOrWhiteSpace(filterDax))
+            {
+                var v = await s.ReadAsync(m => DaxValidator.Validate(m, filterDax));
+                RefuseDaxForWrite(v, filterDax, "this row filter");
+            }
             var changed = false;
             var promoted = false;
             string finalPerm = null;
-            var rev = await s.MutateAsync(origin, "set RLS filter", m =>
+            long rev;
+            try
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found — run list_roles to see roles; create one with create_role.");
-                var table = ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"Table not found: {tableRef} — run list_objects to see the model's tables.");
-                // A calc group isn't a row-bearing table; the vendored RoleRLSIndexer deliberately excludes calc groups
-                // (NonCalculationGroupTables) — its setter has no Keys check, so guard here against an orphaned permission.
-                if (table is CalculationGroupTable)
-                    throw new InvalidOperationException($"RLS row-filters cannot be applied to a calculation group table ('{table.Name}').");
-                var before = role.ModelPermission;
-                var current = role.RowLevelSecurity[table] ?? "";
-                var next = string.IsNullOrWhiteSpace(filterDax) ? "" : filterDax;
-                if (!string.Equals(current, next, StringComparison.Ordinal))
+                rev = await s.MutateAsync(origin, "set RLS filter", m =>
                 {
-                    role.RowLevelSecurity[table] = next.Length == 0 ? null : next;   // null removes the filter/permission
-                    changed = true;
-                }
-                finalPerm = role.ModelPermission.ToString();
-                promoted = before == ModelPermission.None && role.ModelPermission != ModelPermission.None;
-            });
+                    var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
+                    var table = ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"Table not found: {tableRef}. Run list_objects to see the model's tables.");
+                    // A calc group isn't a row-bearing table; the vendored RoleRLSIndexer deliberately excludes calc groups
+                    // (NonCalculationGroupTables) — its setter has no Keys check, so guard here against an orphaned permission.
+                    if (table is CalculationGroupTable)
+                        throw new InvalidOperationException($"RLS row-filters cannot be applied to a calculation group table ('{table.Name}').");
+                    var before = role.ModelPermission;
+                    var current = role.RowLevelSecurity[table] ?? "";
+                    var next = string.IsNullOrWhiteSpace(filterDax) ? "" : filterDax;
+                    if (!string.Equals(current, next, StringComparison.Ordinal))
+                    {
+                        role.RowLevelSecurity[table] = next.Length == 0 ? null : next;   // null removes the filter/permission
+                        changed = true;
+                    }
+                    finalPerm = role.ModelPermission.ToString();
+                    promoted = before == ModelPermission.None && role.ModelPermission != ModelPermission.None;
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException)
+            {
+                return new SetTablePermissionResult { Revision = s.Revision, Changed = false, ModelPermission = finalPerm, Promoted = promoted };
+            }
             return new SetTablePermissionResult { Revision = rev, Changed = changed, ModelPermission = finalPerm, Promoted = promoted };
         }
 
@@ -9610,28 +11072,58 @@ namespace Semanticus.Engine
         public async Task<SetResult> SetRoleMemberAsync(string roleName, string memberName, bool add, string origin)
         {
             if (string.IsNullOrWhiteSpace(memberName)) throw new ArgumentException("A member name is required.");
+            var identity = memberName.Trim();
+            if (add && !IsRoleMemberIdentity(identity))
+                throw new ArgumentException("That is not a user or group name. Use an email like person@company.com, a group name, or an object id.");
             var s = _sessions.Require();
-            var changed = false;
+            var snapshot = await s.ReadAsync(m =>
+            {
+                var role = FindRole(m, roleName);
+                if (role == null) return (Found: false, HasMember: false);
+                var has = role.Members.Any(mem => string.Equals(mem.MemberName, identity, StringComparison.OrdinalIgnoreCase));
+                return (Found: true, HasMember: has);
+            });
+            if (!snapshot.Found)
+                throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
+            if (add && snapshot.HasMember)
+                return new SetResult { Revision = s.Revision, Changed = false, Warning = "That member is already on this role." };
+            if (!add && !snapshot.HasMember)
+                return new SetResult { Revision = s.Revision, Changed = false };
             var rev = await s.MutateAsync(origin, add ? "add role member" : "remove role member", m =>
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found — run list_roles to see roles; create one with create_role.");
-                var existing = role.Members.FirstOrDefault(mem => string.Equals(mem.MemberName, memberName, StringComparison.OrdinalIgnoreCase));
+                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
+                var existing = role.Members.FirstOrDefault(mem => string.Equals(mem.MemberName, identity, StringComparison.OrdinalIgnoreCase));
                 if (add && existing == null)
                 {
                     // External members are gated by PowerBI governance (V3Restricted) unlike the role/filter itself —
                     // re-wrap the raw "Cannot create..." into actionable guidance instead of leaking TOM internals.
-                    try { role.AddExternalMember(memberName); }
+                    try { role.AddExternalMember(identity); }
                     catch (InvalidOperationException ex)
                     {
                         throw new InvalidOperationException(
-                            "Cannot add role members to a governed Power BI model — edit RLS members in the Power BI service, " +
+                            "Cannot add role members to a governed Power BI model. Edit RLS members in the Power BI service, " +
                             "or load the model from an unrestricted source (.bim / database). Underlying: " + ex.Message, ex);
                     }
-                    changed = true;
                 }
-                else if (!add && existing != null) { existing.Delete(); changed = true; }
+                else if (!add && existing != null) existing.Delete();
             });
-            return new SetResult { Revision = rev, Changed = changed };
+            return new SetResult { Revision = rev, Changed = true };
+        }
+
+        internal static bool IsRoleMemberIdentity(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            var s = name.Trim();
+            if (s.Length == 0 || s.Length > 256) return false;
+            if (s.IndexOfAny(new[] { '!', '?', '*', '<', '>', '|', '"', '\n', '\r', '\t' }) >= 0) return false;
+            if (Guid.TryParse(s, out _)) return true;
+            var at = s.IndexOf('@');
+            if (at > 0 && at < s.Length - 1 && s.IndexOf('@', at + 1) < 0 && s.IndexOf(' ') < 0)
+                return s.IndexOf('.', at + 1) > at + 1;
+            var slash = s.IndexOf('\\');
+            if (slash > 0 && slash < s.Length - 1 && s.IndexOf('\\', slash + 1) < 0)
+                return s.IndexOf(' ') < 0;
+            return s.Any(char.IsLetterOrDigit);
         }
 
         // ---- Object-Level Security (OLS) — per-table / per-column metadata permissions (CL ≥ 1400) --------
@@ -9644,9 +11136,9 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, "set table OLS", m =>
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found — run list_roles to see roles; create one with create_role.");
+                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
                 if (role.MetadataPermission == null) throw new InvalidOperationException("Object-level security requires compatibility level 1400 or higher.");
-                var table = ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"Table not found: {tableRef} — run list_objects to see the model's tables.");
+                var table = ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"Table not found: {tableRef}. Run list_objects to see the model's tables.");
                 if (table is CalculationGroupTable)
                     throw new InvalidOperationException($"Object-level security cannot be applied to a calculation group table ('{table.Name}').");
                 var p = ParseMetadataPermission(permission);
@@ -9674,9 +11166,9 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, "set column OLS", m =>
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found — run list_roles to see roles; create one with create_role.");
+                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
                 if (role.MetadataPermission == null) throw new InvalidOperationException("Object-level security requires compatibility level 1400 or higher.");
-                if (!(ObjectRefs.Resolve(m, columnRef) is Column col)) throw new InvalidOperationException($"{columnRef} is not a column — pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
+                if (!(ObjectRefs.Resolve(m, columnRef) is Column col)) throw new InvalidOperationException($"{columnRef} is not a column. Pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
                 // Mirror the table-OLS calc-group guard: a calc group isn't part of the OLS surface (the vendor's
                 // RoleOLSIndexer excludes them), so setting column OLS on one would orphan a TablePermission.
                 if (col.Table is CalculationGroupTable)
@@ -9820,7 +11312,7 @@ namespace Semanticus.Engine
             SetOutcome outcome = null;
             var rev = await s.MutateAsync(origin, "set synonyms", m =>
             {
-                if (!(ObjectRefs.Resolve(m, objRef) is TabularNamedObject obj)) throw new InvalidOperationException($"{objRef} not found — set_synonyms takes a table/column/measure/hierarchy ref; run list_objects or search_model to find it.");
+                if (!(ObjectRefs.Resolve(m, objRef) is TabularNamedObject obj)) throw new InvalidOperationException($"{objRef} not found. set_synonyms takes a table/column/measure/hierarchy ref; run list_objects or search_model to find it.");
                 var cult = EnsureLinguisticCulture(m, culture, out _);
                 outcome = LsdlSynonyms.SetSynonyms(obj, cult, string.Join(",", terms ?? Array.Empty<string>()));
                 changed = true;
@@ -9833,7 +11325,7 @@ namespace Semanticus.Engine
         // PowerBIGovernance suspension is needed (unlike most PBI edits) — it writes the same property set_synonyms does.
         internal const int AiInstructionsLimit = 10000;
         private const string LsdlRefreshNote =
-            "AI instructions are set on the model and live for any in-session reader. For a DEPLOYED model, an LSDL edit syncs to the Power BI service only after a model refresh (Direct Lake / DirectQuery may refresh once a day) — it is not instant. Persist to disk with save_model.";
+            "AI instructions are set on the model and live for any in-session reader. For a DEPLOYED model, an LSDL edit syncs to the Power BI service only after a model refresh (Direct Lake / DirectQuery may refresh once a day). It is not instant. Persist to disk with save_model.";
 
         public async Task<SetInstructionsResult> SetAiInstructionsAsync(string instructions, string culture, string origin)
         {
@@ -9878,9 +11370,9 @@ namespace Semanticus.Engine
                     Limit = AiInstructionsLimit,
                     Culture = cult?.Name,
                     Note = cult == null
-                        ? "No linguistic schema on the model yet — set_ai_instructions seeds one when it writes."
+                        ? "No linguistic schema on the model yet. set_ai_instructions seeds one when it writes."
                         : string.IsNullOrEmpty(text)
-                            ? "Linguistic schema present but no AI instructions set — set_ai_instructions writes them."
+                            ? "Linguistic schema present but no AI instructions set. set_ai_instructions writes them."
                             : null,
                 };
             });
@@ -9916,7 +11408,7 @@ namespace Semanticus.Engine
             // Read-back guards the JSON edit (not TMDL serialization — the save+reopen smoke test proves that).
             var expected = text.Length == 0 ? null : text;
             if (!string.Equals(ReadCustomInstructions(cult.Content), expected, StringComparison.Ordinal))
-                throw new InvalidOperationException("set_ai_instructions: read-back check failed — the value in the LSDL did not match what was written.");
+                throw new InvalidOperationException("set_ai_instructions: read-back check failed. The value in the LSDL did not match what was written.");
             PrepForAiReader.Invalidate(m);
             return true;
         }
@@ -9931,7 +11423,7 @@ namespace Semanticus.Engine
             if (updated == null) return false;
             cult.Content = updated;
             if (ReadEntityExcluded(cult.Content, table, prop) != !included)
-                throw new InvalidOperationException("set_ai_data_schema: read-back check failed — the AI-data-schema flag did not match the request.");
+                throw new InvalidOperationException("set_ai_data_schema: read-back check failed. The AI-data-schema flag did not match the request.");
             PrepForAiReader.Invalidate(m);
             return true;
         }
@@ -10125,7 +11617,16 @@ $@"ADDCOLUMNS(
             {
                 Revision = rev,
                 Created = created == null ? Array.Empty<GeneratedObject>() : new[] { created },
-                Note = "Calendar columns (Year/Quarter/Month + integer sort keys + relative columns like Is Current Month / Day Offset, which re-evaluate at each refresh) materialize when the model is deployed and processed. Marked as a date table" + (markAsDate ? "." : " skipped."),
+                // The Note used to end "Marked as a date table." on markAsDate=true. That was FALSE: this op sets the
+                // table's data category and nothing else, so both date-table best-practice rules still fire afterwards
+                // and the deploy gate reads red. IsKey cannot be set here (a calculated table has no columns until it is
+                // deployed and processed) and nothing sets it later either — the only IsKey writers in the solution are
+                // build_model_from_spec, apply_schema_update and mark_date_table, and none of them is a refresh path.
+                // So the sentence now says what actually happened and names the op that finishes the job.
+                Note = "Calendar columns (Year/Quarter/Month + integer sort keys + relative columns like Is Current Month / Day Offset, which re-evaluate at each refresh) materialize when the model is deployed and processed."
+                       + (markAsDate
+                            ? " The table is tagged as a time table, but marking it as the model's date table is not finished: its date column still has to be set as the table's key, and that cannot happen while the table has no columns. Once the table has columns, run mark_date_table on it to finish the job."
+                            : " It was not tagged as a date table."),
             };
         }
 
@@ -10137,7 +11638,7 @@ $@"ADDCOLUMNS(
             var rev = await s.MutateAsync(origin, "generate time-intelligence measures", m =>
             {
                 if (!(ObjectRefs.Resolve(m, baseMeasureRef) is Measure baseMeasure))
-                    throw new InvalidOperationException($"{baseMeasureRef} is not a measure — generate_time_intelligence wraps a base measure; run list_measures to find one.");
+                    throw new InvalidOperationException($"{baseMeasureRef} is not a measure. generate_time_intelligence wraps a base measure; run list_measures to find one.");
                 var table = baseMeasure.Table ?? throw new InvalidOperationException("Base measure has no table.");
                 var baseName = baseMeasure.Name;
                 var baseRef = $"[{baseName}]";
@@ -10169,7 +11670,7 @@ $@"ADDCOLUMNS(
             if (string.IsNullOrWhiteSpace(dateColumn)) throw new InvalidOperationException("A date column is required (e.g. 'Date'[Date] or column:Date/Date).");
             if (dateColumn.StartsWith("column:", StringComparison.OrdinalIgnoreCase))
             {
-                if (!(ObjectRefs.Resolve(m, dateColumn) is Column c)) throw new InvalidOperationException($"{dateColumn} is not a column — pass a 'column:Table/Name' ref for the date column; run list_columns on the date table to see its columns.");
+                if (!(ObjectRefs.Resolve(m, dateColumn) is Column c)) throw new InvalidOperationException($"{dateColumn} is not a column. Pass a 'column:Table/Name' ref for the date column; run list_columns on the date table to see its columns.");
                 return $"'{c.Table?.Name}'[{c.Name}]";
             }
             return dateColumn.Trim();
@@ -10511,15 +12012,18 @@ $@"ADDCOLUMNS(
                 string status = (after == null && RequiresAfter(kind)) ? "needs_content"
                     : OptInKind(kind, verifyGroupBy) ? "proposed"   // risky / unproven → opt-in (explicit approve required)
                     : "approved";
+                var source = string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) ? "ai" : "deterministic";
+                var risk = RiskForKind(kind);
+                if (source == "ai" && risk == "safe") risk = "ai";
                 var it = new ChangeItem
                 {
                     ObjectRef = objRef,
                     ObjectName = ctx.name,
                     Kind = kind,
-                    Source = "ai",
+                    Source = source,
                     Category = CategoryForKind(kind),
                     Severity = "Medium",
-                    Risk = RiskForKind(kind),
+                    Risk = risk,
                     RuleId = null,
                     Target = tgt,
                     Title = string.IsNullOrWhiteSpace(title) ? DefaultTitle(kind) : title,
@@ -10550,7 +12054,7 @@ $@"ADDCOLUMNS(
             {
                 EnsureContextCurrent(context, "Change plan item");
                 var plan = context.Plans.Require();
-                var it = plan.Find(itemId) ?? throw new InvalidOperationException($"Plan item '{itemId}' not found — run get_plan to see the current plan's item ids.");
+                var it = plan.Find(itemId) ?? throw new InvalidOperationException($"Plan item '{itemId}' not found. Run get_plan to see the current plan's item ids.");
                 if (after != null)
                 {
                     it.After = after;
@@ -10603,7 +12107,7 @@ $@"ADDCOLUMNS(
             // override changes what ships, never what the referee measured. Never a hard wall, never silent.
             var overrides = new HashSet<string>(overrideIds ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             if (overrides.Count > 0 && string.IsNullOrWhiteSpace(overrideReason))
-                throw new ArgumentException("apply_plan: overrideIds need an overrideReason — an unexplained override is a silent suppression (it is recorded in the audit trail).");
+                throw new ArgumentException("apply_plan: overrideIds need an overrideReason. An unexplained override is a silent suppression (it is recorded in the audit trail).");
             await context.PlanGate.WaitAsync();
             try
             {
@@ -10637,7 +12141,7 @@ $@"ADDCOLUMNS(
             // free tier applies items one at a time. Thrown BEFORE any mutation, so a refusal leaves the model intact.
             if (toApply.Count > 1)
                 Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying multiple changes at once",
-                    "Apply changes one at a time (approve a single item), or use the individual edit tools.");
+                    "Apply one approved change at a time, or use Pro to apply the whole set in one step.");
 
             // Re-read the CURRENT body of each gated set_dax target at apply time, so the equivalence proof
             // is against the body actually in the model NOW — not the (possibly stale) baseline captured at
@@ -10647,7 +12151,9 @@ $@"ADDCOLUMNS(
                 gated.ToDictionary(i => i.Id, i => CurrentDax(ObjectRefs.Resolve(m, i.ObjectRef)) ?? i.Before ?? ""));
 
             // Verify-gate set_dax rewrites that carry a matrix (async, BEFORE the mutate batch). Snapshot
-            // the live connection once so a concurrent disconnect from the other door can't null it mid-loop.
+            // the live connection once so a concurrent disconnect from the other door can't change it mid-loop.
+            // A missing snapshot still goes through DaxBench below: its typed "Not connected" result belongs on
+            // the same evidence ladder as every executor error, rather than a second hand-written verdict path.
             var verifyConn = context.Live;
             // A RED/unprovable verdict normally skips the item; an item named in overrideIds ships anyway with
             // its honest VerifyState kept and the override noted (and audit-recorded after the apply).
@@ -10655,7 +12161,7 @@ $@"ADDCOLUMNS(
             void FailVerify(ChangeItem item, string state, string why)
             {
                 item.VerifyState = state;
-                if (overrides.Contains(item.Id)) { item.Note = "override accepted — " + why; overridden.Add(item); }
+                if (overrides.Contains(item.Id)) { item.Note = "override accepted: " + why; overridden.Add(item); }
                 else { item.Status = "skipped"; item.Note = "DAX rewrite not applied: " + why; toApply.Remove(item); }
             }
             // Circular-rewrite guard for EVERY set_dax item (even ones without a verify matrix, which would
@@ -10676,17 +12182,12 @@ $@"ADDCOLUMNS(
                 {
                     it.Status = "rejected";
                     it.VerifyState = "failed";
-                    it.Note = "DAX rewrite rejected: " + DaxBench.CircularRewriteNote + " (structural — not overridable)";
+                    it.Note = "DAX rewrite rejected: " + DaxBench.CircularRewriteNote + " (structural, not overridable)";
                     toApply.Remove(it);
                 }
             foreach (var it in toApply.ToList())
             {
                 if (!string.Equals(it.Kind, "set_dax", StringComparison.OrdinalIgnoreCase) || it.VerifyGroupBy == null) continue;
-                if (verifyConn == null)
-                {
-                    FailVerify(it, "unverified", "no live connection to prove equivalence");
-                    continue;
-                }
                 // Per-item spec: the item's ObjectRef names the target measure, so the proof runs with its REAL
                 // home table (unqualified column refs bind correctly) — measure-faithful, matching optimize_measure.
                 var itemSpec = await BuildQuerySpecAsync(verifyConn, it.ObjectRef);
@@ -10734,6 +12235,16 @@ $@"ADDCOLUMNS(
                 {
                     try
                     {
+                        if (!IsRemovalKind(it.Kind))
+                        {
+                            var live = LiveValueForPlanItem(m, it);
+                            if (live != null && !PlanTextEquals(live, it.Before) && !PlanTextEquals(live, it.After))
+                            {
+                                it.Status = "skipped";
+                                it.Note = "This value changed after the plan was built. It was not applied. Review it again, then apply.";
+                                continue;
+                            }
+                        }
                         // Capture the object BEFORE the rename (its ref still resolves by the old name); the same
                         // instance survives the rename, so the warning's object matches it exactly at drain time.
                         if (string.Equals(it.Kind, "rename", StringComparison.OrdinalIgnoreCase)
@@ -10807,7 +12318,7 @@ $@"ADDCOLUMNS(
             // A structurally rejected item disqualifies the recipe too — it planned an impossible edit.
             report.Distillable = report.FailedCount == 0 && report.RejectedCount == 0 && report.AppliedCount >= 2 && report.OverallAfter >= report.OverallBefore;
             report.DistillableWhy = report.Distillable
-                ? $"{report.AppliedCount} items applied cleanly with no failures and the grade held ({before.card.Grade}→{after.card.Grade}) — a repeatable recipe; run /distill-workflow to capture it."
+                ? $"{report.AppliedCount} items applied cleanly with no failures and the grade held ({before.card.Grade}→{after.card.Grade}): a repeatable recipe; run /distill-workflow to capture it."
                 : null;
 
             // Audit trail: one record per SHIPPED override (the accountable act, per-object queryable), then the
@@ -10820,7 +12331,7 @@ $@"ADDCOLUMNS(
                     {
                         SessionId = s.Id, Revision = rev, Origin = origin, Op = "apply_plan-item", ObjectRef = it.ObjectRef,
                         Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                        Summary = $"{it.Kind} shipped past a '{it.VerifyState}' equivalence verdict — {it.Note}",
+                        Summary = $"{it.Kind} shipped past a '{it.VerifyState}' equivalence verdict: {it.Note}",
                         Evidence = System.Text.Json.JsonSerializer.Serialize(new { it.Id, it.Kind, it.VerifyState }),
                         BodyHash = VerifiedEditsStore.BodyHash(it.After ?? ""),
                     });
@@ -10935,6 +12446,14 @@ $@"ADDCOLUMNS(
 
                 // Per-object AI-content queue. SYN-SCHEMA is the deterministic enable_qna seed (1b); the model-level
                 // AI-instructions findings are seeded above, unbudgeted — exclude all of them from this throttle.
+                //
+                // Two rules CAN want the same (object, property): NAME-COLUMN and DIM-PRIMARY-NAME both rename a
+                // codey dimension label column, and one property gets one plan item, so the dedup key is doing the
+                // right thing by keeping ONE rename rather than queueing two renames of one object in one batch.
+                // What it must not do is drop the loser's GUIDANCE with it , that is how DIM-PRIMARY-NAME's whole
+                // point (rename it to the TABLE's name, not merely to something clearer) disappeared from the plan
+                // for exactly the columns that trip both rules. So a deduped finding merges its message into the
+                // surviving item's rationale, the same way the three co-firing AI-instructions findings do above.
                 var added = 0;
                 foreach (var f in card.Findings.Where(f => f.Fix == nameof(FixKind.AiContent)
                              && f.RuleId != "SYN-SCHEMA" && f.RuleId != "DAC-AI-INSTRUCTIONS" && f.RuleId != "DAC-AI-INSTRUCTIONS-LEN" && f.RuleId != "DAC-GLOSSARY-GAP"))
@@ -10942,7 +12461,14 @@ $@"ADDCOLUMNS(
                     if (added >= maxAi) break;
                     if (!InScope(f.ObjectRef, scope)) continue;
                     var it = MapAiContent(m, f);
-                    if (it != null && seen.Add(it.ObjectRef + "::" + it.Target)) { list.Add(it); added++; }
+                    if (it == null) continue;
+                    var key = it.ObjectRef + "::" + it.Target;
+                    if (seen.Add(key)) { list.Add(it); added++; continue; }
+                    // Same object and property as an item already queued: keep the one item, keep both rationales.
+                    var kept = list.FirstOrDefault(i => (i.ObjectRef + "::" + i.Target) == key);
+                    if (kept != null && !string.IsNullOrEmpty(f.Message)
+                        && (kept.Rationale == null || !kept.Rationale.Contains(f.Message)))
+                        kept.Rationale = string.IsNullOrEmpty(kept.Rationale) ? f.Message : kept.Rationale + "\n" + f.Message;
                 }
             }
             return list;
@@ -11042,6 +12568,18 @@ $@"ADDCOLUMNS(
                 case "NAME-COLUMN":
                 case "NAME-TABLE":
                     return AiItem(f, g, "rename", "name", "rename", "Rename to a clear, human name", f.ObjectName);
+                case "DIM-PRIMARY-NAME":
+                    // The rule advertises FixKind.AiContent, so it MUST land an item here , without this case the
+                    // advertised fix silently produced nothing and the AI queue skipped the finding. Same rename
+                    // mapping as the NAME-* family: the finding targets the label column, so the item inherits that
+                    // column's ref and the intended rename ("Product Name" -> "Product") applies through the shared
+                    // rename seam, with DAX fixup and the LSDL cascade. "rename" is an OPT-IN kind, so authoring the
+                    // value leaves the item PROPOSED for an explicit human approval , the rename-safety contract is
+                    // the existing one, not a new one. The target name IS deterministic (the dimension's table
+                    // name), but the title only states it: pre-filling After would auto-approve a rename, which is
+                    // exactly the consent step this kind exists to preserve.
+                    return AiItem(f, g, "rename", "name", "rename",
+                        $"Rename the label column to the table name{TableNameFromRef(f.ObjectRef)}", f.ObjectName);
                 case "SYN-FIELD":
                     return AiItem(f, g, "set_synonyms", "synonyms", "ai", "Add natural-language synonyms", "(none)");
                 case "SYN-SCHEMA":
@@ -11055,6 +12593,16 @@ $@"ADDCOLUMNS(
                 default:
                     return null;
             }
+        }
+
+        /// <summary>" ('Product')" for a column ref on table Product, else "". Only used to say the intended rename
+        /// target in a plan-item title; the ref is the finding's own, so there is nothing to resolve or validate.</summary>
+        private static string TableNameFromRef(string objectRef)
+        {
+            if (string.IsNullOrEmpty(objectRef) || !objectRef.StartsWith("column:", StringComparison.Ordinal)) return "";
+            var body = objectRef.Substring("column:".Length);
+            var slash = body.IndexOf('/');
+            return slash <= 0 ? "" : $" ('{body.Substring(0, slash)}')";
         }
 
         private static ChangeItem AiItem(ReadinessFinding f, GroundingBundle g, string kind, string target, string risk, string title, string before)
@@ -11087,15 +12635,15 @@ $@"ADDCOLUMNS(
                             // search indexed a description.
                             if (obj != null && obj.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.Instance)?.CanWrite == true)
                             { WriteStringProp(obj, "Description", it.After); break; }
-                            throw new InvalidOperationException($"set_description: {it.ObjectRef} is not a describable object — fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                            throw new InvalidOperationException($"set_description: {it.ObjectRef} is not a describable object. Fix the ref with set_plan_item or drop the item, then apply_plan again.");
                     }
                     break;
                 case "set_display_folder":
-                    if (obj == null) throw new InvalidOperationException($"Object not found: {it.ObjectRef} — fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
+                    if (obj == null) throw new InvalidOperationException($"Object not found: {it.ObjectRef}. Fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
                     WriteStringProp(obj, "DisplayFolder", it.After ?? "");
                     break;
                 case "set_format_string":
-                    if (obj == null) throw new InvalidOperationException($"Object not found: {it.ObjectRef} — fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
+                    if (obj == null) throw new InvalidOperationException($"Object not found: {it.ObjectRef}. Fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
                     WriteStringProp(obj, "FormatString", it.After ?? "");
                     break;
                 case "set_m":
@@ -11104,41 +12652,56 @@ $@"ADDCOLUMNS(
                     {
                         var exName = it.ObjectRef.Substring("namedexpr:".Length);
                         var ex = m.Expressions.FirstOrDefault(x => string.Equals(x.Name, exName, StringComparison.OrdinalIgnoreCase))
-                                 ?? throw new InvalidOperationException($"No shared expression named '{exName}' — fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                                 ?? throw new InvalidOperationException($"No shared expression named '{exName}'. Fix the ref with set_plan_item or drop the item, then apply_plan again.");
                         ex.Expression = it.After;
                         break;
                     }
                     if (!(obj is Partition mp) || mp.SourceType != PartitionSourceType.M)
-                        throw new InvalidOperationException($"set_m: {it.ObjectRef} is not an M partition or shared expression — fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                        throw new InvalidOperationException($"set_m: {it.ObjectRef} is not an M partition or shared expression. Fix the ref with set_plan_item or drop the item, then apply_plan again.");
                     mp.Expression = it.After;
                     break;
                 case "set_measure_format":
-                    if (!(obj is Measure mf)) throw new InvalidOperationException($"{it.ObjectRef} is not a measure, but plan item 'set_measure_format' targets one — fix the ref with set_plan_item (list_measures shows measures) or drop the item, then apply_plan again.");
+                    if (!(obj is Measure mf)) throw new InvalidOperationException($"{it.ObjectRef} is not a measure, but plan item 'set_measure_format' targets one. Fix the ref with set_plan_item (list_measures shows measures) or drop the item, then apply_plan again.");
+                    var fmtProblem = FormatStringRules.Problem(it.After);
+                    if (fmtProblem != null) throw new InvalidOperationException(fmtProblem);
                     mf.FormatString = it.After;
                     break;
                 case "set_summarize_by":
-                    if (!(obj is Column sc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one — fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
+                    if (!(obj is Column sc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one. Fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
                     sc.SummarizeBy = Enum.Parse<AggregateFunction>(it.After, true);
                     break;
                 case "set_column_hidden":
-                    if (!(obj is Column hc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one — fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
+                    if (!(obj is Column hc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one. Fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
                     hc.IsHidden = ParseHidden(it.After);
                     break;
                 case "set_data_category":
-                    if (!(obj is Column dc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one — fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
+                    if (!(obj is Column dc)) throw new InvalidOperationException($"{it.ObjectRef} is not a column, but this plan item ('{it.Kind}') targets one. Fix the ref with set_plan_item (list_columns shows columns) or drop the item, then apply_plan again.");
                     dc.DataCategory = it.After;
                     break;
                 case "set_relationship_crossfilter":
                     var rel = m.Relationships.OfType<SingleColumnRelationship>().FirstOrDefault(r => r.Name == RelName(it.ObjectRef))
-                              ?? throw new InvalidOperationException($"Relationship not found: {it.ObjectRef} — run get_model_summary to see relationship names; fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                              ?? throw new InvalidOperationException($"Relationship not found: {it.ObjectRef}. Run get_model_summary to see relationship names; fix the ref with set_plan_item or drop the item, then apply_plan again.");
                     rel.CrossFilteringBehavior = Enum.Parse<CrossFilteringBehavior>(it.After, true);
                     break;
                 case "mark_date_table":
-                    if (!(obj is Table dt)) throw new InvalidOperationException($"{it.ObjectRef} is not a table, but plan item 'mark_date_table' targets one — fix the ref with set_plan_item (list_objects shows tables) or drop the item, then apply_plan again.");
-                    dt.DataCategory = "Time";
+                    if (!(obj is Table dt)) throw new InvalidOperationException($"{it.ObjectRef} is not a table, but plan item 'mark_date_table' targets one. Fix the ref with set_plan_item (list_objects shows tables) or drop the item, then apply_plan again.");
+                    // The SAME mark the direct op makes (MarkDateTableCore: DataCategory = "Time" AND the date column
+                    // IsKey) — this door used to set only the category, so the item reported applied while the model
+                    // still failed MODEL_SHOULD_HAVE_A_DATE_TABLE (F-029). After carries the chosen date column;
+                    // RequiresAfter is false for this kind, so an empty After legitimately means "resolve it", and the
+                    // core refuses when that choice is not unambiguous. The core resolves before it writes, which is
+                    // what keeps a refusal here from committing a half-marked table (this loop's catch is inside the
+                    // batch: it fails ONE item and the siblings still commit, so nothing would roll a partial back).
+                    var dtMark = MarkDateTableCore(dt, it.After,
+                        " Fix the date column with set_plan_item (list_columns shows them) or drop the item, then apply_plan again.");
+                    // it.Note is this door's per-item channel. An already-marked table is the SATISFIED case: say so
+                    // rather than claim a change that never happened. And when the item named no column, name the one
+                    // that was resolved, so the caller is never left guessing which column became the key.
+                    if (!dtMark.Changed) it.Note = "applied: already marked as the model's date table, so nothing changed";
+                    else if (string.IsNullOrWhiteSpace(it.After)) it.Note = $"applied: '{dtMark.KeyColumn}' resolved as the date table's key";
                     break;
                 case "rename":
-                    if (!(obj is TabularNamedObject rn)) throw new InvalidOperationException($"{it.ObjectRef} is not renameable (rename targets a named object) — fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                    if (!(obj is TabularNamedObject rn)) throw new InvalidOperationException($"{it.ObjectRef} is not renameable (rename targets a named object). Fix the ref with set_plan_item or drop the item, then apply_plan again.");
                     s.Rename(rn, it.After);   // the shared seam: AutoFixup rewrites DAX references AND the LSDL cascade follows (a bare Name set orphaned the linguistic schema); refused cultures retry at batch end
                     break;
                 case "set_dax":
@@ -11149,11 +12712,11 @@ $@"ADDCOLUMNS(
                         case CalculatedTable ct: ct.Expression = it.After; break;
                         case CalculationItem ci2: ci2.Expression = it.After; break;   // calc-item DAX is searched/replaced too
                         case Function fn: fn.Expression = it.After; break;
-                        default: throw new InvalidOperationException($"set_dax: {it.ObjectRef} has no DAX expression (needs a measure, calculated column/table, calculation item or function) — fix the ref with set_plan_item or drop the item, then apply_plan again.");
+                        default: throw new InvalidOperationException($"set_dax: {it.ObjectRef} has no DAX expression (needs a measure, calculated column/table, calculation item or function). Fix the ref with set_plan_item or drop the item, then apply_plan again.");
                     }
                     break;
                 case "set_synonyms":
-                    if (!(obj is TabularNamedObject so)) throw new InvalidOperationException($"{it.ObjectRef} not found — fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
+                    if (!(obj is TabularNamedObject so)) throw new InvalidOperationException($"{it.ObjectRef} not found. Fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
                     var cult = EnsureLinguisticCulture(m, null, out _);
                     var synOutcome = LsdlSynonyms.SetSynonyms(so, cult, it.After ?? "");
                     if (synOutcome.Warning != null) it.Note = "applied: " + synOutcome.Warning;   // the item's Note IS the per-item warning channel
@@ -11174,8 +12737,8 @@ $@"ADDCOLUMNS(
                     break;
                 case "bpa_fix":
                     var rule = GetBpaRules(m).FirstOrDefault(r => string.Equals(r.ID, it.RuleId, StringComparison.OrdinalIgnoreCase))
-                               ?? throw new InvalidOperationException($"Unknown BPA rule '{it.RuleId}' — run bpa_scan to see the rule ids in force (load_bpa_rules to add a rule set); fix the item with set_plan_item or drop it, then apply_plan again.");
-                    if (!(obj is ITabularNamedObject no)) throw new InvalidOperationException($"Object not found: {it.ObjectRef} — fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
+                               ?? throw new InvalidOperationException($"Unknown BPA rule '{it.RuleId}'. Run bpa_scan to see the rule ids in force (load_bpa_rules to add a rule set); fix the item with set_plan_item or drop it, then apply_plan again.");
+                    if (!(obj is ITabularNamedObject no)) throw new InvalidOperationException($"Object not found: {it.ObjectRef}. Fix the ref with set_plan_item (list_objects / search_model finds it) or drop the item, then apply_plan again.");
                     BpaAnalyzer.ApplyFix(m, rule, no);
                     break;
                 case "delete":
@@ -11186,7 +12749,7 @@ $@"ADDCOLUMNS(
                     // dispatch; reaching here means that guard was bypassed — refuse rather than delete unverified.
                     throw new InvalidOperationException("delete_if_unused must be applied through apply_plan, which re-verifies the unused verdict at apply time.");
                 default:
-                    throw new InvalidOperationException($"Unknown plan item kind '{it.Kind}' — see get_op_catalog for valid item kinds; fix it with set_plan_item or drop the item, then apply_plan again.");
+                    throw new InvalidOperationException($"Unknown plan item kind '{it.Kind}'. See get_op_catalog for valid item kinds; fix it with set_plan_item or drop the item, then apply_plan again.");
             }
         }
 
@@ -11212,7 +12775,7 @@ $@"ADDCOLUMNS(
                 return (m.Name, string.IsNullOrEmpty(cur) ? "(none)" : (cur.Length > 80 ? cur.Substring(0, 80) + "…" : cur));
             }
             var obj = ObjectRefs.Resolve(m, objRef);
-            if (obj == null) throw new InvalidOperationException($"Object not found: {objRef} — run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
+            if (obj == null) throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
             string before;
             switch (kind)
             {
@@ -11232,6 +12795,104 @@ $@"ADDCOLUMNS(
                 default: before = null; break;
             }
             return (obj.Name, string.IsNullOrEmpty(before) ? "(none)" : before);
+        }
+
+        private static bool IsRemovalKind(string kind) =>
+            string.Equals(kind, "delete", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(kind, "delete_if_unused", StringComparison.OrdinalIgnoreCase);
+
+        private static bool PlanTextEquals(string a, string b)
+        {
+            string Norm(string s) => string.IsNullOrEmpty(s) || s == "(none)" ? "" : s;
+            return string.Equals(Norm(a), Norm(b), StringComparison.Ordinal);
+        }
+
+        /// <summary>The live property a plan item would overwrite, in the same string space as Before/After.
+        /// Null means this kind has no comparable snapshot and apply proceeds as before.</summary>
+        private static string LiveValueForPlanItem(Model m, ChangeItem it)
+        {
+            var kind = (it.Kind ?? "").Trim();
+            if (IsRemovalKind(kind))
+            {
+                try { return ObjectRefs.Resolve(m, it.ObjectRef) != null ? "exists" : ""; }
+                catch { return ""; }
+            }
+            ITabularNamedObject obj;
+            try { obj = ObjectRefs.Resolve(m, it.ObjectRef); }
+            catch { return null; }
+            if (obj == null) return null;
+            switch (kind)
+            {
+                case "set_description":
+                    var d = (obj as Measure)?.Description ?? (obj as Table)?.Description ?? (obj as Column)?.Description
+                            ?? obj.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj) as string;
+                    return d ?? "";
+                case "set_display_folder":
+                    return obj.GetType().GetProperty("DisplayFolder", BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj) as string ?? "";
+                case "set_format_string":
+                case "set_measure_format":
+                    return (obj as Measure)?.FormatString
+                           ?? obj.GetType().GetProperty("FormatString", BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj) as string ?? "";
+                case "set_dax": return CurrentDax(obj) ?? "";
+                case "set_summarize_by": return (obj as Column)?.SummarizeBy.ToString();
+                case "set_data_category": return (obj as Column)?.DataCategory ?? "";
+                case "set_column_hidden": return (obj as Column)?.IsHidden == true ? "Hidden" : "Visible";
+                case "set_m":
+                    if ((it.ObjectRef ?? "").StartsWith("namedexpr:", StringComparison.Ordinal))
+                    {
+                        var exName = it.ObjectRef.Substring("namedexpr:".Length);
+                        return m.Expressions.FirstOrDefault(x => string.Equals(x.Name, exName, StringComparison.OrdinalIgnoreCase))?.Expression ?? "";
+                    }
+                    return (obj as Partition)?.Expression ?? "";
+                case "rename": return obj.Name ?? "";
+                default: return null;
+            }
+        }
+
+        private async Task ReconcilePlanAfterHistoryAsync(SessionContext context, Session s)
+        {
+            await context.PlanGate.WaitAsync();
+            try
+            {
+                var plan = context.Plans.Current;
+                if (plan == null) return;
+                var changed = await s.ReadAsync(m =>
+                {
+                    var any = false;
+                    foreach (var it in plan.Snapshot())
+                    {
+                        if (ReconcilePlanItemAfterHistory(m, it)) any = true;
+                    }
+                    return any;
+                });
+                if (changed) PublishPlan(plan, s.Revision);
+            }
+            finally { context.PlanGate.Release(); }
+        }
+
+        private static bool ReconcilePlanItemAfterHistory(Model m, ChangeItem it)
+        {
+            if (IsRemovalKind(it.Kind))
+            {
+                var live = LiveValueForPlanItem(m, it);
+                if (it.Status == "applied" && live == "exists") { it.Status = "approved"; it.Note = null; return true; }
+                if (it.Status == "approved" && live == "") { it.Status = "applied"; return true; }
+                return false;
+            }
+            var current = LiveValueForPlanItem(m, it);
+            if (current == null) return false;
+            if (it.Status == "applied" && PlanTextEquals(current, it.Before))
+            {
+                it.Status = "approved";
+                it.Note = null;
+                return true;
+            }
+            if (it.Status == "approved" && PlanTextEquals(current, it.After) && !PlanTextEquals(it.Before, it.After))
+            {
+                it.Status = "applied";
+                return true;
+            }
+            return false;
         }
 
         private ChangePlanView PublishPlan(ChangePlanState plan, long revision)
@@ -11376,10 +13037,6 @@ $@"ADDCOLUMNS(
                 case "set_m": return "m";   // literal M edit: not reference-fixed, so it wears its own (amber) badge
                 case "set_relationship_crossfilter":
                 case "mark_date_table": return "structural";
-                case "set_dax":
-                case "set_description":
-                case "set_ai_instructions":
-                case "set_synonyms": return "ai";
                 default: return "safe";
             }
         }
@@ -11448,6 +13105,23 @@ $@"ADDCOLUMNS(
                 case "TABULAREDITORFOLDER": return SaveFormat.TabularEditorFolder;
                 default: return SaveFormat.TMDL;
             }
+        }
+
+        /// <summary>True when <paramref name="path"/> is a .bim FILE (existing or named as one). A directory
+        /// whose name happens to end in .bim is not a BIM file; a missing path that ends in .bim is, so the first
+        /// save of a new .bim still infers ModelSchemaOnly.</summary>
+        private static bool LooksLikeBimFile(string path)
+        {
+            if (string.IsNullOrEmpty(path) || Directory.Exists(path)) return false;
+            return path.EndsWith(".bim", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static SaveFormat InferSourceFormat(string target)
+        {
+            if (string.IsNullOrEmpty(target)) return SaveFormat.TMDL;
+            if (Directory.Exists(target) || ModelPathResolver.IsTmdlRoot(target)) return SaveFormat.TMDL;
+            if (target.EndsWith(".bim", StringComparison.OrdinalIgnoreCase)) return SaveFormat.ModelSchemaOnly;
+            return SaveFormat.TMDL;
         }
     }
 }

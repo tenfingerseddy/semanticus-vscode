@@ -1,0 +1,162 @@
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/comment-line-in-blocks.md
+  error=<null>
+  source=stock file=comment-line-in-blocks.md
+  name=comment-line-in-blocks kind=<null> version=1 strictness=<null>
+  title=A v1 file with comment-shaped LINES inside its nested blocks
+  description=<null>
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  slot name=table type=text required=required default=<null> example=<null> hint=<null> values=[] question=<null>
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate strictness=hard
+    input name=approval type=verification required=answer-or-decline daxPurity=<null> question=Approved?
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/comment-line-in-frontmatter.md
+  error=<null>
+  source=stock file=comment-line-in-frontmatter.md
+  name=comment-line-in-frontmatter kind=<null> version=1 strictness=<null>
+  title=A v1 file with comment-shaped LINES in its frontmatter
+  description=v1 has no comment syntax, so both lines above are ordinary keys
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  provenance # indented=also a key in v1
+  provenance # owner=finance
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/comment-shaped-values.md
+  error=<null>
+  source=stock file=comment-shaped-values.md
+  name=comment-shaped-values kind=<null> version=1 strictness=<null>
+  title=A v1 file whose values look like comments
+  description=# this is a value in v1, not a comment
+  whenToUse=when checking that v1 keeps reading it that way
+  triggers=[]
+  tags=[]
+  provenance note=# so is this one
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate strictness=hard
+    input name=approval type=verification required=answer-or-decline daxPurity=<null> question=Approved?
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/duplicate-version.md
+  error=<null>
+  source=stock file=duplicate-version.md
+  name=duplicate-version kind=<null> version=1 strictness=<null>
+  title=A v1 file that says its version twice, the second time differently
+  description=The pre-v2 parser had no version key at all, so both lines were unknown keys and the LAST one won. Provenance therefore reads 2, not 1, and that caller-visible value is the thing this fixture pins.
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  provenance schemaVersion=2
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/explicit-v1.md
+  error=<null>
+  source=stock file=explicit-v1.md
+  name=explicit-v1 kind=<null> version=1 strictness=<null>
+  title=A v1 file that says so
+  description=Nothing in the shipped corpus declares a version, so without this fixture the whole version scan is unexercised by the v1 guard.
+  whenToUse=<null>
+  triggers=[create_measure]
+  tags=[]
+  provenance schemaVersion=1
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate strictness=hard
+    input name=approval type=verification required=answer-or-decline daxPurity=<null> question=Approved?
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/hash-and-apostrophe-in-list.md
+  error=<null>
+  source=stock file=hash-and-apostrophe-in-list.md
+  name=hash-and-apostrophe-in-list kind=<null> version=1 strictness=<null>
+  title=A v1 file with a hash and an apostrophe inside inline lists
+  description=<null>
+  whenToUse=<null>
+  triggers=[O'Reilly|finance]
+  tags=[["finance]
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/nonplain-version-keys.md
+  error=<null>
+  source=stock file=nonplain-version-keys.md
+  name=nonplain-version-keys kind=<null> version=1 strictness=<null>
+  title=Non-plain spellings of the version key stay v1, load frozen, and warn
+  description=|
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  provenance "schemaVersion=unclosed content inside a block scalar
+  provenance "schemaVersion"=2
+  provenance "schemaVersion\"=2
+  step id=step-1 number=1 title=Do
+    ops=[]
+    instructions.len=5 instructions.hash=521B25CC458684EB
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/quoted-comma-in-list.md
+  error=<null>
+  source=stock file=quoted-comma-in-list.md
+  name=quoted-comma-in-list kind=<null> version=1 strictness=<null>
+  title=A v1 file whose inline lists contain quoted commas
+  description=<null>
+  whenToUse=<null>
+  triggers=[a|b|plain]
+  tags=[finance|monthly]
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate strictness=hard
+    input name=approval type=verification required=answer-or-decline daxPurity=<null> question=Approved?
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/quoted-version-line.md
+  error=<null>
+  source=stock file=quoted-version-line.md
+  name=quoted-version-line kind=<null> version=1 strictness=<null>
+  title=A v1 file whose quoted LINES merely look like version keys
+  description=<null>
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  provenance "schemaVersion=2" trailing
+  provenance 'schemaVersion=2'
+  step id=step-1 number=1 title=Do
+    ops=[]
+    instructions.len=5 instructions.hash=521B25CC458684EB
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/slot-with-unknown-property.md
+  error=<null>
+  source=stock file=slot-with-unknown-property.md
+  name=slot-with-unknown-property kind=template version=1 strictness=<null>
+  title=A template whose slot carries a property v1 never defined
+  description=<null>
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  slot name=customer type=text required=required default=<null> example=Acme hint=<null> values=[] question=Which customer?
+  step id=step-1 number=1 title=Do the thing for {{customer}}
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate=<null>
+FILE Semanticus.Tests/fixtures/workflow-v1-shapes/unknown-top-level-key.md
+  error=<null>
+  source=stock file=unknown-top-level-key.md
+  name=unknown-top-level-key kind=<null> version=1 strictness=<null>
+  title=A v1 file carrying keys this format never defined
+  description=<null>
+  whenToUse=<null>
+  triggers=[]
+  tags=[]
+  provenance derived_from=some-other-workflow
+  provenance distilled_on=2026-01-01
+  provenance owner=an unknown key with a value, which v1 preserves into Provenance
+  step id=step-1 number=1 title=Do the thing
+    ops=[]
+    instructions.len=10 instructions.hash=4319BBB0A28E6761
+    gate=<null>

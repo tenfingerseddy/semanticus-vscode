@@ -136,7 +136,8 @@ namespace Semanticus.Tests
             var free = await ReadOnlyAsync(freeSessions, () => McpToolsTesting.ListTestRuns(freeEngine));
             Assert.Empty(free.Runs);
             Assert.Contains("history and drift trends are Pro", free.Note, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("run_tests itself is free", free.Note, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("run_tests", free.Note, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Running the suite", free.Note, StringComparison.OrdinalIgnoreCase);
         }
 
         private static async Task<T> ReadOnlyAsync<T>(SessionManager sessions, Func<Task<T>> action)

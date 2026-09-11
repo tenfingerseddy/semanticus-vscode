@@ -76,7 +76,7 @@ const SCENARIOS: Scenario[] = [
     title: 'Make the model AI-ready',
     tag: 'AI-ready',
     hero: true,
-    blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant fills the gaps those tools rely on, and the readiness grade shows the improvement without claiming the model is perfect.',
+    blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant works through the gaps those tools rely on, and the readiness score shows whether the model held or improved.',
     kind: 'settings',
     appliedNote: 'Nothing was changed here. Open "Make the model AI-ready" in your Workflows list, or ask the AI Assistant to make the model AI-ready, to begin.',
     undo: 'This changes no settings. If the assistant later applies model edits, undo that batch from Edit History.',
@@ -352,7 +352,7 @@ function ScenarioWizard({ scenario, isPro, library, titleOf, onBack, onApplied }
     // settings bundle
     const lines: PreviewLine[] = [];
     if (scenario.id === 'make-model-ai-ready') {
-      lines.push({ tone: 'note', text: 'Opens the shipped AI-ready workflow, where the AI Assistant scans the model, fills grounding gaps, and rescans to show the grade moving.' });
+      lines.push({ tone: 'note', text: 'Opens the shipped AI-ready workflow, where the AI Assistant scans the model, works through the gaps, and rescans to check whether readiness held or improved.' });
       lines.push({ tone: 'set', text: 'Choosing this card changes no workflow policy or model setting.' });
       return lines;
     }
@@ -388,9 +388,9 @@ function ScenarioWizard({ scenario, isPro, library, titleOf, onBack, onApplied }
         }
         const primary = slots.find((s) => s.required === 'required');
         const name = `${tmpl.name}-${slug(primary ? values[primary.name] || '' : '')}`.replace(/-+$/, '') || tmpl.name;
-        const lib = await rpc<WorkflowInfo[]>('instantiateWorkflowTemplate', tmpl.name, name, JSON.stringify(payload), 'human');
+        await rpc<WorkflowInfo[]>('instantiateWorkflowTemplate', tmpl.name, name, JSON.stringify(payload), 'human');
         setAppliedNote(`Created the workflow "${renderTemplate(tmpl.title, values, slots)}". Find it in your Workflows list.`);
-        onApplied(lib);
+        onApplied();
       } else if (scenario.profile) {
         // The engine owns the bundle and writes it atomically. Standard therefore clears every prior simple
         // requirement and visibility rule instead of leaving a half-reset policy behind.

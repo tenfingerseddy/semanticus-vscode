@@ -88,19 +88,19 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(raw))
                 return string.IsNullOrWhiteSpace(head)
                     ? new VerifiedEditsChain()
-                    : new VerifiedEditsChain { ChainIntact = false, Note = "head anchor present but the chain annotation is missing — the trail was deleted" };
+                    : new VerifiedEditsChain { ChainIntact = false, Note = "head anchor present but the chain annotation is missing: the trail was deleted" };
             List<VerifiedEditRecord> recs;
             try { recs = JsonSerializer.Deserialize<List<VerifiedEditRecord>>(raw, JsonOpts) ?? new List<VerifiedEditRecord>(); }
             catch
             {
-                return new VerifiedEditsChain { ChainIntact = false, Note = "audit blob unparseable — records unreadable (the next append preserves it under " + Damaged + " and starts a fresh chain)" };
+                return new VerifiedEditsChain { ChainIntact = false, Note = "audit blob unparseable: records unreadable (the next append preserves it under " + Damaged + " and starts a fresh chain)" };
             }
             var chain = new VerifiedEditsChain { Records = recs.Where(r => r != null).ToArray() };
             var broken = FirstBroken(recs);
             if (broken != 0)
             {
                 chain.ChainIntact = false; chain.FirstBrokenSeq = broken;
-                chain.Note = $"chain broken at seq {broken} — a record was edited, removed or reordered after it was written";
+                chain.Note = $"chain broken at seq {broken}: a record was edited, removed or reordered after it was written";
                 return chain;
             }
             // Internal links verified — now the head anchor, which is what catches TAIL truncation (a prefix of a
@@ -110,8 +110,8 @@ namespace Semanticus.Engine
             {
                 chain.ChainIntact = false;
                 chain.Note = head == null
-                    ? "head anchor missing — the trail's tail cannot be vouched for (was it truncated?)"
-                    : "head anchor mismatch — the chain's tail was truncated or replaced after it was written";
+                    ? "head anchor missing: the trail's tail cannot be vouched for (was it truncated?)"
+                    : "head anchor mismatch: the chain's tail was truncated or replaced after it was written";
             }
             return chain;
         }
@@ -147,7 +147,7 @@ namespace Semanticus.Engine
             var reset = new VerifiedEditRecord
             {
                 Op = "chain-reset", Verdict = "info", Origin = "system",
-                Summary = "prior audit blob was unparseable — preserved verbatim under " + Damaged + "; chain restarted",
+                Summary = "prior audit blob was unparseable: preserved verbatim under " + Damaged + "; chain restarted",
             };
             Stamp(recs, reset);
             recs.Add(reset);
@@ -165,7 +165,7 @@ namespace Semanticus.Engine
             var marker = new VerifiedEditRecord
             {
                 Op = "chain-archived", Verdict = "info", Origin = "system",
-                Summary = $"active chain reached {recs.Count} records — archived whole under {ArchivePrefix + n}",
+                Summary = $"active chain reached {recs.Count} records: archived whole under {ArchivePrefix + n}",
                 Evidence = JsonSerializer.Serialize(new { archived = recs.Count, lastHash = recs[recs.Count - 1].Hash, annotation = ArchivePrefix + n }),
             };
             Stamp(fresh, marker);
@@ -245,15 +245,15 @@ namespace Semanticus.Engine
         public static string ToMarkdown(VerifiedEditsChain chain)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("# Verified Edits — audit trail");
+            sb.AppendLine("# Verified Edits: audit trail");
             sb.AppendLine();
             sb.AppendLine(chain.ChainIntact
-                ? $"Chain intact — {chain.Records.Length} record(s), each linking the previous by hash."
-                : $"CHAIN NOT INTACT{(chain.FirstBrokenSeq > 0 ? $" (first break at seq {chain.FirstBrokenSeq})" : "")} — {chain.Note}");
+                ? $"Chain intact: {chain.Records.Length} record(s), each linking the previous by hash."
+                : $"CHAIN NOT INTACT{(chain.FirstBrokenSeq > 0 ? $" (first break at seq {chain.FirstBrokenSeq})" : "")}: {chain.Note}");
             sb.AppendLine();
             foreach (var r in chain.Records)
             {
-                sb.AppendLine($"## {r.Seq}. {Flat(r.Op)} — {Flat(r.Verdict)}");
+                sb.AppendLine($"## {r.Seq}. {Flat(r.Op)}: {Flat(r.Verdict)}");
                 sb.AppendLine($"- **When:** {r.When}  ·  **Actor:** {Flat(r.Origin)}  ·  **Revision:** {r.Revision}");
                 // The git commit the model sat on when this edit was recorded — the durable revert anchor (the chain
                 // stores no prior body). Short sha; the line is omitted entirely for a non-git model, so those trails

@@ -32,7 +32,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(server)) return ResultSet.FromError("A Fabric SQL endpoint (server) is required to run the ground-truth SQL.");
             if (string.IsNullOrWhiteSpace(database)) return ResultSet.FromError("A database is required to run the ground-truth SQL.");
-            if (string.IsNullOrWhiteSpace(sql)) return ResultSet.FromError("No SQL query text supplied — the ground-truth SQL is required (the engine never authors it).");
+            if (string.IsNullOrWhiteSpace(sql)) return ResultSet.FromError("No SQL query text supplied: the ground-truth SQL is required (the engine never authors it).");
 
             var cap = maxRows <= 0 ? 10000 : maxRows;
             var sw = Stopwatch.StartNew();

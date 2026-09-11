@@ -92,7 +92,7 @@ inputs:
                     var run = await engine.StartWorkflowAsync("gated-toggle", "human");
                     var done = await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", "{}", "human");   // no answers needed: gate off
                     Assert.Equal("completed", done.Status);
-                    Assert.Equal("passed", done.Steps[0].Status);
+                    Assert.Equal("skipped", done.Steps[0].Status);          // the badge follows the record: the gate was off
                     Assert.Contains("off", done.Steps[0].Note ?? "");
                     Assert.Equal("off", done.Steps[0].EffectiveStrictness);
 

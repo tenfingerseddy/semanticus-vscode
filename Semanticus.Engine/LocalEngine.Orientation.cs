@@ -135,7 +135,7 @@ namespace Semanticus.Engine
 
                 string[] lines;
                 try { lines = File.ReadAllLines(file); }
-                catch { return new LastSessionBrief { Note = "Experience log present but unreadable — skipped." }; }
+                catch { return new LastSessionBrief { Note = "Experience log present but unreadable: skipped." }; }
 
                 var entries = new List<LastEntry>();
                 var corrupt = false;
@@ -157,7 +157,7 @@ namespace Semanticus.Engine
                     catch { corrupt = true; }   // one bad tail line must not sink the whole read
                 }
                 if (entries.Count == 0)
-                    return corrupt ? new LastSessionBrief { Note = "Experience log unparseable — no readable entries." } : null;
+                    return corrupt ? new LastSessionBrief { Note = "Experience log unparseable: no readable entries." } : null;
                 entries.Reverse();   // present chronologically
                 return new LastSessionBrief
                 {
@@ -178,21 +178,21 @@ namespace Semanticus.Engine
             if (!hasSession)
             {
                 // Nothing else is actionable without a model — this is the whole suggestion.
-                list.Add(new NextAction { Op = "open_model", Args = "path: <.pbip | TMDL folder | .bim>", Reason = "No model is open — orientation needs a session." });
+                list.Add(new NextAction { Op = "open_model", Args = "path: <.pbip | TMDL folder | .bim>", Reason = "No model is open: orientation needs a session." });
                 return list.ToArray();
             }
 
             if (s.ActiveWork?.Workflows is { Length: > 0 } wf)
-                list.Add(new NextAction { Op = "get_workflow_run", Args = "runId: " + wf[0].RunId, Reason = "A workflow run is active — resume it before starting new work." });
+                list.Add(new NextAction { Op = "get_workflow_run", Args = "runId: " + wf[0].RunId, Reason = "A workflow run is active: resume it before starting new work." });
 
             if (s.Overview?.HasUnsavedChanges == true)
                 list.Add(new NextAction { Op = "save_model", Reason = "The model has unsaved changes." });
 
             if (readiness != null && (readiness.Grade == "D" || readiness.Grade == "F"))
-                list.Add(new NextAction { Op = "make_model_ai_ready", Reason = $"AI-readiness grade is {readiness.Grade} — apply the safe fixes (or get_fix_prompt for the AI-authored ones)." });
+                list.Add(new NextAction { Op = "make_model_ai_ready", Reason = $"AI-readiness grade is {readiness.Grade}: apply the safe fixes (or get_fix_prompt for the AI-authored ones)." });
 
             if (graph?.DisconnectedTables is { Length: > 0 } dt)
-                list.Add(new NextAction { Op = "get_model_graph", Reason = $"{dt.Length} visible table(s) are in no relationship — the star-schema smell." });
+                list.Add(new NextAction { Op = "get_model_graph", Reason = $"{dt.Length} visible table(s) are in no relationship: the star-schema smell." });
 
             if (calTiNoCalendars)
                 list.Add(new NextAction { Op = "define_calendar_from_template", Reason = "Classic time-intelligence DAX but no calendars defined (the compatibility level supports them)." });

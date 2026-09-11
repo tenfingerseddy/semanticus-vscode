@@ -50,6 +50,25 @@ namespace Semanticus.Tests
         }
     }
 
+    internal static class ReviewFenceTest
+    {
+        /// <summary>
+        /// Mint the live review token without a preview round-trip. Tests that prove a refusal before any
+        /// live connection cannot call deploy with commit=false: that path still talks to the target.
+        /// </summary>
+        internal static async System.Threading.Tasks.Task<string> TokenAsync(
+            Semanticus.Engine.IEngine engine, string endpoint, string database, string origin = "human")
+        {
+            _ = origin;
+            var info = await engine.SessionInfoAsync();
+            var coords = Semanticus.Engine.ConnectionInput.Parse(endpoint, database);
+            return Semanticus.Engine.ReviewFence.Mint(
+                info.SessionId, info.Revision,
+                Semanticus.Engine.ReviewFence.TargetIdentity(coords.Endpoint, coords.Database),
+                Array.Empty<string>());
+        }
+    }
+
     internal static class CompiledCallGraph
     {
         private static readonly IReadOnlyDictionary<short, OpCode> OpCodesByValue = typeof(OpCodes)

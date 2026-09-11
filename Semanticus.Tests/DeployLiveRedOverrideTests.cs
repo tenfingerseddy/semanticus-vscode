@@ -78,9 +78,10 @@ namespace Semanticus.Tests
         {
             using var engine = await RedModelAsync();
 
+            var token = await ReviewFenceTest.TokenAsync(engine, LocalEndpoint, "Blocked", "agent");
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.DeployLiveAsync(LocalEndpoint, "Blocked", "serviceprincipal", null, null,
-                    commit: true, origin: "agent", overrideReason: "agent decided to ship it"));
+                    commit: true, origin: "agent", overrideReason: "agent decided to ship it", confirmToken: token));
 
             Assert.Contains("HUMAN-only", ex.Message);                 // names the rule…
             Assert.Contains("agent cannot override", ex.Message);
@@ -99,9 +100,10 @@ namespace Semanticus.Tests
 
             // The push fails on the dead loopback endpoint — but only AFTER the gate is cleared and the override is
             // recorded, so the throw is the connection failure, never the gate refusal.
+            var token = await ReviewFenceTest.TokenAsync(engine, LocalEndpoint, "Blocked");
             var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
                 engine.DeployLiveAsync(LocalEndpoint, "Blocked", null, null, null,
-                    commit: true, origin: "human", overrideReason: "data owner approved the hotfix"));
+                    commit: true, origin: "human", overrideReason: "data owner approved the hotfix", confirmToken: token));
             Assert.DoesNotContain("HUMAN-only", ex.Message);
             Assert.DoesNotContain("blocked by the deploy gate", ex.Message);
 
@@ -118,9 +120,10 @@ namespace Semanticus.Tests
         {
             using var engine = await RedModelAsync();
 
+            var token = await ReviewFenceTest.TokenAsync(engine, LocalEndpoint, "Blocked", "agent");
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.DeployLiveAsync(LocalEndpoint, "Blocked", "serviceprincipal", null, null,
-                    commit: true, origin: "agent", overrideReason: null));
+                    commit: true, origin: "agent", overrideReason: null, confirmToken: token));
 
             // The human-only refusal is what teaches recovery (an agent can never supply a valid override).
             Assert.Contains("HUMAN-only", ex.Message);

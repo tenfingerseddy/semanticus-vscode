@@ -109,7 +109,7 @@ namespace Semanticus.Engine
                 try
                 {
                     var info = new FileInfo(file);
-                    if (info.Length > MaxFileBytes) { Skip($"definition.json is {info.Length:N0} bytes — far larger than a verified-answer definition; not parsed."); continue; }
+                    if (info.Length > MaxFileBytes) { Skip($"definition.json is {info.Length:N0} bytes: far larger than a verified-answer definition; not parsed."); continue; }
 
                     using var doc = JsonDocument.Parse(File.ReadAllText(file, Encoding.UTF8));
                     var root = doc.RootElement;
@@ -122,7 +122,7 @@ namespace Semanticus.Engine
 
                     if (questions.Count == 0)
                     {
-                        Skip("no question text found — the definition carries no trigger/question phrasing this parser recognizes (the format is observed, not documented; the raw file is beside the model).");
+                        Skip("no question text found: the definition carries no trigger/question phrasing this parser recognizes (the format is observed, not documented; the raw file is beside the model).");
                         continue;
                     }
 
@@ -301,7 +301,7 @@ namespace Semanticus.Engine
                 if (_templates != null) return _templates;
                 var asm = typeof(HardQuestionPack).Assembly;
                 var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("interview-hard-pack.json", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("interview-hard-pack.json is not embedded in Semanticus.Engine — the built-in hard-question pack is missing from the build.");
+                    ?? throw new InvalidOperationException("interview-hard-pack.json is not embedded in Semanticus.Engine: the built-in hard-question pack is missing from the build.");
                 using var stream = asm.GetManifestResourceStream(name);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 var doc = JsonSerializer.Deserialize<PackFile>(reader.ReadToEnd(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -331,7 +331,7 @@ namespace Semanticus.Engine
             {
                 var hits = shape.Measures.Where(m => string.Equals(m.Name, measureArg.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
                 if (hits.Count == 0)
-                    throw new InvalidOperationException($"Measure '{measureArg.Trim()}' was not found in the model — list_measures shows what exists, or omit `measure` to bind the first visible one.");
+                    throw new InvalidOperationException($"Measure '{measureArg.Trim()}' was not found in the model: list_measures shows what exists, or omit `measure` to bind the first visible one.");
                 measure = hits[0];
             }
             else
@@ -407,10 +407,10 @@ namespace Semanticus.Engine
                 "entityKey" => measure == null ? measureMiss
                              : entityRel == null ? $"no active relationship from '{fact}' to an entity table (nothing to distinct-count)" : null,
                 "twoNumeric" => measure == null ? measureMiss
-                              : numerics.Count < 2 ? $"'{fact}' has {numerics.Count} visible plain numeric column(s) — a weighted average needs two (a value and a weight)" : null,
+                              : numerics.Count < 2 ? $"'{fact}' has {numerics.Count} visible plain numeric column(s): a weighted average needs two (a value and a weight)" : null,
                 "inactiveRel" => measure == null ? measureMiss
                                : inactiveRel == null ? $"no inactive relationship from '{fact}' (nothing for USERELATIONSHIP to activate)" : null,
-                _ => $"template declares an unknown shape requirement '{need}' — the pack file and the binder have drifted",
+                _ => $"template declares an unknown shape requirement '{need}': the pack file and the binder have drifted",
             };
 
             // ---- token map (query context escapes names for string literals; question context stays raw) ----
@@ -466,7 +466,7 @@ namespace Semanticus.Engine
                 {
                     // A leftover token means the template asks for a shape its `needs` didn't declare — surfaced
                     // loudly rather than emitting a question that references nothing.
-                    skips.Add(new InterviewSeedSkip { Source = "hard-pack", Id = t.Id, Family = t.Family, Reason = "template placeholders did not fully bind (pack-file defect: a token is missing from `needs`) — not emitted" });
+                    skips.Add(new InterviewSeedSkip { Source = "hard-pack", Id = t.Id, Family = t.Family, Reason = "template placeholders did not fully bind (pack-file defect: a token is missing from `needs`): not emitted" });
                     continue;
                 }
 

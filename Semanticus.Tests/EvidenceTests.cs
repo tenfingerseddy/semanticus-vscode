@@ -383,7 +383,14 @@ namespace Semanticus.Tests
         public void Render_is_byte_for_byte_deterministic()
         {
             var doc = FullDoc();
-            Assert.Equal(EvidenceRenderer.Render(doc), EvidenceRenderer.Render(doc));
+
+            // Two named renders, not one expression written twice. The claim is that render N and render N+1
+            // agree, and naming them is what makes the assertion read as that claim instead of as a tautology
+            // the hygiene scan has to take on trust.
+            var first = EvidenceRenderer.Render(doc);
+            var second = EvidenceRenderer.Render(doc);
+
+            Assert.Equal(first, second);
         }
 
         // ---- em-dash sweep ----

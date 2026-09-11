@@ -17,11 +17,24 @@ namespace Semanticus.Engine.Lineage
     ///   Column   : { "Column":  { "Expression": { "SourceRef": { "Entity": "T" } }, "Property": "C" } }
     ///   Measure  : { "Measure": { "Expression": { "SourceRef": { "Entity": "T" } }, "Property": "M" } }
     ///   extension: SourceRef carries "Schema":"extension"  ⇒ a REPORT-level measure (not a model object)
-    ///   alias    : SourceRef carries "Source":"alias" (filters) ⇒ resolve via the enclosing query's "From" clause
+    ///   alias    : SourceRef carries "Source":"alias" (filters) ⇒ resolve via the enclosing query's "From" clause,
+    ///              extended one SIBLING level: a From in a direct child object is visible to the other children of
+    ///              the same parent (the real filterConfig shape keeps a filter entry's `field` NEXT TO its sibling
+    ///              `filter.From`). Never wider — a distant branch's From must not capture an orphan alias, because a
+    ///              wrong attribution could resolve to a real field and leave the TRUE target falsely "safe". ANY
+    ///              disagreement about an alias (sibling vs inherited, sibling vs sibling) MASKS it to unresolved for
+    ///              that scope — never pick a winner; the captured name feeds the targeted demote instead.
+    ///   Hierarchy: { "Hierarchy": { "Expression": { "SourceRef": … }, "Hierarchy": "H" } } ⇒ kind "hierarchy"
+    ///              (level→column mapping lives in the MODEL, so LineageGraph resolves it there). An auto date/time
+    ///              variation ("Expression": { "PropertyVariationSource": { "Expression": { "SourceRef": … },
+    ///              "Property": "C" } }) emits the underlying model COLUMN — the object a delete would actually break.
     ///   Aggregation wraps a Column/Measure — handled for free by the recursive descent (we hit the inner shape).
     ///
-    /// The reader walks the ENTIRE part tree (report.json + every visual.json + page filters + reportExtensions.json),
-    /// so it covers ALL reference locations — projections, filters, sort, conditional formatting — in one pass; a
+    /// The reader walks the ENTIRE part tree (report.json + every visual.json + page filters + reportExtensions.json
+    /// + bookmarks/*.json — a bookmark captures filter/selection STATE with real field refs, and a STALE bookmark can
+    /// be the only remaining user of a field; the cloud door already feeds every .json part, so the local door must
+    /// read them too), covering ALL reference locations — projections, filters, sort, conditional formatting,
+    /// bookmark state — in one pass; a
     /// too-narrow parser would over-report "unused". It is pure (string content in → refs out): the SAME parser
     /// serves a local PBIP folder today and the cloud getDefinition parts later. It tolerates $schema version drift
     /// (the shapes are stable across 2.0.0 / 2.4.0 / 2.5.0). Reconciliation to the open model is BY NAME against TOM
@@ -56,6 +69,11 @@ namespace Semanticus.Engine.Lineage
             public HashSet<FieldRef> Fields { get; } = new HashSet<FieldRef>();   // report-level distinct refs (back-compat)
             public List<FieldRef> Occurrences { get; } = new List<FieldRef>();    // every emit, page/visual-stamped (per-visual attribution)
             public int Unresolved { get; set; }     // refs whose Source alias couldn't be resolved (⇒ usage caveat)
+            // The NAMES the unresolved refs carry (the Property is parseable even when the table is not): a would-be
+            // "safe" item with one of these names may be the very field the report uses, so the analyzer demotes the
+            // name-matches to caution instead of letting an unattributable reference erode into a prose-only note.
+            public HashSet<string> UnresolvedNames { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public int SkippedParts { get; set; }    // parts we couldn't read/parse (malformed JSON / file-read fail) — a real coverage GAP: a field used only there is invisible, so "safe" must not be asserted
             public bool DefinitionFound { get; set; }  // a PBIR definition (report.json) was located + read at the path
         }
 
@@ -86,7 +104,7 @@ namespace Semanticus.Engine.Lineage
                     using var doc = JsonDocument.Parse(content);
                     Walk(doc.RootElement, EmptyAliases, result, PartContext(path, doc.RootElement));
                 }
-                catch (JsonException) { /* tolerate a malformed/oddly-versioned part — skip it */ }
+                catch (JsonException) { result.SkippedParts++; /* a malformed/oddly-versioned part — skipped, so coverage is now incomplete (not just tolerated) */ }
             }
             return result;
         }
@@ -119,12 +137,24 @@ namespace Semanticus.Engine.Lineage
         {
             var dir = ResolveDefinitionDir(path);
             if (dir == null) return new ParseResult();
-            var parts = Directory.EnumerateFiles(dir, "*.json", SearchOption.AllDirectories)
-                .Where(f => { var n = Path.GetFileName(f).ToLowerInvariant(); return n == "visual.json" || n == "report.json" || n == "page.json" || n == "reportextensions.json"; })
+            var parts = new List<(string path, string content)>();
+            int readFailures = 0;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.json", SearchOption.AllDirectories))
+            {
                 // Pass the path RELATIVE to the definition folder so page/visual ids (pages/{p}/visuals/{v}/…) are recoverable.
-                .Select(f => { try { return (path: Path.GetRelativePath(dir, f).Replace('\\', '/'), content: File.ReadAllText(f)); } catch { return (path: (string)null, content: (string)null); } })
-                .Where(t => t.content != null);
+                var rel = Path.GetRelativePath(dir, f).Replace('\\', '/');
+                var n = Path.GetFileName(f).ToLowerInvariant();
+                // Bookmarks carry captured filter/selection state with REAL field refs (a stale bookmark can be the
+                // only remaining user of a field) — the cloud door already parses every .json part, so read them here too.
+                bool wanted = n == "visual.json" || n == "report.json" || n == "page.json" || n == "reportextensions.json"
+                    || rel.StartsWith("bookmarks/", StringComparison.OrdinalIgnoreCase)
+                    || rel.Contains("/bookmarks/", StringComparison.OrdinalIgnoreCase);
+                if (!wanted) continue;
+                try { parts.Add((rel, File.ReadAllText(f))); }
+                catch { readFailures++; }   // an unreadable part is a coverage GAP, not a silent drop
+            }
             var result = Parse(parts);
+            result.SkippedParts += readFailures;
             result.DefinitionFound = true;
             return result;
         }
@@ -167,13 +197,19 @@ namespace Semanticus.Engine.Lineage
             switch (node.ValueKind)
             {
                 case JsonValueKind.Object:
-                    // A query/From context introduces aliases for the subtree below it.
-                    var childAliases = MaybeExtendAliases(node, aliases);
+                    // A query/From context introduces aliases for the subtree below it — extended one SIBLING level
+                    // (a direct child object's From is visible to the other children of THIS object), because the
+                    // real filterConfig shape keeps a filter entry's `field` next to its sibling `filter.From`.
+                    var childAliases = ExtendScopeAliases(node, aliases);
 
                     foreach (var prop in node.EnumerateObject())
                     {
                         if ((prop.NameEquals("Column") || prop.NameEquals("Measure")) && IsFieldRefShape(prop.Value))
                             Emit(prop.Value, prop.Name == "Measure" ? "measure" : "column", childAliases, acc, ctx);
+                        // A hierarchy binding (a whole hierarchy or a HierarchyLevel — whose inner Hierarchy shape
+                        // lands here through the recursion, so ONE handler covers both, with no double emit).
+                        else if (prop.NameEquals("Hierarchy") && IsHierarchyShape(prop.Value))
+                            EmitHierarchy(prop.Value, childAliases, acc, ctx);
                         Walk(prop.Value, childAliases, acc, ctx);
                     }
                     break;
@@ -191,27 +227,21 @@ namespace Semanticus.Engine.Lineage
             && v.TryGetProperty("Expression", out var expr)
             && expr.ValueKind == JsonValueKind.Object;
 
-        private static void Emit(JsonElement refObj, string kind, IReadOnlyDictionary<string, string> aliases, ParseResult acc, PartCtx ctx)
+        private static void Emit(JsonElement refObj, string kind, IReadOnlyDictionary<string, string> aliases,
+            ParseResult acc, PartCtx ctx)
         {
             var property = refObj.GetProperty("Property").GetString();
             if (string.IsNullOrEmpty(property)) return;
 
             // SourceRef sits at Expression.SourceRef (direct ref) — but a few shapes nest one more level
             // (Expression.Column.Expression.SourceRef). Find the nearest SourceRef under Expression.
-            if (!TryFindSourceRef(refObj.GetProperty("Expression"), out var sourceRef)) { acc.Unresolved++; return; }
+            if (!TryFindSourceRef(refObj.GetProperty("Expression"), out var sourceRef)) { Bail(acc, property); return; }
 
             bool isExtension = sourceRef.TryGetProperty("Schema", out var schema)
                 && string.Equals(schema.GetString(), "extension", StringComparison.OrdinalIgnoreCase);
 
-            string entity = null;
-            if (sourceRef.TryGetProperty("Entity", out var e)) entity = e.GetString();
-            else if (sourceRef.TryGetProperty("Source", out var s))
-            {
-                var alias = s.GetString();
-                if (alias != null) aliases.TryGetValue(alias, out entity);
-            }
-
-            if (!isExtension && string.IsNullOrEmpty(entity)) { acc.Unresolved++; return; }   // can't attribute ⇒ caveat, never silently "used nothing"
+            var entity = ResolveEntity(sourceRef, aliases);
+            if (!isExtension && string.IsNullOrEmpty(entity)) { Bail(acc, property); return; }   // can't attribute ⇒ demote name-matches, never silently "used nothing"
             var field = new FieldRef
             {
                 Entity = entity, Property = property, Kind = kind, IsExtension = isExtension,
@@ -219,6 +249,109 @@ namespace Semanticus.Engine.Lineage
             };
             acc.Fields.Add(field);          // report-level distinct set (Page/Visual ignored by Equals — dedup unchanged)
             acc.Occurrences.Add(field);     // per-visual attribution (un-deduped; grouped by page/visual downstream)
+        }
+
+        // An unattributable reference is a REAL usage we can't place: count it AND keep its name, so the analyzer can
+        // demote a same-named would-be-safe candidate instead of hiding the risk behind a prose-only note.
+        private static void Bail(ParseResult acc, string name)
+        {
+            acc.Unresolved++;
+            if (!string.IsNullOrEmpty(name)) acc.UnresolvedNames.Add(name);
+        }
+
+        // Entity resolution order: explicit Entity, then the scope's alias map (ancestors + one sibling level).
+        private static string ResolveEntity(JsonElement sourceRef, IReadOnlyDictionary<string, string> aliases)
+        {
+            if (sourceRef.TryGetProperty("Entity", out var e)) return e.GetString();
+            if (sourceRef.TryGetProperty("Source", out var s))
+            {
+                var alias = s.GetString();
+                if (alias != null && aliases.TryGetValue(alias, out var entity)) return entity;
+            }
+            return null;
+        }
+
+        // A hierarchy binding: { "Expression": { "SourceRef": … | "PropertyVariationSource": { … } }, "Hierarchy": "H" }.
+        private static bool IsHierarchyShape(JsonElement v) =>
+            v.ValueKind == JsonValueKind.Object
+            && v.TryGetProperty("Hierarchy", out var name) && name.ValueKind == JsonValueKind.String
+            && v.TryGetProperty("Expression", out var expr) && expr.ValueKind == JsonValueKind.Object;
+
+        private static void EmitHierarchy(JsonElement hierObj, IReadOnlyDictionary<string, string> aliases,
+            ParseResult acc, PartCtx ctx)
+        {
+            var name = hierObj.GetProperty("Hierarchy").GetString();
+            if (string.IsNullOrEmpty(name)) return;
+            var expr = hierObj.GetProperty("Expression");
+
+            // Auto date/time variation: the hierarchy is generated (LocalDateTable), so the model object a delete
+            // would actually break is the UNDERLYING COLUMN the variation hangs off — emit that column.
+            if (expr.TryGetProperty("PropertyVariationSource", out var pvs) && pvs.ValueKind == JsonValueKind.Object)
+            {
+                var col = pvs.TryGetProperty("Property", out var p) ? p.GetString() : null;
+                if (string.IsNullOrEmpty(col)) { Bail(acc, name); return; }
+                if (!pvs.TryGetProperty("Expression", out var pvsExpr) || !TryFindSourceRef(pvsExpr, out var pvsRef))
+                { Bail(acc, col); return; }
+                var colEntity = ResolveEntity(pvsRef, aliases);
+                if (string.IsNullOrEmpty(colEntity)) { Bail(acc, col); return; }
+                var colField = new FieldRef
+                {
+                    Entity = colEntity, Property = col, Kind = "column",
+                    Page = ctx.Page, Visual = ctx.Visual, VisualType = ctx.VisualType,
+                };
+                acc.Fields.Add(colField); acc.Occurrences.Add(colField);
+                return;
+            }
+
+            // A user hierarchy: emit kind "hierarchy" (Entity + hierarchy name). The report names only the hierarchy
+            // (+ level); which COLUMNS that binds is a MODEL fact, so LineageGraph resolves the levels there.
+            if (!TryFindSourceRef(expr, out var sourceRef)) { Bail(acc, name); return; }
+            var entity = ResolveEntity(sourceRef, aliases);
+            if (string.IsNullOrEmpty(entity)) { Bail(acc, name); return; }
+            var field = new FieldRef
+            {
+                Entity = entity, Property = name, Kind = "hierarchy",
+                Page = ctx.Page, Visual = ctx.Visual, VisualType = ctx.VisualType,
+            };
+            acc.Fields.Add(field);
+            acc.Occurrences.Add(field);
+        }
+
+        // Alias scope for an object's children: inherited bindings, extended by DIRECT CHILD objects' From clauses
+        // (the PBIR filter-entry contract — `field` resolves via its SIBLING `filter.From`), then the object's OWN
+        // From applied last (its own query scope is authoritative for its children). EXACTLY one sibling level
+        // (obj.child.From): an array child or deeper nesting never leaks aliases sideways, so a distant branch can
+        // never capture an orphan ref. ANY disagreement about an alias visible here — a sibling contradicting the
+        // inherited binding, or two siblings contradicting each other — MASKS the alias to unresolved for this scope
+        // (never pick a winner): a wrong attribution could resolve to a REAL field and leave the true target falsely
+        // "safe", while unresolved+name feeds the targeted demote that protects every candidate.
+        private static IReadOnlyDictionary<string, string> ExtendScopeAliases(JsonElement obj, IReadOnlyDictionary<string, string> inherited)
+        {
+            Dictionary<string, string> map = null;
+            HashSet<string> conflicted = null;
+            foreach (var prop in obj.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+                if (!prop.Value.TryGetProperty("From", out var from) || from.ValueKind != JsonValueKind.Array) continue;
+                foreach (var entry in from.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object) continue;
+                    if (!entry.TryGetProperty("Name", out var nm) || !entry.TryGetProperty("Entity", out var ent)) continue;
+                    var n = nm.GetString(); var e = ent.GetString();
+                    if (string.IsNullOrEmpty(n) || string.IsNullOrEmpty(e)) continue;
+                    if (conflicted != null && conflicted.Contains(n)) continue;
+                    map ??= new Dictionary<string, string>(inherited, StringComparer.OrdinalIgnoreCase);
+                    if (map.TryGetValue(n, out var prior))
+                    {
+                        if (string.Equals(prior, e, StringComparison.OrdinalIgnoreCase)) continue;   // agrees — no-op
+                        (conflicted ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(n);
+                        map.Remove(n);                                                              // disagreement ⇒ MASK, never guess
+                        continue;
+                    }
+                    map[n] = e;
+                }
+            }
+            return MaybeExtendAliases(obj, map ?? inherited);
         }
 
         // Find a SourceRef object within an Expression node (handles Expression.SourceRef and one nesting level).

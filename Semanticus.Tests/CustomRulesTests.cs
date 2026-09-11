@@ -347,6 +347,21 @@ namespace Semanticus.Tests
             Assert.All(card.Violations.Where(v => v.RuleId != "ORG_TEST_CUSTOM"), v => Assert.False(v.Custom));
         }
 
+        // D-076: two custom BPA rules with the same id in one payload must be refused out loud, not silently merged.
+        [Fact]
+        public async Task Load_bpa_rules_refuses_duplicate_ids_in_one_payload()
+        {
+            var (engine, _) = await FreshAsync();
+            var json =
+                "[{\"ID\":\"ORG_DUP\",\"Name\":\"First\",\"Category\":\"Metadata\",\"Severity\":2,\"Scope\":\"Measure\",\"Expression\":\"string.IsNullOrEmpty(Description)\"}," +
+                "{\"ID\":\"ORG_DUP\",\"Name\":\"Second\",\"Category\":\"Metadata\",\"Severity\":2,\"Scope\":\"Measure\",\"Expression\":\"string.IsNullOrEmpty(Name)\"}]";
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.LoadBpaRulesAsync(json, replace: false, "human"));
+            Assert.Contains("ORG_DUP", ex.Message);
+            Assert.Contains("own id", ex.Message);
+            Assert.Empty((await engine.GetCustomRulesAsync()).Bpa);   // nothing landed
+        }
+
         // ---- dry_run denies the rule-annotation writers (the load_bpa_rules family) -----------------
 
         [Fact]

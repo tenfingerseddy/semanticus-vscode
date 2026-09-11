@@ -66,14 +66,52 @@ assert.equal(
   releaseContentFinding(Buffer.concat([Buffer.from([0, 255, 1]), Buffer.from(embeddedSecret, 'utf16le'), Buffer.from([0, 2])])),
   'hardcoded-generic-secret',
 );
-assert.equal(
-  releaseContentFinding(Buffer.concat([Buffer.from([255]), Buffer.from(`AKIA${'V'.repeat(16)}`, 'utf16le')])),
-  'aws-access-key',
-);
+const oddOffsetAws = Buffer.alloc(666);
+Buffer.from(`AKIA${'V'.repeat(16)}`, 'utf16le').copy(oddOffsetAws, 1);
+const originalBufferToString = Buffer.prototype.toString;
+Buffer.prototype.toString = function guardedBufferToString(encoding, ...args) {
+  if (encoding === 'utf16le' && this.byteOffset % 2 !== 0) {
+    throw new Error('release scanner passed an odd byteOffset directly to UTF-16 decoding');
+  }
+  return Reflect.apply(originalBufferToString, this, [encoding, ...args]);
+};
+try {
+  assert.equal(
+    releaseContentFinding(oddOffsetAws),
+    'aws-access-key',
+    'a UTF-16LE token at an odd byte offset remains visible after the shifted view is copied',
+  );
+} finally {
+  Buffer.prototype.toString = originalBufferToString;
+}
 assert.equal(
   releaseContentFinding(Buffer.concat([Buffer.alloc(10 * 1024, 65), Buffer.from(embeddedSecret, 'utf16le')])),
   'hardcoded-generic-secret',
 );
+
+// Node 26 aborts in glibc when utf16le-decoding a Buffer whose byteOffset is odd. The scanner must copy
+// that one-byte-shifted view before decoding, and must still see a token that exists only at that offset.
+const node26OddOffsetProbe = spawnSync(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { releaseContentFinding } from ${JSON.stringify(new URL('../scripts/release-security.mjs', import.meta.url).href)};
+releaseContentFinding(Buffer.alloc(666, 65));
+const odd = Buffer.concat([Buffer.from([255]), Buffer.from('AKIA' + 'V'.repeat(16), 'utf16le')]);
+const finding = releaseContentFinding(odd);
+if (finding !== 'aws-access-key') throw new Error('odd-offset UTF-16 scan missing: ' + finding);
+process.stdout.write('survived');`,
+  ],
+  { encoding: 'utf8', timeout: 30_000 },
+);
+assert.equal(
+  node26OddOffsetProbe.signal,
+  null,
+  `Node ${process.version} aborted the odd-offset UTF-16 scan (${node26OddOffsetProbe.signal}): ${(node26OddOffsetProbe.stderr || '').trim()}`,
+);
+assert.equal(node26OddOffsetProbe.status, 0, node26OddOffsetProbe.stderr);
+assert.equal(node26OddOffsetProbe.stdout, 'survived');
 
 assert.equal(
   releaseContentFinding('process.env.OPENAI_API_KEY', { engineBoundary: true }),

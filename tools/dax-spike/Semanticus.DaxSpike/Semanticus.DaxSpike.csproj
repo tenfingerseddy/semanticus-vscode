@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Semanticus.DaxSpike (A0 deliverable 2, re-pointed for A1 exit-gate rows 3-4)
+    ===========================================================================
+    A STANDALONE feasibility prototype of a lossless green-tree DAX parser. It is deliberately NOT in
+    Semanticus.sln so CI never sees it. It proves the A0 green-tree design (docs/kernel-a0/*) end to end:
+    green nodes + trivia + byte-exact round-trip + error recovery.
+
+    D2 RE-POINT (2026-07-23): the lexing path now runs over the FIRST-PARTY Semanticus.Dax.DaxLexer
+    instead of the vendored TabularEditor/ANTLR lexer. The Semanticus.Core (and therefore TOM/ANTLR)
+    reference is GONE — Corpus.cs reads .bim/.tmdl with System.Text.Json/text only, and both LexerProbe.cs
+    and Lexing.cs now consume DaxLexer. Semanticus.Dax has no runtime package dependency (spec §11.3 row 9),
+    so this spike no longer references anything outside the net8.0 BCL except that first-party lexer.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Semanticus.Dax\Semanticus.Dax.csproj" />
+  </ItemGroup>
+
+</Project>

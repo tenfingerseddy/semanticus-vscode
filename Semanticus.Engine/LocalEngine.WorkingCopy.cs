@@ -17,8 +17,7 @@ namespace Semanticus.Engine
             var session = _sessions.Require();
             var publish = ConnectionRegistry.Find(connectionId)
                 ?? throw new InvalidOperationException("The selected publish connection no longer exists. Choose it again.");
-            if (!string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The final publish destination must be an XMLA connection.");
+            EnsureRemoteXmlaPublish(publish);
 
             var modelName = await session.ReadAsync(m => m.Database?.Name ?? m.Name ?? "Model");
             var source = ConnectionContextBuilder.FindEditingRecord(session);
@@ -62,8 +61,7 @@ namespace Semanticus.Engine
                 ? (string.Equals(sourceRecord.Kind, "xmla", StringComparison.OrdinalIgnoreCase) ? sourceRecord : null)
                 : ConnectionRegistry.Find(publishConnectionId)
                     ?? throw new InvalidOperationException("The selected publish connection no longer exists. Choose it again.");
-            if (publishRecord != null && !string.Equals(publishRecord.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The final publish destination must be an XMLA connection.");
+            EnsureRemoteXmlaPublish(publishRecord);
             ExplainDestinations(result, sourceRecord, queryRecord, publishRecord);
             result.CommitRequested = commit;
             if (!commit || !result.CanCommit) return result;
@@ -93,7 +91,11 @@ namespace Semanticus.Engine
                 else if (string.Equals(queryRecord.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase))
                     await ConnectLocalAsync(queryRecord.Endpoint, queryRecord.Database);
                 else
-                    await ConnectXmlaAsync(queryRecord.Endpoint, queryRecord.Database, queryRecord.AuthMode, rawToken: null, tenantId: queryRecord.TenantId);
+                    // Thread the CALLER's origin (T163). Omitting it let the parameter default to "human", so an
+                    // agent-driven prepare_working_copy attached the query model with human authority: it skipped the
+                    // agent interactive refusal and built a prompt-capable credential. A defaulted origin is fail-OPEN,
+                    // which is the exact opposite of DeployGuard.IsAgent's fail-closed rule — so it is always passed.
+                    await ConnectXmlaAsync(queryRecord.Endpoint, queryRecord.Database, queryRecord.AuthMode, rawToken: null, tenantId: queryRecord.TenantId, origin: origin);
                 result.QueryConnected = true;
             }
             catch (Exception ex)
@@ -111,6 +113,15 @@ namespace Semanticus.Engine
                 result.NextAction = "Edit the local working copy. Use Review changes before explicitly pushing anything to the published model.";
             }
             return result;
+        }
+
+        private static void EnsureRemoteXmlaPublish(ModelConnectionRecord publish)
+        {
+            if (publish == null) return;
+            if (!string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The final publish destination must be an XMLA connection.");
+            if (LiveDeploy.IsLocalEndpoint(publish.Endpoint))
+                throw new InvalidOperationException("A loopback address cannot be a publish destination. Choose a published XMLA connection.");
         }
 
         private static void ExplainDestinations(WorkingCopyResult result, ModelConnectionRecord source, ModelConnectionRecord query, ModelConnectionRecord publish)

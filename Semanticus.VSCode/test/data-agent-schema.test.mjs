@@ -51,4 +51,8 @@ assert.match(harness, /Schema preview: ' \+ excluded \+ ' excluded elements/,
 assert.match(shot, /getAttribute\('aria-label'\)/,
   'interaction screenshots must be able to drive accessible schema controls');
 
+const engineDataAgent = readFileSync(resolve(root, '../Semanticus.Engine/LocalEngine.DataAgent.cs'), 'utf8');
+assert.doesNotMatch(engineDataAgent, /\[verify-at-build\] confirm the real data-agent type string/,
+  'D-166: the empty-list note must not print a build TODO to the user');
+
 console.log('data agent schema editing tests passed');

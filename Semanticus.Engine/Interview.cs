@@ -241,6 +241,7 @@ namespace Semanticus.Engine
                             if (d.Id != null && byId.TryGetValue(d.Id, out var er) && !tombstoned.Contains(d.Id))
                             {
                                 if (d.Question != null) er.Question = d.Question;
+                                if (d.Tier != null) er.Tier = InterviewScoring.NormalizeTier(d.Tier);
                                 if (d.Query != null) er.Query = d.Query;
                                 if (d.ScalarExpr != null) er.ScalarExpr = d.ScalarExpr;
                                 if (d.ParaphraseExpr != null) er.ParaphraseExpr = d.ParaphraseExpr;
@@ -339,7 +340,7 @@ namespace Semanticus.Engine
         public static (string Outcome, string Detail) ScoreValue(InterviewQuestion q, ResultSet rs)
         {
             if (rs == null)
-                return (Unverified, "offline — no live connection, the answer was NOT checked (open_live/open_local and re-run for real evidence).");
+                return (Unverified, "offline: no live connection, the answer was NOT checked (open_live/open_local and re-run for real evidence).");
             // A POLICY refusal is not a query error: the DAX may be perfectly fine and was never executed, so
             // "fix the DAX and re-run" would be contradictory advice. The structured PolicyRefused marker (set only
             // at the GuardAgent folds, never sniffed from message text) picks the approval-recovery wording — the
@@ -352,7 +353,7 @@ namespace Semanticus.Engine
                 // DAX ERROR("Unauthorized") keeps its "fix the DAX" advice. Same sign-in story as the Compare banner.
                 return (Unverified, rs.AuthFailed
                     ? XmlaAuthHint.ProbeHint()
-                    : "the question's query failed to run: " + rs.Error + " An erroring query proves nothing about the number — fix the DAX attempt and re-run.");
+                    : "the question's query failed to run: " + rs.Error + " An erroring query proves nothing about the number. Fix the DAX attempt and re-run.");
 
             if (q.ExpectedMatrix != null && q.ExpectedMatrix.Length > 0)
                 return ScoreMatrix(q.ExpectedMatrix, rs);
@@ -360,30 +361,30 @@ namespace Semanticus.Engine
             if (!string.IsNullOrEmpty(q.ExpectedValue))
             {
                 if (rs.Rows.Length == 0)
-                    return (Unverified, "the query returned no rows (an all-blank row may have been dropped) — author the attempt as EVALUATE ROW(...) so it always returns one row, then re-run.");
+                    return (Unverified, "the query returned no rows (an all-blank row may have been dropped). Author the attempt as EVALUATE ROW(...) so it always returns one row, then re-run.");
                 if (rs.Rows.Length > 1)
-                    return (Unverified, $"the query returned {rs.Rows.Length} rows but the trusted answer is a single number — record an expectedMatrix for a multi-row answer, or narrow the query to one row.");
+                    return (Unverified, $"the query returned {rs.Rows.Length} rows but the trusted answer is a single number. Record an expectedMatrix for a multi-row answer, or narrow the query to one row.");
                 var row = rs.Rows[0];
                 if (row.Length == 0)
-                    return (Unverified, "the query returned a row with no columns — nothing to compare.");
+                    return (Unverified, "the query returned a row with no columns: nothing to compare.");
                 var actual = row[row.Length - 1];   // the value column is last (ROW(\"v\", …) / SUMMARIZECOLUMNS value arg)
                 if (OracleMatches(actual, q.ExpectedValue))
                     return (Correct, $"the answer {DaxBench.Fmt(actual)} matches the trusted value.");
                 // Blank-vs-value mismatches get their own evidence lines: blank ≠ 0 ≠ error is the house
                 // convention, and "the cell was empty" is a different user experience than "the number was wrong".
                 if (actual == null)
-                    return (SilentlyWrong, $"the answer came back blank but the trusted value is {q.ExpectedValue} — blank is not zero and not a rounding miss; a user would get an empty cell where a real figure belongs.");
+                    return (SilentlyWrong, $"the answer came back blank but the trusted value is {q.ExpectedValue}. Blank is not zero and not a rounding miss; a user would get an empty cell where a real figure belongs.");
                 if (IsBlankSentinel(q.ExpectedValue))
-                    return (SilentlyWrong, $"the trusted answer is blank (no value at all) but the query produced {DaxBench.Fmt(actual)} — a number was invented where none should exist.");
-                return (SilentlyWrong, $"the answer came back {DaxBench.Fmt(actual)} but the trusted value is {q.ExpectedValue} — a user would get a confident, wrong number.");
+                    return (SilentlyWrong, $"the trusted answer is blank (no value at all) but the query produced {DaxBench.Fmt(actual)}. A number was invented where none should exist.");
+                return (SilentlyWrong, $"the answer came back {DaxBench.Fmt(actual)} but the trusted value is {q.ExpectedValue}. A user would get a confident, wrong number.");
             }
 
             // No oracle: the query computed cleanly, so SHOW the answer it produced — the exact number the author
             // needs to confirm-and-record (never auto-trusted: self-verification isn't verification, the oracle is).
             var computed = rs.Rows.Length == 1 && rs.Rows[0].Length > 0
-                ? $" The query ran and came back {DaxBench.Fmt(rs.Rows[0][rs.Rows[0].Length - 1])} — if a person who knows the data confirms that number, record it as expectedValue (the literal BLANK records a no-value answer)."
+                ? $" The query ran and came back {DaxBench.Fmt(rs.Rows[0][rs.Rows[0].Length - 1])}. If a person who knows the data confirms that number, record it as expectedValue (the literal BLANK records a no-value answer)."
                 : "";
-            return (Unverified, "no trusted answer is recorded on this question — record expectedValue (or expectedMatrix) so the engine has an oracle to check against." + computed);
+            return (Unverified, "no trusted answer is recorded on this question. Record expectedValue (or expectedMatrix) so the engine has an oracle to check against." + computed);
         }
 
         // Order-insensitive row-set compare: SUMMARIZECOLUMNS guarantees no row order, so both sides are sorted by
@@ -392,21 +393,21 @@ namespace Semanticus.Engine
         private static (string, string) ScoreMatrix(string[][] expected, ResultSet rs)
         {
             if (rs.Truncated)
-                return (Unverified, $"the result was truncated at {rs.RowCount} rows — coverage incomplete, the row set could not be fully checked.");
+                return (Unverified, $"the result was truncated at {rs.RowCount} rows: coverage incomplete, the row set could not be fully checked.");
 
             var exp = expected.Select(r => (r ?? Array.Empty<string>()).Select(ParseCell).ToArray()).ToList();
             var act = rs.Rows.Select(r => (object[])r.Clone()).ToList();
             if (exp.Count != act.Count)
-                return (SilentlyWrong, $"the query returned {act.Count} row(s) but the trusted answer has {exp.Count} — the answer's shape is wrong, not just a value.");
+                return (SilentlyWrong, $"the query returned {act.Count} row(s) but the trusted answer has {exp.Count}. The answer's shape is wrong, not just a value.");
 
-            string Key(object[] row) => string.Join("", row.Select(DaxBench.Fmt));
+            string Key(object[] row) => string.Join("\u001F", row.Select(DaxBench.Fmt));
             var expSorted = exp.OrderBy(Key, StringComparer.Ordinal).ToList();
             var actSorted = act.OrderBy(Key, StringComparer.Ordinal).ToList();
             for (int i = 0; i < expSorted.Count; i++)
             {
                 var e = expSorted[i]; var a = actSorted[i];
                 if (e.Length != a.Length)
-                    return (Unverified, $"row {i + 1} has {a.Length} column(s) but the trusted row has {e.Length} — the recorded matrix does not match the query's shape; re-record it.");
+                    return (Unverified, $"row {i + 1} has {a.Length} column(s) but the trusted row has {e.Length}. The recorded matrix does not match the query's shape; re-record it.");
                 for (int c = 0; c < e.Length; c++)
                     if (!CellMatches(a[c], e[c]))
                         return (SilentlyWrong, $"row “{string.Join(", ", a.Select(DaxBench.Fmt))}” differs from the trusted answer (expected {DaxBench.Fmt(e[c])}, got {DaxBench.Fmt(a[c])}).");
@@ -447,7 +448,7 @@ namespace Semanticus.Engine
         public static (string Outcome, string Detail) ScoreParaphrase(InterviewQuestion q, EquivalenceResult eq, ResultSet oracleProbe = null)
         {
             if (eq == null)
-                return (Unverified, "offline — no live connection, the two phrasings were NOT compared (open_live/open_local and re-run for real evidence).");
+                return (Unverified, "offline: no live connection, the two phrasings were NOT compared (open_live/open_local and re-run for real evidence).");
             if (!string.IsNullOrEmpty(eq.Error))
                 // Heal the same auth failure here too, off the TYPED marker (never message text): one sign-in story
                 // across the Compare banner AND every live probe; a genuine comparison error keeps its own text.
@@ -467,19 +468,19 @@ namespace Semanticus.Engine
                 {
                     var samples = string.Join("; ", (eq.Mismatches ?? Array.Empty<EquivalenceMismatch>()).Take(3)
                         .Select(m => $"{m.Context}: {m.ValueA} vs {m.ValueB}"));
-                    return (SilentlyWrong, $"asked two ways, the model gives different answers in {eq.MismatchCount}/{eq.RowsCompared} context(s)" + (samples.Length > 0 ? " — e.g. " + samples : "") + ". At least one phrasing returns a confident, wrong number.");
+                    return (SilentlyWrong, $"asked two ways, the model gives different answers in {eq.MismatchCount}/{eq.RowsCompared} context(s)" + (samples.Length > 0 ? ", e.g. " + samples : "") + ". At least one phrasing returns a confident, wrong number.");
                 }
                 case "degraded_mismatch":
                     // NOT a conviction: under a degraded comparison the surrogate itself can cause the divergence
                     // (calc-group identity on generated names) — an observation to investigate, never SilentlyWrong.
-                    return (Unverified, "difference observed under a degraded comparison — not authoritative: " + why);
+                    return (Unverified, "difference observed under a degraded comparison, not authoritative: " + why);
                 case "degraded":
-                    return (Unverified, "the two phrasings agree, but the comparison ran with reduced fidelity — " + eq.Fidelity
+                    return (Unverified, "the two phrasings agree, but the comparison ran with reduced fidelity: " + eq.Fidelity
                         + " Agreement under degraded evaluation is not proof against the deployed model.");
                 case "thin":
-                    return (Unverified, $"both phrasings agree, but only at the grand total ({eq.RowsCompared} context(s)) — not a per-context proof. Add groupBy columns and re-run.");
+                    return (Unverified, $"both phrasings agree, but only at the grand total ({eq.RowsCompared} context(s)), not a per-context proof. Add groupBy columns and re-run.");
                 case "unverified":
-                    return (Unverified, "the comparison did not produce authoritative evidence — " + why);
+                    return (Unverified, "the comparison did not produce authoritative evidence: " + why);
             }
 
             // state == "proven".
@@ -492,12 +493,12 @@ namespace Semanticus.Engine
             if (hasOracle)
             {
                 if (oracleProbe == null)
-                    return (Unverified, "both phrasings agree, but the answer they agree on was NOT checked against the value you trust (offline) — agreement alone is not proof the number is right (open_live/open_local and re-run for real evidence).");
+                    return (Unverified, "both phrasings agree, but the answer they agree on was NOT checked against the value you trust (offline). Agreement alone is not proof the number is right (open_live/open_local and re-run for real evidence).");
                 // Re-use the value-tier oracle comparer on the AGREED answer: the equivalence already proved the two
                 // phrasings compute the same value, so scoring one against the trusted number scores both.
                 var (vo, vd) = ScoreValue(q, oracleProbe);
                 if (vo == SilentlyWrong)
-                    return (SilentlyWrong, "asked two ways the model AGREES — but on the same wrong number: " + vd + " A consistency check alone would have passed this (two phrasings can be confidently wrong the same way).");
+                    return (SilentlyWrong, "asked two ways the model AGREES, but on the same wrong number: " + vd + " A consistency check alone would have passed this (two phrasings can be confidently wrong the same way).");
                 if (vo == Unverified)
                     // The phrasings agree, but the trusted-answer cross-check could not be anchored (empty/multi-row/
                     // shape doubt). High-precision bias: hold the verdict to the oracle rather than claim a bare
@@ -515,10 +516,10 @@ namespace Semanticus.Engine
         public static (string Outcome, string Detail) ScoreRefusal(InterviewQuestion q, bool abstained, bool attemptProduced)
         {
             if (abstained)
-                return (Refused, "the assistant declined to answer — the honest outcome for a question this model cannot answer.");
+                return (Refused, "the assistant declined to answer: the honest outcome for a question this model cannot answer.");
             if (attemptProduced)
-                return (SilentlyWrong, "an answer was produced for a question this model cannot answer — a user would get a confident number with no basis in the model.");
-            return (Unverified, "no attempt is recorded — pass abstained=true if the assistant declined, or attemptDax with what it produced, and re-run.");
+                return (SilentlyWrong, "an answer was produced for a question this model cannot answer. A user would get a confident number with no basis in the model.");
+            return (Unverified, "no attempt is recorded. Pass abstained=true if the assistant declined, or attemptDax with what it produced, and re-run.");
         }
     }
 
@@ -543,7 +544,7 @@ namespace Semanticus.Engine
                 if (_map != null) return _map;
                 var asm = typeof(InterviewFixMap).Assembly;
                 var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("interview-fix-map.json", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("interview-fix-map.json is not embedded in Semanticus.Engine — the interview failure→fix map is missing from the build.");
+                    ?? throw new InvalidOperationException("interview-fix-map.json is not embedded in Semanticus.Engine. The interview failure→fix map is missing from the build.");
                 using var stream = asm.GetManifestResourceStream(name);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 var doc = JsonSerializer.Deserialize<MapFile>(reader.ReadToEnd(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });

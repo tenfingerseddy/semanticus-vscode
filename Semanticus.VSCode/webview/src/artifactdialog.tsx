@@ -75,6 +75,7 @@ export function EvidenceArtifactDialog({ title, subtitle, baseName, stateKey, lo
           {format === 'html' && <button onClick={() => artifact?.html && printDoc(artifact.html, baseName)} disabled={!artifact?.html}
             className="rounded-md border px-3 py-1 text-[11px] disabled:opacity-40" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }} title="Open the report in your browser to print or save as PDF">Print / PDF</button>}
           <button onClick={doExport} disabled={!content || !!error} className="rounded-md border px-3 py-1 text-[11px] font-semibold disabled:opacity-40"
+            title={!content ? 'Nothing to export yet. Run the suite, then open Report again.' : 'Save a local copy of this report'}
             style={{ borderColor: 'var(--sem-accent)', background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Export…</button>
           {save && <button onClick={doSave} disabled={!artifact?.json || !!error || saving} className="rounded-md border px-3 py-1 text-[11px] font-semibold disabled:opacity-40"
             style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-fg)' }} title="Write the sealed JSON and HTML beside this model; export alone writes nothing">{saving ? 'Saving…' : 'Save with model'}</button>}

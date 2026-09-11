@@ -60,6 +60,8 @@ namespace Semanticus.Tests
                 var desc = Assert.Single(view.Items, i => i.Kind == "set_description" && i.ObjectRef == mRef);
                 Assert.Equal("approved", desc.Status);
                 Assert.Equal("about RP_New values", desc.After);
+                Assert.Equal("deterministic", desc.Source);
+                Assert.NotEqual("ai", desc.Risk);
                 var folder = Assert.Single(view.Items, i => i.Kind == "set_display_folder" && i.ObjectRef == mRef);
                 Assert.Equal("approved", folder.Status);
                 Assert.Equal("RP_New Folder", folder.After);
@@ -185,6 +187,51 @@ namespace Semanticus.Tests
                 Assert.Equal(1, one.AppliedCount);
                 await engine.UndoAsync("human");
                 Assert.Equal("gate RP_Gate a", (await engine.GetObjectPropertiesAsync(aRef)).First(p => p.Name == "Description").Value);
+                Assert.Equal("approved", (await engine.GetPlanAsync()).Items.Single(i => i.Id == approved[0]).Status);
+            }
+        }
+
+        [Fact]
+        public async Task Apply_skips_when_the_value_changed_underneath()
+        {
+            var (engine, table, _) = await OpenAsync(pro: false);
+            using (engine)
+            {
+                var mRef = await engine.CreateMeasureAsync("table:" + table, "RP_StaleDesc", "1", "agent");
+                await engine.SetDescriptionAsync(mRef, "UAT_D Canary", "agent");
+                var view = await Propose(engine, "UAT_D", "UAT_F", new[] { "description" }, "table:" + table);
+                var it = Assert.Single(view.Items, i => i.Kind == "set_description" && i.ObjectRef == mRef);
+                Assert.Equal("approved", it.Status);
+
+                await engine.SetDescriptionAsync(mRef, "Changed underneath at 1227", "human");
+                var report = await engine.ApplyPlanAsync(new[] { it.Id }, "human");
+                Assert.Equal(0, report.AppliedCount);
+                Assert.Equal(1, report.SkippedCount);
+                Assert.Contains("changed after the plan was built", Assert.Single(report.Items).Note, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("Changed underneath at 1227",
+                    (await engine.GetObjectPropertiesAsync(mRef)).First(p => p.Name == "Description").Value);
+            }
+        }
+
+        [Theory]
+        [InlineData("human")]
+        [InlineData("agent")]
+        public async Task Apply_preserves_a_column_aggregation_changed_after_review(string origin)
+        {
+            var (engine, table, _) = await OpenAsync(pro: false);
+            using (engine)
+            {
+                var column = await engine.CreateCalculatedColumnAsync("table:" + table, "RP_StaleSum", "1", "human");
+                await engine.SetObjectPropertyAsync(column, "SummarizeBy", "Default", "human");
+                var plan = await engine.AddPlanItemAsync(column, "set_summarize_by", "None", null, null, null, origin);
+                var item = Assert.Single(plan.Items);
+                await engine.SetObjectPropertyAsync(column, "SummarizeBy", "Count", "human");
+
+                var report = await engine.ApplyPlanAsync(new[] { item.Id }, origin);
+
+                Assert.Equal(0, report.AppliedCount);
+                Assert.Equal(1, report.SkippedCount);
+                Assert.Equal("Count", (await engine.GetObjectPropertiesAsync(column)).First(p => p.Name == "SummarizeBy").Value);
             }
         }
 

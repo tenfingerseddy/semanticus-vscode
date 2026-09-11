@@ -477,7 +477,7 @@ namespace Semanticus.Engine
             var pts = Series(records, measureRef, context);
             if (pts.Count == 0)
             {
-                core.Inconclusive = "This number has no recorded history yet — history builds up automatically at apply/optimize/deploy/save moments.";
+                core.Inconclusive = "This number has no recorded history yet: history builds up automatically at apply/optimize/deploy/save moments.";
                 return core;
             }
             var valued = pts.Where(p => p.HasValue).ToList();
@@ -491,12 +491,12 @@ namespace Semanticus.Engine
                     || (p.Rec.When != null && p.Rec.When.StartsWith(since, StringComparison.Ordinal)));
                 if (fromIdx < 0)
                 {
-                    core.Inconclusive = $"No recorded point matches '{since}' — pass a revision number or an ISO timestamp from list_value_history.";
+                    core.Inconclusive = $"No recorded point matches '{since}': pass a revision number or an ISO timestamp from list_value_history.";
                     return core;
                 }
                 if (fromIdx == valued.Count - 1)
                 {
-                    core.Inconclusive = "That point is the most recent observation — nothing newer to compare it against.";
+                    core.Inconclusive = "That point is the most recent observation: nothing newer to compare it against.";
                     return core;
                 }
                 var f = valued[fromIdx];
@@ -513,7 +513,7 @@ namespace Semanticus.Engine
             if (valued.Count < 2)
             {
                 core.Inconclusive = valued.Count == 1
-                    ? "Only one observed value so far — a value history needs at least two live observations to compare (offline points record the formulas but not the numbers)."
+                    ? "Only one observed value so far: a value history needs at least two live observations to compare (offline points record the formulas but not the numbers)."
                     : "The formulas were recorded, but no VALUES have been observed yet (captures ran without a live connection).";
                 return core;
             }

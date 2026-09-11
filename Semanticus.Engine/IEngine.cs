@@ -12,12 +12,17 @@ namespace Semanticus.Engine
     /// </summary>
     public interface IEngine
     {
-        Task<OpenResult> OpenAsync(string path);
-        Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel);
-        Task<OpenResult> OpenLocalAsync(string dataSource, string database);
-        Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false);
+        Task<OpenResult> OpenAsync(string path, bool discardUnsaved = false);
+        Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel, bool discardUnsaved = false);
+        Task<OpenResult> OpenLocalAsync(string dataSource, string database, bool discardUnsaved = false);
+        // accountProfileId (Phase 2, T160): pick a SAVED account profile for THIS open only — it never repoints the tenant
+        // default (that is what makeDefault does, an explicit human choice with a stated blast radius). forceReauth adds a
+        // NEW profile via the Microsoft picker (a human action; the agent door is refused). origin gates the human-only paths.
+        // makeDefault is NULLABLE for wire-compat: null = a LEGACY caller (a forced re-sign implies the Phase 1 tenant
+        // repoint); explicit false = Phase 2 "add a profile without repointing"; explicit true = make-default.
+        Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false);
         // commit runs the accountable checkpoint: a RED deploy gate pauses; overrideReason ships anyway (recorded).
-        Task<DeployReport> DeployLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human", string overrideReason = null);
+        Task<DeployReport> DeployLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null);
         Task<RefreshTypeInfo[]> ListRefreshTypesAsync();
         Task<RefreshReport> RefreshPartitionAsync(string partitionRef, string refreshType, string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human");
         Task<TreeNode[]> ListTreeAsync(string parentRef);
@@ -31,7 +36,7 @@ namespace Semanticus.Engine
         // expectedRevision (round 7): an optional finer fence than expectedSession — refuse if ANY mutation landed since the
         // caller captured the revision it verified against (the rename→body pair + recovery writes; see GuardExpectedRevision).
         Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null);
-        Task<SaveResult> SaveAsync(string path, string format);
+        Task<SaveResult> SaveAsync(string path, string format, bool overwrite = false);
         Task<SessionInfo> SessionInfoAsync();
         Task<ConnectionContext> ConnectionContextAsync();
         // Pro entitlement (offline-verified license) — read-only, both doors. The free tier is fully usable; Pro
@@ -112,8 +117,8 @@ namespace Semanticus.Engine
         //     chosen subset. The source-read needs a reachable SQL/Fabric endpoint (parsed from the partition M) and
         //     fails GRACEFULLY (Reachable=false + a message) on an offline snapshot / non-SQL source. Diff + apply
         //     are source-agnostic: supply sourceColumns to diff a synthesized schema (the manual/offline path).
-        Task<SourceSchema> GetSourceSchemaAsync(string tableRef, string authMode, string tenantId);
-        Task<SchemaDiff> DiffSchemaAsync(string tableRef, SourceColumn[] sourceColumns, string authMode, string tenantId);
+        Task<SourceSchema> GetSourceSchemaAsync(string tableRef, string authMode, string tenantId, string origin = "human");
+        Task<SchemaDiff> DiffSchemaAsync(string tableRef, SourceColumn[] sourceColumns, string authMode, string tenantId, string origin = "human");
         Task<ApplySchemaResult> ApplySchemaUpdateAsync(string tableRef, SchemaUpdateItem[] items, string origin);
         Task<string> CreateCalculatedColumnAsync(string tableRef, string name, string expression, string origin);
         Task<string> CreateRelationshipAsync(string fromColumnRef, string toColumnRef, string crossFilter, bool? isActive, string origin);
@@ -141,6 +146,8 @@ namespace Semanticus.Engine
         Task<DaxLibInstalledRecord[]> DaxLibListInstalledAsync();
         Task<SetResult> DaxLibUninstallAsync(string id, string origin);
         Task<SetResult> DeleteObjectAsync(string objRef, string origin);
+        // Multi-select delete: N objects as ONE undo step. One ref delegates to DeleteObjectAsync.
+        Task<SetResult> DeleteObjectsAsync(string[] objRefs, string origin);
         Task<string> DuplicateObjectAsync(string objRef, string newName, string targetRef, string origin);
         Task<ObjectProperty[]> GetObjectPropertiesAsync(string objRef);
         Task<SetResult> SetObjectPropertyAsync(string objRef, string propertyName, string value, string origin);
@@ -167,8 +174,8 @@ namespace Semanticus.Engine
         // current safe set); reportPaths makes verification report-aware. >1 item = Pro; a single item stays free.
         Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin);
         // Cloud report layer (Phase 3): discover published reports + report-aware safe-to-remove over their cloud PBIR.
-        Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);   // read-only (Power BI scope)
-        Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, CancellationToken cancellationToken = default);
+        Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);   // read-only (Power BI scope)
+        Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, string origin = "human", CancellationToken cancellationToken = default);
         Task<string> ScriptObjectsAsync(string[] refs, string format);
         Task<ApplyScriptResult> ApplyDaxScriptAsync(string script, string origin);
         Task<ApplyScriptResult> ApplyTmdlScriptAsync(string script, string origin);
@@ -212,12 +219,13 @@ namespace Semanticus.Engine
         Task<CalendarResult> DefineCalendarFromTemplateAsync(string template, string tableName, string dateColumn, int fiscalStartMonth, string startExpr, string endExpr, string calendarName, string origin);
 
         // --- live connectivity (attached-readonly DAX/DMV) ---
-        Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null);
+        Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human");
         Task<ConnectionStatus> ConnectLocalAsync(string dataSource, string database);
         Task<LocalInstance[]> ListLocalInstancesAsync();
         Task<ConnectionStatus> ConnectionStatusAsync();
         Task<ConnectionStatus> DisconnectAsync();
-        Task<ResultSet> RunDaxAsync(string query, int maxRows, string origin = "human");
+        Task<ResultSet> RunDaxAsync(string query, int maxRows, string origin = "human", CancellationToken cancellationToken = default);
+        Task<CancelQueryResult> CancelDaxAsync();
         Task<ResultSet> RunDmvAsync(string query, int maxRows);
         Task<ResultSet> PreviewTableAsync(string table, int topN, string origin = "human");
         Task<ResultSet> PivotMeasureAsync(string measureExpr, string[] rowFields, string colField, string[] filters, int maxRows, string origin = "human");
@@ -227,7 +235,7 @@ namespace Semanticus.Engine
         Task<VpaqReport> VertiPaqScanAsync(int topN);
         // Export the model to a VertiPaq-Analyzer .vpax (Microsoft/SQLBI Dax.Vpax) — the interchange format for VertiPaq
         // Analyzer / DAX Studio / the SQLBI ecosystem. Metadata is offline; storage stats are a future live enrichment.
-        Task<VpaxExportResult> ExportVpaxAsync(string path);
+        Task<VpaxExportResult> ExportVpaxAsync(string path, string origin = "human");
 
         // --- AI-native DAX optimize/verify loop (live connection) ---
         Task<BenchmarkResult> BenchmarkDaxAsync(string query, int runs);
@@ -262,7 +270,8 @@ namespace Semanticus.Engine
         //     evaluators + E2 store + E3 analyzer. run = FREE (ambient relationship-integrity probes + static
         //     security + saved reconciles, every verdict + evidence shown); persisted suite / run history = Pro.
         //     Read-only w.r.t. the model — a run never mutates, so no undo/broadcast rides these. ---
-        Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin);
+        Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null);
+        Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin);
         Task<TestSuiteInfo> ListTestDefinitionsAsync();
         Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin);
         Task<bool> DeleteTestDefinitionAsync(string id, string origin);
@@ -297,14 +306,19 @@ namespace Semanticus.Engine
         Task<WorkflowProfileInfo[]> ListWorkflowProfilesAsync();
         Task<WorkflowProfileResult> ActivateWorkflowProfileAsync(string name, string origin);
         Task<WorkflowDef> GetWorkflowAsync(string name);
+        Task<WorkflowDocumentResult> GetWorkflowDocumentAsync(string name, string sessionId = null);
+        Task<WorkflowUpgradeResult> UpgradeWorkflowAsync(string name, bool dryRun = true, string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null);
+        Task<WorkflowDocumentEditResult> EditWorkflowDocumentAsync(string name, string expectByteHash, string exactText, string expectPath, string origin, string sessionId = null);
+        Task<WorkflowLayout> GetWorkflowLayoutAsync(string name);
+        Task<WorkflowLayout> SaveWorkflowLayoutAsync(string name, System.Collections.Generic.Dictionary<string, WorkflowPosition> positions, string expectedRevision = null);
         Task<WorkflowRunView> StartWorkflowAsync(string name, string origin);
         Task<WorkflowRunView> GetWorkflowRunAsync(string runId);
-        Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin);
+        Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin, string callGate = null);
         Task<WorkflowRunView> SkipWorkflowStepAsync(string runId, string stepId, string reason, string origin);
         Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin);
         Task<Semanticus.Engine.Evidence.EvidenceArtifact> ExportWorkflowEvidenceAsync(string runId);
         // designer/authoring surface — free (authoring is content); parse-validate-before-write
-        Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin);
+        Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false);
         Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin);
         // §10 workflow TEMPLATES (the customisation layer) — all FREE (authoring is content). A template is a
         // recipe with declared slots the user fills; instantiate renders it into a concrete workflow through a
@@ -348,7 +362,7 @@ namespace Semanticus.Engine
         //     questions/DAX (the /interview-model skill); the engine never infers (golden rule 1). FREE: list +
         //     one-off run + delete; PRO: add_interview_question (persisting the replayable pack). ---
         Task<InterviewListResult> ListInterviewQuestionsAsync(string scope);
-        Task<InterviewQuestion> AddInterviewQuestionAsync(string question, string tier, string query, string scalarExpr, string paraphraseExpr, string[] groupBy, string[] filters, string expectedValue, string expectedMatrixJson, bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin);
+        Task<InterviewQuestion> AddInterviewQuestionAsync(string question, string tier, string query, string scalarExpr, string paraphraseExpr, string[] groupBy, string[] filters, string expectedValue, string expectedMatrixJson, bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin, string id = null);
         Task<InterviewRunResult> RunInterviewAsync(string questionId, string inlineJson, bool abstained, string attemptDax, string origin);
         Task<SetResult> DeleteInterviewQuestionAsync(string id, string origin);
         Task<InterviewSeedResult> ListInterviewSeedsAsync(string source, string measure);   // verified answers + the built-in hard-question pack (free, read-only; no fabricated oracle)
@@ -397,16 +411,25 @@ namespace Semanticus.Engine
 
         // --- Model compare (ALM Toolkit) + the deploy gate ---
         Task<ModelDiff> CompareModelsAsync(ModelRef left, ModelRef right, bool includeEqual = false, string origin = "human");
-        Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null);
+        Task<ApplyDiffResult> ApplyDiffAsync(ModelRef left, ModelRef right, string[] selectedRefs, bool commit, string origin, string overrideReason = null, string confirmToken = null);
         Task<CherryPickResult> CherryPickAsync(ModelRef source, string[] refs, bool includeDependencies, bool commit, string origin);
         Task<TreeNode[]> ListReferenceTreeAsync(ModelRef reference, string origin = "human");
         Task<ConnectionContext> ClearReferenceBindingAsync();
-        Task<DeployGate> DeployGateAsync(ModelRef compareTarget);
+        Task<DeployGate> DeployGateAsync(ModelRef compareTarget, string origin);
 
         // --- Connections: one registry, doing double duty as the agent-permissions target registry ---
         Task<ModelConnectionRecord[]> ListConnectionsAsync();
         Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null);
         Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync();
+        // ADVANCED sign-in prerequisite PREVIEW (read-only): what the engine can actually SEE for a mode (serviceprincipal
+        // env vars, or the azcli session) before a user tries to connect. Presence + names only, never a secret value;
+        // never an interactive prompt or a network sign-in (local reads + a local `az account show` at most).
+        Task<AuthPrerequisites> ProbeAuthPrerequisitesAsync(string mode, string tenantId = null);
+        // Multi-account profiles (Phase 2, T160): the saved Microsoft identities on this device (credential-free, both
+        // doors). SetDefault is the make-default affordance (human-only) — it repoints the tenant default, so an agent
+        // is refused, mirroring label_connection.
+        Task<AccountProfile[]> ListAccountProfilesAsync();
+        Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human");
         Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent");
         Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent");
         Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent");
@@ -430,19 +453,19 @@ namespace Semanticus.Engine
             bool confirm = false, string confirmToken = null, string origin = "human");
 
         // --- Fabric REST (the cloud ALM lane — read-only discovery) ---
-        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default);
-        Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, CancellationToken cancellationToken = default);
-        Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default);
-        Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
 
         // --- Deployment pipeline: preview + the GATED deploy (write lane) + history ---
-        Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DeployPreview> PreviewDeployAsync(string pipelineId, string sourceStageId, string targetStageId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<DeployStageReport> DeployStageAsync(string pipelineId, string sourceStageId, string targetStageId, string[] items, string note, bool commit, string confirmToken, bool forceOverride, string authMode, string tenantId, string origin, string overrideReason = null, CancellationToken cancellationToken = default);
-        Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DeploymentHistoryEntry[]> DeploymentHistoryAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
 
         // --- Fabric Git (workspace ⇄ git): reads + GATED writes ---
-        Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
-        Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
         Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
         Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
@@ -453,8 +476,8 @@ namespace Semanticus.Engine
         Task<CicdScaffold> CicdGenerateAsync(string target, string workspaceId, string environment, bool write);
 
         // --- Fabric Data Agent (definition-based item): reads (free) + the model-scope generator (Pro) + dry-run writes ---
-        Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default);
-        Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, CancellationToken cancellationToken = default);
+        Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable);
         Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);
         Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default);

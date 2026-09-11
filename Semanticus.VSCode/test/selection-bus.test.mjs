@@ -108,8 +108,8 @@ assert.doesNotMatch(app, /const metaReady = /, 'the combined metaReady gate is g
 assert.match(app, /stagedCols\.has\(colKey\(table, column\)\)/, 'the column check must resolve against the staged column key set');
 assert.match(app, /listColumns/, 'the staged column names must be loaded (getModelGraph carries counts only, not names)');
 // The staged column key must NOT be a '/'-join: '/' is legal in BOTH a table and a column name, so table+'/'+column
-// collides ("Sales/EU"+"Amount" == "Sales"+"EU/Amount"). Join on the unit-separator control char instead.
-assert.match(app, /const KEY_SEP = '\\u001f'/, 'the staged column key must join on an unambiguous separator, not a real ref char');
+// collides ("Sales/EU"+"Amount" == "Sales"+"EU/Amount"). JSON tuple keys stay unambiguous without control chars.
+assert.match(app, /function colKey\(table: string, column: string\) \{ return JSON\.stringify\(\[table, column\]\); \}/, 'the staged column key must be an unambiguous tuple, not a real-ref join');
 assert.doesNotMatch(app, /stagedCols\.has\(table \+ '\/' \+ column\)/, "the column key must NOT '/'-join (collides on slash-in-name)");
 // Re-verify on model/didChange, and IMMEDIATELY distrust the loaded shape (clear state) BEFORE the refetch lands —
 // otherwise the old refs stay actionable during the in-flight reload and a just-renamed object is still reachable.
@@ -144,9 +144,9 @@ assert.ok(loadTablesFn.includes('setTables([])'), 'loadTables must clear the row
 assert.ok(loadTablesFn.indexOf('setTables([])') < loadTablesFn.indexOf("rpc<ModelGraph>('getModelGraph')"),
   'the clear must precede the getModelGraph refetch (no actionable obsolete-ref rows during the in-flight reload)');
 
-// --- 3. F2 rename → the Properties Name row -------------------------------------------------------------
+// --- 3. Context-menu Rename → the Properties Name row; F2 → the Input Box --------------------------------
 assert.match(ext, /registerCommand\('semanticus\.renameObject', \(n: TreeNode, ns\?: TreeNode\[\]\) => renameInPropertiesCmd\(n, ns\)\)/,
-  'F2/Rename must route to the Properties grid (forwarding the selection for multi-select handling)');
+  'context-menu Rename must route to the Properties grid (forwarding the selection for multi-select handling)');
 assert.match(ext, /registerCommand\('semanticus\.renameObjectInputBox', \(n: TreeNode\) => renameCmd\(n\)\)/,
   'the InputBox rename must survive as its own command');
 const renameFn = ext.slice(ext.indexOf('async function renameInPropertiesCmd'), ext.indexOf('async function renameCmd'));
@@ -168,7 +168,7 @@ assert.match(ext, /key === JSON\.stringify\(this\.refs\)/, 'a parked focus inten
 
 // The F2 keybinding must be scoped to renameable viewItems so it never focuses an empty grid on a structural node.
 const f2 = pkg.contributes.keybindings.find((k) => k.key === 'f2');
-assert.equal(f2?.command, 'semanticus.renameObject', 'F2 must stay bound to the (rerouted) rename command');
+assert.equal(f2?.command, 'semanticus.renameObjectInputBox', 'F2 must start the Input Box rename so a keypress in the tree is visible');
 assert.match(f2?.when ?? '', /viewItem =~/, 'the F2 keybinding must be scoped to renameable tree items');
 
 // --- 3b. the renamed object is re-keyed so the didChange refresh does not blank the grid ---------------

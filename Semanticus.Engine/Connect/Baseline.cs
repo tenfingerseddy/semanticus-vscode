@@ -218,7 +218,7 @@ namespace Semanticus.Engine
                 MismatchCount = moved,
                 Truncated = truncated,
                 Mismatches = mismatches.ToArray(),
-                Note = truncated ? "coverage incomplete (row cap hit) — a match here is evidence, not proof" : null,
+                Note = truncated ? "coverage incomplete (row cap hit): a match here is evidence, not proof" : null,
             };
         }
     }

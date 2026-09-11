@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -46,11 +47,14 @@ namespace Semanticus.Engine
         /// boundary; order-agnostic — it tolerates both a thrown exception and an IsError result from next).</summary>
         public static McpRequestHandler<CallToolRequestParams, CallToolResult> Wrap(
             IEngine engine, McpRequestHandler<CallToolRequestParams, CallToolResult> next)
-            => (request, ct) => InvokeAsync(engine, () => next(request, ct));
+            => (request, ct) => InvokeAsync(engine, () => next(request, ct), request?.Params?.Name);
 
         /// <summary>The testable core: mint the call id, run the tool under it, then drain-and-append this
         /// call's health block (success or failure — failure carries it on the exception's Data).</summary>
-        internal static async ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next)
+        internal static ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next)
+            => InvokeAsync(engine, next, null);
+
+        internal static async ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next, string toolName)
         {
             var callId = Guid.NewGuid().ToString("N");
             CallToolResult result;
@@ -71,6 +75,11 @@ namespace Semanticus.Engine
             var delta = await DrainAsync(engine, callId).ConfigureAwait(false);
             if (delta != null && result != null)
                 Append(result, result.IsError == true ? FailureText(delta) : SuccessText(delta));
+            if (result != null && result.IsError != true)
+            {
+                var note = await WorkflowProfileNoteAsync(engine, toolName).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(note)) Append(result, note);
+            }
             return result;
         }
 
@@ -80,7 +89,7 @@ namespace Semanticus.Engine
         // model health moved — pure-failure retry logic would double-apply. Keep it terse and actionable.
         private static string FailureText(HealthDelta h) =>
             "health: " + JsonSerializer.Serialize(h, Terse)
-            + " — the call failed but these changes were already committed (model health moved as shown). "
+            + ". The call failed but these changes were already committed (model health moved as shown). "
             + "Verify the model state before retrying; undo_change can revert the committed part.";
 
         /// <summary>Append one text block, defensively: Content may be null or a non-resizable IList (a fixed
@@ -110,6 +119,30 @@ namespace Semanticus.Engine
         {
             try { return await engine.PullAgentHealthAsync(callId).ConfigureAwait(false); }
             catch { return null; }   // e.g. the owner pipe dropped mid-call — health is best-effort
+        }
+
+        /// <summary>When a warn-mode workflow profile is active, name its promise on the bound authoring ops
+        /// so the agent door sees the same guidance Studio already shows.</summary>
+        internal static async Task<string> WorkflowProfileNoteAsync(IEngine engine, string toolName)
+        {
+            try
+            {
+                if (engine == null || string.IsNullOrWhiteSpace(toolName)) return null;
+                if (!string.Equals(toolName, "create_measure", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(toolName, "update_measure", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(toolName, "create_relationship", StringComparison.OrdinalIgnoreCase))
+                    return null;
+                var policy = await engine.GetWorkflowPolicyAsync().ConfigureAwait(false);
+                var binding = policy?.Bindings?.FirstOrDefault(b => string.Equals(b.Op, toolName, StringComparison.OrdinalIgnoreCase));
+                if (binding == null || !string.Equals(binding.Mode, "warn", StringComparison.OrdinalIgnoreCase))
+                    return null;
+                var profiles = await engine.ListWorkflowProfilesAsync().ConfigureAwait(false);
+                var active = profiles?.FirstOrDefault(p => p.Selected);
+                var effects = active?.Effects;
+                if (effects == null || effects.Length == 0) return null;
+                return string.Join(". ", effects) + ".";
+            }
+            catch { return null; }
         }
     }
 }

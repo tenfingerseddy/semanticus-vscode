@@ -2,7 +2,7 @@
 // Pure, dependency-free DAX analysis for the editor's diagnostics — no vscode import, so it is unit-testable
 // in plain node (see tools/daxlint-test). extension.ts converts the offset-based RawDiag[] into vscode
 // Diagnostics. Deliberately conservative: it flags only HIGH-confidence problems against the live model's
-// symbols (unbalanced () [] , unknown quoted table, unknown column on a known table, a [ref] that is neither a
+// symbols (unbalanced () [] , common function argument counts, unknown quoted table, unknown column on a known table, a [ref] that is neither a
 // measure nor any column) so squiggles are trustworthy, not noisy. Unknown *functions* are NOT flagged (the
 // function list is non-exhaustive) and unknown *unquoted* tables are skipped (could be a VAR).
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -198,12 +198,69 @@ function collectVars(text) {
         out.add(m[1]);
     return [...out];
 }
-/// Analyze a DAX expression/query. Delimiter balance always runs; reference checks run only when an index is
-/// supplied (a model is loaded) — otherwise every name would falsely read as unknown.
+/// Analyze a DAX expression/query. Delimiter balance always runs; a small set of well-known function argument
+/// counts always runs; reference checks run only when an index is supplied (a model is loaded) — otherwise every
+/// name would falsely read as unknown.
 function analyzeDax(text, idx) {
-    const diags = balance(maskDax(text, true));
+    const masked = maskDax(text, true);
+    const diags = balance(masked);
+    diags.push(...arityCheck(masked));
     if (idx)
         diags.push(...references(maskDax(text, false), idx));
     return diags.sort((a, b) => a.start - b.start);
+}
+const KNOWN_ARITY = {
+    SUMX: [2, 2], AVERAGEX: [2, 2], MINX: [2, 2], MAXX: [2, 2], COUNTX: [2, 2], COUNTAX: [2, 2], PRODUCTX: [2, 2], FILTER: [2, 2],
+    SUM: [1, 1], AVERAGE: [1, 1], MIN: [1, 1], MAX: [1, 1], COUNT: [1, 1], COUNTA: [1, 1], COUNTROWS: [1, 1],
+    RELATED: [1, 1], RELATEDTABLE: [1, 1], VALUES: [1, 1], DISTINCT: [1, 1],
+    DIVIDE: [2, 3], IF: [2, 3], SELECTEDVALUE: [1, 2], USERELATIONSHIP: [2, 2], ISBLANK: [1, 1], HASONEVALUE: [1, 1],
+    SELECTEDMEASURE: [0, 0], SELECTEDMEASUREFORMATSTRING: [0, 0], BLANK: [0, 0],
+};
+function arityCheck(masked) {
+    const out = [];
+    const re = /\b([A-Za-z_][A-Za-z0-9]*)\s*\(/g;
+    let m;
+    while ((m = re.exec(masked))) {
+        const name = m[1];
+        const spec = KNOWN_ARITY[name.toUpperCase()];
+        if (!spec)
+            continue;
+        const open = m.index + m[0].length - 1;
+        const counted = countArgs(masked, open);
+        if (counted.end < 0)
+            continue;
+        const [min, max] = spec;
+        if (counted.count >= min && counted.count <= max)
+            continue;
+        const need = min === max ? String(min) : `${min} to ${max}`;
+        const noun = min === 1 && max === 1 ? 'argument' : 'arguments';
+        out.push({ start: m.index, end: open + 1, message: `${name} needs ${need} ${noun}, not ${counted.count}.`, severity: 'warning' });
+    }
+    return out;
+}
+function countArgs(s, openParen) {
+    let depth = 0, count = 0, any = false;
+    for (let i = openParen; i < s.length; i++) {
+        const c = s[i];
+        if (c === '(') {
+            depth++;
+            continue;
+        }
+        if (c === ')') {
+            depth--;
+            if (depth === 0)
+                return { count: any ? count : 0, end: i };
+            continue;
+        }
+        if (c === ',' && depth === 1) {
+            count++;
+            continue;
+        }
+        if (depth === 1 && !/\s/.test(c) && !any) {
+            any = true;
+            count = 1;
+        }
+    }
+    return { count: 0, end: -1 };
 }
 //# sourceMappingURL=daxLint.js.map

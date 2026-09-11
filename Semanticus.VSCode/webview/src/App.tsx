@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
-import { rpc, onDidChange, onReconnect, onActivity, onNavigate, onOpenConnections, onWorkflowChange, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, copyText, loadState, saveState, type ChangeNotification } from './bridge';
+import { rpc, onDidChange, onReconnect, onActivity, onNavigate, onOpenConnections, onWorkflowChange, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, runHostCommand, copyText, loadState, saveState, type ChangeNotification } from './bridge';
 import { RevealBtn, rowKeyProps } from './objectactions';
-import { ShortcutsOverlay, tabForKey, isTypingTarget } from './shortcuts';
+import { ShortcutsOverlay, tabForKey, isTypingTarget, hostCommandForKey } from './shortcuts';
 import { ActivityProvider, LiveActivity, ClaudeRanBanner, useClaudeReflection, KIND_TAB, type ActivityEvent } from './activity';
 import { useFixState } from './hooks';
 import { useConnection, ConnectBar, type SessionInfo } from './connection';
 import { ContextBar, compareSeedFromSession, QueryStalenessChip } from './contextbar';
-import { ConnectionsDrawer } from './connectionsdrawer';
+import { ConnectionsHub } from './connectionshub';
 import type { ModelRef } from './compare';
 import { VpaqComponentBars, VPAQ_COMPONENT_COLORS, VPAQ_UNATTRIBUTED_COLOR, Sparkline, type VpaqColumn, type VpaqTable, type VpaqBarItem } from './echart';
 import { DiagramView } from './diagram';
@@ -176,6 +176,7 @@ export function App() {
     }).catch(() => undefined);
   }, [foldRun]);
   const [deployRestoreTarget, setDeployRestoreTarget] = useState<{ id: string; endpoint: string; database: string; nonce: number } | null>(null);
+  const [publishNonce, setPublishNonce] = useState(0);
   const [pqTarget, setPqTarget] = useState<{ table: string; partitionId?: string; nonce: number } | null>(null);
   const [advArea, setAdvArea] = useState<{ area: string; nonce: number } | null>(null);
   const [searchTarget, setSearchTarget] = useState<{ query: string; nonce: number } | null>(null);   // findInModel → "Open in Search & Replace"
@@ -284,7 +285,7 @@ export function App() {
     // protocol sending a renamed tab a stale bundle doesn't have — is IGNORED (never a mystery landing on some
     // arbitrary tab), and logged so version skew is visible in devtools instead of silent.
     if (!VALID_TABS.has(t)) { console.warn(`[Studio] ignoring navigation to unknown tab id '${t}' (host/webview version skew?)`); return; }
-    if (t === 'compare') t = 'deploy';   // compatibility alias: comparison is Deploy's Push changes review
+    if (t === 'compare') t = 'deploy';   // compatibility alias: comparison is Deploy's Choose what to publish review
     if (t === 'permissions' && approvalId) setPermissionTarget({ id: approvalId, nonce: ++navNonce.current });
     setUnseen((s) => { if (!s.has(t)) return s; const n = new Set(s); n.delete(t); return n; });
     setTab(t as StudioTab);
@@ -340,6 +341,7 @@ export function App() {
       // The native sync status-bar item → a seeded Compare (same as the footer click): compute the seed from
       // live connection state and land on Review. jumpToCompare already seeds + goTab('compare'), so return early.
       if (m.tab === 'compare' && m.target === 'seed') { jumpToCompare(); return; }
+      if (m.tab === 'deploy' && m.target === 'publish') setPublishNonce((n) => n + 1);
       // '' is a real target here: "just focus the find box" (Ctrl+F) — only undefined means no hand-off.
       if (m.tab === 'search' && m.target != null) setSearchTarget({ query: m.target, nonce: ++navNonce.current });
       if (m.tab) goTab(m.tab);
@@ -357,6 +359,8 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
+      const hostCmd = hostCommandForKey(e);
+      if (hostCmd) { e.preventDefault(); e.stopPropagation(); runHostCommand(hostCmd); return; }
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === '?' && !isTypingTarget(e.target)) {
         e.preventDefault(); setShortcutsOpen((v) => !v); return;
       }
@@ -367,8 +371,8 @@ export function App() {
       const t = tabForKey(e);
       if (t) { e.preventDefault(); if (t === 'readiness') void scan(); goTab(t); }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -447,7 +451,7 @@ export function App() {
     <DaxLabTabStateProvider>
     <StorageTabStateProvider active={tab === 'stats'}>
     <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-    <ConnectionsDrawer open={connectionsOpen} onClose={closeConnections} />
+    <ConnectionsHub open={connectionsOpen} onClose={closeConnections} />
     <Shell tab={tab === 'dataagent' ? 'deploy' : tab} onTab={goTab} onGroup={goGroup} onShortcuts={() => setShortcutsOpen(true)} unseen={unseen} historyCount={activity.length - undoneCount} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={pendingApprovals[0]?.id} onConnections={openConnections} onJumpToCompare={jumpToCompare}>
       <>
       {/* A test run can carry substantial cell evidence, so keep the view alive across Studio navigation instead
@@ -504,7 +508,7 @@ export function App() {
       ) : tab === 'docs' ? (
         <DocumentationView />
       ) : tab === 'deploy' ? (
-        <DeployView key="deploy" seed={compareSeed} dataAgent={<DataAgentView />} restoreTarget={deployRestoreTarget} onRestoreConsumed={() => setDeployRestoreTarget(null)} />
+        <DeployView key="deploy" seed={compareSeed} dataAgent={<DataAgentView />} restoreTarget={deployRestoreTarget} onRestoreConsumed={() => setDeployRestoreTarget(null)} publishNonce={publishNonce} />
       ) : tab === 'tests' ? (
         null
       ) : tab === 'permissions' ? (
@@ -553,6 +557,53 @@ function BrandMark() {
   );
 }
 
+function MoreStudioMenu({ tab, onTab, onGroup }: { tab: StudioTab; onTab: (t: string) => void; onGroup: (gid: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const activeGroup = TAB_TO_GROUP[tab];
+  const standaloneActive = tab === 'knowledge' || tab === 'workflows' || tab === 'history';
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el?.closest?.('.studio-more')) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  return (
+    <div className="studio-more relative">
+      <button type="button" aria-label="More Studio pages" aria-expanded={open} aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
+        className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold"
+        style={standaloneActive || open
+          ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
+          : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>More</button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-1 z-50 min-w-40 rounded-md py-1"
+          style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+          {TAB_GROUPS.map((g) => (
+            <button key={g.id} role="menuitem" type="button"
+              onClick={() => { onGroup(g.id); setOpen(false); }}
+              className="block w-full text-left text-[12.5px] px-3 py-1.5"
+              style={g.id === activeGroup ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-fg)' }}>
+              {g.label}
+            </button>
+          ))}
+          <div className="my-1" style={{ borderTop: '1px solid var(--sem-border)' }} />
+          {([['knowledge', 'Primer'], ['workflows', 'Workflows'], ['history', 'Edits']] as const).map(([id, label]) => (
+            <button key={id} role="menuitem" type="button"
+              onClick={() => { onTab(id); setOpen(false); }}
+              className="block w-full text-left text-[12.5px] px-3 py-1.5"
+              style={tab === id ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-fg)' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pendingApprovalCount, firstPendingApprovalId, onConnections, onJumpToCompare, children }: { tab: StudioTab; onTab: (t: string, approvalId?: string) => void; onGroup: (gid: string) => void; onShortcuts: () => void; unseen: Set<string>; historyCount: number; pendingApprovalCount: number; firstPendingApprovalId?: string; onConnections: () => void; onJumpToCompare: () => void; children: React.ReactNode }) {
   // Edit History and Workflows are standalone (no intent group) — a different axis from the five task intents
   // (a session-wide record / a cross-cutting playbook library). When either is active NO group is highlighted and the
@@ -580,10 +631,10 @@ function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pending
   return (
     <div className="h-full flex flex-col">
       {/* primary row — analyst intents (left) + the standalone cross-cutting affordances (right) */}
-      <header className="flex items-center gap-3 px-4 py-2 border-b" style={{ borderColor: 'var(--sem-border)' }}>
+      <header className="studio-chrome flex items-center gap-3 px-4 py-2 border-b min-w-0" style={{ borderColor: 'var(--sem-border)' }}>
         <BrandMark />
-        <div className="font-semibold tracking-tight">Semanticus Studio</div>
-        <nav className="flex items-center gap-1 ml-3">
+        <div className="studio-title font-semibold tracking-tight">Semanticus Studio</div>
+        <nav className="studio-groups flex items-center gap-1 ml-3 min-w-0">
           {TAB_GROUPS.map((g, i) => (
             <GroupTab key={g.id} active={g.id === activeGroup} title={`${g.label} (Ctrl+Shift+${i + 1})`}
               unseen={g.id !== activeGroup && g.tabs.some((t) => unseen.has(t.id))}
@@ -591,10 +642,13 @@ function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pending
               onClick={() => onGroup(g.id)}>{g.label}</GroupTab>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
-          <KnowledgeTab active={tab === 'knowledge'} onClick={() => onTab('knowledge')} />
-          <WorkflowsTab active={tab === 'workflows'} onClick={() => onTab('workflows')} />
-          <HistoryTab active={isHistory} count={historyCount} onClick={() => onTab('history')} />
+        <div className="ml-auto flex items-center gap-3 shrink-0">
+          <div className="studio-standalone flex items-center gap-3">
+            <KnowledgeTab active={tab === 'knowledge'} onClick={() => onTab('knowledge')} />
+            <WorkflowsTab active={tab === 'workflows'} onClick={() => onTab('workflows')} />
+            <HistoryTab active={isHistory} count={historyCount} onClick={() => onTab('history')} />
+          </div>
+          <MoreStudioMenu tab={tab} onTab={onTab} onGroup={onGroup} />
           <LicenseButton />
           <span className="w-px h-5" style={{ background: 'var(--sem-border)' }} />
           <HelpButton tab={tab} onGo={(t) => onTab(t as StudioTab)} onShortcuts={onShortcuts} />
@@ -735,7 +789,7 @@ function Hero({ card, trend, busy, tier, onSafe, onRescan, onReviewAsPlan }: { c
         <div className="flex-1 min-w-0">
           <div className="text-[15px] font-semibold">AI Readiness {card.overall.toFixed(1)}</div>
           <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-            {card.findings.length} findings · {card.safeFixCount} safe fixes available
+            {card.findings.filter((f) => !f.waived).length} findings{card.waivedCount ? ` · ${card.waivedCount} waived` : ''} · {card.safeFixCount} safe fixes available
           </div>
           {trend.length >= 2 && (
             <div className="mt-1 -mb-1" style={{ maxWidth: 320 }}><Sparkline values={trend} /></div>
@@ -781,7 +835,7 @@ function Categories({ card }: { card: Scorecard }) {
                 <div className="h-full rounded-full transition-all" style={{ width: `${c.score}%`, background: col }} />
               </div>
               <div className="w-12 text-right text-[12px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.score.toFixed(0)}</div>
-              <div className="w-20 text-right text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.violations}/{c.applicable}</div>
+              <div className="w-28 text-right text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.violations}/{c.applicable}{c.waived ? ` · ${c.waived} waived` : ''}</div>
             </div>
           );
         })}
@@ -795,6 +849,7 @@ const sevNum = (s: string) => (s === 'Critical' || s === 'High' ? 3 : s === 'Med
 function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void }) {
   const [filter, setFilter] = useState<'all' | 'SafeFix' | 'AiContent' | 'Proposal'>('all');
   const [waiveErr, setWaiveErr] = useState<string | null>(null);
+  const [waivedOpen, setWaivedOpen] = useState(false);
   const { state: working, keyOf, fix, ask } = useFixState('applyFix', 'getFixPrompt');
 
   const activeFindings = card.findings.filter((f) => !f.waived);
@@ -841,7 +896,7 @@ function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void })
     <div className="flex flex-col gap-4">
       <Panel>
         <div className="flex items-center gap-2">
-          <SectionTitle>Findings <span style={{ color: 'var(--sem-muted)' }}>({activeFindings.length}{card.waivedCount ? ` · ${card.waivedCount} waived` : ''})</span></SectionTitle>
+          <SectionTitle>Findings <span style={{ color: 'var(--sem-muted)' }}>({activeFindings.length}{card.waivedCount ? <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} waived</button></span> : ''})</span></SectionTitle>
           <div className="ml-auto flex gap-1">
             <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All</Chip>
             <Chip active={filter === 'SafeFix'} onClick={() => setFilter('SafeFix')}>Safe {counts.SafeFix ?? 0}</Chip>
@@ -852,7 +907,7 @@ function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void })
         {waiveErr && <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{waiveErr}</div>}
         <div className="mt-2"><GroupedFindings rows={rows} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} /></div>
       </Panel>
-      <WaivedList rows={waivedRows} onUnwaive={unwaive} />
+      <WaivedList rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
     </div>
   );
 }
@@ -910,10 +965,7 @@ interface VpaqReport { queryIdentity?: string | null; modelSize: number; columnC
 
 // The staged "does this column exist" key. '/' is a legal character in BOTH a table AND a column name, so a
 // plain table + '/' + column join collides (table "Sales/EU" col "Amount" == table "Sales" col "EU/Amount").
-// This key is internal (built and looked up only here), so join on the unit-separator control char — unambiguous
-// and never a real name character — instead of concatenating a real ref.
-const KEY_SEP = '\u001f';
-function colKey(table: string, column: string) { return table + KEY_SEP + column; }
+function colKey(table: string, column: string) { return JSON.stringify([table, column]); }
 function fmtMB(bytes: number) { const mb = bytes / 1024 / 1024; return mb >= 1 ? mb.toFixed(1) + ' MB' : (bytes / 1024).toFixed(0) + ' KB'; }
 function fmtInt(n: number) { return (n ?? 0).toLocaleString(); }
 const ENC_COLOR: Record<string, string> = { Hash: '#7C8BA5', Value: '#36c98b', RLE: '#e0b341' };

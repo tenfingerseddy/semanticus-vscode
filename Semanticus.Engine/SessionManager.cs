@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Semanticus.Engine
@@ -11,7 +10,6 @@ namespace Semanticus.Engine
     /// </summary>
     public sealed class SessionManager : IDisposable
     {
-        private int _counter;
         // One volatile publication carries the model and every model-scoped store. Readers can capture this
         // object once and cannot pair a new Session with an old plan/spec/live binding (or the reverse).
         private volatile SessionContext _current = new SessionContext(null);
@@ -43,6 +41,16 @@ namespace Semanticus.Engine
         public async Task<Session> CreateAsync(string name, int compatibilityLevel) =>
             await PublishAsync(await BuildCreateAsync(name, compatibilityLevel)).ConfigureAwait(false);
 
+        /// <summary>Mint an opaque id for a NEW session. A client keeps this handle and hands it back later as
+        /// the engine's <c>expectedSession</c> fence, so it has to be unique for as long as any client could still
+        /// be holding it: across manager instances AND across process restarts. It used to be a per-manager
+        /// counter, which made the FIRST session of every manager (and of every launch) "s1". A client carrying
+        /// an old "s1" then passed <c>GuardExpectedModel</c> against an unrelated, newly opened model and edited
+        /// it through either guarded MCP route. A UUID has no position to restart from; it is the same one-off
+        /// identity primitive the rest of the engine already uses. The value stays an opaque string: nothing
+        /// parses it, and the only operation on it is an ordinal compare.</summary>
+        private static string MintSessionId() => "s" + Guid.NewGuid().ToString("N");
+
         /// <summary>Build a fully-loaded replacement session WITHOUT touching <see cref="Current"/>. A bad path or
         /// parse failure leaves the current context and its unsaved work fully intact.</summary>
         internal async Task<Session> BuildOpenAsync(string path)
@@ -57,7 +65,7 @@ namespace Semanticus.Engine
                 // builds the wrapper graph there). The TE2 handler now lives behind the IModelSession seam, so the
                 // concrete type + its build settings are owned by Te2ModelSession.Open (ModelSession.cs), not here.
                 IModelSession model = await dispatcher.RunAsync(() => (IModelSession)Te2ModelSession.Open(full));
-                var id = "s" + Interlocked.Increment(ref _counter);
+                var id = MintSessionId();
                 return new Session(id, dispatcher, model, Bus, full);
             }
             catch
@@ -78,7 +86,7 @@ namespace Semanticus.Engine
                 // Built on the single-writer thread; the concrete handler + its empty-model build settings are owned
                 // by Te2ModelSession.Create (ModelSession.cs) behind the seam, mirroring BuildOpenAsync.
                 IModelSession model = await dispatcher.RunAsync(() => (IModelSession)Te2ModelSession.Create(name, compatibilityLevel));
-                var id = "s" + Interlocked.Increment(ref _counter);
+                var id = MintSessionId();
                 return new Session(id, dispatcher, model, Bus, null);    // unsaved: no source path yet
             }
             catch

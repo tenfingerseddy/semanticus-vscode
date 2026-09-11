@@ -1,8 +1,38 @@
-// M standard-library symbols — 866 built-in functions/constants/types (Table.*, List.*,
-// Text.*, Date.*, Sql.Database, …). VENDORED from Microsoft's MIT-licensed vscode-powerquery extension:
-//   server/src/library/standard/standard-enUs.json @ 6a43c83b7ab8adc6e03bdb82c647030ce2ed041f
-// (microsoft/vscode-powerquery). Attribution in /NOTICE. Regenerate with tools/uishot or the gh download in
-// docs/powerquery-tab-plan.md if the upstream dataset changes.
+// THIRD-PARTY FILE. This is not first-party Semanticus work.
+//
+// Upstream project: microsoft/vscode-powerquery
+// Author/copyright: Copyright (c) Microsoft Corporation. All rights reserved.
+// License:          MIT
+// Upstream URL:     https://github.com/microsoft/vscode-powerquery
+// Upstream path:    server/src/library/standard/standard-enUs.json @ 6a43c83b7ab8adc6e03bdb82c647030ce2ed041f
+//
+// MIT requires the copyright notice AND this permission notice to travel with the file, so both are here
+// rather than only in THIRD-PARTY-NOTICES.md, which a file published on its own does not carry:
+//
+//   MIT License
+//
+//   Copyright (c) Microsoft Corporation. All rights reserved.
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+//   associated documentation files (the "Software"), to deal in the Software without restriction,
+//   including without limitation the rights to use, copy, modify, merge, publish, distribute,
+//   sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+//   furnished to do so, subject to the following conditions:
+//
+//   The above copyright notice and this permission notice shall be included in all copies or substantial
+//   portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+//   LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+//   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+//   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// M standard-library symbols — 866 built-in functions/constants/types (Table.*, List.*, Text.*, Date.*,
+// Sql.Database, …), copied from that pinned commit. Data unmodified; only the surrounding module wrapper is
+// ours. Declared in /third-party-manifest.json; full MIT text in /THIRD-PARTY-NOTICES.md. Regenerate with
+// tools/uishot or the gh download in docs/powerquery-tab-plan.md if the upstream dataset changes, and
+// re-verify the licence at the new commit.
 //
 // Embedded as a JSON string parsed once at runtime — NOT a literal object graph: tsc types RAW as `string`
 // (no multi-second inference over an 840KB literal) and the bundler ships one blob it parses fast. Consumed by

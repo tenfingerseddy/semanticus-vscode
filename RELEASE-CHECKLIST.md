@@ -6,25 +6,26 @@ that genuinely require a human. The frozen release surface and platform claims a
 [`docs/supported-platforms.md`](docs/supported-platforms.md). The exact execution order is
 [`docs/rc-acceptance.md`](docs/rc-acceptance.md).
 
-> **Status 2026-07-17:** the 1.1.0 authoring-and-evidence feature roll-up plus hardening pass is being cut on the
-> same five-target package set. Kane uploads the accepted packages through the Marketplace portal. Do not create a
-> release tag or publish while any required automated gate is red or while a mandatory human acceptance step for a
-> selected artifact is failed or incomplete.
+> **Status 2026-09-12:** 1.1.2 post-fix UAT is complete and merged. Linux and Windows automated checks passed,
+> as did installed Linux acceptance and a live Publish-and-restore check. The public GitHub release provides
+> all five platform VSIX installers and checksums. These are direct GitHub downloads; Marketplace publication remains
+> a separate step. The Marketplace release process below still applies to that channel.
+> Kane uploads the accepted packages through the Marketplace portal. Do not create a release tag or upload while
+> any required automated gate is red or while a mandatory human acceptance step for a selected artifact is failed
+> or incomplete.
 
 ## Phase 0 — before the first published build
 - [x] **License — DECIDED + committed: Elastic License 2.0 (source-available)** (root `LICENSE`; the 2026-07-06
       ratified source-available call superseded the earlier MIT-core decision, and the paid value still lives behind
       the `apply_change_plan` gate, so a fork of the open core has nothing to unlock). The
       `"license": "Elastic-2.0"` field is now in `Semanticus.VSCode/package.json`.
-- [ ] **Marketplace publisher ownership.** `Semanticus.VSCode/package.json` declares
-      `"publisher": "semanticus-vscode"`. Confirm that exact id is registered, owned by the release account and
-      accepted by Marketplace before the RC tag. Change the manifest only if Marketplace requires a different id,
-      then rebuild and repeat package acceptance.
-- [ ] **`VSCE_PAT` secret.** Create a Marketplace PAT; add it as the GitHub Actions secret `VSCE_PAT`
-      (the dormant `.github/workflows/publish.yml` reads it on a `v*` tag).
+- [x] **Marketplace publisher ownership.** `Semanticus.VSCode/package.json` declares
+      `"publisher": "semanticus-vscode"`. Marketplace accepted the five 1.1.0 packages under that publisher through
+      the release account. Change the manifest only if Marketplace requires a different id, then rebuild and repeat
+      package acceptance.
 
 ## Phase 1 — unlock autonomous live-tenant verification (the big leverage)
-- [x] **Service principal — WIRED + read-only Fabric REST lane LIVE-VERIFIED (Nexwave tenant).** The engine
+- [x] **Service principal — WIRED + read-only Fabric REST lane LIVE-VERIFIED (a private tenant).** The engine
       auth already reads `FABRIC_CLIENT`/`FABRIC_SECRET`/`FABRIC_TENANT` (or `AZURE_*`); `CicdSmoke` now runs a
       READ-ONLY live block gated on those env vars, and `ci.yml` passes the matching GitHub secrets to it. Confirmed
       live: SP auth, `list_workspaces` (8), `list_deployment_pipelines` (8), `get_pipeline_stages` (a real
@@ -64,11 +65,26 @@ that genuinely require a human. The frozen release surface and platform claims a
       its comparable baseline needs an investigated and explicitly accepted reason.
 - [ ] **Final RC merge call.** Confirm the chosen SHA is on `origin/main`, all required CI jobs for that exact SHA
       are green, every security-sensitive PR has independent approval, and there are zero open P0/P1 defects.
-- [x] **Version and release notes.** Version 1.1.0 is stamped in `package.json` and `package-lock.json`, with a
-      matching CHANGELOG section for the authoring-and-evidence feature roll-up and hardening pass. A published
+- [x] **Version and release notes.** Version 1.1.2 is stamped in `package.json` and `package-lock.json`, with a
+      matching CHANGELOG section for the workflow updates and post-UAT repairs. A published
       Marketplace version is never reused.
+- [ ] **Marketplace portal upload.** Kane manually uploads the five accepted target packages through the Marketplace
+      portal. This happens before the release tag. `.github/workflows/publish.yml` packages and verifies artifacts; it
+      does not publish to Marketplace.
 - [ ] **Code-signing cert** for the `.vsix` (optional for Marketplace; required for some orgs).
 - [ ] Complete the ordered **F5 interaction gate** in `docs/rc-acceptance.md` on the final RC build.
+
+## Phase 3b — after the Marketplace accepts the upload (added 2026-07-21; this is how "what is released?" stays answerable from the repo)
+- [ ] **Tag the release.** Annotated `vX.Y.Z` on the roll-up commit, pushed to origin only after Marketplace
+      acceptance. A `v*` tag fires `publish.yml`, which packages and verifies the five-target matrix and does not publish.
+      Pushing a tag whose history touches `.github/workflows/` needs the workflow-scoped `GITHUB_PAT`, not the OAuth token.
+- [ ] **Release consistency check.** `node tools/release/verify-release.mjs --marketplace` is green: the
+      `package.json` / `package-lock.json` version, the newest versioned CHANGELOG section, the pushed `v` tag and
+      the live Marketplace version all agree.
+- [ ] **Post-release hygiene.** Every working checkout returns to `main` (a checkout left on a merged PR branch
+      reads as the wrong version and causes exactly the confusion this phase exists to prevent), merged local
+      branches are pruned, and CHANGELOG opens a fresh `## [Unreleased]` section so post-release merges keep
+      recording themselves.
 
 ## Phase 4 — monetize
 - [ ] **Paddle** account to live mode; product/price plus checkout/customer portal; verify the shipped

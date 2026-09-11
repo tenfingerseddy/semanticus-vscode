@@ -134,6 +134,16 @@ namespace Semanticus.Analysis
         // Custom-rule problems surfaced loudly instead of a silent pass (unparseable annotation, an eval error, a
         // hand-edited id colliding with a built-in). Built-in rules never populate this. Mirrors BpaScorecard.RuleErrors.
         public string[] RuleErrors { get; set; } = Array.Empty<string>();
+        /// <summary>Ids of rules that could not be evaluated on this model. Such a rule is forced DORMANT
+        /// (Applicable = 0, findings cleared) so it can never contribute an always-pass population and lift the score —
+        /// a broken rule making a model look BETTER is the worst version of a lying map. Dormancy keeps the number
+        /// honest; this list is what stops the dormancy itself from being invisible.</summary>
+        public string[] UnevaluatedRules { get; set; } = Array.Empty<string>();
+        /// <summary>Stored "air" waivers whose rule id is ABSENT from the loaded rule set (built-in + custom + live).
+        /// Same contract as <see cref="BpaScorecard.OrphanedWaivers"/>: surfaced and counted as its own state, never
+        /// counted in <see cref="WaivedCount"/>, never suppressing a finding, never auto-deleted.</summary>
+        public WaiverRecord[] OrphanedWaivers { get; set; } = Array.Empty<WaiverRecord>();
+        public int OrphanedWaiverCount { get; set; }
     }
 
     /// <summary>Live per-column statistics (distinct-value cardinality, from COLUMNSTATISTICS / DMVs) that the

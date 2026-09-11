@@ -242,6 +242,7 @@ namespace Semanticus.Engine
         /// checks the Azure.Identity / MSAL credential exception TYPES directly.</summary>
         public static bool IsAuthFailure(Exception ex)
         {
+            if (ex is SignInException) return true;
             for (var e = ex; e != null; e = e.InnerException)
             {
                 var tn = e.GetType().Name;
@@ -272,6 +273,7 @@ namespace Semanticus.Engine
         /// never mislabeled "you cancelled" — the reason a forced sign-in that failed reads honestly (MED 4).</summary>
         public static bool IsUserCancellation(Exception ex)
         {
+            if (ex is SignInException se) return se.Outcome == SignInWait.Outcome.Cancelled;
             for (var e = ex; e != null; e = e.InnerException)
             {
                 if (e is OperationCanceledException) return true;
@@ -427,5 +429,21 @@ namespace Semanticus.Engine
         /// sign-in story heals the Interview pane too. Reads as the "Couldn't check". No em dash (copy rule).</summary>
         public static string ProbeHint() =>
             "couldn't check: not signed in to the live model. Run Connect to sign in, then re-run this check.";
+
+        /// <summary>Chooser dismissed. Names the cancel and leaves a support id (D-014 / D-021).</summary>
+        public static string CancelledHint(string id) =>
+            "Sign-in cancelled. Support id: " + id + ".";
+
+        /// <summary>The chooser was left open or the tab was closed. Stops the 10 minute wait (D-014).</summary>
+        public static string TimedOutHint(string id) =>
+            "Sign-in timed out. Try again when you are ready. Support id: " + id + ".";
+
+        /// <summary>Sign-in failed before an account was chosen, and it was not a cancel.</summary>
+        public static string FailedHint(string id) =>
+            "Sign-in did not finish. Support id: " + id + ".";
+
+        /// <summary>A live query saw an expired token after a silent renew did not help (D-017).</summary>
+        public static string ExpiredTokenHint(string id) =>
+            "The live sign-in expired. Sign in again to keep querying. Support id: " + id + ".";
     }
 }

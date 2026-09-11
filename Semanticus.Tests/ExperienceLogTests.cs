@@ -233,9 +233,15 @@ namespace Semanticus.Tests
         {
             var a = TempCopyOfFixture();
             var b = TempCopyOfFixture();
-            Assert.Equal(ExperienceStore.FingerprintFor(a), ExperienceStore.FingerprintFor(a));
-            Assert.NotEqual(ExperienceStore.FingerprintFor(a), ExperienceStore.FingerprintFor(b));
-            Assert.Equal(16, ExperienceStore.FingerprintFor(a).Length);   // 8 bytes hex
+
+            // Two named reads of the SAME model, so "stable" is asserted as read-then-reread rather than as one
+            // expression written twice, which cannot fail and so cannot carry the claim.
+            var firstReadOfA = ExperienceStore.FingerprintFor(a);
+            var secondReadOfA = ExperienceStore.FingerprintFor(a);
+
+            Assert.Equal(firstReadOfA, secondReadOfA);
+            Assert.NotEqual(firstReadOfA, ExperienceStore.FingerprintFor(b));
+            Assert.Equal(16, firstReadOfA.Length);   // 8 bytes hex
         }
 
         // ---- attribution: an activity FROZEN to another session is dropped, never recorded under this model -------

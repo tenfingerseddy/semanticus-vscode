@@ -37,6 +37,7 @@ export interface VpaqTable { name: string; size: number; rows: number | null; pc
 export interface VpaqColumn { table: string; column: string; totalSize: number; encoding: string; pctOfModel: number; }
 export interface VpaqReport { modelSize: number; columnCount: number; tables: VpaqTable[]; topColumns: VpaqColumn[]; storageMode?: 'import' | 'directLake' | 'unknown'; caveat?: string; error?: string; }
 export interface PrepForAiConfig { hasLinguisticSchema: boolean; aiInstructions?: string; aiInstructionsLength: number; aiSchemaExcludedFields: number; sourceReadable: boolean; qnaEnabled?: boolean | null; verifiedAnswersPresent: boolean; verifiedAnswerCount: number; }
+export interface DocPerspective { ref: string; name: string; description?: string; members: string[]; }
 
 export interface DocModelDto {
   header: DocModelHeader;
@@ -54,6 +55,7 @@ export interface DocModelDto {
   prepForAi?: PrepForAiConfig | null;
   storage?: VpaqReport | null;
   storageAvailable: boolean;
+  perspectives?: DocPerspective[];
 }
 
 // ---- config + branding ----------------------------------------------------------------------------
@@ -71,6 +73,7 @@ export interface DocConfig {
   calcGroups: boolean;        // calculation groups + items
   kpis: boolean;              // KPIs
   rls: boolean;               // roles + row-level security
+  perspectives: boolean;      // named model perspectives
   lineage: boolean;           // partitions / M source / data sources / shared expressions
   storageStats: boolean;      // VertiPaq storage (auto-suppressed when storage is unavailable)
   readinessScorecard: boolean;// AI-readiness scorecard
@@ -94,7 +97,7 @@ export interface DocBranding {
 
 export const DEFAULT_DOC_CONFIG: DocConfig = {
   hiddenObjects: false, daxExpressions: true, perTableDetail: true, columnsDetail: true, hierarchies: true,
-  diagram: true, relationships: true, measuresIndex: true, calcGroups: true, kpis: true, rls: true,
+  diagram: true, relationships: true, measuresIndex: true, calcGroups: true, kpis: true, rls: true, perspectives: true,
   lineage: true, storageStats: true, readinessScorecard: true, bpaScorecard: true, prepForAi: true, narrative: true,
 };
 
@@ -380,6 +383,8 @@ function renderHtml(dto: DocModelDto, cfg: DocConfig, b: DocBranding): string {
   if (cfg.kpis && dto.kpis.length) add('kpis', 'KPIs', kpisHtml(dto.kpis, cfg));
   // Roles / RLS
   if (cfg.rls && dto.roles.length) add('roles', 'Roles & Security', rolesHtml(dto.roles));
+  // Perspectives
+  if (cfg.perspectives && dto.perspectives && dto.perspectives.length) add('perspectives', 'Perspectives', perspectivesHtml(dto.perspectives));
   // Lineage (partitions / sources / expressions)
   if (cfg.lineage && (dto.dataSources.length || dto.expressions.length)) add('lineage', 'Data Sources & Lineage', lineageHtml(dto));
   // Storage
@@ -444,9 +449,11 @@ function overviewHtml(dto: DocModelDto, cfg: DocConfig): string {
     scorecards += `<div class="doc-scorecard"><b>Best practices:</b> <span class="doc-muted">${fmtNum(dto.bpa.violationCount)} issue(s) across ${fmtNum(dto.bpa.ruleCount)} rules · ${fmtNum(dto.bpa.autoFixable)} auto-fixable</span></div>`;
   }
 
-  const narr = cfg.narrative && dto.modelNarrative ? sectionMd(dto.modelNarrative, 'overview') : '';
+  const narr = cfg.narrative && dto.modelNarrative
+    ? narrativeHtml({ ...dto.modelNarrative, sections: (dto.modelNarrative.sections || []).filter((s) => s.key === 'overview') })
+    : '';
   const desc = has(dto.header.description) ? `<p class="doc-desc">${esc(dto.header.description)}</p>` : '';
-  return (narr ? `<div class="doc-narr">${narr}</div>` : '') + desc + `<div class="doc-stats">${statCards}</div>` + scorecards;
+  return narr + desc + `<div class="doc-stats">${statCards}</div>` + scorecards;
 }
 
 function tableDetailHtml(t: DocTable, dto: DocModelDto, cfg: DocConfig): string {
@@ -524,6 +531,19 @@ function kpisHtml(kpis: DocKpi[], cfg: DocConfig): string {
     + `</div>`).join('');
 }
 
+function perspectivesHtml(ps: DocPerspective[]): string {
+  return ps.map((p) => {
+    const members = (p.members ?? []).map((m) => `<li>${esc(prettyMember(m))}</li>`).join('');
+    return `<div class="doc-role"><h3 class="doc-h3">${esc(p.name)}</h3>`
+      + (has(p.description) ? `<p class="doc-desc">${esc(p.description)}</p>` : '')
+      + (members ? `<ul>${members}</ul>` : '<div class="doc-muted">No members.</div>')
+      + `</div>`;
+  }).join('');
+}
+function prettyMember(ref: string): string {
+  return String(ref).replace(/^[a-z]+:/i, '');
+}
+
 function rolesHtml(roles: RoleInfo[]): string {
   return roles.map((r) => {
     const filters = r.tableFilters.map((f) => `<tr><td>${esc(f.table)}</td><td><pre class="doc-code doc-inline"><code>${esc(f.filterExpression)}</code></pre></td></tr>`).join('');
@@ -569,16 +589,21 @@ function prepForAiHtml(p: PrepForAiConfig): string {
   return out;
 }
 
-// Authored-narrative block (per object): every section under a soft-tinted card with an author attribution.
+// Authored-narrative block (per object): every section under a soft-tinted card with a provenance marker.
 function narrativeHtml(n: DocNarrative): string {
   const who = n.author === 'agent' ? 'AI Assistant' : n.author === 'human' ? 'You' : '';
   const body = n.sections.filter((s) => has(s.markdown)).map((s) => `<div class="doc-narr-sec"><div class="doc-narr-key">${esc(prettyKey(s.key))}</div><div class="doc-narr">${mdToHtml(s.markdown)}</div></div>`).join('');
   if (!body) return '';
-  return `<div class="doc-narr-card">${who ? `<div class="doc-narr-by">${esc(who)}</div>` : ''}${body}</div>`;
+  const byline = who ? `Authored narrative · ${who}` : 'Authored narrative';
+  return `<div class="doc-narr-card"><div class="doc-narr-by">${esc(byline)}</div>${body}</div>`;
 }
-function sectionMd(n: DocNarrative, key: string): string {
+function authoredMarkdown(n: DocNarrative, key: string): string {
   const s = n.sections.find((x) => x.key === key);
-  return s && has(s.markdown) ? mdToHtml(s.markdown) : '';
+  if (!s || !has(s.markdown)) return '';
+  const who = n.author === 'agent' ? 'AI Assistant' : n.author === 'human' ? 'You' : '';
+  const by = who ? ` (${who})` : '';
+  const quoted = s.markdown.trim().split('\n').map((line) => `> ${line}`).join('\n');
+  return `> **Authored narrative**${by}\n>\n${quoted}`;
 }
 function prettyKey(k: string): string {
   return String(k).replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
@@ -681,7 +706,7 @@ function renderMarkdown(dto: DocModelDto, cfg: DocConfig): string {
 
   p(`# ${NL(h.name) || 'Semantic Model'}: Documentation`);
   p();
-  if (cfg.narrative && dto.modelNarrative) { const o = dto.modelNarrative.sections.find((x) => x.key === 'overview'); if (o && has(o.markdown)) { p(o.markdown.trim()); p(); } }
+  if (cfg.narrative && dto.modelNarrative) { const block = authoredMarkdown(dto.modelNarrative, 'overview'); if (block) { p(block); p(); } }
   if (has(h.description)) { p(h.description!.trim()); p(); }
   p('## Overview'); p();
   const ov: [string, string][] = [['Tables', fmtNum(h.tableCount)], ['Measures', fmtNum(h.measureCount)], ['Columns', fmtNum(h.columnCount)], ['Relationships', fmtNum(h.relationshipCount)], ['Compatibility level', String(h.compatibilityLevel || '')], ['Culture', NL(h.culture)], ['Default mode', NL(h.defaultMode)]];
@@ -729,6 +754,40 @@ function renderMarkdown(dto: DocModelDto, cfg: DocConfig): string {
       p(`### ${NL(r.name)} (${NL(r.modelPermission)})`); p();
       if (r.tableFilters.length) { for (const f of r.tableFilters) { p(`- **${NL(f.table)}**`); code('dax', NL(f.filterExpression).trim()); } } else { p('_No row-level filters._'); p(); }
     }
+  }
+  if (cfg.perspectives && dto.perspectives && dto.perspectives.length) {
+    p('## Perspectives'); p();
+    for (const persp of dto.perspectives) {
+      p(`### ${NL(persp.name)}`); p();
+      if (has(persp.description)) { p(persp.description!.trim()); p(); }
+      const members = persp.members ?? [];
+      if (members.length) { for (const m of members) p(`- ${prettyMember(m)}`); p(); }
+      else { p('_No members._'); p(); }
+    }
+  }
+  if (cfg.lineage && (dto.dataSources.length || dto.expressions.length)) {
+    p('## Data Sources & Lineage'); p();
+    if (dto.dataSources.length) {
+      p('| Name | Type |'); p('| --- | --- |');
+      dto.dataSources.forEach((d) => p(`| ${mdcell(d.name)} | ${mdcell(prettyKey(d.type ?? ''))} |`)); p();
+    }
+    for (const e of dto.expressions) {
+      p(`### ${NL(e.name)} (${prettyKey(e.kind ?? '')})`); p();
+      if (has(e.description)) { p(e.description!.trim()); p(); }
+      if (has(e.expression)) code('m', e.expression!.trim());
+    }
+  }
+  if (cfg.prepForAi && dto.prepForAi) {
+    const prep = dto.prepForAi;
+    const qna = prep.qnaEnabled == null ? 'unknown' : prep.qnaEnabled ? 'yes' : 'no';
+    p('## Prep for AI'); p();
+    p('| Property | Value |'); p('| --- | --- |');
+    p(`| Q&A enabled | ${qna} |`);
+    p(`| Linguistic schema | ${prep.hasLinguisticSchema ? 'present' : 'none'} |`);
+    p(`| AI instructions | ${prep.aiInstructionsLength > 0 ? fmtNum(prep.aiInstructionsLength) + ' chars' : 'none'} |`);
+    p(`| Fields excluded from AI schema | ${fmtNum(prep.aiSchemaExcludedFields)} |`);
+    p(`| Verified answers | ${prep.verifiedAnswersPresent ? fmtNum(prep.verifiedAnswerCount) : 'none'} |`); p();
+    if (has(prep.aiInstructions)) { p('### AI Instructions'); p(); code('', prep.aiInstructions!.trim()); }
   }
   if (cfg.storageStats && dto.storageAvailable && dto.storage && !dto.storage.error) {
     const storageMode = dto.storage.storageMode === 'import' || dto.storage.storageMode === 'directLake' ? dto.storage.storageMode : 'unknown';

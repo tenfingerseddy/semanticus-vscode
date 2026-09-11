@@ -169,10 +169,62 @@ namespace Semanticus.Engine
             var dir = DirFor(sourcePath);
             if (dir == null) throw new InvalidOperationException("The model has no on-disk location to store layout beside.");
             Directory.CreateDirectory(dir);
+            EnsureRuntimeIgnore(dir);
             var file = Path.Combine(dir, FileName);
             var shape = new FileShape { Version = CurrentVersion, Tables = entries.ToList() };
             File.WriteAllText(file, JsonSerializer.Serialize(shape, JsonOpts));
             return file;
+        }
+
+        /// <summary>Ignore engine runtime files so a model checkpoint can keep primers and workflows without
+        /// committing the live log.</summary>
+        public static void EnsureRuntimeIgnore(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return;
+            Directory.CreateDirectory(dir);
+            var gitignore = Path.Combine(dir, ".gitignore");
+            if (File.Exists(gitignore)) return;
+            File.WriteAllText(gitignore, "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n");
+        }
+
+        public static readonly string[] GitAddExcludes =
+        {
+            ":(exclude,glob)**/engine.lock",
+            ":(exclude,glob)**/engine.json",
+            ":(exclude,glob)**/experience.jsonl",
+            ":(exclude,glob)**/baselines/vitals.jsonl",
+            ":(exclude,glob)**/vitals.jsonl",
+        };
+
+        /// <summary>Copy the sidecar beside a save-as target so primers and workflows travel with the model.</summary>
+        public static void CopyForSaveAs(string oldSource, string newSource)
+        {
+            var oldDir = DirFor(oldSource);
+            var newDir = DirFor(newSource);
+            if (string.IsNullOrEmpty(oldDir) || string.IsNullOrEmpty(newDir)) return;
+            if (string.Equals(Path.GetFullPath(oldDir), Path.GetFullPath(newDir), StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(oldDir)) return;
+            CopyTree(oldDir, newDir);
+            EnsureRuntimeIgnore(newDir);
+        }
+
+        private static void CopyTree(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+            foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories))
+                Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, dir)));
+            foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+            {
+                var name = Path.GetFileName(file);
+                if (string.Equals(name, "engine.lock", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "engine.json", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "experience.jsonl", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "vitals.jsonl", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var dest = Path.Combine(to, Path.GetRelativePath(from, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                if (!File.Exists(dest)) File.Copy(file, dest);
+            }
         }
     }
 }

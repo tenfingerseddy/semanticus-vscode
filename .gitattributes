@@ -3,3 +3,9 @@
 *.ts text
 *.json text
 *.md text
+
+# Git hooks MUST be LF. `core.autocrlf=true` is set on this machine, so without this line the checked-out
+# .githooks/pre-commit gets CRLF, `#!/bin/sh` becomes `/bin/sh\r`, and the hook dies with "bad interpreter"
+# on every commit. That failure looks like the hook being broken rather than the register being checked, and
+# a hook that errors for an unrelated reason is worse than no hook: people delete it.
+.githooks/* text eol=lf

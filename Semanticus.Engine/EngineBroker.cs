@@ -18,6 +18,11 @@ namespace Semanticus.Engine
         // original start instant. Stamped by WriteInfo; a record WITHOUT them is a legacy engine's (see IsAlive).
         public string ProcessStartUtc { get; set; }   // Process.StartTime as UTC ISO round-trip
         public string ExePath { get; set; }           // the owner's executable (dotnet.exe in dev, the apphost when self-contained)
+        // Absolute address of the owner's pipe. On Windows this is the named-pipe path for PipeName. On Unix, .NET
+        // places the socket at Path.Combine(GetTempPath(), "CoreFxPipe_" + PipeName), and GetTempPath follows THIS
+        // process's TMPDIR. The agent process often has a different TMPDIR than the UI owner, so the short PipeName
+        // alone is not enough to join; clients must open this stamped path (D-118).
+        public string PipePath { get; set; }
     }
 
     /// <summary>
@@ -40,6 +45,29 @@ namespace Semanticus.Engine
             var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(key));
             var hex = BitConverter.ToString(hash, 0, 6).Replace("-", string.Empty).ToLowerInvariant();
             return "semanticus-" + hex;
+        }
+
+        /// <summary>The absolute pipe address .NET would use in THIS process. Stamp the owner's value at
+        /// <see cref="WriteInfo"/> so an attaching agent does not recompute it under a different temp directory.</summary>
+        public static string PipePathFor(string pipeName)
+        {
+            if (string.IsNullOrEmpty(pipeName)) return null;
+            if (OperatingSystem.IsWindows()) return @"\\.\pipe\" + pipeName;
+            return Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + pipeName);
+        }
+
+        /// <summary>Stderr when the MCP door could not join or become owner. Never tells the reader to delete
+        /// the session lock: that lock is what keeps the open VS Code window on this folder.</summary>
+        public static string McpAttachFailureMessage(TimeSpan deadline, bool ownerAlive)
+        {
+            var seconds = deadline.TotalSeconds.ToString("0");
+            if (ownerAlive)
+                return "[mcp] FATAL: Semanticus is already open for this folder, but the AI Assistant could not join that session within "
+                    + seconds
+                    + "s. Keep the VS Code window open and reconnect the AI Assistant.";
+            return "[mcp] FATAL: Semanticus could not start for this folder within "
+                + seconds
+                + "s. Wait a moment and reconnect. If it keeps happening, close other VS Code windows for this folder.";
         }
 
         /// <summary>Returns the held lock stream (keep open for the engine's lifetime) or null if another owner exists.</summary>
@@ -73,6 +101,10 @@ namespace Semanticus.Engine
                     info.ExePath = CurrentExecutablePath();
             }
             catch { /* identity stamping is best-effort — a record without it is handled as legacy by IsAlive */ }
+            // Stamp the owner's absolute pipe address under THIS process's temp directory. An attaching agent must
+            // not recompute it: its temp directory is often not the owner's (D-118).
+            if (string.IsNullOrEmpty(info.PipePath) && !string.IsNullOrEmpty(info.PipeName))
+                info.PipePath = PipePathFor(info.PipeName);
             // Atomic publish: write a temp sibling then move-replace, so a concurrent reader (a second VS Code
             // window or the MCP proxy) never sees a HALF-written engine.json as "no engine" and races us for
             // ownership. Same temp+move discipline every sidecar owes.
@@ -113,14 +145,40 @@ namespace Semanticus.Engine
                     // drift between the recorded ISO string and the OS start instant.
                     if (Math.Abs((actual - recorded.ToUniversalTime()).TotalSeconds) > 3) return false;
                     // Supplementary (never the sole signal): the recorded executable's name, when known.
-                    var expected = string.IsNullOrEmpty(info.ExePath) ? null : Path.GetFileNameWithoutExtension(info.ExePath);
-                    return expected == null || string.Equals(p.ProcessName, expected, StringComparison.OrdinalIgnoreCase);
+                    return ProcessNameMatches(info.ExePath, p.ProcessName);
                 }
                 // LEGACY record (pre identity fields): fall back to the old pid + name check — an upgraded engine
                 // must not orphan a RUNNING old-version owner just because its engine.json predates the new fields.
                 return string.Equals(p.ProcessName, Process.GetCurrentProcess().ProcessName, StringComparison.OrdinalIgnoreCase);
             }
             catch { return false; }   // pid gone / access denied / raced exit ⇒ not alive
+        }
+
+        /// <summary>True when <paramref name="processName"/> (what <see cref="Process.ProcessName"/> reported)
+        /// names the executable at <paramref name="exePath"/>. This check is SUPPLEMENTARY evidence, so it is
+        /// permissive exactly where the platform mangles names. Windows reports the file name without its
+        /// extension, so the extension is dropped there. Unix reports the file name as-is, and the Unix apphost
+        /// has NO extension, so <c>Path.GetFileNameWithoutExtension</c> would cut a dotted name like
+        /// "Semanticus.Engine" down to "Semanticus" and never match — which is what made a LIVE owner read as dead
+        /// and stopped the agent door joining it on Linux (D-118). The Linux kernel also records a process name
+        /// truncated to 15 characters, which .NET reports when the command line is unreadable; a name explained by
+        /// that truncation is the same process, not a mismatch.</summary>
+        public static bool ProcessNameMatches(string exePath, string processName)
+        {
+            if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(processName)) return true;   // no evidence to contradict
+            string fileName;
+            try { fileName = Path.GetFileName(exePath); } catch { return true; }   // an unreadable path proves nothing
+            if (string.IsNullOrEmpty(fileName)) return true;
+
+            var expected = OperatingSystem.IsWindows() ? Path.GetFileNameWithoutExtension(fileName) : fileName;
+            if (string.Equals(expected, processName, StringComparison.OrdinalIgnoreCase)) return true;
+
+            // Accept ONLY a difference that the kernel's 15-character record explains. Anything else is a real
+            // mismatch — a recycled pid carrying an unrelated process is exactly what this guard exists to catch.
+            const int LinuxNameMax = 15;
+            var shorter = expected.Length <= processName.Length ? expected : processName;
+            var longer = expected.Length <= processName.Length ? processName : expected;
+            return shorter.Length == LinuxNameMax && longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>The executable identity of this launch shape: dotnet for a development DLL, or the

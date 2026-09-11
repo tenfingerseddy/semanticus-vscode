@@ -5,7 +5,20 @@ import { fileURLToPath } from 'node:url';
 import {
   emptyRuns, reduceRuns, liveRuns, terminalRuns, mostRecentLive, mostRecentTerminal,
   runById, runForWorkflow, focusedRun, stepGateSkipped, runRank, isRunNotFound, MAX_RUNS,
+  runSections, frameProgress, frameIsCurrent, providedAnswerDraft,
 } from '../webview/src/workflowruns.mjs';
+
+// F-147: a hard-gate failure remains current for retry, but its recorded failure stays visible.
+{
+  for (const kind of ['iteration', 'call']) {
+    const item = { frame: { kind, state: 'in_progress' }, rows: [{ result: { stepId: 'retry', status: 'failed' } }] };
+    assert.equal(frameProgress(item, 'retry'), 'failed', 'a failed current frame keeps its recorded failure');
+    assert.equal(frameIsCurrent(item, 'retry'), true, 'the failed current frame stays open for retry');
+    assert.equal(frameIsCurrent(item, 'other'), false, 'another step does not force this frame open');
+    item.rows[0].result.status = 'passed';
+    assert.equal(frameProgress(item), 'passed', 'a successful retry clears the failed frame status');
+  }
+}
 
 // ===================================================================================================
 // Behavioral coverage for the run-map reducer — the logic behind BLOCKER 2 (multi-run isolation) and
@@ -236,6 +249,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (f) => readFileSync(resolve(root, f), 'utf8');
 const app = read('webview/src/App.tsx');
 const workflows = read('webview/src/workflows.tsx');
+const mcpTools = read('../Semanticus.Engine/McpTools.cs');
 assert.match(app, /onWorkflowChange\(\(v\) => foldRun\(v as WorkflowRunView, \{ sessionId: sid \}\)\)/, 'App holds the always-alive run subscription and stamps each live broadcast with the current session (survives leaving the Workflows tab; generation-guarded)');
 assert.match(app, /setRuns\(emptyRuns\(sid\)\); ownRunIds\.current = new Set\(\);\s*if \(!sid\) return;/, 'App resets the run map (stamped with the new session) + ownership on ANY sessionId change, then reseeds (HIGH 3 + finding 4: a model swap must not carry the prior run map)');
 assert.match(app, /foldRun\(r, \{ seed: true, sessionId: sid \}\)/, 'App seeds are folded as SEEDS stamped with the session (HIGH 1: a seed never overwrites a live broadcast; finding 4: guarded against a mid-seed swap)');
@@ -248,5 +262,113 @@ assert.match(app, /rpc<WorkflowRunView>\('getWorkflowRun', id\)\.then\(\s*\(v\) 
 assert.match(app, /\(e\) => \{ if \(isRunNotFound\(e\)\) evictGhost\(id\); \},/, 'a refetch that REJECTS evicts ONLY on an authoritative run-not-found — a transport failure (pipe drop/timeout) preserves the entry for a later pass, never loses a completed receipt');
 assert.doesNotMatch(workflows, /started with enforcement off, so its gates are skipped/, 'the run view must not make a run-wide enforcement-off claim — the wire exposes only per-step strictness (HIGH 6)');
 assert.match(workflows, /stepGateSkipped\(current\.effectiveStrictness\)/, 'the current step must render its OWN frozen gate-skip snapshot, not the model-wide flag');
+assert.match(workflows, /not_applicable:\s*\{\s*glyph:\s*'[^']+',\s*color:\s*'var\(--sem-muted\)',\s*label:\s*'did not apply'\s*\}/, 'a not-applicable step has an explicit muted rail style and plain label');
+assert.match(workflows, /const done = [^;]*result\.status === 'not_applicable'/, 'a not-applicable step is terminal on the run rail, so its recorded reason can be reopened');
+
+// Acceptance 13b: every visible total stays honest while an authored loop template remains unexpanded.
+assert.match(workflows, /totalStepsProvisional\?: boolean \| null/, 'the TypeScript run contract carries the optional provisional-total flag');
+assert.match(workflows, /function totalStepsText\(run: WorkflowRunView\)[\s\S]*run\.totalStepsProvisional \? `at least \$\{run\.totalSteps\} steps` : `\$\{run\.totalSteps\} steps`/, 'the one Studio formatter says at least N steps only for provisional totals');
+assert.equal((workflows.match(/totalStepsText\(/g) ?? []).length, 6, 'all five visible Studio step-total phrases use the shared honest formatter');
+assert.doesNotMatch(workflows, /\{run\.totalSteps\}[^\n]*(?:passed|started)|\$\{r\.totalSteps\}/, 'no visible run phrase bypasses the provisional-total formatter and states a final count');
+assert.match(mcpTools, /r\.TotalStepsProvisional == true\s*\? \$"at least \{r\.TotalSteps\} steps"\s*:\s*\$"\{r\.TotalSteps\} steps"/, 'the MCP start activity says at least N steps for a provisional total');
+{
+  const provisional = run('loop', { totalStepsProvisional: true });
+  assert.equal(reduceRuns(emptyRuns(), provisional).runs[0].totalStepsProvisional, true, 'the run reducer preserves the provisional-total flag');
+}
+
+// Loop groups follow execution order, not frame order or repeated display titles. Pending frame state
+// is in_progress on the wire, so its actual step result determines whether it has started.
+{
+  const step = (stepId, status) => ({ stepId, title: 'Review item', status, answers: {}, verifyResults: [] });
+  const first = step('review#0', 'passed');
+  const second = step('review#1', 'in_progress');
+  const third = step('review#2', 'pending');
+  const frames = [first, second, third].map((result, iterationIndex) => ({
+    kind: 'iteration', stepId: 'review', iterationIndex, loopVariable: 'table',
+    loopValue: ['Sales', 'Customers', 'Products'][iterationIndex], state: 'in_progress', steps: [result],
+  }));
+  const view = run('loop', {
+    steps: [step('before', 'passed'), first, second, third, step('after', 'pending')],
+    frames: frames.slice().reverse(), currentStep: { stepId: 'review#1' },
+  });
+  const sections = runSections(view);
+  assert.deepEqual(sections.map((section) => section.kind), ['step', 'frames', 'step']);
+  const items = sections[1].items;
+  assert.deepEqual(items.map((item) => item.frame.loopValue), ['Sales', 'Customers', 'Products']);
+  assert.deepEqual(items.map((item) => item.rows[0].n), [2, 3, 4]);
+  assert.deepEqual(items.map((item) => frameProgress(item, view.currentStep.stepId)), ['passed', 'in_progress', 'pending']);
+  assert.equal(frameProgress({ rows: [{ result: step('skip', 'skipped') }] }), 'skipped');
+  assert.equal(frameProgress({ rows: [{ result: step('exclude', 'not_applicable') }] }), 'not_applicable');
+  assert.equal(frameProgress({ rows: [{ result: step('fail', 'failed') }] }), 'failed');
+  assert.equal(frameProgress({ rows: [{ result: step('click', 'done') }] }), 'done');
+  const updated = { ...view, steps: view.steps.map((result) => result === second ? { ...second, status: 'skipped' } : result) };
+  assert.equal(frameProgress(runSections(updated)[1].items[1]), 'skipped', 'flat plan updates win over old frame result copies');
+  assert.deepEqual(runSections(run('ordinary', { steps: [step('plain#0', 'pending')] })).map((section) => section.kind), ['step'], 'ids that look like iterations are not treated as frames');
+  const interrupted = { ...view, steps: [first, step('between', 'passed'), second, third] };
+  assert.deepEqual(runSections(interrupted).map((section) => section.kind), ['frames', 'step', 'frames'], 'grouping never moves intervening plan rows');
+}
+
+// Calls retain their instance identity and own their nested loops. The same authored loop id in a
+// second call or its caller never joins the first call's group.
+{
+  const step = (stepId, status = 'passed') => ({ stepId, title: 'Review', status, answers: {}, verifyResults: [] });
+  const rows = ['outer-header', 'first-header', 'first-item', 'second-header', 'second-item', 'root-item'].map((id) => step(id, id === 'second-item' ? 'in_progress' : id === 'root-item' ? 'pending' : 'passed'));
+  const call = (parentFrameIndex, members, state = 'in_progress') => ({
+    kind: 'call', stepId: 'review', workflow: 'review-table', depth: 1, parentFrameIndex,
+    state, passed: ['table'], returned: state === 'passed' ? ['summary'] : [], steps: members,
+  });
+  const iteration = (parentFrameIndex, index, member) => ({
+    kind: 'iteration', stepId: 'repeat', parentFrameIndex, iterationIndex: index,
+    loopVariable: 'table', loopValue: 'Sales', state: 'in_progress', steps: [member],
+  });
+  const view = run('nested', { steps: rows, frames: [
+    call(null, [rows[0], rows[1], rows[3]]),
+    call(0, [], 'passed'), iteration(1, 0, rows[2]),
+    call(0, []), iteration(3, 0, rows[4]),
+    iteration(null, 0, rows[5]),
+  ] });
+  const sections = runSections(view);
+  assert.equal(sections.length, 2, 'root loop stays separate from loops inside calls');
+  const outer = sections[0].items[0];
+  assert.deepEqual(outer.rows.map((row) => row.result.stepId), rows.slice(0, 5).map((row) => row.stepId));
+  assert.deepEqual(outer.sections.map((section) => section.kind), ['step', 'step', 'frames', 'step', 'frames']);
+  const first = outer.sections[2].items[0];
+  const second = outer.sections[4].items[0];
+  assert.notEqual(first.frameIndex, second.frameIndex, 'two calls to the same workflow keep separate keys');
+  assert.equal(first.sections[0].items[0].frame.parentFrameIndex, 1);
+  assert.equal(second.sections[0].items[0].frame.parentFrameIndex, 3);
+  assert.equal(frameProgress(outer, 'second-item'), 'in_progress', 'active descendant opens its outer call');
+  assert.equal(frameProgress(second, 'second-item'), 'in_progress', 'active descendant opens its immediate call');
+  assert.equal(frameProgress(first, 'second-item'), 'passed', 'completed sibling call stays completed');
+  assert.deepEqual(first.frame.returned, ['summary']);
+  assert.deepEqual(second.frame.returned, [], 'pending returns are never copied from another invocation');
+
+  const loopCall = run('loop-call', { steps: rows.slice(0, 3), frames: [
+    iteration(null, 0, rows[0]), call(0, [rows[1]]), call(1, [rows[2]]),
+  ] });
+  const loop = runSections(loopCall)[0].items[0];
+  assert.equal(loop.sections[1].items[0].sections[1].items[0].frameIndex, 2, 'loop item contains call and nested call');
+  assert.equal(frameProgress(loop, 'first-item'), 'in_progress', 'current nested call opens the enclosing loop item');
+  assert.equal(frameProgress({ rows: [], frame: { kind: 'call', state: 'passed' } }), 'passed');
+  assert.equal(frameProgress({ rows: [{ result: rows[0] }], frame: { kind: 'call', state: 'failed' } }), 'failed', 'call failure is not concealed by passed body rows');
+}
+
+{
+  const supplied = {
+    table: { value: 'Sales', answered: true },
+    note: { declined: true, declineReason: 'Awaiting owner', answered: false },
+  };
+  const initial = providedAnswerDraft(supplied);
+  assert.equal(initial.vals.table, 'Sales');
+  assert.equal(initial.declined.note, true);
+  assert.equal(initial.reasons.note, 'Awaiting owner');
+  const editing = { ...initial, vals: { ...initial.vals, table: '' } };
+  const refreshed = providedAnswerDraft({ table: { value: 'Customers' }, note: { value: 'Confirmed', declined: false } }, editing, new Set(['table']));
+  assert.equal(refreshed.vals.table, '', 'same-step broadcasts preserve an answer the person cleared');
+  assert.equal(refreshed.vals.note, 'Confirmed', 'untouched questions refresh from current supplied answers');
+  assert.equal(refreshed.declined.note, false);
+  assert.equal(refreshed.reasons.note, '');
+  assert.equal(initial.vals.table, 'Sales', 'draft updates leave the prior form snapshot alone');
+}
 
 console.log('workflow run-map reducer tests passed');

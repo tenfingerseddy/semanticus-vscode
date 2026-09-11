@@ -34,6 +34,7 @@ const CONFIG_LABELS: { key: keyof DocConfig; label: string }[] = [
   { key: 'calcGroups', label: 'Calculation groups' },
   { key: 'kpis', label: 'KPIs' },
   { key: 'rls', label: 'Roles & RLS' },
+  { key: 'perspectives', label: 'Perspectives' },
   { key: 'lineage', label: 'Sources & lineage' },
   { key: 'storageStats', label: 'Storage' },
   { key: 'readinessScorecard', label: 'AI-readiness scorecard' },
@@ -248,7 +249,7 @@ function NarrativePane({ dto, outline, onSaved }: { dto: DocModelDto | null; out
     <aside className="w-[320px] shrink-0 overflow-auto border-l p-3 flex flex-col gap-3" style={{ borderColor: 'var(--sem-border)' }}>
       <Section title="Narrative: additional context">
         <div className="mb-1" style={{ color: 'var(--sem-muted)' }}>
-          Add business context that merges into the docs, separate from each object's Description. Edits are shared with the AI Assistant live and are undoable.
+          Add business context that merges into the docs, separate from each object's Description. Edits save with the model and are undoable. Your AI Assistant sees them the next time it works here.
         </div>
         <select value={current?.ref} onChange={(e) => setSel(e.target.value)} style={{ ...selStyle, width: '100%' }}>
           {objects.map((o) => {

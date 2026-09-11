@@ -13,7 +13,8 @@ import {
 } from 'vscode-jsonrpc/node';
 import { analyzeDax, collectVars, extractDaxSymbols, varDefinition, type DaxIndex } from './daxLint';
 import { formatDax } from './daxFormat';
-import { buildDaxHeader, splitDaxHeader, reKeyRef, uniqueName, checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken, MODEL_SCOPED_KINDS, type PendingRenameRecord } from './daxHeader';
+import { buildDaxHeader, splitDaxHeader, reKeyRef, uniqueName, checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken, pickOpenDaxHref, shouldCloseDaxTab, shouldApplyDaxBuffer, MODEL_SCOPED_KINDS, type PendingRenameRecord } from './daxHeader';
+import { resolveEditDaxNode } from './editDaxTarget';
 import {
     decideEngineOwner,
     resolveEngineCandidate,
@@ -21,6 +22,7 @@ import {
     type McpServerEntry,
     type ResolvedEngine,
 } from './engineResolution';
+import { canUseOsKeychain, mcpLaunchArgs, ownerServeArgs, ownerStdinPayload } from './licenseDelivery';
 import { normFolder, folderParts, folderRef, parentFolderPath, leafFolderName, groupFolderLevel } from './folders';
 import { migrateLegacyXmlaEntries, type LegacyRecentXmla } from './legacyXmlaMigration';
 import { getUiChallenge, RpcHandshakeRejectedError, rpcRolePreamble, waitForRpcHandshake } from './rpcAuth';
@@ -37,11 +39,14 @@ interface UndoStateDto { canUndo: boolean; canRedo: boolean; atCheckpoint: boole
 interface HealthDelta { grade?: string; new?: string[]; findings?: number; impact?: number; warn?: boolean; }
 interface ChangeNotification { sessionId: string; revision: number; origin: string; label?: string; deltas?: ChangeDelta[]; undo?: UndoStateDto; health?: HealthDelta; }
 interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; }
-interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; }
+interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; diskDiverged?: boolean; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; }
 interface ModelConnectionRecord { id: string; kind: string; endpoint: string; database?: string; modelName?: string; tenantId?: string; authMode?: string; label?: string; workingFolder?: string; publishConnectionId?: string; lastUsedUtc?: string; lastAccount?: string; }
 // One target's silently-probed account (mirrors Engine ConnectionAccountProbe). `account` is who the NEXT open signs in
 // as (the tenant-wide record wins); `previousAccount` names the target's last-used account when it differs ("was <x>").
 interface ConnectionAccountProbe { id: string; account?: string; previousAccount?: string; tenantId?: string; }
+// A saved Microsoft identity on this device (mirrors Engine AccountProfile) — the Phase 2 multi-account store. No
+// credential: `isDefault` marks who an unqualified open uses, `signedIn` whether a usable saved sign-in still exists.
+interface AccountProfile { id: string; username: string; tenantId?: string; family?: string; lastSignInUtc?: string; lastUseUtc?: string; isDefault?: boolean; signedIn?: boolean; }
 // The credential family a tenant-wide account switch acts on: only interactive / device-code sign-ins keep a switchable
 // record. azcli / serviceprincipal / token have no account picker, so an "Open as…" on them would be a false promise.
 function credentialFamily(authMode?: string): 'interactive' | 'devicecode' | null {
@@ -51,16 +56,22 @@ function credentialFamily(authMode?: string): 'interactive' | 'devicecode' | nul
     return null;   // azcli / serviceprincipal / token — no interactive record to switch
 }
 interface LocalInstance { port: number; title: string; dataSource: string; }
+// Power BI Desktop names a running local model's database with a bare GUID, which tells a person nothing. Detect it so
+// a local row shows an honest friendly name (the Desktop model/file name, else "Local running model") and never the
+// GUID as the display name (P5).
+const isGuidName = (s?: string): boolean => !!s && /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i.test(s.trim());
+const localDisplayName = (r: ModelConnectionRecord): string =>
+    r.modelName || (isGuidName(r.database) ? '' : (r.database || '')) || 'Local running model';
 // Mirrors Entitlement.EntitlementInfo (camelCased over the RPC): the tier the engine actually computed, plus a
 // teaching `reason` (why free, OR the grace advisory while still Pro). expiry is unix seconds (0 = perpetual).
 interface EntitlementInfo { tier: string; licensedTo?: string; expiry?: number; reason?: string; manageUrl?: string; }
-interface SetResult { revision: number; changed: boolean; }
+interface SetResult { revision: number; changed: boolean; warning?: string; }
 // Mirrors Semanticus.Engine RenameResult (camelCased over the RPC). newRef is the AUTHORITATIVE post-rename ref the
 // engine computed (never a string-spliced guess) — the header-driven save re-keys to it, falling back to reKeyRef only
 // if a build ever omits it.
 interface RenameResult { revision: number; changed: boolean; newRef?: string; warning?: string; }
 interface SaveResult { revision: number; path: string; format: string; fileCount: number; }
-interface DeployReport { endpoint?: string; database?: string; committed?: boolean; totalChanges?: number; added?: number; changes?: string[]; unmatched?: string[]; liveOnly?: string[]; conflicts?: string[]; error?: string; }
+interface DeployReport { endpoint?: string; database?: string; committed?: boolean; totalChanges?: number; added?: number; changes?: string[]; unmatched?: string[]; liveOnly?: string[]; matchNote?: string; conflicts?: string[]; error?: string; confirmToken?: string; }
 interface EngineInfo { pipeName: string; pid: number; startedUtc: string; workspace: string; exePath?: string; }
 interface SearchHit { ref: string; kind: string; name: string; table?: string; where: string; snippet?: string; }
 interface SearchResult { query: string; hits: SearchHit[]; total: number; truncated: boolean; }
@@ -77,9 +88,21 @@ let reconnectAttempt = 0;
 let deactivating = false;
 let spawned: cp.ChildProcess | undefined;
 let studioPanel: vscode.WebviewPanel | undefined;   // at most one Studio panel (openStudio reveals the existing one)
+let connectionsPanel: vscode.WebviewPanel | undefined;   // the standalone Connections hub panel, hosted when Studio is closed
+
+// Broadcast a host→webview NOTIFICATION to every live panel that hosts a connection surface — the Studio panel AND the
+// standalone Connections panel — so the hub is never deaf to engine state when it is the only door open. Used for the
+// connection-relevant channels (model/didChange, connectionChanged, reconnected). Request/response (rpcResult) and
+// Studio-tab-only broadcasts (plan/spec/layout/workflow/progress/navigate/openConnections) stay panel-scoped. 'reconnected'
+// also settles each panel's in-flight bridge requests, so a standalone panel's requests never hang to the timeout.
+function postToPanels(msg: unknown): void {
+    for (const p of [studioPanel, connectionsPanel]) {
+        if (p) { try { p.webview.postMessage(msg); } catch { /* disposing */ } }
+    }
+}
 let studioReady = false;                            // the Studio webview has posted 'studioReady' (its listeners are live)
 let pendingNav: { tab: string; target?: string; addTables?: string[] } | undefined;  // a navigation queued while the panel was still mounting
-let pendingOpenConnections = false;   // "Manage connections" queued while the Studio panel was still mounting
+let pendingOpenConnections: string | null = null;   // the hub section ('open'/'setup'/...) queued while the Studio panel was still mounting
 let dragTablesStash: string[] = [];                 // tables being dragged from the Model tree — handed to the Studio diagram on drop (the webview iframe can't read a native drag's DataTransfer, so it pulls them via the 'requestDropTables' relay)
 let tree: ModelTreeProvider;                          // module-scoped so every context-menu handler can refresh the tree
 let treeView: vscode.TreeView<TreeNode>;              // module-scoped so handlers can read the multi-selection
@@ -88,6 +111,7 @@ let daxFs: DaxFileSystem;                             // module-scoped so connec
 let status: vscode.StatusBarItem;                     // module-scoped so connectEngine()/restart can update it
 let healthStatus: vscode.StatusBarItem;               // the health chip (feature #4): what the LAST change did to model health — plain English, never a popup
 let syncStatus: vscode.StatusBarItem;                 // the sync chip: what you're EDITING vs QUERYING (mirrors the Studio footer, but global — visible while editing a TMDL file / browsing the tree, outside the webview). Click → seeded Compare.
+let publishStatus: vscode.StatusBarItem;              // Publish chip: visible only while a live model is open. Click opens Ship > Deploy with the confirm card.
 let aiConnectStatus: vscode.StatusBarItem;            // call-to-action shown ONLY while this workspace has no `semanticus` MCP entry — clicking it runs Connect AI Assistant. Hidden once connected, so it's a disappearing nudge, not clutter.
 // Connection-mutating RPCs the webview relays through the host: after one lands, re-read the sync chip so a
 // webview-initiated attach/disconnect (which fires no model/didChange) still updates the native chip immediately.
@@ -135,6 +159,10 @@ export async function activate(context: vscode.ExtensionContext) {
     syncStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
     syncStatus.command = 'semanticus.openCompareSeeded';
 
+    // Publish chip (C1.6 / D-007): one word, reachable from every pane. Hidden when the model is not live.
+    publishStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
+    publishStatus.command = 'semanticus.saveToLive';
+
     // "Connect AI Assistant" call-to-action: wiring Claude Code is a one-command step users kept missing (it was
     // Command-Palette-only). This chip makes it a visible one click — shown ONLY while this folder has no semanticus
     // MCP entry, and it disappears the moment it's connected. Paired with the Model view-title plug button.
@@ -163,6 +191,7 @@ export async function activate(context: vscode.ExtensionContext) {
         status,
         healthStatus,
         syncStatus,
+        publishStatus,
         treeView,
         vscode.window.registerWebviewViewProvider('semanticusProperties', propGrid),
         vscode.workspace.registerFileSystemProvider(DAX_SCHEME, daxFs, { isCaseSensitive: true }),
@@ -191,14 +220,21 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('semanticus.refresh', () => tree.refresh()),
         vscode.commands.registerCommand('semanticus.findInModel', () => findInModelCmd(context)),
-        vscode.commands.registerCommand('semanticus.editDax', (n: TreeNode) => openDax(n)),
-        vscode.commands.registerCommand('semanticus.openModel', () => openModelCommand(tree)),
+        vscode.commands.registerCommand('semanticus.editDax', (n?: TreeNode) => editDaxCmd(n)),
+        vscode.commands.registerCommand('semanticus.selectTreeObject', (n: TreeNode) => selectTreeObject(n)),
+        // The tree's primary Open Model now opens the shared floating hub on Open a model (Kane's ratified reversal);
+        // the old keyboard-first native picker survives as a separately named Quick Open Model. Manage Connections opens
+        // the hub on Current setup (also a gear on the tree title bar).
+        vscode.commands.registerCommand('semanticus.openModel', () => openConnectionsManager('open')),
+        vscode.commands.registerCommand('semanticus.quickOpenModel', () => quickOpenModelCommand(tree)),
+        vscode.commands.registerCommand('semanticus.manageConnections', () => openConnectionsManager('setup')),
         vscode.commands.registerCommand('semanticus.openStudio', () => openStudio(context)),
         // The native sync chip's click: open Studio → Compare, seeded with what you're editing vs querying (the
         // webview computes the seed from its live connection state — 'seed' is the pseudo-target it recognises).
         vscode.commands.registerCommand('semanticus.openCompareSeeded', () => navigateStudio(context, 'compare', 'seed')),
         vscode.commands.registerCommand('semanticus.save', () => saveCommand()),
         vscode.commands.registerCommand('semanticus.saveToLive', () => saveToLiveCommand()),
+        vscode.commands.registerCommand('semanticus.applyPropertyField', () => propGrid.applyFocused()),
         vscode.commands.registerCommand('semanticus.restartEngine', () => restartEngineCmd(context)),
         vscode.commands.registerCommand('semanticus.activateLicense', () => activateLicenseCmd(context)),
         vscode.commands.registerCommand('semanticus.showLicense', () => showLicenseCmd()),
@@ -229,8 +265,8 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('semanticus.hierarchyFromColumns', (n: TreeNode, ns?: TreeNode[]) => hierarchyFromColumnsCmd(n, ns)),
         vscode.commands.registerCommand('semanticus.newRelationship', (n: TreeNode) => authorNewRelationship(n)),
         // Universal edit/navigation (single object). DAX editing reuses semanticus.editDax (opens Monaco).
-        // F2 / Rename routes to the Properties grid's Name row (the grid IS the rename surface); the old
-        // InputBox prompt stays available as its own command so keyboard-only rename is never lost.
+        // Context-menu Rename routes to the Properties grid's Name row. F2 uses the Input Box (the path that
+        // actually appears when the tree has focus) so a keypress starts a rename the user can see.
         vscode.commands.registerCommand('semanticus.renameObject', (n: TreeNode, ns?: TreeNode[]) => renameInPropertiesCmd(n, ns)),
         vscode.commands.registerCommand('semanticus.renameObjectInputBox', (n: TreeNode) => renameCmd(n)),
         vscode.commands.registerCommand('semanticus.duplicateObject', (n: TreeNode) => authorDuplicate(n)),
@@ -280,8 +316,38 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('semanticus.studioSearch', () => navigateStudio(context, 'search', '')),          // '' = "focus the find box" (no query hand-off)
         vscode.commands.registerCommand('semanticus.studioNextTab', () => navigateStudio(context, 'cycle:next')),
         vscode.commands.registerCommand('semanticus.studioPrevTab', () => navigateStudio(context, 'cycle:prev')),
-        vscode.commands.registerCommand('semanticus.studioGoGroup', (g: string) => navigateStudio(context, 'group:' + (g || 'understand'))),
-        vscode.commands.registerCommand('semanticus.studioGoTab', (t: string) => { if (t) navigateStudio(context, t); }),  // power users: bind your own key to any tab id
+        vscode.commands.registerCommand('semanticus.studioGoGroup', async (g: string) => {
+            if (!g) {
+                const groups: Array<vscode.QuickPickItem & { key: string }> = [
+                    { label: 'Understand', key: 'understand' },
+                    { label: 'Change', key: 'change' },
+                    { label: 'Improve', key: 'improve' },
+                    { label: 'Prove', key: 'prove' },
+                    { label: 'Ship', key: 'ship' },
+                ];
+                const pick = await vscode.window.showQuickPick(groups, { title: 'Go to Studio group' });
+                if (!pick) return;
+                g = pick.key;
+            }
+            navigateStudio(context, 'group:' + g);
+        }),
+        vscode.commands.registerCommand('semanticus.studioGoTab', async (t: string) => {
+            if (!t) {
+                const tabs: Array<vscode.QuickPickItem & { key: string }> = [
+                    { label: 'Diagram', key: 'diagram' }, { label: 'Search', key: 'search' }, { label: 'Lineage', key: 'lineage' },
+                    { label: 'DAX Lab', key: 'daxlab' }, { label: 'Data', key: 'data' }, { label: 'Storage', key: 'stats' },
+                    { label: 'Model Spec', key: 'spec' }, { label: 'Advanced Modelling', key: 'advmodels' }, { label: 'M Code', key: 'mcode' },
+                    { label: 'Change Plan', key: 'optimize' }, { label: 'AI Readiness', key: 'readiness' }, { label: 'BPA', key: 'bpa' },
+                    { label: 'Tests', key: 'tests' }, { label: 'Evidence', key: 'evidence' },
+                    { label: 'Deploy', key: 'deploy' }, { label: 'Permissions', key: 'permissions' }, { label: 'Docs', key: 'docs' },
+                    { label: 'Primer', key: 'knowledge' }, { label: 'Workflows', key: 'workflows' }, { label: 'Edit History', key: 'history' },
+                ];
+                const pick = await vscode.window.showQuickPick(tabs, { title: 'Go to Studio tab' });
+                if (!pick) return;
+                t = pick.key;
+            }
+            navigateStudio(context, t);
+        }),
         vscode.commands.registerCommand('semanticus.scanReadiness', () => navigateStudio(context, 'readiness', 'rescan')),
         vscode.commands.registerCommand('semanticus.scanBpa', () => navigateStudio(context, 'bpa')),                       // the BPA tab scans on open
         vscode.commands.registerCommand('semanticus.keyboardShortcuts', () => navigateStudio(context, 'shortcuts')),       // the '?' cheat sheet
@@ -322,8 +388,8 @@ export function deactivate() {
     const previous = conn;
     conn = undefined;   // clear first: its onClose callback must not schedule a replacement during shutdown
     try { previous?.dispose(); } catch { /* ignore */ }
-    // Only kill the engine if WE spawned it.
-    if (spawned && spawned.pid) { try { spawned.kill(); } catch { /* ignore */ } }
+    // Leave the engine running. A window reload reattaches to the same session (unsaved work and a live
+    // playbook run stay). Restart Engine is the path that kills the process.
 }
 
 // ---- engine lifecycle ------------------------------------------------------------------------
@@ -386,20 +452,52 @@ function withLicenseMutation<T>(work: () => Promise<T>): Promise<T> {
     return run;
 }
 
+/// Whether this editor can actually hold secrets — the answer every licence path acts on.
+/// canUseOsKeychain() only reads the ENVIRONMENT, and the environment is a weak witness: VS Code reaches the OS
+/// keyring through its own session, so GNOME_KEYRING_CONTROL / KDE_FULL_SESSION / PASSWORD_STORE are often absent
+/// from the extension host while the keyring works fine (a weston + dbus-run-session lane, a Code started from a
+/// bare session). 1.1.0 stored the token through SecretStorage with no probing at all, so when the hint answered
+/// "no keychain" after the upgrade, the token a person had activated was still on the machine and nothing could
+/// read it: Pro silently became free (D-174). The hint is therefore only a FAST PATH for the common yes; when it
+/// says no, ASK the store itself. A rejected read is the honest "no keychain here" answer and lands on exactly the
+/// behaviour the hint used to give, so a machine with no keyring is no worse off. The read is cheap even there:
+/// getUiChallenge() already reads AND writes SecretStorage on every launch, with no hint to guard it.
+/// Only a POSITIVE is remembered. A remembered no would be D-174 again: one rejected read (the keyring locked at
+/// launch, dbus not up yet) would decide the whole session, so a keyring that comes up afterwards would stay
+/// invisible until a window reload. A flow still acts on ONE answer — activateLicenseFlow resolves it once before
+/// its first locked read — so re-probing between flows costs nothing and cannot disagree with itself mid-flow.
+let secretStorageReadable: boolean | undefined;
+function canUseSecretStorage(context: vscode.ExtensionContext): Promise<boolean> {
+    if (canUseOsKeychain()) return Promise.resolve(true);
+    if (secretStorageReadable) return Promise.resolve(true);
+    return (async () => {
+        try {
+            await context.secrets.get(LICENSE_SECRET_KEY);
+            secretStorageReadable = true;   // a positive holds for the session: a store must land where a read looked
+            return true;
+        } catch { return false; }           // a negative is NOT remembered: re-probe it on the next licence decision
+    })();
+}
+
 /// The Pro license token, read securely with a clear preference order and a one-time migration OFF plaintext settings:
 ///   1) SecretStorage (context.secrets — the OS keychain), the authoritative home going forward;
 ///   2) the legacy `semanticus.licenseToken` SETTING (plaintext in settings.json) — if found, MIGRATE it into secrets
 ///      (VERIFIED read-back first) and offer (non-modally, once) to remove the plaintext copy; never a silent delete;
 ///   3) neither → '' (free tier). Setting a token is the explicit "Activate License" command, never an auto-prompt here.
-/// Single source of truth for BOTH the engine-spawn --license arg and the .mcp.json writer, so both doors agree on tier.
+/// Single source of truth for the owner-spawn stdin token, so both doors agree on tier.
 /// opts.reconcile=false makes this a PURE read: no migration into secrets, no cleanup offer, no conflict prompt.
 /// The Activate License prefill uses it — a fire-and-forget prompt launched from the prefill could sit open while
 /// the user activates a DIFFERENT token, then apply its stale answer over the new one.
 async function getLicenseToken(context: vscode.ExtensionContext = extCtx, opts?: { reconcile?: boolean }): Promise<string> {
     const reconcile = opts?.reconcile !== false;
+    // Only a PROVEN-useless store may skip SecretStorage (see canUseSecretStorage): trusting the environment hint
+    // here is what orphaned the token 1.1.0 had already put in the keychain (D-174).
+    if (!(await canUseSecretStorage(context))) {
+        return (vscode.workspace.getConfiguration('semanticus').get<string>('licenseToken') || '').trim();
+    }
     let secret = '';
     try { secret = (await context.secrets.get(LICENSE_SECRET_KEY))?.trim() || ''; }
-    catch { /* keychain unavailable — fall through to the legacy setting */ }
+    catch { /* keychain unavailable: fall through to the legacy setting */ }
 
     const legacy = (vscode.workspace.getConfiguration('semanticus').get<string>('licenseToken') || '').trim();
 
@@ -702,7 +800,7 @@ async function clearLegacyLicenseSetting(ask: boolean, expected: string): Promis
             const revisionAtPrompt = licenseMutationRevision;
             const epochAtPrompt = licenseMutationAttemptEpoch;
             void vscode.window.showInformationMessage(
-                `Semanticus moved your Pro license into secure storage (the OS keychain). Remove the plaintext copy from settings.json (${scopeList})?`,
+                `Semanticus saved your Pro license in this editor's secure storage. Remove the plaintext copy from settings.json (${scopeList})?`,
                 'Remove from settings', 'Keep',
             ).then((pick) => {
                 if (pick !== 'Remove from settings') return;
@@ -884,12 +982,10 @@ async function ensureEngine(ws: string, context: vscode.ExtensionContext, uiChal
 
     // Resolve which binary to launch (dev DLL via dotnet, or the bundled self-contained exe directly). Throws a
     // teaching error naming both fixes when neither is present.
-    const serveArgs = ['serve', '--workspace', ws, '--ui-challenge-stdin'];
-    // Deliver the Pro license to the OWNER engine we spawn here — entitlement follows the owner, and get_entitlement
-    // (plus every Pro chokepoint) reads from THIS process. Previously only the .mcp.json writer passed --license, so a
-    // VS Code-spawned engine stayed Free even with a token set; pass it here too (the engine's `serve` accepts it).
+    const serveArgs = ownerServeArgs(ws);
+    // Deliver the Pro license to the OWNER engine over stdin. Entitlement follows the owner, and get_entitlement
+    // (plus every Pro chokepoint) reads from THIS process. The token must not appear on argv.
     const licenseToken = await getLicenseToken(context);
-    if (licenseToken) serveArgs.push('--license', licenseToken);
     let spawnCmd: string;
     let spawnArgs: string[];
     if (engine.kind === 'dll') {
@@ -902,12 +998,11 @@ async function ensureEngine(ws: string, context: vscode.ExtensionContext, uiChal
         spawnCmd = engine.path;
         spawnArgs = serveArgs;
     }
-    // Redact the Pro token (the value after --license) from the shareable output channel; spawn() below still gets the real args.
     out.appendLine(`Spawning engine (${engine.kind}): "${spawnCmd}" ${redactArgs(spawnArgs).map(a => `"${a}"`).join(' ')}`);
     // Pipe the engine's own stdout/stderr into this channel so a startup failure is VISIBLE here instead of
     // surfacing only as a 10s timeout. ('error' = spawn couldn't start; 'exit' = engine quit early.)
     spawned = cp.spawn(spawnCmd, spawnArgs, { windowsHide: true });
-    spawned.stdin?.end(uiChallenge + '\n');
+    spawned.stdin?.end(ownerStdinPayload(uiChallenge, licenseToken));
     spawned.stdout?.on('data', (d) => out.appendLine('  [engine] ' + d.toString().replace(/\s+$/, '')));
     spawned.stderr?.on('data', (d) => out.appendLine('  [engine] ' + d.toString().replace(/\s+$/, '')));
     spawned.on('error', (e) => out.appendLine('Engine spawn error: ' + ((e as Error)?.message ?? e) + '. Is the .NET 8 runtime installed and is dotnet on PATH?'));
@@ -1088,12 +1183,15 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             tree.refresh();
             scheduleDaxSymbolRebuild();   // keep DAX IntelliSense in sync with renames/creates/deletes
             void propGrid.refresh();   // live-update the property grid when the selected object changes (incl. agent edits)
-            for (const d of n.deltas ?? []) { daxFs.signalChanged(d.ref); }
+            for (const d of n.deltas ?? []) {
+                daxFs.signalChanged(d.ref);
+                if (d.kind === 'remove') void closeDaxTabsForRef(d.ref);
+            }
             status.text = `$(database) Semanticus rev ${n.revision}${n.origin === 'agent' ? ' $(hubot)' : ''}`;
             healthSessionId = n.sessionId;   // the chip now reflects THIS session's last change
             renderHealthChip(n.health);
             void refreshSyncChip();   // an edit can flip hasUnsavedChanges → repaint the editing↔querying verdict
-            try { studioPanel?.webview.postMessage({ type: 'didChange', payload: n }); } catch { /* disposing */ }
+            postToPanels({ type: 'didChange', payload: n });   // both the Studio panel AND the standalone Connections hub re-read session state
         });
         // The change plan broadcasts separately so the Studio Optimize tab updates live as the plan
         // is proposed/filled/applied (by the human OR the user's Claude on the same session).
@@ -1118,6 +1216,9 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         connected.onNotification('workflow/didChange', (v: unknown) => {
             try { studioPanel?.webview.postMessage({ type: 'workflowDidChange', payload: v }); } catch { /* disposing */ }
         });
+        connected.onNotification('workflow/layoutDidChange', (v: unknown) => {
+            try { studioPanel?.webview.postMessage({ type: 'workflowLayoutDidChange', payload: v }); } catch { /* disposing */ }
+        });
         // The workflow LIBRARY broadcasts separately so the Workflows rail live-updates when a workflow file is
         // saved/deleted (by the human OR the user's Claude via save_workflow) on the same session.
         connected.onNotification('workflow/libraryDidChange', (v: unknown) => {
@@ -1128,16 +1229,22 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         // tree/grid side effects); the webview routes it to the matching tab + the live activity feed.
         connected.onNotification('model/activity', (e: unknown) => {
             try { studioPanel?.webview.postMessage({ type: 'activity', payload: e }); } catch { /* disposing */ }
-            // A connection-mutating op by the agent (over MCP) fires only model/activity — no model/didChange — so the
-            // native identity/sync chips would otherwise go stale on the UI door. Repaint them when the activity is a
-            // connect/disconnect (HIGH 7). Other activity kinds (run_dax/…) don't move the connection state — skip them.
+            // A connection-mutating op fires only model/activity — no model/didChange — so the native identity/sync
+            // chips + every connection consumer would otherwise go stale. Two shapes matter here: a connect/disconnect
+            // that moves the LIVE identity (repaint the status chips), and a registry mutation (remember/label/forget)
+            // that changes the remembered SET — both doors emit these (a human forget/label from the Permissions tab
+            // too), so relaying them keeps the Connections hub AND the Compare picker current. Other kinds
+            // (run_dax/…) don't touch connection state — skip them.
             const kind = (e as { kind?: string } | undefined)?.kind;
-            if (kind === 'connect_xmla' || kind === 'connect_local' || kind === 'disconnect') {
-                void refreshStatus();
-                // The webview's ConnectBar + Connections drawer subscribe to reconnect + model edits only, so an
-                // MCP-door connect/disconnect (no model/didChange) would leave them stale. Relay a light connection-
-                // state nudge so both re-read their context (MED 5).
-                try { studioPanel?.webview.postMessage({ type: 'connectionChanged' }); } catch { /* disposing */ }
+            const liveConnChange = kind === 'connect_xmla' || kind === 'connect_local' || kind === 'disconnect';
+            const registryChange = kind === 'remember_xmla_connection' || kind === 'label_connection' || kind === 'forget_connection' || kind === 'set_default_account_profile';
+            if (liveConnChange || registryChange) {
+                if (liveConnChange) void refreshStatus();   // only a connect/disconnect moves the live identity chips
+                // The webview's ConnectBar + the Connections hub + Compare picker subscribe to reconnect + model edits
+                // only, so a connect/disconnect OR a registry add/label/forget (no model/didChange) would leave them
+                // stale. Relay a light connection-state nudge to BOTH panels so the Studio surfaces AND the standalone
+                // hub re-read their context (MED 5).
+                postToPanels({ type: 'connectionChanged' });
             }
         });
         connected.onClose(() => {
@@ -1154,11 +1261,17 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         let info: SessionInfo | undefined = await connected.sendRequest<SessionInfo>('sessionInfo');
         if (info?.sessionId) {
             setStatusFromInfo(info);
+            rememberLastModelPath(info.source);
+            watchModelDisk(info.source);
+            if (info.diskDiverged) void warnIfDiskDiverged();
         } else {
-            const configured = vscode.workspace.getConfiguration('semanticus').get<string>('modelPath');
+            const last = context.workspaceState.get<string>(LAST_MODEL_PATH_KEY);
+            const configured = last || vscode.workspace.getConfiguration('semanticus').get<string>('modelPath');
             if (configured) {
                 await connected.sendRequest<OpenResult>('open', configured);
                 info = await refreshStatus();
+                rememberLastModelPath(info?.source);
+                watchModelDisk(info?.source);
             } else {
                 status.text = '$(database) Semanticus: no model. Run "Open Model…"';
             }
@@ -1166,7 +1279,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         if (info?.sessionId) await propGrid.showModelIfEmpty(info.modelName);
         else await propGrid.clear();
         tree.refresh();
-        try { studioPanel?.webview.postMessage({ type: 'reconnected' }); } catch { /* no panel */ }
+        postToPanels({ type: 'reconnected' });   // settle + re-read on BOTH the Studio panel and the standalone Connections hub
         void rebuildDaxSymbols();   // seed DAX IntelliSense for the just-opened model
         reconnectAttempt = 0;
     } catch (err: any) {
@@ -1182,7 +1295,125 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
 
 /// One-click dev loop: drop the connection, kill the running engine (freeing the locked DLL), optionally
 /// rebuild it (Debug), then reconnect a fresh engine — no full window reload. Picks up engine code changes.
+
+const LAST_MODEL_PATH_KEY = 'semanticus.lastModelPath';
+let modelDiskWatcher: vscode.Disposable | undefined;
+let diskWarnKey: string | undefined;
+
+function rememberLastModelPath(source?: string): void {
+    if (!extCtx || !source) return;
+    void extCtx.workspaceState.update(LAST_MODEL_PATH_KEY, source);
+}
+
+async function confirmUnsavedWork(detail: string): Promise<'proceed' | 'save' | 'discard' | 'cancel'> {
+    if (!conn) return 'proceed';
+    const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+    if (!info?.sessionId || !info.hasUnsavedChanges) return 'proceed';
+    const choice = await vscode.window.showWarningMessage(
+        'This model has unsaved changes.',
+        { modal: true, detail },
+        'Save', 'Discard');
+    if (choice === 'Save') return 'save';
+    if (choice === 'Discard') return 'discard';
+    return 'cancel';
+}
+
+async function confirmAndSendOpen<T>(method: string, detail: string, ...args: unknown[]): Promise<T | undefined> {
+    const decision = await confirmUnsavedWork(detail);
+    if (decision === 'cancel') return undefined;
+    if (decision === 'save') { if (!await saveCommand()) return undefined; }
+    const discard = decision === 'discard';
+    return conn!.sendRequest<T>(method, ...args, discard);
+}
+
+async function pickFirstSaveDestination(modelName?: string): Promise<{ path: string; format: string } | undefined> {
+    const kind = await vscode.window.showQuickPick(
+        [
+            { label: 'Save as a file', detail: 'A .bim model file', id: 'file' as const },
+            { label: 'Save as a folder', detail: 'A folder of model files', id: 'folder' as const },
+        ],
+        { placeHolder: 'This model has never been saved. Choose where to save it.' },
+    );
+    if (!kind) return undefined;
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const safe = (modelName || 'model').replace(/[^\w.-]+/g, '_') || 'model';
+    if (kind.id === 'file') {
+        const picked = await vscode.window.showSaveDialog({
+            defaultUri: folder ? vscode.Uri.joinPath(folder, safe + '.bim') : vscode.Uri.file(safe + '.bim'),
+            saveLabel: 'Save model',
+            filters: { 'Semantic models': ['bim'] },
+        });
+        if (!picked) return undefined;
+        return { path: picked.fsPath, format: 'BIM' };
+    }
+    const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+        defaultUri: folder, openLabel: 'Save in this folder',
+    });
+    if (!picked || picked.length === 0) return undefined;
+    return { path: picked[0].fsPath, format: 'TMDL' };
+}
+
+function watchModelDisk(source?: string): void {
+    try { modelDiskWatcher?.dispose(); } catch { /* already gone */ }
+    modelDiskWatcher = undefined;
+    diskWarnKey = undefined;
+    if (!source) return;
+    try {
+        if (!fs.existsSync(source)) return;
+        const uri = vscode.Uri.file(source);
+        const watcher = fs.statSync(source).isDirectory()
+            ? vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(uri, '**/*'))
+            : vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(path.dirname(source)), path.basename(source)));
+        const onChange = () => { void warnIfDiskDiverged(); };
+        watcher.onDidChange(onChange);
+        watcher.onDidCreate(onChange);
+        watcher.onDidDelete(onChange);
+        modelDiskWatcher = watcher;
+    } catch { /* a missing path is not a watcher we can keep */ }
+}
+
+async function warnIfDiskDiverged(): Promise<void> {
+    if (!conn) return;
+    const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+    if (!info?.diskDiverged || !info.source) return;
+    const key = `${info.sessionId}:${info.source}`;
+    if (diskWarnKey === key) return;
+    diskWarnKey = key;
+    const detail = info.hasUnsavedChanges
+        ? 'This model has unsaved changes, and the files on disk also changed. Saving now would overwrite the files on disk.'
+        : 'The files on disk changed. This model still shows what was loaded. Saving now would overwrite the files on disk.';
+    const choice = await vscode.window.showWarningMessage(
+        'The files on disk changed.',
+        { modal: true, detail },
+        'Reload from disk', 'Keep editing');
+    if (choice !== 'Reload from disk') return;
+    if (info.hasUnsavedChanges) {
+        const decision = await confirmUnsavedWork('Reloading throws those changes away unless you save first.');
+        if (decision === 'cancel') return;
+        if (decision === 'save') { if (!await saveCommand()) return; }
+        await conn.sendRequest<OpenResult>('open', info.source, true);
+    } else {
+        await conn.sendRequest<OpenResult>('open', info.source);
+    }
+    await refreshStatus();
+    tree.refresh();
+    postToPanels({ type: 'reconnected' });
+}
+
 async function restartEngineCmd(context: vscode.ExtensionContext): Promise<void> {
+    const decision = await confirmUnsavedWork('Restarting the engine throws those changes away unless you save first.');
+    if (decision === 'cancel') return;
+    if (decision === 'save') { if (!await saveCommand()) return; }
+    try {
+        const run = await conn?.sendRequest<{ status?: string }>('getWorkflowRun', null);
+        if ((run?.status || '').toLowerCase() === 'active') {
+            const go = await vscode.window.showWarningMessage(
+                'A playbook run is still going. Restarting the engine ends that run.',
+                { modal: true }, 'Restart anyway');
+            if (go !== 'Restart anyway') return;
+        }
+    } catch { /* no run to protect */ }
     await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'Semanticus: restarting engine' },
         async (progress) => {
@@ -1212,7 +1443,7 @@ async function restartEngineCmd(context: vscode.ExtensionContext): Promise<void>
 }
 
 /// "Semanticus: Activate license" — paste a Pro token, persist it, and re-verify HONESTLY via the engine. We never
-/// re-implement ECDSA in TS; we hand the token to the engine over --license and read back its get_entitlement verdict.
+/// re-implement ECDSA in TS; we hand the token to the engine over stdin and read back its get_entitlement verdict.
 /// SINGLE-FLIGHT: at most one interactive license flow may exist at a time — a second invocation is refused while
 /// one is in flight, and entering the flow settles any open conflict prompt (releases its pair guard; its parked
 /// apply aborts through its own revision/epoch/value checks if this flow changes anything).
@@ -1235,9 +1466,11 @@ async function activateLicenseFlow(context: vscode.ExtensionContext): Promise<vo
     // setting, the commit revision and the attempt epoch. Every decision made in the input box below is based on
     // this snapshot, and every apply re-checks it under the lock before touching anything. The prefill derived
     // from it is ALSO the value the clear flow treats as "the token being discarded" (the value-guarded clear).
+    const canStore = await canUseSecretStorage(context);   // proven answer, resolved BEFORE the lock (it only reads)
     const opened = await withLicenseMutation(async () => {
         let secretAtOpen: string | null = '';
-        try { secretAtOpen = ((await context.secrets.get(LICENSE_SECRET_KEY)) ?? '').trim(); } catch { secretAtOpen = null; }
+        if (!canStore) secretAtOpen = null;
+        else try { secretAtOpen = ((await context.secrets.get(LICENSE_SECRET_KEY)) ?? '').trim(); } catch { secretAtOpen = null; }
         const legacyAtOpen = (vscode.workspace.getConfiguration('semanticus').get<string>('licenseToken') || '').trim();
         return { secretAtOpen, legacyAtOpen, revision: licenseMutationRevision, epoch: licenseMutationAttemptEpoch };
     });
@@ -1258,6 +1491,20 @@ async function activateLicenseFlow(context: vscode.ExtensionContext): Promise<vo
     // removed ONLY after the secret provably reads back, and only where it holds the SAME token (value-guarded);
     // the explicit command discloses the removal instead of asking.
     if (!trimmed) {
+        if (!canStore) {
+            const remaining = await withLicenseMutation(async () => {
+                if (prefill) await clearLegacyScopes(prefill);
+                else reportKeptScopes(definedLegacyScopes());
+                return definedLegacyScopes().map((s) => s.label);
+            });
+            if (remaining.length === 0) {
+                vscode.window.showInformationMessage('Semanticus: license cleared. The engine will run on the free tier after the next restart.');
+            } else {
+                vscode.window.showWarningMessage(
+                    `Semanticus: a license token remains in ${remaining.join(', ')}. That setting is still read on the next engine start, so Pro may still activate. To fully clear it, open that settings.json and delete the "semanticus.licenseToken" entry.`);
+            }
+            return;
+        }
         // Empty submit means "clear the license I was shown" (the prefill), NOT "delete whatever secret exists
         // now": a newer activation can commit while this box sits open, and deleting ITS token would destroy it.
         // One locked unit: revision check first, then the secret must still equal the captured prefill before it
@@ -1337,7 +1584,9 @@ async function activateLicenseFlow(context: vscode.ExtensionContext): Promise<vo
     type StoreAttempt =
         | { superseded: 'committed' | 'attempted' | 'unverified' }
         | { superseded: false; stored: boolean; priorSecret: string; priorSecretKnown: boolean; revision: number; epoch: number };
-    const attempt = await withLicenseMutation(async (): Promise<StoreAttempt> => {
+    const attempt: StoreAttempt = !canStore
+        ? { superseded: false, stored: false, priorSecret: '', priorSecretKnown: false, revision: licenseMutationRevision, epoch: licenseMutationAttemptEpoch }
+        : await withLicenseMutation(async (): Promise<StoreAttempt> => {
         // The abort wording follows the EVIDENCE: revision or value difference = a change happened; epoch only =
         // an attempt happened; a read that cannot be compared proves nothing.
         if (licenseMutationRevision !== opened.revision) return { superseded: 'committed' };
@@ -1386,6 +1635,10 @@ async function activateLicenseFlow(context: vscode.ExtensionContext): Promise<vo
             'Store in plaintext',
         );
         if (choice !== 'Store in plaintext') {
+            if (!canStore) {
+                vscode.window.showInformationMessage('Semanticus: the license was not saved. Secure storage was not used, and nothing was written to settings.json.');
+                return;
+            }
             // Cancelled (or dismissed): persist nothing. "Not saved" must be PROVABLY true — the failed store may
             // have half-succeeded (stored, but the verifying read failed). Under the lock, the revision+epoch check
             // comes FIRST: value equality is NOT identity — another actor can have ATTEMPTED or stored the SAME
@@ -1471,10 +1724,10 @@ async function activateLicenseFlow(context: vscode.ExtensionContext): Promise<vo
         vscode.window.showWarningMessage('Semanticus: license saved to settings.json in plaintext because secure storage was unavailable. Consider excluding settings.json from Settings Sync until secure storage works, then re-activate to move it into the keychain.');
     }
 
-    // Re-verify: restart the engine WE spawned so it re-reads --license, then report what the engine computed. If we
+    // Re-verify: restart the engine WE spawned so it re-reads the token from stdin, then report what the engine computed. If we
     // merely ATTACHED to an engine we don't own, we must not kill it — prompt for a window reload to re-own with the token.
     if (spawned) {
-        await restartEngineCmd(context);   // respawns with --license (getLicenseToken now returns the new token)
+        await restartEngineCmd(context);   // respawns with the token on stdin (getLicenseToken now returns the new token)
         await showLicenseCmd();            // surface the engine's real verdict (tier + expiry/grace, or the teaching failure Reason)
     } else {
         const pick = await vscode.window.showInformationMessage(
@@ -1515,8 +1768,7 @@ async function showLicenseCmd(): Promise<void> {
         const detail = info.reason ? info.reason
             : expiry ? `Licensed to ${info.licensedTo || 'you'}, expires ${expiry}.`
             : `Licensed to ${info.licensedTo || 'you'}, perpetual.`;
-        const pick = await vscode.window.showInformationMessage(`Semanticus Pro is active. ${detail}`, 'Pro options');
-        if (pick === 'Pro options') await manageLicenseCmd(info);
+        await vscode.window.showInformationMessage(`Semanticus Pro is active. ${detail}`);
     } else {
         // Free — surface the engine's Reason VERBATIM (it teaches: no license / invalid / expired-past-grace + renew URL).
         const pick = await vscode.window.showInformationMessage(
@@ -1587,15 +1839,28 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     refresh() { this.flat.clear(); this._emitter.fire(); }
 
     getTreeItem(n: TreeNode): vscode.TreeItem {
+        if (n.kind === 'emptyModel') {
+            const empty = new vscode.TreeItem(n.name, vscode.TreeItemCollapsibleState.None);
+            empty.id = n.ref;
+            empty.contextValue = 'emptyModel';
+            empty.iconPath = new vscode.ThemeIcon('add');
+            empty.tooltip = 'This model has no tables yet. Click to add the first one.';
+            empty.command = { command: 'semanticus.newTable', title: 'New Table' };
+            return empty;
+        }
         const item = new vscode.TreeItem(
             n.name,
             n.hasChildren ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         item.id = n.ref;          // stable identity (= ref) so reveal-by-ref matches the rendered node
         item.contextValue = n.kind;
-        item.iconPath = iconFor(n.kind);
-        // Single-click opens the full Monaco DAX editor for anything with a DAX body (no more tiny input boxes).
+        item.iconPath = n.kind === 'relationship' && n.name.includes('(inactive)')
+            ? new vscode.ThemeIcon('debug-disconnect')
+            : iconFor(n.kind);
+        if (n.kind === 'relationship' && n.name.includes('(inactive)')) item.tooltip = 'Inactive: formulas must ask for this relationship';
+        // Every object click updates Properties, including a re-click of the already-selected node (VS Code does
+        // not fire onDidChangeSelection then). DAX-bearing objects still open Monaco as well.
+        item.command = { command: 'semanticus.selectTreeObject', title: 'Select', arguments: [n] };
         if (DAX_KINDS.has(n.kind)) {
-            item.command = { command: 'semanticus.editDax', title: 'Edit DAX', arguments: [n] };
             item.tooltip = n.kind === 'function' ? 'Edit function (DAX UDF)' : 'Edit DAX';
         }
         if (n.kind === 'dfolder') item.tooltip = 'Display folder: a label on its members, not a container (it lives in each member’s Display Folder property)';
@@ -1605,7 +1870,13 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     async getChildren(n?: TreeNode): Promise<TreeNode[]> {
         if (!this.connection) return [];
         try {
-            if (!n) return await this.connection.sendRequest<TreeNode[]>('listTree', null);
+            if (!n) {
+                const roots = await this.connection.sendRequest<TreeNode[]>('listTree', null);
+                if (roots.length === 0) {
+                    return [{ ref: 'empty:', name: 'Add a table…', kind: 'emptyModel', hasChildren: false }];
+                }
+                return roots;
+            }
             // A table/calc-group fans through the folder grouper (TE2-style); a folder node fans its own level.
             if (n.kind === 'table' || n.kind === 'calcgroup') {
                 const kids = await this.connection.sendRequest<TreeNode[]>('listTree', n.ref);
@@ -1751,7 +2022,9 @@ async function loadReferenceModel(): Promise<void> {
     if (!conn || !referenceRef) return;
     const label = referenceRef.path ?? referenceRef.gitRef ?? referenceRef.database ?? referenceRef.endpoint ?? 'reference';
     try {
-        const nodes = await conn.sendRequest<TreeNode[]>('listReferenceTree', referenceRef);
+        // byPosition: a lone object otherwise goes as named params and StreamJsonRpc cannot bind
+        // listReferenceTree(ModelRef, origin) ("Unable to find method 'listR...'", D-035).
+        const nodes = await conn.sendRequest<TreeNode[]>('listReferenceTree', ParameterStructures.byPosition, referenceRef);
         referenceTree.setNodes(nodes);
         referenceView.title = 'Reference · ' + label;
         await vscode.commands.executeCommand('setContext', 'semanticus.hasReference', true);
@@ -1764,12 +2037,12 @@ async function loadReferenceModel(): Promise<void> {
 function clearReferenceModel(): void {
     referenceRef = undefined; copyStash = undefined; referenceTree.clear();
     referenceView.title = undefined;
-    // Drop the engine-owned reference binding too, so the Connections drawer's Reference card clears in lockstep (MED 8).
-    // Nudge the drawer to re-read ONCE the engine has actually cleared the binding (round-trip, not fire-and-forget) so
+    // Drop the engine-owned reference binding too, so the Connections hub's Reference card clears in lockstep (MED 8).
+    // Nudge the hub to re-read ONCE the engine has actually cleared the binding (round-trip, not fire-and-forget) so
     // its Reference card + "Use as reference" state update instead of lagging a step behind (MED 7).
     void conn?.sendRequest('clearReferenceBinding')
         .catch(() => { /* best-effort — the tree is already cleared */ })
-        .finally(() => { try { studioPanel?.webview.postMessage({ type: 'connectionChanged' }); } catch { /* no panel */ } });
+        .finally(() => postToPanels({ type: 'connectionChanged' }));
     void vscode.commands.executeCommand('setContext', 'semanticus.hasReference', false);
     // The reference clipboard died with the reference model — fall back to the Model tree's own clipboard
     // (if any) so the Paste menu and the most-recent-copy routing stay coherent.
@@ -1876,7 +2149,8 @@ function iconFor(kind: string): vscode.ThemeIcon {
 // ---- editable DAX as virtual files (Monaco) --------------------------------------------------
 
 function uriForRef(ref: string): vscode.Uri {
-    return vscode.Uri.parse(`${DAX_SCHEME}:/${encodeURIComponent(ref)}.dax`);
+    const mk = daxHeaderModelKey ? '?mk=' + identityToken(daxHeaderModelKey) : '';
+    return vscode.Uri.parse(`${DAX_SCHEME}:/${encodeURIComponent(ref)}.dax${mk}`);
 }
 // The header-doc uri for a create-then-edit ref (CRITICAL 2): the SAME path as uriForRef (so getDax/setDax resolve the
 // ref from the path unchanged) PLUS a query that STAMPS the identity onto the uri — hdr=1 marks it a header doc and mk
@@ -1964,7 +2238,25 @@ function clearDaxHeaderDocsOnSwap(sessionId?: string): void {
     // deliberately NOT cleared here (HIGH 3): they are persisted to survive a window reload -- which itself looks like a
     // session swap -- and a stale record can never be misapplied because decideRenameRecovery re-checks the model token
     // and authoritative engine state before resuming.
-    if (sessionId !== daxHeaderSessionId) { daxHeaderSessionId = sessionId; daxHeaderDocs.clear(); }
+    if (sessionId !== daxHeaderSessionId) {
+        const wasSwap = daxHeaderSessionId !== undefined;
+        daxHeaderSessionId = sessionId;
+        daxHeaderDocs.clear();
+        if (wasSwap) void closeStaleDaxTabs(true);
+    }
+}
+
+async function closeStaleDaxTabs(isSwap: boolean): Promise<void> {
+    const liveMk = daxHeaderModelKey ? identityToken(daxHeaderModelKey) : undefined;
+    for (const g of vscode.window.tabGroups.all) {
+        for (const tab of g.tabs) {
+            if (!(tab.input instanceof vscode.TabInputText)) continue;
+            const u = tab.input.uri;
+            if (u.scheme !== DAX_SCHEME) continue;
+            if (!shouldCloseDaxTab(headerUriModelKey(u), liveMk, isSwap)) continue;
+            try { await vscode.window.tabGroups.close(tab); } catch { /* already closed */ }
+        }
+    }
 }
 
 // After a header-driven rename the object's ref (its identity is its name) changed, so the old uri is now stale.
@@ -1976,6 +2268,7 @@ async function reopenRenamedDaxNow(oldUri: vscode.Uri, newRef: string): Promise<
     try {
         const newUri = uriForHeaderRef(newRef);
         daxHeaderDocs.delete(oldUri.toString());
+        daxFs.forgetWritten(oldUri);
         void clearPendingRename(oldUri.toString());
         daxHeaderDocs.add(newUri.toString());
         for (const g of vscode.window.tabGroups.all) {
@@ -2012,11 +2305,33 @@ function displayDax(raw: string): string {
 }
 
 async function openDaxAt(uri: vscode.Uri, ref: string) {
-    const doc = await vscode.workspace.openTextDocument(uri);
+    const liveMk = daxHeaderModelKey ? identityToken(daxHeaderModelKey) : undefined;
+    const open = vscode.window.tabGroups.all.flatMap((g) => g.tabs)
+        .filter((t) => t.input instanceof vscode.TabInputText && (t.input as vscode.TabInputText).uri.scheme === DAX_SCHEME)
+        .map((t) => {
+            const u = (t.input as vscode.TabInputText).uri;
+            return { path: u.path, query: u.query, href: u.toString() };
+        });
+    const existingHref = pickOpenDaxHref(open, ref, liveMk);
+    const target = existingHref ? vscode.Uri.parse(existingHref) : uri;
+    const doc = await vscode.workspace.openTextDocument(target);
     await vscode.languages.setTextDocumentLanguage(doc, 'dax');
     await vscode.window.showTextDocument(doc, { preview: false });
     validateDaxDoc(doc);   // language is set after open, so onDidOpen may have missed it — lint now
-    void ref;              // ref is implied by the uri path; kept in the signature for call-site clarity
+}
+
+async function selectTreeObject(n: TreeNode): Promise<void> {
+    if (!n) return;
+    if (n.kind !== 'dfolder') await propGrid.showObjects([n]);
+    if (DAX_KINDS.has(n.kind)) await openDax(n);
+}
+async function editDaxCmd(n?: TreeNode) {
+    const node = resolveEditDaxNode(n, treeView?.selection, DAX_KINDS) as TreeNode | undefined;
+    if (!node?.ref) {
+        vscode.window.showWarningMessage('Select a measure, calculated column, calculation item, or function in the Model tree, then run Edit DAX.');
+        return;
+    }
+    await openDax(node);
 }
 async function openDax(n: TreeNode) {
     return openDaxAt(uriForRef(n.ref), n.ref);   // tree-opened: the PLAIN uri (body-only editor, no name header)
@@ -2081,6 +2396,8 @@ class DaxFileSystem implements vscode.FileSystemProvider {
     private readonly _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this._emitter.event;
     private readonly mtimes = new Map<string, number>();
+    private readonly lastShown = new Map<string, string>();   // last body shown to the editor; Ctrl+S is a no-op when unchanged (D-044)
+    private readonly lastWritten = new Map<string, Uint8Array>(); // post-save re-read must match the buffer or VS Code prompts again after a rename
     private connection: MessageConnection | undefined;
 
     constructor(private readonly getConn: () => MessageConnection | undefined) {}
@@ -2088,12 +2405,17 @@ class DaxFileSystem implements vscode.FileSystemProvider {
     private conn() { return this.connection ?? this.getConn(); }
 
     signalChanged(ref: string) {
-        // Fire for the plain (tree-opened) uri AND any registered header-doc uri of the same ref (they share the path
-        // but differ by query), so a live edit to a freshly-created object refreshes its header editor too.
-        const plain = uriForRef(ref);
-        const uris = [plain];
+        // Fire for every open DAX uri of this ref (plain and header, current mk and leftover), so a live edit or a
+        // restored tab after the model loads actually refreshes the editor that is on screen.
+        const seen = new Set<string>();
+        const uris: vscode.Uri[] = [];
+        const add = (uri: vscode.Uri) => { const k = uri.toString(); if (seen.has(k)) return; seen.add(k); uris.push(uri); };
+        add(uriForRef(ref));
         for (const key of daxHeaderDocs) {
-            try { const u = vscode.Uri.parse(key); if (u.toString() !== plain.toString() && refFromUri(u) === ref) uris.push(u); } catch { /* not a uri */ }
+            try { const u = vscode.Uri.parse(key); if (refFromUri(u) === ref) add(u); } catch { /* not a uri */ }
+        }
+        for (const d of vscode.workspace.textDocuments) {
+            if (d.uri.scheme === DAX_SCHEME && refFromUri(d.uri) === ref) add(d.uri);
         }
         for (const uri of uris) {
             this.mtimes.set(uri.toString(), Date.now());
@@ -2101,8 +2423,16 @@ class DaxFileSystem implements vscode.FileSystemProvider {
         }
     }
 
+    forgetWritten(uri: vscode.Uri): void { this.lastWritten.delete(uri.toString()); }
+    private rememberWritten(key: string, content: Uint8Array): void {
+        this.lastWritten.set(key, content);
+        this.mtimes.set(key, Date.now());
+    }
+
     async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
         const mtime = this.mtimes.get(uri.toString()) ?? Date.now();
+        const written = this.lastWritten.get(uri.toString());
+        if (written) return { type: vscode.FileType.File, ctime: 0, mtime, size: written.byteLength, permissions: undefined };
         let size = 0;
         try {
             const dax = await this.conn()?.sendRequest<string>('getDax', refFromUri(uri));
@@ -2112,9 +2442,21 @@ class DaxFileSystem implements vscode.FileSystemProvider {
     }
 
     async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-        const dax = await this.conn()?.sendRequest<string>('getDax', refFromUri(uri));
-        // Pretty-print a single-line measure so it opens/peeks readably (multi-line DAX is shown as authored).
-        return Buffer.from(this.withHeader(uri, displayDax(dax ?? '')), 'utf8');
+        const written = this.lastWritten.get(uri.toString());
+        if (written) return written;
+        try {
+            const dax = await this.conn()?.sendRequest<string>('getDax', refFromUri(uri));
+            if (dax === undefined && !this.conn()) {
+                throw vscode.FileSystemError.Unavailable('Open a model to view this DAX.');
+            }
+            // Pretty-print a single-line measure so it opens/peeks readably (multi-line DAX is shown as authored).
+            const shown = displayDax(dax ?? '');
+            this.lastShown.set(uri.toString(), shown);
+            return Buffer.from(this.withHeader(uri, shown), 'utf8');
+        } catch (e) {
+            if (e instanceof vscode.FileSystemError) throw e;
+            throw vscode.FileSystemError.Unavailable(String((e as Error)?.message ?? e));
+        }
     }
 
     // Prepend the create-then-edit name header for a header doc (URI truth, cache fallback); body-only otherwise.
@@ -2175,7 +2517,7 @@ class DaxFileSystem implements vscode.FileSystemProvider {
         let liveModelKey: string | undefined;
         let liveSession: string | undefined;   // CRITICAL 1: passed to the mutation RPCs as expectedSession (engine-side swap fence)
         let liveRevision: number | undefined;   // CRITICAL (r7/r8): the live session revision (same one sessionInfo read) — the recovery-resume proof + write fence
-        if (isHeaderDoc && conn) { const id = await this.liveModelIdentity(conn); liveModelKey = id.token; liveSession = id.sessionId; liveRevision = id.revision; }
+        if (conn) { const id = await this.liveModelIdentity(conn); liveModelKey = id.token; liveSession = id.sessionId; liveRevision = id.revision; }
         const decision = decideDaxSave(oldRef, header, body, {
             isHeaderUri: isHeaderDoc,
             uriModelKey,
@@ -2263,7 +2605,8 @@ class DaxFileSystem implements vscode.FileSystemProvider {
                     throw new Error(`Renamed to "${newName}", but saving the DAX failed: ${e?.message ?? e} Your DAX is kept here. Fix it and Save again.`);
                 }
                 await clearPendingRename(key);
-                this.mtimes.set(key, Date.now());
+                this.lastShown.set(key, body);
+                this.rememberWritten(key, content);
                 await this.warnIfModelDrifted(conn, uriModelKey);   // CRITICAL 1 (b): flag a swap that slipped the residual race
                 reopenRenamedDax(uri, newRef);   // the ref changed (rename, or a resume off a renamed base) — re-home the editor
                 void vscode.window.setStatusBarMessage(`$(check) Renamed to "${newName}" and saved. Any DAX references and Q&A synonyms follow the rename.`, 5000);
@@ -2278,13 +2621,18 @@ class DaxFileSystem implements vscode.FileSystemProvider {
             // every door (MCP + UI) uses; fencing a plain save on the GLOBAL revision would make it refuse constantly under
             // concurrent agent activity, for no safety gain the other doors have. The fence is reserved for this feature's
             // VERIFIED-RESUMPTION writes (the rename→body pair and recovery), not every save.
+            if (!shouldApplyDaxBuffer(this.lastShown.get(key), body)) {
+                this.rememberWritten(key, content);
+                return;
+            }
             try {
                 // CRITICAL 1: the engine refuses this write if the model swapped since liveSession was sampled.
                 await conn.sendRequest<SetResult>('setDax', baseRef, body, 'human', liveSession, recoveryRevision);
             } catch (e: any) {
                 throw new Error(`Saving the DAX failed: ${e?.message ?? e} Your DAX is kept here. Fix it and Save again.`);
             }
-            this.mtimes.set(key, Date.now());
+            this.lastShown.set(key, body);
+            this.rememberWritten(key, content);
             await this.warnIfModelDrifted(conn, uriModelKey);   // CRITICAL 1 (b): flag a swap that slipped the residual race
             if (baseRef !== oldRef) {
                 // A prior partial rename is now fully resolved (the body reached the renamed object) — clear the
@@ -2296,8 +2644,15 @@ class DaxFileSystem implements vscode.FileSystemProvider {
         }
 
         // decision.kind === 'body': a plain (non-header) DAX editor — save the whole document as the expression.
-        await conn?.sendRequest<SetResult>('setDax', oldRef, raw, 'human');
-        this.mtimes.set(key, Date.now());
+        if (!conn) throw new Error('Not connected to the engine yet, so this cannot be saved.');
+        if (!liveSession) throw new Error("Couldn't confirm the live model session, so nothing was saved. Reopen the object from the Model tree, then Save.");
+        if (!shouldApplyDaxBuffer(this.lastShown.get(key), raw)) {
+            this.rememberWritten(key, content);
+            return;
+        }
+        await conn.sendRequest<SetResult>('setDax', oldRef, raw, 'human', liveSession);
+        this.lastShown.set(key, raw);
+        this.rememberWritten(key, content);
     }
 
     watch(): vscode.Disposable { return new vscode.Disposable(() => { /* no-op */ }); }
@@ -2870,10 +3225,18 @@ async function formatDaxOnlineCmd(context: vscode.ExtensionContext) {
 
 // ---- commands --------------------------------------------------------------------------------
 
+// Tail of a source path so two copies of the same model name stay distinguishable on the status bar (D-144).
+function sourceTail(source?: string, max = 48): string {
+    const v = (source || '').replace(/[\\/]+$/, '');
+    if (!v) return '';
+    if (v.length <= max) return v;
+    return '…' + v.slice(-(max - 1));
+}
+
 // Set the status bar from a SessionInfo. ONE model identity: name + measure count + a live indicator when a
 // query engine is attached (a unified open of Power BI Desktop / XMLA, or an attach to a running instance).
 function setStatusFromInfo(info?: SessionInfo): void {
-    // Gate the "Save to Live Model" toolbar button on a live-bound session (opened via Power BI Desktop / XMLA).
+    // Gate the Publish toolbar button on a live-bound session (opened via Power BI Desktop / XMLA).
     void vscode.commands.executeCommand('setContext', 'semanticus.liveBound', !!info?.liveBound);
     // Health chip hygiene: opening a DIFFERENT model broadcasts no didChange, so a stale "health moved" chip
     // from the previous session would linger over the new model — hide it whenever the session identity changes.
@@ -2881,20 +3244,22 @@ function setStatusFromInfo(info?: SessionInfo): void {
     // Opening a DIFFERENT model invalidates the create-then-edit header registry (its refs are for the old model) —
     // wipe it on the same session-identity change the health chip keys off (HIGH: a reloaded window must not carry
     // stale header registrations onto a new model).
-    clearDaxHeaderDocsOnSwap(info?.sessionId);
-    // The model key stamped onto new header uris: the source path (stable across a window reload) when the model is
-    // saved, else the ephemeral session id. Used ONLY to reject a header doc minted for a DIFFERENT model at Save.
+    // Stamp the live model key BEFORE the swap closer runs, so leftover tabs compare against the model that is open now.
     daxHeaderModelKey = modelKeyOf(info);
+    clearDaxHeaderDocsOnSwap(info?.sessionId);
     renderSyncChip(info);
+    renderPublishChip(info);
     if (!info?.sessionId) { status.text = '$(database) Semanticus: no model. Run "Open Model…"'; return; }
     const live = info.liveConnected ? ' · $(broadcast) live' : '';
-    // Show which account the live model is signed in as, so identity is visible even with the drawer closed. Only when
+    // Show which account the live model is signed in as, so identity is visible even with the hub closed. Only when
     // a live connection is in play and the account is known (azcli/local report no named account — honestly omitted).
     const acct = (info.liveConnected || info.liveBound) && info.currentAccount ? ` · $(account) ${info.currentAccount}` : '';
-    status.text = `$(database) Semanticus: ${info.modelName} (${info.measures} measures)${live}${acct}`;
-    status.tooltip = info.currentAccount
-        ? `Signed in as ${info.currentAccount}${info.currentTenant ? ` · ${info.currentTenant}` : ''}`
-        : undefined;
+    const src = sourceTail(info.source);
+    status.text = `$(database) Semanticus: ${info.modelName}${src ? ` · ${src}` : ''} (${info.measures} measures)${live}${acct}`;
+    const tip: string[] = [];
+    if (info.source) tip.push(info.source);
+    if (info.currentAccount) tip.push(`Signed in as ${info.currentAccount}${info.currentTenant ? ` · ${info.currentTenant}` : ''}`);
+    status.tooltip = tip.length ? tip.join('\n') : undefined;
 }
 
 // The native sync chip: EDITING → QUERYING, tinted only when we can PROVE a divergence (a live query connection
@@ -2932,9 +3297,21 @@ function renderSyncChip(info?: SessionInfo): void {
 }
 // Re-read sessionInfo and repaint the sync chip. Used where we don't already hold a fresh SessionInfo — a
 // model/didChange (flips hasUnsavedChanges) or a webview-initiated attach/disconnect relayed through the host.
+function renderPublishChip(info?: SessionInfo): void {
+    if (!publishStatus) return;
+    if (!info?.liveBound) { publishStatus.hide(); return; }
+    publishStatus.text = '$(cloud-upload) Publish';
+    const dest = info.liveDatabase || info.modelName || 'the live model';
+    publishStatus.tooltip = `Publish changes to ${dest}. Ctrl+S never publishes.`;
+    publishStatus.show();
+}
 async function refreshSyncChip(): Promise<void> {
-    if (!conn) { syncStatus?.hide(); return; }
-    try { renderSyncChip(await conn.sendRequest<SessionInfo>('sessionInfo')); } catch { /* leave the chip as-is */ }
+    if (!conn) { syncStatus?.hide(); publishStatus?.hide(); return; }
+    try {
+        const info = await conn.sendRequest<SessionInfo>('sessionInfo');
+        renderSyncChip(info);
+        renderPublishChip(info);
+    } catch { /* leave the chips as-is */ }
 }
 async function refreshStatus(): Promise<SessionInfo | undefined> {
     if (!conn) return undefined;
@@ -2942,15 +3319,15 @@ async function refreshStatus(): Promise<SessionInfo | undefined> {
     catch { return undefined; }
 }
 
-// Native counterpart of the Connections drawer: a local project, a remembered local runtime, or a remembered XMLA
-// model can be the source. The drawer separately controls tests/queries and the final publish destination.
-// The model tree keeps its fast native picker (keyboard-first, no webview spin-up), but every remembered row now shows
-// the identity a connect will use, and carries inline account actions. It launches; it never manages — management
-// lives in the Connections drawer. Built on createQuickPick so each row can carry per-row buttons.
-async function openModelCommand(tree: ModelTreeProvider) {
+// Quick Open Model: the fast keyboard-first native picker (no webview spin-up), the separately named command the tree's
+// primary Open Model no longer runs (that now opens the shared floating hub). It launches; it never manages — management
+// lives in the Connections hub. Converged on the outcome taxonomy: Enter = Open live; inline "Query this model" and
+// "Choose account for this open"; "Add published model" routes to the hub's Add view. A typed endpoint is NOT
+// interpreted here (endpoints belong only in Add). Built on createQuickPick so each row can carry per-row buttons.
+async function quickOpenModelCommand(tree: ModelTreeProvider) {
     if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return; }
     const connection = conn;
-    type OpenPick = vscode.QuickPickItem & { id?: 'newModel' | 'file' | 'discoverLocal' | 'newXmla' | 'manage'; record?: ModelConnectionRecord };
+    type OpenPick = vscode.QuickPickItem & { id?: 'newModel' | 'file' | 'typedPath' | 'discoverLocal' | 'newXmla' | 'manage'; record?: ModelConnectionRecord };
     const known = (await connection.sendRequest<ModelConnectionRecord[]>('listConnections').catch(() => [])) ?? [];
     // One cheap silent probe (a local MSAL-record read on the engine) fills in the account for rows connected before we
     // began capturing it — so "as <account>" is honest even for older targets, and absent means "account unknown".
@@ -2963,11 +3340,12 @@ async function openModelCommand(tree: ModelTreeProvider) {
     // fall back to the per-target lastAccount as the prediction — that appears only as "last opened as" provenance (HIGH 3).
     const accountOf = (r: ModelConnectionRecord) => probeOf(r)?.account;
     const local = known.filter((r) => r.kind === 'localDesktop');
+    const files = known.filter((r) => r.kind === 'file');
     const xmla = known.filter((r) => r.kind === 'xmla');
 
-    // Per-row buttons (icon + tooltip — the native inline-action mechanism). The tooltip carries the exact wording.
-    const openAsBtn: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('account'), tooltip: 'Open as…' };
-    const signInBtn: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('sign-in'), tooltip: 'Sign in and open' };
+    // Per-row buttons (icon + tooltip — the native inline-action mechanism). The tooltips carry the exact taxonomy.
+    const accountBtn: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('account'), tooltip: 'Choose account for this open' };
+    const queryBtn: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('beaker'), tooltip: 'Query this model' };
     const manageBtn: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('gear'), tooltip: 'Manage connections' };
     const xmlaRow = (r: ModelConnectionRecord): OpenPick => {
         const account = accountOf(r);
@@ -2980,11 +3358,10 @@ async function openModelCommand(tree: ModelTreeProvider) {
         const identity = account
             ? (was && was !== account ? `as ${account} (was ${was})` : `as ${account}`)
             : (was ? `last opened as ${was}` : 'account unknown');
-        // Account actions only make sense for a switchable sign-in family (interactive / device-code). For azcli /
-        // service principal there is no account picker, so offer NO account button — the row just opens on Enter,
-        // rather than promising an "Open as…" that would silently reuse the non-interactive identity.
+        // The account button only makes sense for a switchable sign-in family (interactive / device-code); azcli /
+        // service principal have no picker, so those rows carry only Query + Manage.
         const switchable = credentialFamily(r.authMode) != null;
-        const buttons = !switchable ? [manageBtn] : account ? [openAsBtn, manageBtn] : [signInBtn, manageBtn];
+        const buttons = switchable ? [accountBtn, queryBtn, manageBtn] : [queryBtn, manageBtn];
         return {
             record: r, label: `$(cloud) ${r.modelName || r.database || r.endpoint}`, description,
             detail: `${r.endpoint}${r.database ? ` · ${r.database}` : ''} · ${identity}`,
@@ -2994,31 +3371,36 @@ async function openModelCommand(tree: ModelTreeProvider) {
     const items: OpenPick[] = [
         { id: 'newModel', label: '$(new-file) Create a new model…', detail: 'Start with a guided draft, review it with AI Assistant, then build' },
         { id: 'file', label: '$(file-directory) Open local file or project…', detail: 'Edit user-owned .bim or TMDL files, including projects already in source control' },
-        { id: 'discoverLocal', label: '$(vm) Find a running local model…', detail: 'Use one running model for editing and queries' },
+        { id: 'typedPath', label: '$(edit) Type a local path…', detail: 'Enter a .bim, TMDL folder, or Power BI project path' },
+        { id: 'discoverLocal', label: '$(vm) Find a running local model…', detail: 'Discover a running local model and open it' },
     ];
+    if (files.length) {
+        items.push({ label: 'Local files and projects', kind: vscode.QuickPickItemKind.Separator });
+        items.push(...files.map((r): OpenPick => ({ record: r, label: `$(file) ${r.modelName || path.basename(r.endpoint)}`, description: 'local', detail: r.endpoint, buttons: [manageBtn] })));
+    }
     if (local.length) {
         items.push({ label: 'Running local models', kind: vscode.QuickPickItemKind.Separator });
-        items.push(...local.map((r): OpenPick => ({ record: r, label: `$(vm) ${r.modelName || r.database || r.endpoint}`, description: r.label || 'local', detail: `${r.endpoint}${r.database ? ` · ${r.database}` : ''}` })));
+        items.push(...local.map((r): OpenPick => ({ record: r, label: `$(vm) ${localDisplayName(r)}`, description: r.label || 'local', detail: r.endpoint, buttons: [queryBtn, manageBtn] })));
     }
     if (xmla.length) {
         items.push({ label: 'Published models', kind: vscode.QuickPickItemKind.Separator });
         items.push(...xmla.map(xmlaRow));
     }
     items.push({ label: '', kind: vscode.QuickPickItemKind.Separator },
-        { id: 'newXmla', label: '$(add) Add a published model…', detail: 'Enter the endpoint once, then pick the account; it is remembered across the product' },
+        { id: 'newXmla', label: '$(add) Add a published model…', detail: 'Enter the endpoint once in Connections; it is remembered across the product' },
         { id: 'manage', label: '$(gear) Manage connections', detail: 'Accounts, environments, history' });
 
     const qp = vscode.window.createQuickPick<OpenPick>();
     qp.items = items;
-    qp.placeholder = 'Search models, or paste an XMLA endpoint or file path';
+    qp.placeholder = 'Search remembered models';
     qp.matchOnDetail = true; qp.matchOnDescription = true;
-    const pickOne = () => new Promise<{ item?: OpenPick; button?: vscode.QuickInputButton; record?: ModelConnectionRecord; value?: string }>((resolve) => {
+    const pickOne = () => new Promise<{ item?: OpenPick; button?: vscode.QuickInputButton; record?: ModelConnectionRecord }>((resolve) => {
         let resolved = false;
-        const done = (v: { item?: OpenPick; button?: vscode.QuickInputButton; record?: ModelConnectionRecord; value?: string }) => { if (!resolved) { resolved = true; resolve(v); } };
+        const done = (v: { item?: OpenPick; button?: vscode.QuickInputButton; record?: ModelConnectionRecord }) => { if (!resolved) { resolved = true; resolve(v); } };
         qp.onDidTriggerItemButton((e) => { qp.hide(); done({ button: e.button, record: (e.item as OpenPick).record }); });
-        // Enter accepts the highlighted row — OR, when the typed text matched nothing, the raw value the user pasted
-        // (the placeholder promises "paste an XMLA endpoint or file path"), so a paste is opened, not silently dropped.
-        qp.onDidAccept(() => { const item = qp.selectedItems[0]; const value = qp.value; qp.hide(); done({ item, value }); });
+        // Enter accepts the highlighted row (Open live). A typed value that matches nothing is NOT interpreted as an
+        // endpoint or path — endpoints belong only in Add — so a stray paste cancels rather than opening blind.
+        qp.onDidAccept(() => { const item = qp.selectedItems[0]; qp.hide(); done({ item }); });
         qp.onDidHide(() => done({}));
         qp.show();
     });
@@ -3026,52 +3408,60 @@ async function openModelCommand(tree: ModelTreeProvider) {
     qp.dispose();
 
     try {
-        // An inline row button was pressed: switch account, sign in and open, or jump to the manager.
+        // An inline row button was pressed: query this model, choose the account for this open, or jump to the manager.
         if (choice.button) {
             if (choice.button === manageBtn) { await openConnectionsManager(); return; }
             if (!choice.record) return;
-            const r = choice.button === signInBtn
-                ? await signInAndOpen(choice.record, known)
-                : await switchAccountAndOpen(choice.record, known);
+            if (choice.button === queryBtn) { await queryFromRemembered(choice.record); return; }
+            const r = await switchAccountAndOpen(choice.record, known);
             await finishOpen(r, tree);
             return;
         }
         const pick = choice.item;
-        if (!pick) {
-            // No row matched, but the user typed/pasted something and pressed Enter — route it to the same open flow
-            // the placeholder promises, instead of cancelling. An XMLA endpoint opens live; anything else is a path.
-            const pasted = (choice.value || '').trim();
-            if (pasted) { await finishOpen(await openFromPasted(pasted), tree); }
-            return;
-        }
+        if (!pick) return;
         if (pick.id === 'manage') { await openConnectionsManager(); return; }
+        if (pick.id === 'newXmla') { await openConnectionsManager('add'); return; }   // typed endpoints live only in the hub's Add view
         if (pick.id === 'newModel') {
             const name = await vscode.window.showInputBox({
                 title: 'Create a new model', prompt: 'Model name', placeHolder: 'Sales analytics', ignoreFocusOut: true,
                 validateInput: (v) => v.trim() ? undefined : 'Enter a model name.',
             });
             if (!name) return;
-            const current = await connection.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
-            if (current?.sessionId && current.hasUnsavedChanges) {
-                const confirm = await vscode.window.showWarningMessage(
-                    `Creating ${name.trim()} replaces the open model, which has unsaved changes.`,
-                    { modal: true }, 'Create new model');
-                if (confirm !== 'Create new model') return;
-            }
-            const created = await connection.sendRequest<OpenResult>('createModel', name.trim(), 1604);
-            await propGrid.showModel(created.modelName);
-            tree.refresh(); await refreshStatus(); void rebuildDaxSymbols();
-            try { studioPanel?.webview.postMessage({ type: 'reconnected' }); } catch { }
+            const created = await confirmAndSendOpen<OpenResult>(
+                'createModel',
+                'Creating a new model throws those changes away unless you save first.',
+                name.trim(), 1604);
+            if (!created) return;
+            await bindGridAndTree(created.modelName, tree);
             navigateStudio(extCtx, 'spec');
             return;
         }
         const r = pick.record ? await openFromRemembered(pick.record)
             : pick.id === 'file' ? await openFromFile()
-            : pick.id === 'discoverLocal' ? await openFromLocal()
-            : await openFromXmla();
+            : pick.id === 'typedPath' ? await openFromTypedPath()
+            : await openFromLocal();   // discoverLocal (newXmla is routed to the hub's Add view above)
         await finishOpen(r, tree);
     } catch (e: any) {
         vscode.window.showErrorMessage('Open failed: ' + (e?.message ?? e));
+    }
+}
+
+// Connect a remembered model for tests and queries (the "Query this model" outcome), without touching the editing
+// session — the query connection is a separate role. Mirrors the hub's Query this model.
+async function queryFromRemembered(r: ModelConnectionRecord): Promise<void> {
+    if (!conn) return;
+    const name = r.kind === 'localDesktop' ? localDisplayName(r) : (r.modelName || r.database || r.endpoint);
+    try {
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Semanticus: connecting ${name} for queries…` },
+            () => r.kind === 'localDesktop'
+                ? conn!.sendRequest('connectLocal', r.endpoint, null)
+                : conn!.sendRequest('connectXmla', r.endpoint, r.database || null, r.authMode || 'interactive', null, r.tenantId || null));
+        await refreshStatus();
+        postToPanels({ type: 'connectionChanged' });
+        vscode.window.showInformationMessage(`Now querying ${name}. The model you are editing stays open.`);
+    } catch (e: any) {
+        vscode.window.showErrorMessage('Could not connect for queries: ' + (e?.message ?? e));
     }
 }
 
@@ -3080,104 +3470,252 @@ async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): P
     if (!r) return;
     const account = r.account ? ` · as ${r.account}` : '';
     vscode.window.showInformationMessage(`Opened ${r.modelName}: ${r.tables} tables, ${r.measures} measures${r.liveConnected ? ' · live' : ''}${account}.`);
-    await propGrid.showModel(r.modelName);   // a model swap never inherits an old object's property target
-    tree.refresh();
-    await refreshStatus();
-    void rebuildDaxSymbols();   // re-seed DAX IntelliSense (completion/hover/go-to-definition) for the just-opened model
-    try { studioPanel?.webview.postMessage({ type: 'reconnected' }); } catch { /* no panel */ }
+    await bindGridAndTree(r.modelName, tree);
 }
 
-// Open the shared Connections manager. Studio hosts it as the Connections drawer; opening Studio and posting the
-// message opens the same component from the native door. Queued (like navigation) so it survives a cold panel mount.
-async function openConnectionsManager(): Promise<void> {
-    openStudio(extCtx);
-    pendingOpenConnections = true;
-    flushOpenConnections();
+async function bindGridAndTree(modelName: string | undefined, tree: ModelTreeProvider): Promise<void> {
+    await propGrid.showModel(modelName);   // a model swap never inherits an old object's property target
+    tree.refresh();
+    const info = await refreshStatus();
+    rememberLastModelPath(info?.source);
+    watchModelDisk(info?.source);
+    void rebuildDaxSymbols();
+    refreshOpenDaxEditors();
+    postToPanels({ type: 'reconnected' });
+    setTimeout(() => { void resyncPropertiesFromTree(); }, 0);
+}
+
+function refreshOpenDaxEditors(): void {
+    for (const d of vscode.workspace.textDocuments) {
+        if (d.uri.scheme === DAX_SCHEME) daxFs.signalChanged(refFromUri(d.uri));
+    }
+}
+
+function resyncPropertiesFromTree(): void {
+    if (!treeView) return;
+    const sel = [...treeView.selection].filter((n) => n.kind !== 'dfolder');
+    if (sel.length) void propGrid.showObjects(sel);
+}
+
+async function closeDaxTabsForRef(ref: string): Promise<void> {
+    for (const g of vscode.window.tabGroups.all) {
+        for (const tab of g.tabs) {
+            if (!(tab.input instanceof vscode.TabInputText)) continue;
+            const u = tab.input.uri;
+            if (u.scheme !== DAX_SCHEME) continue;
+            if (refFromUri(u) !== ref) continue;
+            try { await vscode.window.tabGroups.close(tab); } catch { /* already closed */ }
+        }
+    }
+}
+
+// Open the shared Connections hub on a given section. When Studio is ALREADY open, reveal it and open the hub as the
+// shared floating overlay (queued like navigation so it survives a cold mount). When Studio is CLOSED, host the SAME hub
+// full-page in a dedicated webview panel instead of force-opening all of Studio — the standalone door the ratified
+// design promised. Both paths mount one component (ONE bundle), so there is no second manager.
+async function openConnectionsManager(section: 'open' | 'setup' | 'accounts' | 'history' | 'add' = 'open'): Promise<void> {
+    // Guard BEFORE creating/revealing any panel: with no engine every hub RPC would error, so refuse honestly (parity
+    // with Quick Open Model's warning) rather than open a dead hub.
+    if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return; }
+    if (studioPanel) {
+        studioPanel.reveal(vscode.ViewColumn.Active);
+        pendingOpenConnections = section;
+        flushOpenConnections();
+        return;
+    }
+    openConnectionsPanel(extCtx, section);
+}
+
+// The standalone Connections hub: a singleton webview panel that reuses the studio bundle with the 'connections' view
+// flag, so main.tsx mounts ONLY the hub. It registers the SAME host relay as Studio, so every hub op reaches the one
+// engine connection exactly as it does inside Studio. The section flag lands it on the right view (Manage Connections
+// -> Current setup); a revealed existing panel is switched by the same host->webview message the overlay uses.
+function openConnectionsPanel(context: vscode.ExtensionContext, section: string = 'open'): void {
+    if (connectionsPanel) {
+        connectionsPanel.reveal(vscode.ViewColumn.Active);
+        // Always post the requested section (INCLUDING 'open') so a panel currently on Current setup jumps to Open a
+        // model when Open Model is invoked, instead of silently revealing the wrong section.
+        try { connectionsPanel.webview.postMessage({ type: 'openConnections', section }); } catch { /* disposing */ }
+        return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+        'semanticusConnections', 'Connections', vscode.ViewColumn.Active,
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
+        });
+    connectionsPanel = panel;
+    panel.onDidDispose(() => { if (connectionsPanel === panel) connectionsPanel = undefined; });
+    panel.webview.onDidReceiveMessage(studioRelayHandler(panel, true));
+    panel.webview.html = studioHtml(panel.webview, context, 'connections', section);
 }
 function flushOpenConnections() {
     if (studioPanel && studioReady && pendingOpenConnections) {
-        try { studioPanel.webview.postMessage({ type: 'openConnections' }); } catch { /* disposing */ }
-        pendingOpenConnections = false;
+        try { studioPanel.webview.postMessage({ type: 'openConnections', section: pendingOpenConnections }); } catch { /* disposing */ }
+        pendingOpenConnections = null;
     }
 }
 
-async function openFromRemembered(record: ModelConnectionRecord): Promise<OpenResult> {
-    return record.kind === 'localDesktop'
-        ? conn!.sendRequest<OpenResult>('openLocal', record.endpoint, record.database || null)
-        : vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: `Semanticus: opening ${record.modelName || record.database || 'published model'}…` },
-            () => conn!.sendRequest<OpenResult>('openLive', record.endpoint, record.database || null, record.authMode || 'interactive', null, record.tenantId || null, false),
-        );
+// Live open wait: Cancel, a 2 minute ceiling (matches the engine sign-in wait), and replace so a second
+// Quick Open of the same model dismisses the first spinner instead of stacking it (D-016).
+const OPEN_WAIT_MS = 120_000;
+const openingByKey = new Map<string, { cancel: (reason: Error) => void }>();
+function withOpenProgress(key: string, title: string, work: () => Thenable<OpenResult>): Promise<OpenResult> {
+    const prior = openingByKey.get(key);
+    if (prior) prior.cancel(new Error('Opening cancelled. A newer open of this model replaced it.'));
+    return Promise.resolve(vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+        (_progress, token) => new Promise<OpenResult>((resolve, reject) => {
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let sub: { dispose(): void } | undefined;
+            const finish = (fn: () => void) => {
+                if (settled) return;
+                settled = true;
+                openingByKey.delete(key);
+                if (timer) clearTimeout(timer);
+                sub?.dispose();
+                fn();
+            };
+            const cancel = (reason: Error) => finish(() => reject(reason));
+            timer = setTimeout(() => cancel(new Error('Opening timed out. Sign-in did not finish. Try again.')), OPEN_WAIT_MS);
+            sub = token.onCancellationRequested(() => cancel(new Error('Opening cancelled.')));
+            openingByKey.set(key, { cancel });
+            void Promise.resolve(work()).then(
+                (r) => finish(() => resolve(r)),
+                (e) => finish(() => reject(e instanceof Error ? e : new Error(String(e)))),
+            );
+        }),
+    ));
+}
+function liveOpenKey(endpoint: string, database?: string | null): string {
+    return `live:${endpoint}|${database || ''}`;
 }
 
-// The ONE shared account dialog, reached from the picker's "Open as…", the drawer's Switch account, and
-// "Sign in and open". Phase 1 is honest: the sign-in cache holds one slot per tenant, so choosing a different
-// account is a SWITCH with tenant-wide consequences, never a fake per-open override. We quantify the blast radius —
-// the remembered models on the same tenant this switch will also re-point — BEFORE anything happens.
-function switchBlastRadius(record: ModelConnectionRecord, known: ModelConnectionRecord[]): string {
-    const tenant = (record.tenantId || '').toLowerCase();
-    const family = credentialFamily(record.authMode);
-    // A sign-in is remembered per (tenant, credential family), so a switch only re-points other records that share BOTH.
-    // Count from the SAME slot the switch actually acts on: same tenant string (including the empty one) and same family.
-    const affected = known.filter((r) => r.kind === 'xmla' && r.id !== record.id
-        && (r.tenantId || '').toLowerCase() === tenant && credentialFamily(r.authMode) === family);
-    // A record with NO tenant recorded shares the empty-tenant slot with EVERY other tenantless record of the same
-    // family — whatever tenant each actually belongs to — so the honest scope is "models with no tenant recorded",
-    // never "on the same tenant" (which would falsely imply they are all the same tenant) (HIGH 3).
-    if (!tenant) {
-        return affected.length
-            ? `${affected.length} other remembered model${affected.length === 1 ? '' : 's'} with no tenant recorded also share this sign-in and will open with the new account, whatever tenant they belong to.`
-            : 'No other remembered models without a tenant recorded are affected.';
-    }
-    return affected.length
-        ? `${affected.length} other remembered model${affected.length === 1 ? '' : 's'} signed in the same way on this tenant will also open with the new account from now on.`
-        : 'No other remembered models on this tenant are affected.';
-}
-
-async function switchAccountAndOpen(record: ModelConnectionRecord, known: ModelConnectionRecord[]): Promise<OpenResult | undefined> {
-    if (!conn) return undefined;
-    const name = record.modelName || record.database || 'this model';
-    const choice = await vscode.window.showWarningMessage(
-        `Open ${name} as a different account?`,
-        { modal: true, detail: `The saved endpoint does not change, whichever account you pick. ${switchBlastRadius(record, known)} Every switch is recorded in the connection history.` },
-        'Choose account and open');
-    if (choice !== 'Choose account and open') return undefined;
-    return vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Semanticus: switching account for ${name}…` },
-        () => conn!.sendRequest<OpenResult>('openLive', record.endpoint, record.database || null, record.authMode || 'interactive', null, record.tenantId || null, true),
+async function openFromRemembered(record: ModelConnectionRecord): Promise<OpenResult | undefined> {
+    const detail = 'Opening another model throws those changes away unless you save first.';
+    if (record.kind === 'file') return confirmAndSendOpen<OpenResult>('open', detail, record.endpoint);
+    if (record.kind === 'localDesktop') return confirmAndSendOpen<OpenResult>('openLocal', detail, record.endpoint, record.database || null);
+    const decision = await confirmUnsavedWork(detail);
+    if (decision === 'cancel') return undefined;
+    if (decision === 'save') { if (!await saveCommand()) return undefined; }
+    const discard = decision === 'discard';
+    const name = record.modelName || record.database || 'published model';
+    return withOpenProgress(
+        liveOpenKey(record.endpoint, record.database),
+        `Semanticus: opening ${name}…`,
+        () => conn!.sendRequest<OpenResult>('openLive', record.endpoint, record.database || null, record.authMode || 'interactive', null, record.tenantId || null, false, null, false, null, 'human', discard),
     );
 }
 
-// A stale (signed-out / account-unknown) row: sign in and open in one step. Forces the account picker (forceReauth),
-// so a failed authorization returns to the account choice, never to an endpoint form.
-async function signInAndOpen(record: ModelConnectionRecord, known: ModelConnectionRecord[]): Promise<OpenResult | undefined> {
-    if (record.kind === 'localDesktop') return openFromRemembered(record);
-    return switchAccountAndOpen(record, known);
+// Open a remembered model with an explicit Phase 2 account choice: a saved profile pinned for THIS open only
+// (accountProfileId, never repointing the tenant default), or a fresh Microsoft sign-in (forceReauth, which adds a
+// profile). A failed authorization surfaces its error and the caller returns to the account choice, never an endpoint form.
+async function openWith(record: ModelConnectionRecord, opts: { forceReauth?: boolean; accountProfileId?: string; loginHint?: string }): Promise<OpenResult | undefined> {
+    const name = record.modelName || record.database || 'published model';
+    const detail = 'Opening another model throws those changes away unless you save first.';
+    const decision = await confirmUnsavedWork(detail);
+    if (decision === 'cancel') return undefined;
+    if (decision === 'save') { if (!await saveCommand()) return undefined; }
+    const discard = decision === 'discard';
+    return withOpenProgress(
+        liveOpenKey(record.endpoint, record.database),
+        `Semanticus: opening ${name}…`,
+        () => conn!.sendRequest<OpenResult>('openLive', record.endpoint, record.database || null, record.authMode || 'interactive', null,
+            record.tenantId || null, opts.forceReauth ?? false, opts.accountProfileId ?? null, false, opts.loginHint ?? null, 'human', discard),
+    );
 }
 
-// A value pasted into the Open picker: an XMLA endpoint (a URI scheme like powerbi:// or asazure://, or a
-// "Data Source=" connection form) opens live with a browser sign-in (the safe default; the account can be switched
-// afterwards). Anything else is treated as a .bim/.tmdl file or a PBIP/TMDL folder path. Mirrors the two open flows
-// the picker's rows already offer, so a paste is never dropped.
-async function openFromPasted(value: string): Promise<OpenResult | undefined> {
-    const v = value.trim();
-    if (!v || !conn) return undefined;
-    const looksXmla = /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^data source=/i.test(v);
-    if (looksXmla) {
-        return vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: 'Semanticus: connecting to XMLA…' },
-            () => conn!.sendRequest<OpenResult>('openLive', v, null, 'interactive', null, null, false));
+// The ONE shared account dialog, native form, reached from the picker's "Open as…" and "Sign in and open". Phase 2:
+// saved profiles are selectable PER OPEN (never repointing the tenant default); "Sign in another account" adds a profile
+// via the real Microsoft picker. Management (making an account the default) lives in the Connections hub — the picker
+// launches, it never manages. A failed/denied authorization returns HERE — the picker is RE-SHOWN (item 7), never an
+// endpoint form — so the user can pick another account or retry.
+async function switchAccountAndOpen(record: ModelConnectionRecord, _known: ModelConnectionRecord[]): Promise<OpenResult | undefined> {
+    if (!conn) return undefined;
+    const name = record.modelName || record.database || 'this model';
+    const family = credentialFamily(record.authMode);
+    const tenant = (record.tenantId || '').toLowerCase();
+    // Loop so a failed authorization returns to the account choice (parity with the hub dialog), never to an endpoint form.
+    for (;;) {
+        const profiles = ((await conn.sendRequest<AccountProfile[]>('listAccountProfiles').catch(() => [])) ?? [])
+            .filter((p) => credentialFamily(p.family) === family && (!tenant || (p.tenantId || '').toLowerCase() === tenant));
+        type P = vscode.QuickPickItem & { profile?: AccountProfile; act?: 'signin' | 'manage' };
+        const items: P[] = [];
+        for (const p of profiles) {
+            const bits = [p.tenantId ? `${p.tenantId} tenant` : 'tenant unknown', p.signedIn ? 'signed in' : 'signed out'];
+            items.push({
+                profile: p,
+                label: `$(account) ${p.username}`,
+                description: p.isDefault ? 'default' : (p.signedIn ? 'use for this open' : 'signed out'),
+                detail: bits.join(' · '),
+            });
+        }
+        items.push({ act: 'signin', label: '$(add) Sign in another account', detail: 'opens the Microsoft sign-in picker; adds a saved profile' });
+        items.push({ act: 'manage', label: '$(gear) Manage accounts and defaults', detail: 'set which account is the default for this tenant, in Connections' });
+        const pick = await vscode.window.showQuickPick(items, {
+            title: `Who should open ${name}?`,
+            placeHolder: 'This choice applies to this open. The saved endpoint stays the same whichever account you pick.',
+            matchOnDetail: true,
+        });
+        if (!pick) return undefined;
+        if (pick.act === 'manage') { await openConnectionsManager(); return undefined; }
+        try {
+            // A saved-but-signed-out NAMED profile re-signs with a loginHint so the picker targets that identity (item 12).
+            if (pick.profile && !pick.profile.signedIn) return await openWith(record, { forceReauth: true, loginHint: pick.profile.username });
+            // "Sign in another account" opens an unrestricted picker (adds a new profile).
+            if (pick.act === 'signin') return await openWith(record, { forceReauth: true });
+            // A saved, signed-in profile → pin it for THIS open only.
+            return await openWith(record, { accountProfileId: pick.profile!.id });
+        } catch (e: any) {
+            const again = await vscode.window.showWarningMessage(
+                `Could not open ${name} with that account: ${e?.message ?? e}`,
+                { modal: true }, 'Choose another account');
+            if (again !== 'Choose another account') return undefined;
+            // loop back to the account choice
+        }
     }
-    return conn.sendRequest<OpenResult>('open', v);
 }
 
 async function openFromFile(): Promise<OpenResult | undefined> {
-    const picked = await vscode.window.showOpenDialog({
-        canSelectFiles: true, canSelectFolders: true, canSelectMany: false,
-        openLabel: 'Open semantic model', filters: { 'Semantic models': ['bim', 'tmdl'] },
-    });
+    // Electron on Linux cannot offer files AND folders in one dialog and degrades to folder-only
+    // (D-146): a .bim or flat .tmdl never appears. Ask which shape first, then open the matching picker.
+    const kind = await vscode.window.showQuickPick(
+        [
+            { label: 'Open a file', detail: 'A .bim or .tmdl model file', id: 'file' as const },
+            { label: 'Open a folder', detail: 'A model folder or a Power BI project', id: 'folder' as const },
+        ],
+        { placeHolder: 'Open a semantic model from disk' },
+    );
+    if (!kind) return undefined;
+    const picked = kind.id === 'file'
+        ? await vscode.window.showOpenDialog({
+            canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
+            openLabel: 'Open a file', filters: { 'Semantic models': ['bim', 'tmdl'] },
+        })
+        : await vscode.window.showOpenDialog({
+            canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+            openLabel: 'Open a folder',
+        });
     if (!picked || picked.length === 0) return undefined;
-    return conn!.sendRequest<OpenResult>('open', picked[0].fsPath);
+    return confirmAndSendOpen<OpenResult>('open', 'Opening another model throws those changes away unless you save first.', picked[0].fsPath);
+}
+
+async function openFromTypedPath(): Promise<OpenResult | undefined> {
+    const typed = await vscode.window.showInputBox({
+        title: 'Open a local model',
+        prompt: 'Path to a .bim file, TMDL folder, or Power BI project',
+        ignoreFocusOut: true,
+        validateInput: (v) => {
+            const t = v.trim();
+            if (!t) return 'Please enter a path that exists.';
+            try { return fs.existsSync(t) ? undefined : 'Please enter a path that exists.'; }
+            catch { return 'Please enter a path that exists.'; }
+        },
+    });
+    if (!typed?.trim()) return undefined;
+    return confirmAndSendOpen<OpenResult>('open', 'Opening another model throws those changes away unless you save first.', typed.trim());
 }
 
 async function openFromLocal(): Promise<OpenResult | undefined> {
@@ -3197,10 +3735,9 @@ async function openFromLocal(): Promise<OpenResult | undefined> {
         if (!p) return undefined;
         ds = p.ds;
     }
-    return vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'Semanticus: opening local model…' },
-        () => conn!.sendRequest<OpenResult>('openLocal', ds, null),
-    );
+    const opened = await confirmAndSendOpen<OpenResult>('openLocal', 'Opening another model throws those changes away unless you save first.', ds, null);
+    if (!opened) return undefined;
+    return opened;
 }
 
 // T13 migration: the engine registry is now the only connection history. Import the extension's former globalState
@@ -3221,112 +3758,85 @@ async function migrateLegacyXmlaHistory(): Promise<void> {
         out.appendLine('Legacy XMLA connection migration will retry: ' + (e?.message ?? e));
     }
 }
-// forceReauth: the interactive families cache ONE saved sign-in per (client, tenant). "Use a different account…"
-// ignores that saved sign-in and shows the Entra account picker, then persists the newly chosen identity — the
-// recovery path when the cache is stuck on the wrong account (e.g. a different tenant's workspace shows "not found").
-interface AuthMode { mode: string; label: string; detail: string; forceReauth?: boolean; }
-const AUTH_MODES: AuthMode[] = [
-    { mode: 'interactive', label: 'Microsoft Entra (interactive)', detail: 'Browser sign-in / MFA; reuses your saved sign-in' },
-    { mode: 'interactive', label: 'Microsoft Entra: use a different account…', detail: 'Forces the account picker; ignores the saved sign-in (switch tenant/identity)', forceReauth: true },
-    { mode: 'serviceprincipal', label: 'Service principal', detail: 'Reads AZURE_CLIENT_ID/SECRET/TENANT (or FABRIC_*) from the engine env; reliable for Fabric' },
-    { mode: 'azcli', label: 'Azure CLI', detail: 'Uses your current `az login` session' },
-];
-async function openFromXmla(): Promise<OpenResult | undefined> {
-    const endpoint = await vscode.window.showInputBox({
-        prompt: 'XMLA endpoint', ignoreFocusOut: true,
-        placeHolder: 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>',
-    });
-    if (!endpoint) return undefined;
-    const database = await vscode.window.showInputBox({
-        prompt: 'Model / database (optional, leave empty for the endpoint\'s only/first model)', ignoreFocusOut: true,
-    });
-    if (database === undefined) return undefined;
-    const authPick = await vscode.window.showQuickPick(AUTH_MODES, { placeHolder: 'Authentication' });
-    if (!authPick) return undefined;
-
-    const ep = endpoint, db = database || undefined, am = authPick.mode;
-    const r = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'Semanticus: connecting to XMLA…' },
-        () => conn!.sendRequest<OpenResult>('openLive', ep, db || null, am, null, null, authPick.forceReauth ?? false),
-    );
-    return r;
-}
-
-async function saveCommand() {
-    if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return; }
+async function saveCommand(overwrite = false): Promise<boolean> {
+    if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return false; }
     try {
-        const r = await conn.sendRequest<SaveResult>('save', null, 'TMDL');
+        // Infer BIM from the open path so Save Model does not ask TE2 to write a TMDL folder on top of a
+        // .bim file ("already exists", D-032). The engine also infers this, so both doors stay honest.
+        const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+        const src = info?.source ?? '';
+        if (!src) {
+            const dest = await pickFirstSaveDestination(info?.modelName);
+            if (!dest) return false;
+            const r = await conn.sendRequest<SaveResult>('save', dest.path, dest.format, overwrite);
+            rememberLastModelPath(r.path);
+            watchModelDisk(r.path);
+            vscode.window.showInformationMessage(`Saved ${r.format} → ${r.path} (${r.fileCount} files).`);
+            return true;
+        }
+        const format = /\.bim$/i.test(src) ? 'BIM' : 'TMDL';
+        const r = await conn.sendRequest<SaveResult>('save', null, format, overwrite);
+        rememberLastModelPath(r.path);
+        watchModelDisk(r.path);
         vscode.window.showInformationMessage(`Saved ${r.format} → ${r.path} (${r.fileCount} files).`);
+        return true;
     } catch (e: any) {
-        vscode.window.showErrorMessage('Save failed: ' + (e?.message ?? e));
+        const msg = String(e?.message ?? e);
+        if (!overwrite && /files on disk changed/i.test(msg)) {
+            const choice = await vscode.window.showWarningMessage(
+                'The files on disk changed.',
+                { modal: true, detail: 'Saving now would replace those files with this model.' },
+                'Replace files on disk');
+            if (choice === 'Replace files on disk') return saveCommand(true);
+            return false;
+        }
+        vscode.window.showErrorMessage('Save failed: ' + msg);
+        return false;
     }
 }
 
-// Save to the LIVE model the session was opened from (open_local / open_live). A live WRITE — so it always runs a
-// DRY RUN first, shows the exact change set, and only writes after an explicit modal confirm. Local Power BI Desktop
-// writes back with integrated auth (no prompt); a cloud XMLA write asks for the write principal (service principal
-// is the reliable one for Fabric). Metadata only — no data refresh, no object add/delete (engine-enforced).
+// Publish to the live model this session was opened from. The confirm card on Ship > Deploy is the one write
+// surface (option C): the chip, the tree icon, the palette and the Ship page button all land there.
 async function saveToLiveCommand() {
     if (!conn) { warnNoEngine(); return; }
     const info = await conn.sendRequest<SessionInfo>('sessionInfo');
     if (!info?.liveBound || !info.liveEndpoint) {
-        vscode.window.showWarningMessage('This model wasn’t opened from a live source. Use Open Model… → Power BI Desktop or XMLA, then deploy changes back.');
+        vscode.window.showWarningMessage('This model was not opened from a live source. Open it from a live model, then publish.');
         return;
     }
-    // Auth is REUSED from how the model was opened — no re-prompt, like Tabular Editor. Passing authMode=null makes
-    // the engine reuse the live binding's mode (local Power BI Desktop = integrated/no token; cloud = the cached
-    // open token via MSAL). 1) DRY RUN — compute the change set, write nothing.
-    let dry: DeployReport;
-    try {
-        dry = await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: 'Semanticus: computing changes (dry run)…' },
-            () => conn!.sendRequest<DeployReport>('deployLive', null, null, null, null, null, false),
-        );
-    } catch (e: any) { vscode.window.showErrorMessage('Save to live (dry run) failed: ' + (e?.message ?? e)); return; }
-    if (dry.error) { vscode.window.showErrorMessage('Save to live (dry run): ' + dry.error); return; }
-    if (!dry.totalChanges) { vscode.window.showInformationMessage('No metadata changes to deploy. The live model already matches the session.'); return; }
-    // 2) CONFIRM — modal, with the exact change list.
-    const list = (dry.changes ?? []).slice(0, 12).join('\n');
-    const more = (dry.totalChanges ?? 0) > 12 ? `\n…and ${(dry.totalChanges ?? 0) - 12} more` : '';
-    const extra = [
-        dry.added ? `\n+ ${dry.added} new object(s) (measures / calculated columns) will be created.` : '',
-        dry.conflicts?.length ? `\nWarning: ${dry.conflicts.length} rename conflict(s) will be skipped.` : '',
-        dry.unmatched?.length ? `\nNote: ${dry.unmatched.length} object(s) can’t be deployed here (new tables / data columns, left out).` : '',
-    ].join('');
-    const go = await vscode.window.showWarningMessage(
-        `Deploy ${dry.totalChanges} metadata change(s) to the live model “${dry.database}”?`,
-        { modal: true, detail: `Endpoint: ${dry.endpoint}\n\n${list}${more}${extra}\n\nMetadata only (incl. new measures / calc columns). No data refresh, no deletes. This writes to the LIVE model.` },
-        'Deploy',
-    );
-    if (go !== 'Deploy') return;
-    // 3) COMMIT.
-    try {
-        const res = await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: 'Semanticus: deploying to the live model…' },
-            () => conn!.sendRequest<DeployReport>('deployLive', null, null, null, null, null, true),
-        );
-        if (res.error) vscode.window.showErrorMessage('Deploy failed; nothing was committed: ' + res.error);
-        else if (res.committed) vscode.window.showInformationMessage(`Deployed ${res.totalChanges} change(s) to “${res.database}”.`);
-        else vscode.window.showWarningMessage(`Deploy made no changes (${res.totalChanges ?? 0} computed).`);
-    } catch (e: any) {
-        // The Verified-Edits deploy gate is an ACCOUNTABLE PAUSE, never a hard wall (golden rule #2 — the agent door
-        // can override, so the human door must too). A RED gate throws "…blocked by the deploy gate — <blockers>…";
-        // catch just that, show the blockers, and offer an "Override & Deploy…" that captures a required reason and
-        // retries with it (mirroring the engine, which rejects an empty/whitespace override reason).
-        const emsg = String(e?.message ?? e);
-        if (emsg.includes('blocked by the deploy gate')) { await overrideDeployToLive(emsg); return; }
-        vscode.window.showErrorMessage('Deploy failed: ' + emsg);
-    }
+    if (!extCtx) { vscode.window.showWarningMessage('Semanticus is still starting. Try Publish again in a moment.'); return; }
+    navigateStudio(extCtx, 'deploy', 'publish');
+}
+
+function shortLiveOnlyName(ref: string): string {
+    const cut = ref.indexOf(' (live-only');
+    const r = cut >= 0 ? ref.slice(0, cut) : ref;
+    const colon = r.indexOf(':');
+    const rest = colon >= 0 ? r.slice(colon + 1) : r;
+    const slash = rest.lastIndexOf('/');
+    return slash >= 0 ? rest.slice(slash + 1) : rest;
+}
+
+async function pickLiveOnlyDeletes(database: string | undefined, liveOnly: string[]): Promise<string[] | undefined> {
+    const items = liveOnly.map((ref) => ({ label: shortLiveOnlyName(ref), description: ref, picked: false as boolean, ref }));
+    const picked = await vscode.window.showQuickPick(items, {
+        title: `On ${database || 'the live model'} but not in your copy`,
+        placeHolder: 'Nothing is removed unless you tick it',
+        canPickMany: true,
+        ignoreFocusOut: true,
+    });
+    if (!picked) return undefined;
+    return picked.map((p) => p.ref);
 }
 
 // The accountable-override path for Save to Live when the deploy gate blocks. Surfaces the blockers, requires a typed
 // reason (engine-enforced too), then retries deployLive with origin='human' + the reason as the 8th/9th params.
-async function overrideDeployToLive(gateMsg: string) {
+async function overrideDeployToLive(gateMsg: string, confirmToken?: string, deleteRefs: string[] = []) {
     if (!conn) { warnNoEngine(); return; }
-    const pick = await vscode.window.showWarningMessage(gateMsg, { modal: true, detail: 'The readiness gate blocked this deploy. You can override with a written reason; it is recorded, permanently, in the Verified Edits trail.' }, 'Override & Deploy…');
+    const pick = await vscode.window.showWarningMessage(gateMsg, { modal: true, detail: 'This change introduced problems. Fix them, or waive a finding with a reason on AI Readiness. You can still publish with a written reason. The reason is recorded in Edits.' }, 'Override & Deploy…');
     if (pick !== 'Override & Deploy…') return;
     const reason = await vscode.window.showInputBox({
-        prompt: 'Reason for overriding the deploy gate (recorded in the Verified Edits trail)',
+        prompt: 'Reason for publishing anyway (recorded in Edits)',
         placeHolder: 'Why is it acceptable to deploy despite the blockers?',
         ignoreFocusOut: true,
         validateInput: (v) => (v.trim() ? null : 'A reason is required to override the gate.'),
@@ -3335,7 +3845,7 @@ async function overrideDeployToLive(gateMsg: string) {
     try {
         const res = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: 'Semanticus: deploying to the live model (override)…' },
-            () => conn!.sendRequest<DeployReport>('deployLive', null, null, null, null, null, true, 'human', reason.trim()),
+            () => conn!.sendRequest<DeployReport>('deployLive', null, null, null, null, null, true, 'human', reason.trim(), confirmToken, deleteRefs),
         );
         if (res.error) vscode.window.showErrorMessage('Deploy failed; nothing was committed: ' + res.error);
         else if (res.committed) vscode.window.showWarningMessage(`Deployed ${res.totalChanges} change(s) to “${res.database}” (gate overridden).`);
@@ -3353,13 +3863,11 @@ async function overrideDeployToLive(gateMsg: string) {
 //   • bundled 'exe' → command = the self-contained engine exe, args = ["mcp","--workspace",ws] (no dotnet needed);
 //   • dev 'dll'     → command = the resolved dotnet, args = [dll,"mcp","--workspace",ws].
 // The engine is attach-or-own (ONE server model): this `mcp` process ATTACHES to a running owner engine (the
-// one VS Code Studio spawned) when present, else owns the model itself. Entitlement follows the OWNER engine,
-// so no env block here (env blocks in .mcp.json are historically unreliable). A Pro licence, when the user
-// has one, is delivered via the RELIABLE --license flag (appended only when semanticus.licenseToken is set).
-function semanticusMcpEntry(engine: ResolvedEngine, ws: string, licenseToken: string): McpServerEntry {
+// one VS Code Studio spawned) when present, else owns the model itself. Entitlement follows the OWNER engine.
+// The token is never written into .mcp.json argv: that would put it on the MCP process command line.
+function semanticusMcpEntry(engine: ResolvedEngine, ws: string): McpServerEntry {
     const command = engine.kind === 'exe' ? engine.path : resolveDotnet();
-    const args = engine.kind === 'exe' ? ['mcp', '--workspace', ws] : [engine.path, 'mcp', '--workspace', ws];
-    if (licenseToken) args.push('--license', licenseToken);
+    const args = engine.kind === 'exe' ? mcpLaunchArgs(ws) : [engine.path, ...mcpLaunchArgs(ws)];
     return { command, args };
 }
 
@@ -3397,15 +3905,13 @@ async function autoHealSemanticusMcpEntry(context: vscode.ExtensionContext): Pro
     const prior = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? (parsed as any).mcpServers?.semanticus
         : undefined;
-    const licenseToken = await getLicenseToken(context, { reconcile: false });
-    const entry = semanticusMcpEntry(engine, path.resolve(ws), licenseToken);
+    const entry = semanticusMcpEntry(engine, path.resolve(ws));
     if (!shouldAutoHealMcpEntry(prior, entry, process.platform)) return;
 
     const merged = mergeMcpConfig(parsed, entry).merged;
     try { fs.writeFileSync(target, JSON.stringify(merged, null, 2) + '\n', 'utf8'); }
     catch (e: any) { out.appendLine(`AI Assistant connection auto-heal failed: ${e?.message ?? e}`); return; }
     out.appendLine(`Updated the Semanticus AI Assistant entry to bundled engine ${engine.path}.`);
-    if (licenseToken) await warnIfMcpJsonNotIgnored(ws);
 
     const noticeKey = `mcpAutoHealNotice:${target}:${engine.path}`;
     if (!context.globalState.get<boolean>(noticeKey)) {
@@ -3560,9 +4066,9 @@ async function connectClaudeCodeCmd(): Promise<void> {
     try { engine = resolveEngine(); }
     catch (e: any) { vscode.window.showErrorMessage(e?.message ?? String(e)); return; }
 
-    // A Pro licence token, if the user has set one, rides along via the reliable --license flag.
-    const licenseToken = await getLicenseToken();
-    const entry = semanticusMcpEntry(engine, path.resolve(ws), licenseToken);
+    // Reconcile any leftover plaintext token. The AI Assistant entry does not carry the token on argv.
+    await getLicenseToken();
+    const entry = semanticusMcpEntry(engine, path.resolve(ws));
     const target = path.join(ws, '.mcp.json');
 
     let merged: Record<string, any>;
@@ -3598,14 +4104,14 @@ async function connectClaudeCodeCmd(): Promise<void> {
     catch (e: any) { vscode.window.showErrorMessage(`Could not write ${target}: ${e?.message ?? e}`); return; }
     refreshAiConnectStatus();   // the folder is wired now — drop the call-to-action chip
 
-    // The token in .mcp.json args is the DOCUMENTED delivery channel for the user's own Claude Code (kept intact) —
-    // but if the file now holds a token and isn't git-ignored, nudge once so it doesn't get committed to a shared repo.
-    if (licenseToken) await warnIfMcpJsonNotIgnored(ws);
+    // The token is not written into .mcp.json. Entitlement follows the owner engine over the pipe.
 
     // The restart is the step users miss: an .mcp.json change is only picked up on the AI Assistant's next start,
     // so lead with it (a fresh assistant process discovers the server; a running one needs a tools refresh).
+    // Honest on purpose: this command wrote a file. Nothing is connected until the AI Assistant next starts in
+    // this folder, so the toast says what happened rather than what the user is hoping for (D-210).
     const pick = await vscode.window.showInformationMessage(
-        'AI Assistant connected. Last step: restart it in this folder (or refresh its tools) so it loads them. Keep VS Code open so Studio holds the shared live session.',
+        'Wrote the connection file for the AI Assistant. Nothing is connected yet: restart it in this folder (or refresh its tools) so it reads the file. Keep VS Code open so Studio holds the shared live session.',
         'Open .mcp.json',
     );
     if (pick === 'Open .mcp.json') void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(target));
@@ -3755,7 +4261,7 @@ async function authorNewFunction() {
     if (!conn) { warnNoEngine(); return; }
     // Zero dialog: UDF names forbid spaces, so the generated name (and its collision suffix) is space-free.
     const name = uniqueName('NewFunction', await existingNames('function'), '');
-    await createThenEdit('createFunction', [name, '(x: INT64) => x'], 'function (needs compat level 1702+)', '');
+    await createThenEdit('createFunction', [name, '(x: INT64) => x'], 'function', '');
 }
 
 // ---- Create (per parent node) ----
@@ -3957,26 +4463,42 @@ async function hierarchyFromColumnsCmd(node?: TreeNode, nodes?: TreeNode[]) {
 
 async function authorNewRelationship(n: TreeNode) {
     if (!conn) { warnNoEngine(); return; }
-    // ONE picker (was a free-text ref InputBox): the candidate lookup columns on OTHER tables — the "one" side this
-    // many-side column points to. The from-column is the clicked node, so a single choice completes the relationship.
+    // ONE picker: lookup columns on OTHER tables of the SAME type. The engine also refuses a mismatched pair, so
+    // filtering here is the honest UI half of that shared check (D-038).
     const fromTable = refParts(n.ref).table;
     const items: (vscode.QuickPickItem & { ref: string })[] = [];
     try {
-        const roots = await conn.sendRequest<TreeNode[]>('listTree', null);
-        for (const t of roots.filter((r) => r.kind === 'table')) {
-            if (t.name === fromTable) continue;
-            for (const k of await conn.sendRequest<TreeNode[]>('listTree', t.ref)) {
-                if (k.kind === 'column' || k.kind === 'calcColumn') items.push({ label: `${t.name}[${k.name}]`, ref: k.ref });
-            }
+        const cols = await conn.sendRequest<{ ref: string; name: string; table: string; dataType: string }[]>('listColumns');
+        const from = cols.find((c) => c.ref === n.ref);
+        const fromType = from?.dataType;
+        for (const c of cols) {
+            if (c.table === fromTable) continue;
+            if (fromType && c.dataType !== fromType) continue;
+            items.push({ label: `${c.table}[${c.name}]`, description: plainColumnType(c.dataType), ref: c.ref });
         }
     } catch { /* engine hiccup — handled by the empty check below */ }
-    if (!items.length) { vscode.window.showInformationMessage('No columns on other tables to relate to. Add a lookup table first.'); return; }
+    if (!items.length) {
+        vscode.window.showInformationMessage('No columns of the same type on other tables. A relationship needs matching types.');
+        return;
+    }
     const pick = await vscode.window.showQuickPick(items, {
         title: `New relationship from ${n.name}`, matchOnDescription: true,
-        placeHolder: 'Pick the lookup column this column points to (many-to-one)',
+        placeHolder: 'Pick the lookup column this column points to (many-to-one). Same type only.',
     });
     if (!pick) return;
     await createAndRefresh('createRelationship', [n.ref, pick.ref, null, null], 'relationship');
+}
+
+function plainColumnType(t?: string): string {
+    switch ((t || '').toLowerCase()) {
+        case 'int64': return 'whole number';
+        case 'string': return 'text';
+        case 'datetime': return 'date';
+        case 'boolean': return 'true/false';
+        case 'decimal': return 'decimal';
+        case 'double': return 'decimal number';
+        default: return t || '';
+    }
 }
 
 // ---- Universal edit / navigation ----
@@ -4114,10 +4636,10 @@ async function pasteObjectCmd(n?: TreeNode) {
     }
 }
 
-// F2 / right-click Rename: show the object in the Properties view and put the caret in its Name row
-// (text selected, ready to type over). The grid's Name write goes through the same engine property path
-// (DAX references auto-rewritten), so nothing is lost vs the old InputBox — which remains available as
-// "Rename with Input Box" (semanticus.renameObjectInputBox) for anyone who prefers the prompt.
+// Right-click Rename: show the object in the Properties view and put the caret in its Name row
+// (text selected, ready to type over). F2 is bound to renameObjectInputBox instead, because the tree
+// keeps focus and the grid never appears. The grid's Name write still goes through the same engine
+// property path (DAX references auto-rewritten).
 async function renameInPropertiesCmd(n?: TreeNode, ns?: TreeNode[]) {
     if (!conn) { warnNoEngine(); return; }
     // Rename acts on exactly ONE object. A right-click passes the clicked node (n); the F2 keybinding / palette
@@ -4149,9 +4671,13 @@ async function renameCmd(n?: TreeNode) {
     n ??= treeView?.selection[0];   // no node passed — rename the tree selection
     if (!n?.ref) { vscode.window.showInformationMessage('Select an object in the Model tree to rename.'); return; }
     if (n.kind === 'dfolder') { await renameFolderCmd(n); return; }   // a folder rename is the prefix rewrite, not renameObject
-    const newName = await vscode.window.showInputBox({ prompt: `Rename this ${COPYABLE_KINDS[n.kind] ?? n.kind} "${n.name}". DAX references are auto-rewritten.`, value: n.name });
+    const newName = await vscode.window.showInputBox({ prompt: `Rename this ${COPYABLE_KINDS[n.kind] ?? n.kind} "${n.name}". DAX references are auto-rewritten. Names in reports are not.`, value: n.name });
     if (!newName || newName === n.name) return;
-    try { await conn.sendRequest('renameObject', n.ref, newName, 'human'); tree.refresh(); }
+    try {
+        const result = await conn.sendRequest<RenameResult>('renameObject', n.ref, newName, 'human');
+        tree.refresh();
+        if (result?.warning) void vscode.window.showWarningMessage(result.warning);
+    }
     catch (e: any) { vscode.window.showErrorMessage('Rename failed: ' + (e?.message ?? e)); }
 }
 
@@ -4163,9 +4689,15 @@ async function authorDelete(node?: TreeNode, nodes?: TreeNode[]) {
     const ok = await vscode.window.showWarningMessage(`Delete ${label}? DAX references are NOT auto-rewritten, so check dependents first.`, { modal: true }, 'Delete');
     if (ok !== 'Delete') return;
     try {
-        for (const t of targets) await conn.sendRequest('deleteObject', t.ref, 'human');
+        const refs = targets.map((t) => t.ref).filter(Boolean);
+        if (refs.length === 1) await conn.sendRequest('deleteObject', refs[0], 'human');
+        else await conn.sendRequest('deleteObjects', refs, 'human');
         tree.refresh();
-    } catch (e: any) { vscode.window.showErrorMessage('Delete failed: ' + (e?.message ?? e)); }
+    } catch (e: any) {
+        const msg: string = e?.message ?? String(e);
+        if (/formula/i.test(msg)) void vscode.window.showInformationMessage(msg);
+        else vscode.window.showErrorMessage('Delete failed: ' + msg);
+    }
 }
 
 /// Read-only Script ▸ (DAX / TMDL / TMSL) of the whole selection → opens the script in a scratch Monaco doc.
@@ -4319,8 +4851,13 @@ async function setFormatCmd(n: TreeNode) {
     } catch (e: any) { vscode.window.showErrorMessage('Set format failed: ' + (e?.message ?? e)); }
 }
 
-async function timeIntelCmd(n: TreeNode) {
-    if (!conn || !n) return;
+async function timeIntelCmd(n?: TreeNode) {
+    if (!conn) { warnNoEngine(); return; }
+    n ??= treeView?.selection[0];
+    if (!n?.ref || n.kind !== 'measure') {
+        vscode.window.showInformationMessage('Select a measure in the Model tree, then run Generate Time-Intelligence.');
+        return;
+    }
     const dateCol = await vscode.window.showInputBox({ prompt: `Date column for time-intelligence on ${n.name}`, placeHolder: "column:Date/Date or 'Date'[Date]" });
     if (!dateCol) return;
     try {
@@ -4333,7 +4870,18 @@ async function timeIntelCmd(n: TreeNode) {
 // ---- Column-specific ----
 async function summarizeByCmd(n: TreeNode) {
     if (!conn || !n) return;
-    const pick = await vscode.window.showQuickPick(['None', 'Sum', 'Average', 'Min', 'Max', 'Count', 'DistinctCount'], { title: `Default summarization for ${n.name}` });
+    let dataType = '';
+    try {
+        const info = await conn.sendRequest<{ properties?: Record<string, unknown> }>('getObject', n.ref);
+        dataType = String(info?.properties?.dataType ?? '');
+    } catch { /* picker still offers the full list; the engine refuses an invalid pick */ }
+    const numeric = /^(Int64|Decimal|Double)$/i.test(dataType);
+    const date = /^DateTime$/i.test(dataType);
+    const options = numeric
+        ? ['None', 'Sum', 'Average', 'Min', 'Max', 'Count', 'DistinctCount']
+        : date ? ['None', 'Min', 'Max', 'Count', 'DistinctCount']
+        : ['None', 'Count', 'DistinctCount'];
+    const pick = await vscode.window.showQuickPick(options, { title: `Default summarization for ${n.name}` });
     if (!pick) return;
     try { await conn.sendRequest('setColumnMetadata', n.ref, null, pick, null, null, 'human'); tree.refresh(); }
     catch (e: any) { vscode.window.showErrorMessage('Set summarize-by failed: ' + (e?.message ?? e)); }
@@ -4342,9 +4890,19 @@ async function summarizeByCmd(n: TreeNode) {
 async function dataCategoryCmd(n: TreeNode) {
     if (!conn || !n) return;
     const cats = ['Address', 'City', 'Continent', 'Country', 'County', 'Latitude', 'Longitude', 'PostalCode', 'StateOrProvince', 'Place', 'WebUrl', 'ImageUrl', 'Barcode'];
-    const pick = await vscode.window.showQuickPick(cats, { title: `Data category for ${n.name}` });
+    let current = '';
+    try {
+        const props = await conn.sendRequest<PropDesc[]>('getObjectProperties', n.ref);
+        current = props.find((p) => p.name === 'DataCategory')?.value ?? '';
+    } catch { /* picker still works without a current marker */ }
+    if (current && !cats.includes(current)) cats.unshift(current);
+    const items = [
+        { label: current === '' ? '$(check) None' : 'None', description: 'Clear the data category', value: '' },
+        ...cats.map((c) => ({ label: c === current ? `$(check) ${c}` : c, description: c === current ? 'Currently set' : undefined, value: c })),
+    ];
+    const pick = await vscode.window.showQuickPick(items, { title: `Data category for ${n.name}` });
     if (!pick) return;
-    try { await conn.sendRequest('setColumnMetadata', n.ref, null, null, pick, null, 'human'); tree.refresh(); }
+    try { await conn.sendRequest('setColumnMetadata', n.ref, null, null, pick.value, null, 'human'); tree.refresh(); }
     catch (e: any) { vscode.window.showErrorMessage('Set data category failed: ' + (e?.message ?? e)); }
 }
 
@@ -4399,9 +4957,19 @@ async function refreshPartitionCmd(n: TreeNode) {
 // ---- Relationship-specific ----
 async function relCrossFilterCmd(n: TreeNode) {
     if (!conn || !n) return;
-    const pick = await vscode.window.showQuickPick(['OneDirection', 'BothDirections'], { title: 'Cross-filter direction (prefer OneDirection in a star schema)' });
+    let current = '';
+    try {
+        const props = await conn.sendRequest<PropDesc[]>('getObjectProperties', n.ref);
+        current = props.find((p) => p.name === 'CrossFilteringBehavior')?.value ?? '';
+    } catch { /* picker still offers the two directions */ }
+    const items = ['OneDirection', 'BothDirections'].map((d) => ({
+        label: d === current ? `$(check) ${d}` : d,
+        description: d === current ? 'Currently set' : undefined,
+        value: d,
+    }));
+    const pick = await vscode.window.showQuickPick(items, { title: 'Cross-filter direction (prefer OneDirection in a star schema)' });
     if (!pick) return;
-    try { await conn.sendRequest('setRelationship', refParts(n.ref).name, pick, null, 'human'); tree.refresh(); }
+    try { await conn.sendRequest('setRelationship', refParts(n.ref).name, pick.value, null, 'human'); tree.refresh(); }
     catch (e: any) { vscode.window.showErrorMessage('Set cross-filter failed: ' + (e?.message ?? e)); }
 }
 
@@ -4481,12 +5049,17 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
 
     constructor(private readonly getConn: () => MessageConnection | undefined, private readonly extensionUri: vscode.Uri) {}
 
+    applyFocused(): void {
+        this.view?.webview.postMessage({ type: 'applyFocused' });
+    }
+
     resolveWebviewView(view: vscode.WebviewView) {
         this.view = view;
         this.templatesPosted = false;
         view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] };
         view.webview.html = this.html(view.webview);
         view.webview.onDidReceiveMessage(async (msg: any) => {
+            if (msg?.type === 'runCommand') { runWebviewHostCommand(msg.command); return; }
             const conn = this.getConn();
             if (msg?.type === 'ready') {
                 void this.push(); void this.pushTemplates();
@@ -4507,6 +5080,7 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
                 const refs = this.refs.slice();
                 const names = this.names.slice();   // parallel to refs — the CURRENT (pre-write) object names, for the re-key below
                 let error: string | null = null;
+                let warning: string | undefined;
                 try {
                     // Two rows have dedicated single-object engine ops with typed refusals (the format-expression and
                     // column-data-type paths); no batch variant, so they stay per-object. Everything else — the vast
@@ -4522,9 +5096,11 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
                         if (rest.length) await conn.sendRequest('setObjectProperties', rest, msg.name, msg.value, 'human');
                     } else if (refs.length === 1) {
                         // Single object → the unchanged single-object path (no batch audit record).
-                        await conn.sendRequest('setObjectProperty', refs[0], msg.name, msg.value, 'human');
+                        const result = await conn.sendRequest<SetResult>('setObjectProperty', refs[0], msg.name, msg.value, 'human');
+                        warning = result?.warning;
                     } else {
-                        await conn.sendRequest('setObjectProperties', refs, msg.name, msg.value, 'human');
+                        const result = await conn.sendRequest<SetResult>('setObjectProperties', refs, msg.name, msg.value, 'human');
+                        warning = result?.warning;
                     }
                 }
                 catch (e: any) { error = String(e?.message ?? e); }
@@ -4552,6 +5128,7 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
                         if (newRef !== refs[0]) { this.refs = [newRef]; this.names = [msg.value]; await this.push(); }
                     }
                 }
+                if (!error && warning) void vscode.window.showWarningMessage(warning);
                 // On success the mutation broadcasts model/didChange → refresh() re-pushes the canonical values.
             }
         });
@@ -4679,18 +5256,37 @@ function openStudio(context: vscode.ExtensionContext) {
     studioPanel = panel;
     panel.onDidDispose(() => { if (studioPanel === panel) { studioPanel = undefined; studioReady = false; } });
 
-    // Relay: webview RPC requests -> the single engine connection -> result back to the webview.
-    panel.webview.onDidReceiveMessage(async (msg: any) => {
+    panel.webview.onDidReceiveMessage(studioRelayHandler(panel, false));
+    panel.webview.html = studioHtml(panel.webview, context);
+}
+
+// Shared host relay: webview RPC -> the single engine connection -> result back. Both the Studio panel and the
+// standalone Connections panel register the SAME handler, so the hub behaves identically from either door. The
+// standalone panel does NOT drive the studio-only nav / openConnections flush singletons (guarded by isStandalone),
+// and answers 'closePanel' by disposing itself (the hub's close button when it IS the whole window).
+const WEBVIEW_HOST_COMMANDS = new Set(['semanticus.save', 'semanticus.undo', 'semanticus.redo', 'workbench.action.showCommands']);
+function runWebviewHostCommand(command: unknown): void {
+    if (typeof command !== 'string' || !WEBVIEW_HOST_COMMANDS.has(command)) return;
+    void vscode.commands.executeCommand(command);
+}
+
+function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): (msg: any) => Promise<void> {
+    return async (msg: any) => {
+        if (msg?.type === 'runCommand') { runWebviewHostCommand(msg.command); return; }
+        if (msg?.type === 'closePanel') { panel.dispose(); return; }   // the standalone Connections hub's close button
         if (msg?.type === 'revealInTree') { void revealRefInTree(msg.ref); return; }   // Studio "Reveal in Model tree"
         if (msg?.type === 'selectObject') { selectRefInProperties(msg.ref); return; }  // selection bus: Properties follows a Studio row focus (no focus steal)
         if (msg?.type === 'focusModelTree') { void vscode.commands.executeCommand('semanticusModel.focus'); return; }   // Ctrl+Alt+T in Studio — only the host can move focus out of a webview
+        if (msg?.type === 'saveModel') {
+            const saved = await saveCommand();
+            try { panel.webview.postMessage({ type: 'saveModelResult', id: msg.id, saved: !!saved }); } catch { /* disposing */ }
+            return;
+        }
         if (msg?.type === 'openLocalModel') {
             try {
                 const opened = await openFromFile();
                 if (opened) {
-                    await propGrid.showModel(opened.modelName);
-                    tree.refresh(); await refreshStatus(); void rebuildDaxSymbols();
-                    panel.webview.postMessage({ type: 'reconnected' });
+                    await bindGridAndTree(opened.modelName, tree);
                 }
             } catch (e: any) { vscode.window.showErrorMessage('Open failed: ' + (e?.message ?? e)); }
             return;
@@ -4720,6 +5316,10 @@ function openStudio(context: vscode.ExtensionContext) {
                     defaultUri: folder ? vscode.Uri.joinPath(folder, safeName) : vscode.Uri.file(safeName),
                     saveLabel: 'Save Model Spec', filters: { 'Model Spec': ['json'] },
                 });
+                if (selected) {
+                    const collapsed = collapseDuplicateJsonExtension(selected.fsPath);
+                    if (collapsed !== selected.fsPath) selected = vscode.Uri.file(collapsed);
+                }
             } else {
                 selected = (await vscode.window.showOpenDialog({
                     defaultUri: folder, canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
@@ -4732,13 +5332,14 @@ function openStudio(context: vscode.ExtensionContext) {
         if (msg?.type === 'exportDoc') { void exportDocToFile(msg); return; }            // Documentation tab "Export…"
         if (msg?.type === 'printDoc') { void printDocInBrowser(msg); return; }           // Documentation tab "Print / PDF" (system browser)
         if (msg?.type === 'manageLicense') { void vscode.commands.executeCommand('semanticus.manageLicense'); return; }
-        if (msg?.type === 'useAsReference') {                                            // Connections drawer "Use as reference" → point the Reference tree at a remembered model
+        if (msg?.type === 'showLicense') { void vscode.commands.executeCommand('semanticus.showLicense'); return; }
+        if (msg?.type === 'useAsReference') {                                            // Connections hub "Use as reference" → point the Reference tree at a remembered model
             // A remembered model carries its endpoint, dataset, auth mode AND tenant — so a cross-tenant reference
             // targets its own tenant, never the default one az login is home to (the same fix as the native picker).
             referenceRef = { kind: 'workspace', endpoint: String(msg.endpoint ?? ''), database: msg.database || undefined, authMode: msg.authMode || 'azcli', tenantId: msg.tenantId || undefined };
             // Round-trip the binding: only AFTER the host has actually bound the reference (and the engine context
-            // reflects it) do we nudge the drawer to re-read — a fire-and-forget refresh observed the OLD binding (MED 7).
-            void loadReferenceModel().finally(() => { try { panel.webview.postMessage({ type: 'connectionChanged' }); } catch { /* disposing */ } });
+            // reflects it) do we nudge BOTH panels to re-read — a fire-and-forget refresh observed the OLD binding (MED 7).
+            void loadReferenceModel().finally(() => postToPanels({ type: 'connectionChanged' }));
             return;
         }
         if (msg?.type === 'openExternal') {                                              // sandboxed-iframe links → the user's browser
@@ -4746,7 +5347,7 @@ function openStudio(context: vscode.ExtensionContext) {
             if (/^https?:\/\//i.test(url)) void vscode.env.openExternal(vscode.Uri.parse(url));
             return;
         }
-        if (msg?.type === 'studioReady') { studioReady = true; flushNav(); flushOpenConnections(); return; }     // webview mounted → flush queued nav / drawer-open
+        if (msg?.type === 'studioReady') { if (!isStandalone) { studioReady = true; flushNav(); flushOpenConnections(); } return; }     // webview mounted → flush queued nav / hub-open (the studio panel only)
         // Diagram drop: hand over (and consume) the tables stashed when the user started dragging from the Model tree.
         if (msg?.type === 'requestDropTables') { panel.webview.postMessage({ type: 'dropTables', id: msg.id, tables: dragTablesStash }); dragTablesStash = []; return; }
         if (msg?.type !== 'rpc') return;
@@ -4765,23 +5366,25 @@ function openStudio(context: vscode.ExtensionContext) {
                 tree.refresh();
                 await refreshStatus();
                 void rebuildDaxSymbols();
+                refreshOpenDaxEditors();
+                setTimeout(() => { void resyncPropertiesFromTree(); }, 0);
             }
             panel.webview.postMessage({ type: 'rpcResult', id: msg.id, result });
             // Resolve the caller BEFORE announcing the model swap. onReconnect deliberately rejects requests still
-            // in flight against the old session; reversing these two messages would make a successful drawer open
-            // report "connection lost" and discard its real result.
-            if (modelSwapped) try { panel.webview.postMessage({ type: 'reconnected' }); } catch { }
+            // in flight against the old session; reversing these two messages would make a successful hub open
+            // report "connection lost" and discard its real result. Broadcast the swap to BOTH panels so the OTHER
+            // door (Studio, or the standalone hub) re-reads the new session instead of showing the old one.
+            if (modelSwapped) postToPanels({ type: 'reconnected' });
             // A webview attach/disconnect changes the QUERYING side (and the account in play) but fires no
-            // model/didChange — repaint the native status chip AND the sync chip so neither lags behind the footer the
-            // user just acted through. refreshStatus() repaints BOTH (it calls setStatusFromInfo → renderSyncChip);
-            // refreshSyncChip alone left the account chip stale on a webview connect/disconnect (HIGH 7).
-            if (SYNC_REFRESH_METHODS.has(msg.method)) void refreshStatus();
+            // model/didChange — repaint the native status chip AND the sync chip so neither lags behind the door the
+            // user just acted through, and nudge BOTH panels so the OTHER surface re-reads the connection too.
+            // refreshStatus() repaints BOTH chips (setStatusFromInfo → renderSyncChip); alone it left the account chip
+            // stale on a webview connect/disconnect (HIGH 7).
+            if (SYNC_REFRESH_METHODS.has(msg.method)) { void refreshStatus(); postToPanels({ type: 'connectionChanged' }); }
         } catch (e: any) {
             panel.webview.postMessage({ type: 'rpcResult', id: msg.id, error: String(e?.message ?? e) });
         }
-    });
-
-    panel.webview.html = studioHtml(panel.webview, context);
+    };
 }
 
 // Open Studio (revealing an existing panel) and navigate it to a tab, optionally selecting a target object (e.g.
@@ -5014,8 +5617,14 @@ function schemaDiffHtml(webview: vscode.Webview, tableName: string): string {
 </body></html>`;
 }
 
+// VS Code's save dialog with a .json filter can append a second .json when the typed name already has one.
+function collapseDuplicateJsonExtension(fsPath: string): string {
+    if (/\.json\.json$/i.test(fsPath)) return fsPath.slice(0, -5);
+    return fsPath;
+}
+
 // "Print / PDF": window.print() inside a VS Code webview (and doubly so inside the doc-preview's sandboxed
-// iframe) is suppressed by the host — it silently does nothing. The reliable path on every OS: write the
+// iframe) is suppressed by the host. It silently does nothing. The reliable path on every OS: write the
 // rendered HTML to a temp file and open it in the system browser, where Ctrl+P / "Save as PDF" just work.
 async function printDocInBrowser(msg: any): Promise<void> {
     try {
@@ -5024,8 +5633,12 @@ async function printDocInBrowser(msg: any): Promise<void> {
         const safeName = String(msg?.suggestedName ?? 'documentation').replace(/[^\w.-]+/g, '_').replace(/^[.]+/, '') || 'documentation';
         const file = path.join(os.tmpdir(), `semanticus-doc-${safeName}-${Date.now().toString(36)}.html`);
         await fs.promises.writeFile(file, content, 'utf8');
-        await vscode.env.openExternal(vscode.Uri.file(file));
-        void vscode.window.setStatusBarMessage('Semanticus: documentation opened in your browser. Print or save as PDF there.', 6000);
+        const opened = await vscode.env.openExternal(vscode.Uri.file(file));
+        if (opened) {
+            void vscode.window.setStatusBarMessage('Semanticus: documentation opened in your browser. Print or save as PDF there.', 6000);
+        } else {
+            void vscode.window.showWarningMessage('Semanticus: nothing opened the documentation. Open the saved file in a browser to print or save as PDF.');
+        }
     } catch (e: any) {
         void vscode.window.showErrorMessage('Print / PDF failed: ' + String(e?.message ?? e));
     }
@@ -5058,7 +5671,10 @@ async function exportDocToFile(msg: any): Promise<void> {
     }
 }
 
-function studioHtml(webview: vscode.Webview, context: vscode.ExtensionContext): string {
+// `initialView` reuses the ONE studio bundle for the standalone Connections panel: passing 'connections' makes the
+// bundle mount ONLY the hub (main.tsx reads window.__semanticusInitialView) instead of the full Studio. The inline
+// setter is nonce'd, so it runs under the same strict CSP as the module entry — no second bundle, one source of truth.
+function studioHtml(webview: vscode.Webview, context: vscode.ExtensionContext, initialView?: string, section?: string): string {
     const base = vscode.Uri.joinPath(context.extensionUri, 'media', 'studio');
     const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(base, 'studio.js'));
     const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(base, 'studio.css'));
@@ -5076,12 +5692,16 @@ function studioHtml(webview: vscode.Webview, context: vscode.ExtensionContext): 
         // The doc's own inline <script> (search) has no nonce, so it stays inert in the preview by design.
         `frame-src 'self'`,
     ].join('; ');
+    const viewSetter = initialView
+        ? `<script nonce="${nonce}">window.__semanticusInitialView=${JSON.stringify(initialView)};${section && section !== 'open' ? `window.__semanticusInitialSection=${JSON.stringify(section)};` : ''}</script>`
+        : '';
+    const title = initialView === 'connections' ? 'Connections' : 'Semanticus Studio';
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${cssUri}">
-<title>Semanticus Studio</title></head>
-<body><div id="root"></div><script type="module" nonce="${nonce}" src="${jsUri}"></script></body></html>`;
+<title>${title}</title></head>
+<body><div id="root"></div>${viewSetter}<script type="module" nonce="${nonce}" src="${jsUri}"></script></body></html>`;
 }
 
 function getNonce(): string {

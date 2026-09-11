@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc } from './bridge';
+import { rpc, onConnectionChange } from './bridge';
 import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
 import { useConnection } from './connection';
 import { DiffView } from './diffview';
-
-// Issue #156: a compare against a not-signed-in XMLA target returns a TEACHING error ("Not signed in to this
-// workspace… Run Connect to sign in"). Recognise it so the banner offers a one-click sign-in affordance instead of
-// dead-ending. Matches the engine copy (XmlaAuthHint) — a broad match is safe (worst case an extra Connect button).
-function isSignInError(msg: string | null): boolean {
-  return !!msg && /not signed in|run connect to sign in/i.test(msg);
-}
+import { isSignInError } from './authcopy';
 
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased). The Compare tab is the general
 // any-two-models differ/merger over compareModels + applyDiff; the Deploy tab's Source-Control diff is a
@@ -19,10 +13,31 @@ function isSignInError(msg: string | null): boolean {
 export interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
 export interface ModelDiffItem { ref: string; objectType: string; name: string; table?: string; action: string; leftText?: string; rightText?: string; matchedByName?: boolean; }
 export interface ModelDiff { leftLabel?: string; rightLabel?: string; created: number; updated: number; deleted: number; equal: number; items: ModelDiffItem[]; error?: string; }
-export interface ApplyDiffResult { applied: boolean; count: number; appliedRefs: string[]; failedRefs: string[]; target?: string; note?: string; error?: string; }
+export interface ApplyDiffResult { applied: boolean; count: number; appliedRefs: string[]; failedRefs: string[]; target?: string; note?: string; error?: string; confirmToken?: string; }
 
 const ACTION_COLOR: Record<string, string> = { Create: 'var(--sem-good)', Update: 'var(--sem-warn)', Delete: 'var(--sem-bad)', Equal: 'var(--sem-muted)' };
 const TYPE_ORDER = ['Table', 'Column', 'Measure', 'Hierarchy', 'Partition', 'Relationship', 'Role', 'Perspective', 'Culture', 'DataSource', 'Expression'];
+
+// A remembered live-model record from the engine connection registry — the SAME `listConnections` op that backs the
+// Connections manager. Only the fields the Workspace picker needs (a workspace ModelRef is built straight from these);
+// each webview module declares its own registry subset, as deploy.tsx / permissions.tsx already do.
+interface ConnRecord { id: string; kind: string; endpoint: string; database?: string; modelName?: string; authMode?: string; tenantId?: string; label?: string; }
+const shortEndpoint = (value?: string) => {
+  const v = (value || '').replace(/[\\/]+$/, '');
+  const i = Math.max(v.lastIndexOf('/'), v.lastIndexOf('\\'));
+  return i >= 0 ? v.slice(i + 1) : v;
+};
+const recordName = (r: ConnRecord) => r.modelName || r.database || shortEndpoint(r.endpoint) || 'Model';
+// An XMLA record's environment chip: its declared label (uat / prod / local), else the fail-closed "Production
+// safeguards" wording for an unlabelled cloud model — the SAME pattern the Connections manager uses (do not reword).
+const envLabel = (r: ConnRecord) => r.label || 'Production safeguards';
+// Build a workspace ModelRef straight from a registry record: no endpoint is ever typed here, and the record threads
+// its own tenant so a cross-tenant compare targets ITS tenant, not az login's default (which the old free-text form lost).
+const workspaceRef = (r: ConnRecord): ModelRef => ({
+  kind: 'workspace', endpoint: r.endpoint, database: r.database ?? '',
+  authMode: r.authMode || 'interactive', tenantId: r.tenantId ?? '', label: recordName(r),
+});
+const PICKER_INPUT = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 6px', fontSize: 12 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // The shared diff grid: groups by object type, drills each row down to a property-level (or code-level)
@@ -225,12 +240,29 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   const [err, setErr] = useState<string | null>(null);
   const [upsell, setUpsell] = useState<string | null>(null);   // a free click on a bulk merge teaches, never errors
   const tier = useTier();
-  const { connectXmla, busy: connBusy } = useConnection();   // for the sign-in-and-retry affordance on an auth error (#156)
+  const { connectXmla, busy: connBusy, openConnections } = useConnection();   // sign-in-and-retry on an auth error (#156) + opening the shared Connections manager to add a model
+  // Remembered live models from the engine connection registry — the Workspace side of the picker SELECTS one of these
+  // instead of typing an endpoint (Add connection is the only place an endpoint is typed; docs/design-records-2026-07-12.md
+  // T13/R8). Reloads on onConnectionChange, which fires for every registry mutation: the manager's own "Add a published
+  // model" broadcasts it in-webview (connect_xmla emits no activity), and the host relays remember/label/forget from
+  // either door — so a model added or forgotten in the Connections manager appears/disappears here without a remount.
+  const [xmlaRecords, setXmlaRecords] = useState<ConnRecord[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try { const recs = (await rpc<ConnRecord[]>('listConnections')) ?? []; if (!cancelled) setXmlaRecords(recs.filter((r) => r.kind === 'xmla')); }
+      catch { /* the registry is supporting context — a fetch failure still leaves file / git-ref / working-copy compares usable */ }
+    };
+    void load();
+    const off = onConnectionChange(() => { void load(); });
+    return () => { cancelled = true; off(); };
+  }, []);
   const [pending, setPending] = useState<ApplyDiffResult | null>(null);   // apply dry-run awaiting Confirm
   const [result, setResult] = useState<ApplyDiffResult | null>(null);
   // A context-bar click seeds Source/Target (editing vs querying). We adopt a seed once per nonce, and never once the
   // user has set up their own comparison by hand — mirroring how the Change Plan seed only acts on an untouched plan.
   const consumedNonce = useRef<number | undefined>(undefined);
+  const gatedWhyRef = useRef<HTMLDivElement>(null);
   const [touched, setTouched] = useState(false);
   const touch = () => { setTouched(true); setSeedNote(null); };
 
@@ -264,8 +296,11 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
       const d = await rpc<ModelDiff>('compareModels', l, r, includeEqual);
       if (d.error) { setErr(d.error); setDiff(null); return; }
       setDiff(d); setEqualsLoaded(includeEqual);
-      // default: every CHANGE selected (ALM-style). Identical objects are never selectable — they carry no action.
-      setSelected(new Set(d.items.filter((i) => i.action !== 'Equal').map((i) => i.ref)));
+      // default: every CHANGE selected (ALM-style), except Delete against a published model starts unticked.
+      // Identical objects are never selectable — they carry no action.
+      const changes = d.items.filter((i) => i.action !== 'Equal');
+      const preselected = r.kind === 'workspace' ? changes.filter((i) => i.action !== 'Delete') : changes;
+      setSelected(new Set(preselected.map((i) => i.ref)));
     } catch (e) { setErr(String((e as Error).message ?? e)); setDiff(null); }
     finally { setBusy(null); }
   }
@@ -274,9 +309,9 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   async function signInAndRetry() {
     if (right.kind !== 'workspace' || !right.endpoint) return;
     setErr(null);
-    const ok = await connectXmla(right.endpoint, right.database ?? '', 'interactive', right.tenantId ?? null);
+    const { ok, message } = await connectXmla(right.endpoint, right.database ?? '', 'interactive', right.tenantId ?? null);
     if (ok) void compare();
-    else setErr('Sign-in did not complete. Try again, or use the Connect panel to sign in with an account that has access to this workspace.');
+    else setErr(message || 'Sign-in did not complete. Try again, or open the Connections manager to sign in with an account that has access to this workspace.');
   }
   // Toggle "Only differences". OFF the first time fetches the identical objects (includeEqual) once, preserving the
   // current selection (identical refs are never added to it). ON just filters them out client-side — no round-trip.
@@ -307,18 +342,24 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
     finally { setBusy(null); }
   }
   // Confirm the apply — into a FILE (writes disk, no in-app undo) or the open MODEL (undoable merge).
+  const clickWhy = 'Merging one object at a time is free. Pro merges everything you selected in one step.';
   async function applyConfirm() {
-    setBusy('apply'); setErr(null); setUpsell(null);
+    const gated = tier === 'free' && selected.size > 1;
+    setBusy('apply'); setErr(null); setUpsell(gated ? clickWhy : null);
     try {
-      const r = await rpc<ApplyDiffResult>('applyDiff', left, right, [...selected], true, 'human');
+      const r = await rpc<ApplyDiffResult>('applyDiff', left, right, [...selected], true, 'human', undefined, pending?.confirmToken);
       setPending(null); setResult(r); setFailed(new Set(r.failedRefs ?? []));
       if (r.error) { setErr(r.error); return; }
+      setUpsell(null);
       // refresh the diff so the applied changes drop out of the view (keeping the result line)
       const d = await rpc<ModelDiff>('compareModels', left, right, !onlyDiffs);
       if (!d.error) { setDiff(d); setEqualsLoaded(!onlyDiffs); setSelected(new Set(d.items.filter((i) => i.action !== 'Equal').map((i) => i.ref))); }
     } catch (e) {
-      // A free click on a bulk merge (>1 object, file or open-model target) gets the plain invitation.
-      if (isEntitlementError(e)) setUpsell('Merging one object at a time is free. Pro merges everything you selected in one step.');
+      // A free click on a bulk merge (>1 object, file or open-model target) gets the plain invitation at the click.
+      if (isEntitlementError(e)) {
+        setUpsell(clickWhy);
+        queueMicrotask(() => gatedWhyRef.current?.scrollIntoView({ block: 'nearest' }));
+      }
       else setErr(String((e as Error).message ?? e));
     }
     finally { setBusy(null); }
@@ -332,22 +373,23 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   // (diff.items carry only non-Equal actions and `selected` only ever holds item refs, so selected.size IS the basis.)
   const submitCount = selected.size;
   const targetIsSession = right.kind === 'session';
-  const targetIsApplyable = targetIsFile || targetIsSession;
-  const targetLabel = targetIsSession ? 'the open model' : (right.path || 'the target file');
+  const targetIsWorkspace = right.kind === 'workspace';
+  const targetIsApplyable = targetIsFile || targetIsSession || targetIsWorkspace;
+  const targetLabel = targetIsSession ? 'the open model' : targetIsWorkspace ? (right.database || right.label || 'the published model') : (right.path || 'the target file');
 
   return (
     <div className={embedded ? '' : 'h-full overflow-auto'} style={{ color: 'var(--sem-fg)' }}>
       <div className={`${embedded ? '' : 'm-3'} rounded-lg p-3`} style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
         <div className="flex items-baseline gap-2 mb-2">
-          <span className="text-[13px] font-semibold">{embedded ? 'Push changes' : 'Compare'}</span>
+          <span className="text-[13px] font-semibold">{embedded ? 'Choose what to publish' : 'Compare'}</span>
           <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{embedded ? 'review the exact model diff, validate the selection, then confirm the write' : 'diff any two models · drill summary → object → property → code · merge selected changes into the open model or a file'}</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap text-[12px] mb-2">
           <span style={{ color: 'var(--sem-muted)' }}>Source</span>
-          <ModelRefPicker value={left} onChange={(r) => { touch(); setLeft(r); setDiff(null); }} />
+          <ModelRefPicker value={left} records={xmlaRecords} onAddConnection={openConnections} onChange={(r) => { touch(); setLeft(r); setDiff(null); }} />
           <span style={{ color: 'var(--sem-accent)' }}>→</span>
           <span style={{ color: 'var(--sem-muted)' }}>Target</span>
-          <ModelRefPicker value={right} onChange={(r) => { touch(); setRight(r); setDiff(null); }} />
+          <ModelRefPicker value={right} records={xmlaRecords} onAddConnection={openConnections} onChange={(r) => { touch(); setRight(r); setDiff(null); }} />
           <button onClick={() => { touch(); const a = left, b = right; setLeft(b); setRight(a); setDiff(null); }} title="swap source/target" className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>⇄</button>
           <Btn primary onClick={() => { touch(); void compare(); }} busy={busy === 'compare'}>{embedded ? 'Review' : 'Compare'}</Btn>
         </div>
@@ -356,17 +398,17 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
         {err && (
           <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>
             <div>{err}</div>
-            {/* #156: a sign-in error is not a dead end — offer the one-click sign-in (or name the Connect panel). */}
+            {/* #156: a sign-in error is not a dead end — offer the one-click sign-in (or name the Connections manager). */}
             {isSignInError(err) && (
               <div className="mt-1.5 flex items-center gap-2">
                 {right.kind === 'workspace' && right.endpoint
                   ? <Btn primary onClick={signInAndRetry} busy={connBusy}>Sign in and retry</Btn>
-                  : <span style={{ color: 'var(--sem-muted)' }}>Use the <b>Connect</b> panel to sign in, then run the compare again.</span>}
+                  : <span style={{ color: 'var(--sem-muted)' }}>Open the <b>Connections</b> manager to sign in, then run the compare again.</span>}
               </div>
             )}
           </div>
         )}
-        {upsell && <div className="mb-2"><UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice></div>}
+        {upsell && !pending && <div className="mb-2"><UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice></div>}
 
         {diff && (
           <>
@@ -379,7 +421,7 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
             {changeCount > 0 && (
               <div className="flex items-center gap-2 mt-2 text-[12px] flex-wrap">
                 <div className="ml-auto flex items-center gap-2">
-                  {!targetIsApplyable && <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>To apply, set the Target to a <b>file</b> or the <b>working copy</b>.</span>}
+                  {!targetIsApplyable && <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>To apply, set the Target to a <b>file</b>, the <b>working copy</b>, or a <b>published model</b>.</span>}
                   <Btn onClick={validate} busy={busy === 'validate'} disabled={!targetIsApplyable || selected.size === 0}>Validate selection</Btn>
                 </div>
               </div>
@@ -390,7 +432,14 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
                 {(pending.failedRefs?.length ?? 0) > 0 && <div className="mt-0.5" style={{ color: 'var(--sem-bad)' }}>{pending.failedRefs.length} cannot apply (highlighted above): a missing parent, or an unsupported type. They still count as selected changes, so deselect them to merge only what applies.</div>}
                 {targetIsSession
                   ? <div className="mt-1" style={{ color: 'var(--sem-muted)' }}>Merges into the open model; <b>undoable</b> (one Ctrl+Z reverts the whole merge).</div>
-                  : <div className="mt-1" style={{ color: 'var(--sem-warn)' }}>Writes <span className="font-mono">{right.path}</span> on disk; there is no in-app undo (git is the safety net).</div>}
+                  : targetIsWorkspace
+                    ? <div className="mt-1" style={{ color: 'var(--sem-warn)' }}>Writes to the published model. A restore point is saved first. Nothing is removed unless you selected a Delete.</div>
+                    : <div className="mt-1" style={{ color: 'var(--sem-warn)' }}>Writes <span className="font-mono">{right.path}</span> on disk; there is no in-app undo (git is the safety net).</div>}
+                {upsell && (
+                  <div className="mt-1.5" data-testid="compare-pro-gated-why" ref={gatedWhyRef}>
+                    <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mt-1.5">
                   <Btn primary onClick={applyConfirm} busy={busy === 'apply'} disabled={pending.count === 0}
                     title={tier === 'free' && submitCount > 1
@@ -398,7 +447,9 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
                       : undefined}>
                     {targetIsSession
                       ? (submitCount > pending.count ? `Merge ${pending.count} of ${submitCount} selected → open model` : `Merge ${pending.count} → open model`)
-                      : `Apply ${pending.count} → file`}
+                      : targetIsWorkspace
+                        ? `Push ${pending.count} to the published model`
+                        : `Apply ${pending.count} → file`}
                     <ProBadge show={tier === 'free' && submitCount > 1} variant="onAccent" />
                   </Btn>
                   <button className="text-[11px] underline" onClick={() => { setPending(null); setFailed(undefined); }} style={{ color: 'var(--sem-muted)' }}>Cancel</button>
@@ -417,14 +468,20 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   );
 }
 
-// A source/target endpoint picker: the open model, a file/PBIP path, or a git ref of the open model's repo.
-function ModelRefPicker({ value, onChange }: { value: ModelRef; onChange: (r: ModelRef) => void }) {
+// A source/target model picker: the open model, a file/PBIP path, a git ref of the open model's repo, or a remembered
+// published model chosen from the connection registry. An endpoint is NEVER typed here — the Workspace side SELECTS a
+// record (Add connection is the only place an endpoint is typed; docs/design-records-2026-07-12.md T13/R8).
+function ModelRefPicker({ value, onChange, records, onAddConnection }: {
+  value: ModelRef; onChange: (r: ModelRef) => void; records: ConnRecord[]; onAddConnection: () => void;
+}) {
   const setKind = (kind: string) => onChange(
     kind === 'session' ? { kind: 'session' }
     : kind === 'file' ? { kind: 'file', path: value.path ?? '' }
-    : kind === 'workspace' ? { kind: 'workspace', endpoint: value.endpoint ?? '', database: value.database ?? '', authMode: value.authMode || 'azcli' }
+    // Preselect the first remembered model so the picker is immediately usable; no records yet ⇒ an endpoint-less
+    // workspace ref whose picker offers "Add a published model" (an endpoint is never seeded from free text).
+    : kind === 'workspace' ? (records[0] ? workspaceRef(records[0]) : { kind: 'workspace', endpoint: '' })
     : { kind: 'gitref', gitRef: value.gitRef ?? 'HEAD' });
-  const inp = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 6px', fontSize: 12 } as const;
+  const inp = PICKER_INPUT;
   return (
     <span className="inline-flex items-center gap-1">
       <select value={value.kind} onChange={(e) => setKind(e.target.value)}
@@ -432,7 +489,7 @@ function ModelRefPicker({ value, onChange }: { value: ModelRef; onChange: (r: Mo
         <option value="session">● working copy</option>
         <option value="file">File…</option>
         <option value="gitref">Git ref…</option>
-        <option value="workspace">Workspace (XMLA)…</option>
+        <option value="workspace">Published model…</option>
       </select>
       {value.kind === 'file' && (
         <input value={value.path ?? ''} onChange={(e) => onChange({ kind: 'file', path: e.target.value })} placeholder=".bim / .pbip / TMDL folder" spellCheck={false} style={{ ...inp, width: 220 }} />
@@ -441,10 +498,66 @@ function ModelRefPicker({ value, onChange }: { value: ModelRef; onChange: (r: Mo
         <input value={value.gitRef ?? ''} onChange={(e) => onChange({ kind: 'gitref', gitRef: e.target.value })} placeholder="HEAD / branch / commit" spellCheck={false} style={{ ...inp, width: 150 }} />
       )}
       {value.kind === 'workspace' && (
-        <>
-          <input value={value.endpoint ?? ''} onChange={(e) => onChange({ ...value, kind: 'workspace', endpoint: e.target.value })} placeholder="powerbi://api.powerbi.com/v1.0/myorg/Workspace" spellCheck={false} style={{ ...inp, width: 240 }} />
-          <input value={value.database ?? ''} onChange={(e) => onChange({ ...value, kind: 'workspace', database: e.target.value })} placeholder="dataset (optional)" spellCheck={false} style={{ ...inp, width: 120 }} />
-        </>
+        <WorkspacePicker value={value} records={records} onChange={onChange} onAddConnection={onAddConnection} />
+      )}
+    </span>
+  );
+}
+
+// The Published-model side of the picker: SELECTS a remembered model from the connection registry — no endpoint is ever
+// typed. Each row shows the model's environment chip (uat / prod / local, else the fail-closed "Production safeguards"),
+// so you see what you are about to diff against before you diff it. If the model you want is not remembered yet, "Add a
+// published model" opens the shared Connections manager; adding it there makes it appear in this list.
+function WorkspacePicker({ value, records, onChange, onAddConnection }: {
+  value: ModelRef; records: ConnRecord[]; onChange: (r: ModelRef) => void; onAddConnection: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const selected = records.find((r) => r.endpoint === value.endpoint && (r.database ?? '') === (value.database ?? ''));
+  // A value carried in from a seed (a publish/live destination) may not be in the fetched list yet; show its own label so
+  // the selection reads honestly, with the fail-closed "Production safeguards" chip for an unlabelled cloud model.
+  const heading = selected ? recordName(selected) : (value.endpoint ? (value.label || shortEndpoint(value.endpoint)) : 'Choose a published model');
+  const headingChip = selected ? envLabel(selected) : (value.endpoint ? 'Production safeguards' : null);
+  // A lightweight menu (no focus trap — the surrounding selects stay usable): close on Escape or a click outside it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const chip = (text: string) => <span className="rounded px-1 py-0.5 text-[9px] whitespace-nowrap" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{text}</span>;
+  return (
+    <span ref={ref} className="relative inline-flex items-center gap-1">
+      <button type="button" data-testid="compare-workspace-picker" onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}
+        className="inline-flex items-center gap-1.5" style={{ ...PICKER_INPUT, minWidth: 200, maxWidth: 300 }}>
+        <span className="min-w-0 flex-1 truncate text-left">{heading}</span>
+        {headingChip && chip(headingChip)}
+        <span style={{ color: 'var(--sem-muted)' }}>▾</span>
+      </button>
+      {open && (
+        <div role="listbox" className="absolute z-50 rounded" style={{ top: '100%', left: 0, marginTop: 4, minWidth: 260, maxWidth: 360, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.35)' }}>
+          <div style={{ maxHeight: 240, overflow: 'auto' }}>
+            {records.length === 0 && <div className="px-2 py-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No published models are remembered yet.</div>}
+            {records.map((r) => (
+              <button type="button" key={r.id} role="option" aria-selected={selected?.id === r.id}
+                onClick={() => { onChange(workspaceRef(r)); setOpen(false); }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[12px]"
+                style={{ background: selected?.id === r.id ? 'var(--sem-accent-soft)' : 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer' }}>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{recordName(r)}</span>
+                  <span className="block truncate text-[10px]" style={{ color: 'var(--sem-muted)' }}>{r.database || shortEndpoint(r.endpoint)}</span>
+                </span>
+                {chip(envLabel(r))}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => { setOpen(false); onAddConnection(); }}
+            className="flex w-full items-center px-2 py-1.5 text-left text-[11px] font-semibold"
+            style={{ borderTop: '1px solid var(--sem-border)', background: 'transparent', color: 'var(--sem-accent)', cursor: 'pointer' }}>
+            + Add a published model
+          </button>
+        </div>
       )}
     </span>
   );

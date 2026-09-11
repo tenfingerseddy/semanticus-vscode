@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The out-of-process depth probe for A2PR1-M1 and A2PR1-M2.
+
+    It exists because a .NET StackOverflowException cannot be caught: it terminates the process. An
+    in-process test for a deep-formula crash takes the test host down with it, which reads as an
+    infrastructure flake rather than as a failure. So the deep work runs HERE, in a child process, and the
+    test asserts the child's exit code.
+
+    Deliberately NOT in Semanticus.sln, exactly like the corpus bar. It IS referenced by
+    Semanticus.Dax.Tests so that `dotnet test` builds it and drops it beside the test assembly; the tests
+    locate it by filename in their own output directory, so the gate is not a local-only convenience.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Semanticus.DaxDeepProbe</RootNamespace>
+    <AssemblyName>Semanticus.DaxDeepProbe</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Semanticus.Dax\Semanticus.Dax.csproj" />
+  </ItemGroup>
+
+</Project>

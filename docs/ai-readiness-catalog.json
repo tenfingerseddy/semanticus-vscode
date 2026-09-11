@@ -1,12 +1,22 @@
 {
   "counts": {
-    "rawRequirements": 199,
-    "distinct": 194,
-    "confirmed": 192,
-    "covered": 62,
-    "partial": 50,
-    "missing": 87,
-    "residualNonGoals": 138
+    "sourceRequirements": 192,
+    "sourceRequirementsByClass": {
+      "hardGate": 26,
+      "recommended": 130,
+      "bestPractice": 36
+    },
+    "sourceRequirementsWithSourceUrl": 192,
+    "sourceDocuments": 24,
+    "reconciliationRows": 207,
+    "covered": 67,
+    "partial": 48,
+    "missing": 92,
+    "reconciliationRowsWithLedgerEntry": 191,
+    "reconciliationRowsWithoutLedgerEntry": 16,
+    "ledgerEntriesRejected": 1,
+    "residualNonGoals": 138,
+    "countsDerivation": "Recomputed 2026-09-06 from the arrays in this file. TWO DIFFERENT POPULATIONS, previously conflated: the source-requirement LEDGER and the coverage RECONCILIATION. sourceRequirements = the `requirements` object, the only array of confirmed source requirements in this file: 26 hardGate + 130 recommended + 36 bestPractice = 192. reconciliationRows = 67 covered + 48 partial + 92 missing = 207, where covered is the `covered` array and partial/missing are the `gaps` rows that are in neither the `covered` nor the `rejected` array. These 207 rows are NOT 207 confirmed source requirements, which is what the earlier rawRequirements/distinct/confirmed = 207 triple asserted: matching row titles against the ledger, 191 rows carry a ledger entry and 16 do not (reconciliationRowsWithoutLedgerEntry , Semanticus-authored deterministic checks folded in by the completion-batch lane, which have no source requirement and no sourceUrl behind them), while 1 ledger entry is held in `rejected` and so has no reconciliation row (191 + 1 = 192). Provenance is the ledger's own: all 192 of 192 entries carry a sourceUrl, across 24 distinct Microsoft Learn documents (sourceDocuments). No provenance is claimed for anything else. RESIDUAL UNCERTAINTY: the ledger-to-row match is by exact normalised title, so a row whose title was reworded on one side only reads as unmatched; the 16/191 split is therefore a lower bound on matching and an upper bound on the unmatched set. `residualNonGoals` counts residualBuckets entries, a third population again, and is not a requirement count."
   },
   "requirements": {
     "hardGate": [
@@ -2237,7 +2247,7 @@
       "ourRuleId": "",
       "proposedRuleId": "DAC-HELPER-IN-SCHEMA",
       "proposedCheck": "This is THE core missing DataAgentConfig rule. Two-stage detection. (1) Deterministic candidate filter: a measure whose name matches helper patterns (^_, _base, _helper, temp, aux) OR that is referenced ONLY by other measures and never surfaced (needs DISCOVER_CALC_DEPENDENCY — a Dmv rule kind). (2) the rule's real subject is the AI data schema include-set: flag helper/intermediate measures that ARE included in the Prep-for-AI data schema. Fix is deliberately NOT IsHidden (the plan, line 174, says hiding breaks verified answers) — instead EXCLUDE from the AI data schema via a set_ai_data_schema tool that does not yet exist. Category DataAgentConfig. Severity Medium, Fix=Proposal (exclude-from-schema).",
-      "notes": "No coverage and no enabling tool. There is no readiness rule for helper measures, no DISCOVER_CALC_DEPENDENCY wiring, and crucially no set_ai_data_schema MCP tool (planned in section H, absent from McpTools.cs). This is the headline content the empty DataAgentConfig category should hold: an AI-data-schema include-set that excludes helpers/intermediates."
+      "notes": "No coverage and no enabling tool. There is no readiness rule for helper measures, no DISCOVER_CALC_DEPENDENCY wiring, and crucially no set_ai_data_schema MCP tool (planned in section H, absent from McpTools.cs). This is the headline content the empty DataAgentConfig category should hold: an AI-data-schema include-set that excludes helpers/intermediates. Completion batch 7 narrows this boundary without moving the row: AISCHEMA-DEP-MISSING now reads the curated exclusion set from the linguistic schema and flags an included measure whose visible dependents are excluded. What keeps the row pinned is the rest of the requirement, which is not deterministic here: judging which helper or overlapping measure belongs in the include-set, and writing the closure back through an autoCloseDependencies path the published Prep-for-AI schema does not cover."
     },
     {
       "title": "Define clear relationships with correct cardinality and active/inactive state",
@@ -2363,7 +2373,7 @@
       "title": "Include dependent objects when defining the AI data schema",
       "status": "missing",
       "ourRuleId": "",
-      "notes": "No dependency-closure logic feeds the (non-existent) AI-data-schema. The engine does not call DISCOVER_CALC_DEPENDENCY anywhere for readiness (the plan lists it as Wave-2 live work), so it cannot detect that a Total Revenue measure in the schema references measures/columns that were left out. Catalog marks this deterministic:true.",
+      "notes": "No dependency-closure logic feeds the (non-existent) AI-data-schema. The engine does not call DISCOVER_CALC_DEPENDENCY anywhere for readiness (the plan lists it as Wave-2 live work), so it cannot detect that a Total Revenue measure in the schema references measures/columns that were left out. Catalog marks this deterministic:true. Completion batch 7 narrows this boundary without moving the row: AISCHEMA-DEP-MISSING now reads the curated exclusion set from the linguistic schema and flags an included measure whose visible dependents are excluded. What keeps the row pinned is the rest of the requirement, which is not deterministic here: judging which helper or overlapping measure belongs in the include-set, and writing the closure back through an autoCloseDependencies path the published Prep-for-AI schema does not cover.",
       "proposedRuleId": "DAC-SCHEMA-DEPS",
       "proposedCheck": "DataAgentConfig rule DAC-SCHEMA-DEPS, RuleKind.Deterministic (Dmv for the dependency walk), FixKind.SafeFix. Predicate: for every object in the AI-data-schema include-set, compute its full dependency closure (measure->measure and measure->column refs via DISCOVER_CALC_DEPENDENCY or static DAX parse) and flag any dependent object NOT in the set. Fix = auto-add the missing dependents (autoCloseDependencies=true on the proposed set_ai_data_schema tool). Purely deterministic once an include-set and dependency source exist; depends on DAC-SCHEMA landing first."
     },
@@ -2853,7 +2863,7 @@
       "ourRuleId": "NAME-DUP",
       "proposedRuleId": "DAC-AI-SCHEMA-EXCLUDE",
       "proposedCheck": "NAME-DUP catches duplicate VISIBLE *column* names across tables (ambiguity), which is adjacent but NOT the requirement: it does not cover measures, near-duplicate/overlapping measure semantics (Total Sales vs Sales Amount vs Revenue), or helper/intermediate-measure exclusion. Propose DAC-AI-SCHEMA-EXCLUDE in DataAgentConfig: (a) deterministic detection of helper measures - a visible measure referenced ONLY by other measures (needs DISCOVER_CALC_DEPENDENCY via the live connection / run_dmv) or matching /_base|_helper|^_|temp|aux/; (b) LLM-judgment for overlapping/near-duplicate business measures. Fix path = exclude from the AI data schema (preferred over hiding, which breaks verified answers) via a NEW set_ai_data_schema MCP tool + Prep-for-AI store - neither exists. Until then it degrades to set_column_hidden/IsHidden, which is the wrong lever.",
-      "notes": "NAME-DUP is the only adjacent rule and it is column-only ambiguity, FixKind.Proposal. No helper-measure detection, no overlapping-measure judgment, no AI-data-schema include/exclude storage or tool. Dependency-closure detection requires DISCOVER_CALC_DEPENDENCY (Wave-2 live-grounded)."
+      "notes": "NAME-DUP is the only adjacent rule and it is column-only ambiguity, FixKind.Proposal. No helper-measure detection, no overlapping-measure judgment, no AI-data-schema include/exclude storage or tool. Dependency-closure detection requires DISCOVER_CALC_DEPENDENCY (Wave-2 live-grounded). Completion batch 7 narrows this boundary without moving the row: AISCHEMA-DEP-MISSING now reads the curated exclusion set from the linguistic schema and flags an included measure whose visible dependents are excluded. What keeps the row pinned is the rest of the requirement, which is not deterministic here: judging which helper or overlapping measure belongs in the include-set, and writing the closure back through an autoCloseDependencies path the published Prep-for-AI schema does not cover."
     },
     {
       "title": "Use explicit measures and correct default summarization, not implicit measures",
@@ -3323,7 +3333,7 @@
       "title": "Include dependent objects when scoping the AI data schema",
       "status": "missing",
       "ourRuleId": "",
-      "notes": "Deterministic and fully computable from the TOM dependency graph, but no rule exists and there is no AI-schema include-set to validate against. DataAgentConfig has no rules. This is the most tractable DataAgentConfig rule because it is a pure closure check once a schema include-set exists.",
+      "notes": "Deterministic and fully computable from the TOM dependency graph, but no rule exists and there is no AI-schema include-set to validate against. DataAgentConfig has no rules. This is the most tractable DataAgentConfig rule because it is a pure closure check once a schema include-set exists. Completion batch 7 narrows this boundary without moving the row: AISCHEMA-DEP-MISSING now reads the curated exclusion set from the linguistic schema and flags an included measure whose visible dependents are excluded. What keeps the row pinned is the rest of the requirement, which is not deterministic here: judging which helper or overlapping measure belongs in the include-set, and writing the closure back through an autoCloseDependencies path the published Prep-for-AI schema does not cover.",
       "proposedRuleId": "DAC-SCHEMA-DEP-CLOSURE",
       "proposedCheck": "Deterministic predicate, DataAgentConfig, recommended. For each measure marked included in the AI data schema, compute its dependency closure (referenced measures and their underlying columns) and flag any dependency not also included. Detection: parse measure DAX / use DISCOVER_CALC_DEPENDENCY (live) to build the closure; compare against the include-set. Applicable = included measures (0 until an AI schema exists, so it self-excludes from scoring until DAC-AI-SCHEMA-MISSING is resolved). Fix path: set_ai_data_schema with autoCloseDependencies=true (proposed tool) auto-adds the missing dependents; until that tool exists, emit the exact missing-object list as a Proposal."
     },
@@ -3558,6 +3568,48 @@
       "proposedRuleId": "DAC-CAPACITY-PREFLIGHT",
       "proposedCheck": "NOT deterministically checkable from model metadata — region co-location, F2+/P1+ capacity SKU, and cross-geo AI tenant settings are Fabric service/tenant facts, invisible to the TOM model. Could become deterministic only with a Fabric REST/capacity API call (which Semanticus does not make today). Proposed as a DataAgentConfig (or new Scale category) pre-flight advisory gate: before recommending the model for data-agent deployment, warn that source and agent workspace capacities must be co-located in-region and on F2+/P1+ with cross-geo AI enabled, else the agent can't execute queries. Fix path: external/advisory — no model predicate, no MCP tool; if a Fabric capacity API is later wired in, it could become a true deterministic pre-flight gate.",
       "notes": "No capacity/region/SKU awareness anywhere in Semanticus; there is also no Scale category in the enum (the requirement's 'Scale' category doesn't exist in our code — only CopilotLimits). This is environmental governance that lives outside the model file, so it belongs as DataAgentConfig advisory unless/until a Fabric REST capacity probe is added."
+    },
+    {
+      "title": "AI data schema must include the dependents of every included measure",
+      "status": "covered",
+      "ourRuleId": "AISCHEMA-DEP-MISSING",
+      "proposedRuleId": "AISCHEMA-DEP-MISSING",
+      "proposedCheck": "A measure selected into the AI data schema must have its dependent measures and columns selected too, or the data agent grounds on a measure whose definition it cannot see.",
+      "notes": "Folded in from the Microsoft semantic-model-authoring provenance backlog (docs/archive/ms-fabric-skills-research.md item 8) and named as a queued row in ai-readiness-plan.md section 9. Implemented as deterministic AISCHEMA-DEP-MISSING: the curated exclusion set is read from the linguistic schema through PrepForAiReader, dependents come from the shared DAX token scanner, and only a dependent that is VISIBLE in the model yet excluded counts, because Power BI auto-excludes model-hidden fields. Dormant without a curated schema and when the Copilot Tooling Format is present.",
+      "sourceUrl": "https://learn.microsoft.com/en-us/fabric/data-science/semantic-model-best-practices"
+    },
+    {
+      "title": "Linguistic schema entities must still bind to objects that exist",
+      "status": "covered",
+      "ourRuleId": "SYN-ENTITY-ORPHAN",
+      "proposedRuleId": "SYN-ENTITY-ORPHAN",
+      "proposedCheck": "A linguistic-schema entity that binds to a renamed or deleted object grounds nothing and still occupies one of the 1,000 Q&A index entities.",
+      "notes": "Implemented as deterministic SYN-ENTITY-ORPHAN. Resolution reuses the same ConceptualEntity/ConceptualProperty binding shape the shipped synonym rules use and matches against every model object, hidden and RowNumber included, so hiding a field is never read as deleting it. Population is the bound entities, so the rule is a real coverage ratio; dormant without a JSON linguistic schema."
+    },
+    {
+      "title": "A single DAX expression must stay under the documented 5,000-character Copilot limit",
+      "status": "covered",
+      "ourRuleId": "LIMIT-DAX-LENGTH",
+      "proposedRuleId": "LIMIT-DAX-LENGTH",
+      "proposedCheck": "Microsoft documents a 5,000-character limit on a single DAX expression for DAX query Copilot; past it Copilot may be unavailable for the query or may work from reduced model metadata.",
+      "notes": "The one ceiling in the design spec's own scale-ceiling row (ai-readiness-plan.md section 2.G) that LIMIT-SCALE never implemented; LIMIT-SCALE covers the object counts and the 256-character name limit only. Implemented as deterministic LIMIT-DAX-LENGTH over measures, calculated columns and calculation items. Scope and wording follow the Microsoft source: the limit belongs to DAX query Copilot and the documented effect is MAY be unavailable or reduced metadata, so the finding says may, not will. Presence design, matching LIMIT-QNA-INDEX and SCALE-QNA-INDEX, so a clean model stays dormant. Deliberately NOT wired into the LIMIT-SCALE hard gate: changing what caps a grade is a product decision, not a batch one.",
+      "sourceUrl": "https://learn.microsoft.com/en-us/dax/dax-copilot"
+    },
+    {
+      "title": "Describe the hierarchies Copilot and Q&A drill on",
+      "status": "covered",
+      "ourRuleId": "DESC-HIERARCHY",
+      "proposedRuleId": "DESC-HIERARCHY",
+      "proposedCheck": "A hierarchy is a grounded object; without a description Copilot and Q&A see a drill path with no stated meaning.",
+      "notes": "Closes the one object type the Descriptions category never evaluated. The ruleset already checks hierarchy NAMES (NAME-HIERARCHY) and drill shape (REL-HIERARCHY-SINGLE-LEVEL). Implemented as DESC-HIERARCHY over visible hierarchies on visible business tables, dormant on a model that defines none. FixKind is Proposal, not AiContent: the shipped description writer accepts measures, tables, columns and perspectives only, so an agent-applyable content fix would be an affordance the engine cannot honour."
+    },
+    {
+      "title": "The column that identifies a dimension row should carry the table name",
+      "status": "covered",
+      "ourRuleId": "DIM-PRIMARY-NAME",
+      "proposedRuleId": "DIM-PRIMARY-NAME",
+      "proposedCheck": "Name the primary dimension column after its table (Product, not Product Name, in table Product) so a natural-language question resolves to one field.",
+      "notes": "Folded in from the Microsoft naming-conventions candidates (docs/archive/ms-fabric-skills-research.md). Implemented as deterministic DIM-PRIMARY-NAME. The dimension set is the graph slice REL-SNOWFLAKE already uses (a table that is only ever the one side of a relationship), so there is no fact/dimension guesswork, and the population is only the dimensions that already carry a table-named label column. The dim/fact plural-singular naming candidates from the same source are NOT shipped: regular-plural detection is an English heuristic with the false-positive blast radius that kept UNUSED-COLUMN-VISIBLE deferred."
     }
   ],
   "covered": [
@@ -3808,6 +3860,28 @@
     {
       "title": "High-cardinality columns and inefficient DAX flagged as model problems",
       "ourRuleId": "SCALE-HICARD-COLUMN, BP-DAX-IFERROR, BP-DAX-SUMMARIZE-EXT, BP-DAX-BARE-TABLE-FILTER, BP-DAX-VAR-ALIAS"
+    },
+    {
+      "title": "AI data schema must include the dependents of every included measure",
+      "ourRuleId": "AISCHEMA-DEP-MISSING",
+      "sourceUrl": "https://learn.microsoft.com/en-us/fabric/data-science/semantic-model-best-practices"
+    },
+    {
+      "title": "Linguistic schema entities must still bind to objects that exist",
+      "ourRuleId": "SYN-ENTITY-ORPHAN"
+    },
+    {
+      "title": "A single DAX expression must stay under the documented 5,000-character Copilot limit",
+      "ourRuleId": "LIMIT-DAX-LENGTH",
+      "sourceUrl": "https://learn.microsoft.com/en-us/dax/dax-copilot"
+    },
+    {
+      "title": "Describe the hierarchies Copilot and Q&A drill on",
+      "ourRuleId": "DESC-HIERARCHY"
+    },
+    {
+      "title": "The column that identifies a dimension row should carry the table name",
+      "ourRuleId": "DIM-PRIMARY-NAME"
     }
   ],
   "evalSuiteDesign": {
@@ -4023,7 +4097,7 @@
   "launchReadiness": {
     "assessedAt": "2026-07-14",
     "verdict": "enough-for-1.0",
-    "offlineBuiltInRules": 82,
+    "offlineBuiltInRules": 88,
     "liveBuiltInRules": 2,
     "closedCriticRuleIds": [
       "FMT-SORTBY",
@@ -4053,7 +4127,7 @@
       "SYN-LSDL-XML",
       "FMT-COLUMN"
     ],
-    "exitRule": "The 199 requirement rows remain a research ledger. The historical 1.0 cutoff is preserved, while the next-release completion lane may add high-quality deterministic model-visible rules in partitioned batches. Rows assigned to residualBuckets are documented non-goals until their named boundary changes."
+    "exitRule": "The tracked requirement rows remain a research ledger. The historical 1.0 cutoff is preserved, while the next-release completion lane may add high-quality deterministic model-visible rules in partitioned batches. Rows assigned to residualBuckets are documented non-goals until their named boundary changes."
   },
   "criticMissed": [
     {
@@ -4082,7 +4156,7 @@
       "why": "These cannot be determined safely from names or object counts. They are suited to the Model Interview, workflows and human review, not deterministic scoring rules."
     }
   ],
-  "criticVerdict": "Enough for 1.0. Semanticus ships 81 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI Q&A/schema/instructions/verified answers, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Q&A scale/cardinality limits. The next-release completion ledger records 62 covered, 50 partial and 87 missing rows. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for the Q&A index and null/blank profiling.",
+  "criticVerdict": "Enough for 1.0, with the next-release completion lane still adding deterministic model-visible rows. Semanticus ships 87 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI Q&A/schema/instructions/verified answers, AI-data-schema dependency closure, linguistic-entity integrity, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Q&A/DAX scale limits. The completion ledger, recomputed 2026-09-06 from this file's own arrays, records 67 covered, 48 partial and 92 missing coverage-reconciliation rows, 207 in total. Those rows are not 207 confirmed requirements: the source-requirement ledger in this file holds 192 (191 of the 207 rows carry a ledger entry, 16 are Semanticus-authored checks with no source requirement, and 1 ledger entry is rejected). See counts.countsDerivation. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for the Q&A index and null/blank profiling.",
   "rejected": [
     {
       "title": "Harmful/problematic phrases in metadata break Copilot entirely",
@@ -4094,7 +4168,7 @@
     },
     {
       "title": "Mark the model 'Approved for Copilot' when ready",
-      "note": "NOT OFFLINE-DETECTABLE (batch 2). 'Approved for Copilot' (formerly 'prepped for AI') is a SERVICE-SIDE item flag set in the semantic-model settings — it is NOT stored in the model file (TMDL/.bim/PBIP) that Semanticus reads offline (confirmed in CLAUDE.md's Prep-for-AI notes). The TOM Model.Description is a distinct, ambiguous signal (a model description, not the approval state), so it can't stand in. This is an out-of-band governance checklist item, not a metadata rule. Marked deterministic:true in the catalog, but only against SERVICE metadata we don't have offline."
+      "note": "NOT OFFLINE-DETECTABLE (batch 2). 'Approved for Copilot' (formerly 'prepped for AI') is a SERVICE-SIDE item flag set in the semantic-model settings — it is NOT stored in the model file (TMDL/.bim/PBIP) that Semanticus reads offline (confirmed in docs/prep-for-ai-storage.md). The TOM Model.Description is a distinct, ambiguous signal (a model description, not the approval state), so it can't stand in. This is an out-of-band governance checklist item, not a metadata rule. Marked deterministic:true in the catalog, but only against SERVICE metadata we don't have offline."
     },
     {
       "title": "Measures must be in a valid (error-free) state",

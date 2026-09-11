@@ -90,9 +90,15 @@ namespace Semanticus.Engine
             return new UTF8Encoding(false, true).GetString(bytes, 0, count);
         }
 
+        /// <summary>The one rule for a UI challenge. Non-throwing on purpose: the owner reads the challenge from
+        /// stdin, and a throw there escapes Main, which the runtime answers with an abort (exit 134, core dump)
+        /// rather than a message. Callers that can print and exit call this; callers that cannot, throw.</summary>
+        internal static bool IsValidChallenge(string value) =>
+            !string.IsNullOrWhiteSpace(value) && value.Length >= 32 && value.Length <= 128;
+
         internal static string ValidateChallenge(string value)
         {
-            if (string.IsNullOrWhiteSpace(value) || value.Length < 32 || value.Length > 128)
+            if (!IsValidChallenge(value))
                 throw new ArgumentException("The RPC UI challenge must contain 32 to 128 characters.", nameof(value));
             return value;
         }

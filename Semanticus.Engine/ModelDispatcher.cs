@@ -58,7 +58,7 @@ namespace Semanticus.Engine
                 // the caller awaits a FAULTED task like any other failed op — never a synchronous throw from
                 // what looks like a plain enqueue (a sync throw here escaped into the session-swap path).
                 tcs.TrySetException(new InvalidOperationException(
-                    "This session's model dispatcher has been stopped (the session was closed or replaced) — the operation did not run. Retry against the current session (re-open the model if none is open).", ex));
+                    "This session's model dispatcher has been stopped (the session was closed or replaced): the operation did not run. Retry against the current session (re-open the model if none is open).", ex));
             }
             return tcs.Task;
         }
@@ -101,7 +101,7 @@ namespace Semanticus.Engine
                 // one-per-wedged-thread leak (GC reclaims it once the wedged thread finally exits) is strictly
                 // better than crashing an in-flight model op. Leave it abandoned and say so; a later Dispose may
                 // still reclaim it once the thread has unwedged (the flags make that retry safe).
-                try { Console.Error.WriteLine("[dispatcher] worker did not stop within 5s — abandoning (not disposing) the queue to avoid a use-after-dispose in a running model op."); } catch { }
+                try { Console.Error.WriteLine("[dispatcher] worker did not stop within 5s: abandoning (not disposing) the queue to avoid a use-after-dispose in a running model op."); } catch { }
                 return;
             }
             if (Interlocked.CompareExchange(ref _queueDisposed, 1, 0) == 0)

@@ -33,15 +33,15 @@ inputs:
   - name: targetTable
     question: "Which table holds the calendar: an existing date table, or a NEW name to spin up a fresh CALENDAR() table? (default 'Date')"
     type: text
-    required: answer-or-decline
+    required: optional
   - name: dateColumn
     question: "The date column on that table (leave blank to auto-detect when the table has a single DateTime column)."
     type: text
-    required: answer-or-decline
+    required: optional
   - name: fiscalStart
     question: "Fiscal template only: the first month of the fiscal year, 1-12 (default 7 = July). Ignore for the other templates."
     type: number
-    required: answer-or-decline
+    required: optional
 ```
 
 ## Step 2: Confirm support, then generate the calendar

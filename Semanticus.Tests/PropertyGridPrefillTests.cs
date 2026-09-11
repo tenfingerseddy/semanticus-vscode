@@ -38,6 +38,12 @@ namespace Semanticus.Tests
             Assert.Contains(props, p => p.Name == "Description" && p.Kind == "string" && !p.ReadOnly);
             Assert.Contains(props, p => p.Name == "Culture" && p.Kind == "string");
             Assert.Contains(props, p => p.Name == "DiscourageImplicitMeasures" && p.Kind == "bool" && !p.ReadOnly);
+            var compatibility = Assert.Single(props, p => p.Name == "CompatibilityLevel");
+            Assert.Equal("Compatibility level", compatibility.DisplayName);
+            Assert.Equal("number", compatibility.Kind);
+            Assert.False(compatibility.ReadOnly);
+            Assert.Equal("1604", compatibility.Value);
+            Assert.Contains("comp", compatibility.DisplayName, StringComparison.OrdinalIgnoreCase);
 
             var set = await engine.SetObjectPropertyAsync("model:", "Description", "Default model selection", "human");
             Assert.True(set.Changed);
@@ -46,6 +52,39 @@ namespace Semanticus.Tests
 
             await engine.UndoAsync("human");
             Assert.Equal("", (await engine.GetObjectPropertiesAsync("model:")).Single(p => p.Name == "Description").Value);
+        }
+
+        [Fact]
+        public async Task Model_compatibility_level_can_be_raised_on_the_shared_grid_and_not_lowered()
+        {
+            using var engine = NewEngine();
+            await engine.CreateModelAsync("Compat", 1604);
+
+            var set = await engine.SetObjectPropertyAsync("model:", "CompatibilityLevel", "1702", "human");
+            Assert.True(set.Changed);
+            Assert.Equal("1702",
+                (await engine.GetObjectPropertiesAsync("model:")).Single(p => p.Name == "CompatibilityLevel").Value);
+
+            var dedicated = await engine.SetCompatibilityLevelAsync(1702, "human");
+            Assert.False(dedicated.Changed);
+
+            var down = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.SetObjectPropertyAsync("model:", "CompatibilityLevel", "1604", "human"));
+            Assert.Contains("cannot be lowered", down.Message);
+            Assert.DoesNotContain("set_compatibility_level", down.Message);
+        }
+
+        [Fact]
+        public async Task Create_function_below_1702_points_at_the_property_not_an_op()
+        {
+            using var engine = NewEngine();
+            await engine.CreateModelAsync("Udf", 1604);
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.CreateFunctionAsync("NewFunction", "(x: INT64) => x", "human"));
+            Assert.Contains("1702", ex.Message);
+            Assert.Contains("Compatibility level", ex.Message);
+            Assert.DoesNotContain("set_compatibility_level", ex.Message);
+            Assert.DoesNotContain("compat level", ex.Message);
         }
 
         [Fact]

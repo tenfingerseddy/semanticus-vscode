@@ -58,6 +58,18 @@ namespace Semanticus.Engine
                 }
                 var bim = Path.Combine(full, "model.bim");
                 if (File.Exists(bim)) return TOM.JsonSerializer.DeserializeDatabase(File.ReadAllText(bim), null, AS.CompatibilityMode.PowerBI);
+                // A Tabular Editor split-folder model (database.json + tables/*.json). The UI open path already
+                // loads this via TE2; the reference / compare / cherry-pick door must too, or a Linux TE folder
+                // that just saved cannot be browsed as a reference (D-033).
+                var teJson = ResolveTeFolderJson(full);
+                if (teJson != null)
+                    return TOM.JsonSerializer.DeserializeDatabase(teJson, null, AS.CompatibilityMode.PowerBI);
+            }
+            if (File.Exists(full) && string.Equals(Path.GetFileName(full), "database.json", StringComparison.OrdinalIgnoreCase))
+            {
+                var teJson = ResolveTeFolderJson(Path.GetDirectoryName(full));
+                if (teJson != null)
+                    return TOM.JsonSerializer.DeserializeDatabase(teJson, null, AS.CompatibilityMode.PowerBI);
             }
             throw new InvalidOperationException("No TMDL/.bim model found at: " + full);
         }
@@ -81,6 +93,15 @@ namespace Semanticus.Engine
             var def = Path.Combine(dir, "definition");
             if (Directory.Exists(def)) return def;
             return null;
+        }
+
+        /// <summary>Combine a TE2 split-folder model into one TMSL document the raw TOM deserializer can load.
+        /// Returns null when the folder is not a TE folder so callers fall through to the not-found error.</summary>
+        private static string ResolveTeFolderJson(string dir)
+        {
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
+            if (!File.Exists(Path.Combine(dir, "database.json"))) return null;
+            return TabularEditor.TOMWrapper.Serialization.SplitModelSerializer.CombineFolderJson(dir);
         }
 
         // ---- the diff ----
@@ -111,7 +132,7 @@ namespace Semanticus.Engine
                     // Ambiguous target: shield ALL twins from the delete sweep, surface one Ambiguous item, apply nothing.
                     foreach (var twin in rtList.Where(x => x.LineageTag == ltag)) matchedRT.Add(twin);
                     items.Add(Ambiguous(AlmRef.Top("table", lt.Name), "Table", lt.Name, null, Ser(lt),
-                        $"the target has multiple tables sharing LineageTag '{ltag}' — cannot resolve which to update"));
+                        $"the target has multiple tables sharing LineageTag '{ltag}': cannot resolve which to update"));
                     continue;
                 }
                 var rt = Match(lt.LineageTag, lt.Name, rightTablesByTag, n => rtList.FirstOrDefault(x => x.Name == n), t => t.LineageTag, out var retagRT);
@@ -209,7 +230,7 @@ namespace Semanticus.Engine
                 {
                     foreach (var twin in rl.Where(x => tag(x) == ltag)) matched.Add(twin);
                     items.Add(Ambiguous(RefFor(kind, srcTable, name(l)), type, name(l), srcTable, Ser(l),
-                        $"the target has multiple {type.ToLowerInvariant()}s sharing LineageTag '{ltag}' — cannot resolve which to update"));
+                        $"the target has multiple {type.ToLowerInvariant()}s sharing LineageTag '{ltag}': cannot resolve which to update"));
                     continue;
                 }
                 var r = Match(ltag, name(l), rightByTag, n => rl.FirstOrDefault(x => name(x) == n), tag, out var retagR);
@@ -510,7 +531,7 @@ namespace Semanticus.Engine
                     if (rtT == null)
                     {
                         if (!string.IsNullOrEmpty(it.TargetTag))
-                            throw new InvalidOperationException($"the table this change targeted (lineage '{it.TargetTag}') no longer exists on the target — re-diff against the current model");
+                            throw new InvalidOperationException($"the table this change targeted (lineage '{it.TargetTag}') no longer exists on the target: re-diff against the current model");
                         return false;
                     }
                     if (it.Action == "Delete") { right.Tables.Remove(rtT); return true; }
@@ -522,7 +543,7 @@ namespace Semanticus.Engine
                     // reports a kind-changed table as success. (A silent half-apply would leave the paired calc-item
                     // creates to fail against a table that still has no calc group.) The user recreates the table.
                     if ((ltT.CalculationGroup == null) != (rtT.CalculationGroup == null))
-                        throw new InvalidOperationException($"table '{rtT.Name}' changed kind (plain table ↔ calculation group) — recreate it rather than updating it in place");
+                        throw new InvalidOperationException($"table '{rtT.Name}' changed kind (plain table ↔ calculation group): recreate it rather than updating it in place");
                     if (!JsonSemanticEqual(UnsupportedTableShell(ltT), UnsupportedTableShell(rtT)))
                         throw new InvalidOperationException($"table '{rtT.Name}' carries authored shell metadata this apply path cannot copy yet; deploy it through TMDL/XMLA instead");
                     rtT.Description = ltT.Description; rtT.IsHidden = ltT.IsHidden; rtT.DataCategory = ltT.DataCategory;
@@ -551,14 +572,16 @@ namespace Semanticus.Engine
                     CopyAnnotations(ltT.Annotations.Cast<TOM.Annotation>(), rtT.Annotations);
                     return true;
                 case "Measure": return ApplyTableChild(left, right, it, t => t.Measures.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Measures.Add((TOM.Measure)o), (t, n) => { var x = t.Measures.Find(n); if (x != null) t.Measures.Remove(x); });
-                case "Column": return ApplyTableChild(left, right, it, t => t.Columns.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Columns.Add((TOM.Column)o), (t, n) => { var x = t.Columns.Find(n); if (x != null) t.Columns.Remove(x); });
+                case "Column":
+                    if (it.Action == "Update") GuardColumnTypeUpdate(left, right, it);
+                    return ApplyTableChild(left, right, it, t => t.Columns.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Columns.Add((TOM.Column)o), (t, n) => { var x = t.Columns.Find(n); if (x != null) t.Columns.Remove(x); });
                 case "Partition": return ApplyTableChild(left, right, it, t => t.Partitions.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Partitions.Add((TOM.Partition)o), (t, n) => { var x = t.Partitions.Find(n); if (x != null) t.Partitions.Remove(x); });
                 // A calculation item is a name-keyed child of a table's CalculationGroup (issue #124), mirroring "Partition".
                 // A target table with NO calc group can't receive a calc item — fail with a CLEAR reason (the throw is caught
                 // into outcome.Failed by Apply, so it's reported, never a raw NullReference across a door).
                 case "CalculationItem": return ApplyTableChild(left, right, it,
                     t => t.CalculationGroup?.CalculationItems.Cast<TOM.NamedMetadataObject>() ?? Enumerable.Empty<TOM.NamedMetadataObject>(),
-                    (t, o) => { if (t.CalculationGroup == null) throw new InvalidOperationException($"cannot add calculation item '{o.Name}' — the target table '{t.Name}' has no calculation group"); t.CalculationGroup.CalculationItems.Add((TOM.CalculationItem)o); },
+                    (t, o) => { if (t.CalculationGroup == null) throw new InvalidOperationException($"cannot add calculation item '{o.Name}': the target table '{t.Name}' has no calculation group"); t.CalculationGroup.CalculationItems.Add((TOM.CalculationItem)o); },
                     (t, n) => { var x = t.CalculationGroup?.CalculationItems.Find(n); if (x != null) t.CalculationGroup.CalculationItems.Remove(x); });
                 case "Hierarchy": return ApplyTableChild(left, right, it, t => t.Hierarchies.Cast<TOM.NamedMetadataObject>(), (t, o) => t.Hierarchies.Add((TOM.Hierarchy)o), (t, n) => { var x = t.Hierarchies.Find(n); if (x != null) t.Hierarchies.Remove(x); });
                 case "Relationship": return ApplyRelationship(left, right, it);
@@ -571,6 +594,50 @@ namespace Semanticus.Engine
             }
         }
 
+        // A column type change that would leave a relationship with mismatched ends is refused before the clone
+        // lands. Numeric types (Int64/Decimal/Double) are treated as compatible with each other; text, date and
+        // true/false must match exactly. No relationship (no dependents) still applies.
+        private static void GuardColumnTypeUpdate(TOM.Model left, TOM.Model right, ModelDiffItem it)
+        {
+            var lt = left.Tables.Find(it.Table);
+            var src = lt?.Columns.Find(it.Name);
+            if (src == null) return;
+            var rt = FindTableBy(right, it.TargetTableTag, it.TargetTable, it.Table);
+            if (rt == null) return;
+            var tgt = ResolveChild(rt.Columns.Cast<TOM.NamedMetadataObject>(), it.TargetTag,
+                string.IsNullOrEmpty(it.TargetTag) ? (it.TargetName ?? it.Name) : null) as TOM.Column;
+            if (tgt == null) return;
+            if (src.DataType == tgt.DataType) return;
+            foreach (var rel in right.Relationships.OfType<TOM.SingleColumnRelationship>())
+            {
+                TOM.Column other = null;
+                if (ReferenceEquals(rel.FromColumn, tgt)) other = rel.ToColumn;
+                else if (ReferenceEquals(rel.ToColumn, tgt)) other = rel.FromColumn;
+                if (other == null) continue;
+                if (ColumnTypesCompatible(src.DataType, other.DataType)) continue;
+                throw new InvalidOperationException(
+                    $"Column '{rt.Name}'[{tgt.Name}] cannot change from {PlainColumnType(tgt.DataType)} to {PlainColumnType(src.DataType)} because a relationship still uses it.");
+            }
+        }
+
+        private static bool ColumnTypesCompatible(TOM.DataType a, TOM.DataType b)
+        {
+            if (a == b) return true;
+            bool num(TOM.DataType t) => t == TOM.DataType.Int64 || t == TOM.DataType.Decimal || t == TOM.DataType.Double;
+            return num(a) && num(b);
+        }
+
+        private static string PlainColumnType(TOM.DataType t) => t switch
+        {
+            TOM.DataType.Int64 => "whole number",
+            TOM.DataType.Decimal => "decimal",
+            TOM.DataType.Double => "decimal",
+            TOM.DataType.String => "text",
+            TOM.DataType.DateTime => "date",
+            TOM.DataType.Boolean => "true/false",
+            _ => t.ToString(),
+        };
+
         private static bool ApplyTableChild(TOM.Model left, TOM.Model right, ModelDiffItem it,
             Func<TOM.Table, IEnumerable<TOM.NamedMetadataObject>> children, Action<TOM.Table, TOM.NamedMetadataObject> add, Action<TOM.Table, string> remove)
         {
@@ -581,7 +648,7 @@ namespace Semanticus.Engine
             if (rt == null)
             {
                 if (!string.IsNullOrEmpty(it.TargetTableTag))
-                    throw new InvalidOperationException($"the owning table this change targeted (lineage '{it.TargetTableTag}') no longer exists on the target — re-diff against the current model");
+                    throw new InvalidOperationException($"the owning table this change targeted (lineage '{it.TargetTableTag}') no longer exists on the target: re-diff against the current model");
                 return false;
             }
             // The CHILD OBJECT itself is resolved by identity too. If the item carried a child tag (Update/Delete of a
@@ -595,7 +662,7 @@ namespace Semanticus.Engine
                 if (cur == null)
                 {
                     if (childHasIdentity)
-                        throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target — re-diff against the current model");
+                        throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target: re-diff against the current model");
                     return false;   // tag-less + absent by name ⇒ a reported no-op, never a guess
                 }
                 remove(rt, cur.Name); return true;
@@ -607,7 +674,7 @@ namespace Semanticus.Engine
             // identity and remove THAT — not it.Name (the NEW name), which would no-op and leave a duplicate + orphan.
             var existing = ResolveChild(children(rt), it.TargetTag, childHasIdentity ? null : (it.TargetName ?? it.Name));
             if (existing == null && childHasIdentity)
-                throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target — re-diff against the current model");
+                throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target: re-diff against the current model");
             if (existing != null) remove(rt, existing.Name);
             add(rt, CloneNamed(lo, children(rt)));   // children(rt) is post-removal — the collision check sees the current state
             return true;
@@ -627,7 +694,7 @@ namespace Semanticus.Engine
                 ro = rightColl.FirstOrDefault(x => LineageOf(x) == it.TargetTag);
                 if (it.Action == "Delete") { if (ro != null) { remove(ro); return true; } return false; }   // tag miss ⇒ no-op, never a name-guess
                 if (ro == null)
-                    throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target — re-diff against the current model");
+                    throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target: re-diff against the current model");
             }
             else
             {
@@ -1094,7 +1161,7 @@ namespace Semanticus.Engine
         private static ModelDiffItem Ambiguous(string refStr, string type, string name, string table, string left, string reason)
         {
             var it = Mk(refStr, type, name, table, "Ambiguous", left, null, false);
-            it.Reason = reason + " — nothing applied or deleted for this tag";
+            it.Reason = reason + ": nothing applied or deleted for this tag";
             return it;
         }
 

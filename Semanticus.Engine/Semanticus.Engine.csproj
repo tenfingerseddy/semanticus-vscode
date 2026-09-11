@@ -29,6 +29,13 @@
     <ProjectReference Include="..\Semanticus.Analysis\Semanticus.Analysis.csproj" />
   </ItemGroup>
 
+  <!-- Reads the YAML interiors of format-v2 workflow files (WorkflowParser.cs). Pinned: MIT verified at
+       exactly this version (THIRD-PARTY-NOTICES.md, "YamlDotNet"); the frozen v1 ruleset never touches
+       it, by [T217]'s exit test. Zero transitive dependencies on net8.0. -->
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="[18.1.0]" />
+  </ItemGroup>
+
   <!-- Curated format-string template library (docs scratchpad format-string-template-library.md): the SINGLE
        source of truth, compiled into the engine and served identically to the webview (RPC) and the agent (MCP)
        via list_format_templates. Embedded (not CopyToOutput) so it can't drift from the binary or go missing. -->

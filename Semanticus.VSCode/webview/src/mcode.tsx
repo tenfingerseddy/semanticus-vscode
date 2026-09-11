@@ -7,7 +7,7 @@ import { mDiagnostics } from './manalysis';
 import { useConnection } from './connection';
 import { gen, mQuoteIdent } from './mtransform';
 import { SamplePreview, AppliedStepsPanel, sourceMName, type GridCol } from './pqtransforms';
-import { isMContextCurrent, mContextToken, pollingExpressionForSave, reconcileExternalM, reconcileProfileSubject, reconcileSaveRevision } from './mcodelifecycle.mjs';
+import { isMContextCurrent, mContextToken, policyFetchAllowed, pollingExpressionForSave, reconcileExternalM, reconcileProfileSubject, reconcileSaveRevision, reconcileTableSelection } from './mcodelifecycle.mjs';
 
 // The M Code tab is one workspace: the M query is primary, with the selected table's incremental-refresh
 // prerequisites and policy beside it. The CodeMirror M editor provides offline format, the
@@ -57,14 +57,20 @@ type BusyMap = Record<string, RefreshBusyOp>;
 const PARAMS_BUSY_KEY = 'prerequisite:parameters';
 
 export function MCodeView({ navTarget }: { navTarget?: { table: string; partitionId?: string; nonce: number } | null } = {}) {
+  const { session } = useConnection();
   const [doc, setDoc] = useState<DocModel | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [selected, setSelectedState] = useState<string>(() => loadState<string>('pqTable', ''));
+  const tableStateKey = 'pqTable:' + (session?.sessionId ?? '');
+  const [selected, setSelectedState] = useState<string>(() => loadState<string>(tableStateKey, ''));
   // Table-context token, updated SYNCHRONOUSLY with every selection change: a passive effect would leave a
   // window (setSelected(B) → before React re-renders) where an in-flight save/remove continuation still sees A
   // and applies A's state. Every selection path funnels through this setter.
-  const selectedRef = useRef(loadState<string>('pqTable', ''));
-  const setSelected = useCallback((t: string) => { selectedRef.current = t; setSelectedState(t); }, []);
+  const selectedRef = useRef(loadState<string>(tableStateKey, ''));
+  const policyDraftDirtyRef = useRef(false);
+  const setSelected = useCallback((t: string) => {
+    if (selectedRef.current !== t) policyDraftDirtyRef.current = false;
+    selectedRef.current = t; setSelectedState(t);
+  }, []);
   // A Model-tree "Edit M code" jump selects that table and exact partition. Nonce re-fires a repeat jump.
   // pendingNav feeds the eligibility toast below; mNav hands the clicked partition to the M lane.
   const [pendingNav, setPendingNav] = useState<{ table: string; nonce: number } | null>(null);
@@ -108,7 +114,7 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   // a second guard so a delayed continuation can never write one table's policy state into another table's UI.
   const [toast, setToast] = useState<Toast | null>(null);
 
-  useEffect(() => { saveState('pqTable', selected); }, [selected]);
+  useEffect(() => { saveState(tableStateKey, selected); }, [tableStateKey, selected]);
   useEffect(() => { if (toast?.tone === 'ok') { const id = window.setTimeout(() => setToast(null), 3500); return () => window.clearTimeout(id); } }, [toast]);
 
   const loadDoc = useCallback(async () => {
@@ -124,10 +130,11 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
 
   // Tables that can carry an incremental-refresh policy: those with an M/import partition (not calculated tables).
   const tables = useMemo(() => (doc?.tables ?? []).filter((t) => !t.isCalculated), [doc]);
-  // Heal the selection: keep it if still present, else pick the first eligible table.
+  // Heal the selection: keep it if still present, else pick the first eligible table. A leftover name from the
+  // previous model must not keep firing requests (and must not replace this tab with the engine error text).
   useEffect(() => {
-    if (!tables.length) return;
-    if (!tables.some((t) => t.name === selected)) setSelected(tables[0].name);
+    const next = reconcileTableSelection(selected, tables.map((t) => t.name));
+    if (next !== selected) setSelected(next);
   }, [tables, selected]);
   // The honesty layer over that heal-snap: a tree jump to a table this tab can't edit (calculated — its logic is
   // DAX) used to be silently snapped back to the first eligible table, so the click looked like it did nothing.
@@ -152,13 +159,19 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   const rangeEnd = useMemo(() => doc?.expressions.find((e) => e.name === 'RangeEnd'), [doc]);
   const paramsOk = isParamExpr(rangeStart) && isParamExpr(rangeEnd);
   const partitionFilters = useMemo(() => (table?.partitions ?? []).some((p) => filtersOnRange(p.source)), [table]);
-  // Calculated columns are excluded: the range filter is M over the PARTITION OUTPUT, where a calculated
-  // column does not exist (the engine rejects them for the same reason).
-  const dateColumns = useMemo(
-    () => (doc?.columns ?? []).filter((c) => c.table === selected && !c.isCalculated && /date|time/i.test(c.dataType)).map((c) => c.name),
-    [doc, selected]
+  // Eligible date columns: data columns loaded from the source. Calculated columns and columns with no
+  // source name cannot be filtered in M, so offering them only produces a save the engine then rejects.
+  const tableColumns = useMemo(() => (doc?.columns ?? []).filter((c) => c.table === selected), [doc, selected]);
+  const eligibleDateColumns = useMemo(
+    () => tableColumns.filter((c) => !!sourceMName(c) && /date|time/i.test(c.dataType)).map((c) => c.name),
+    [tableColumns]
   );
-  const allColumns = useMemo(() => (doc?.columns ?? []).filter((c) => c.table === selected && !c.isCalculated).map((c) => c.name), [doc, selected]);
+  const eligibleAllColumns = useMemo(
+    () => tableColumns.filter((c) => !!sourceMName(c)).map((c) => c.name),
+    [tableColumns]
+  );
+  const dateColumns = eligibleDateColumns;
+  const allColumns = eligibleAllColumns;
 
   // Has the USER picked a date column for this table? A wired-field seed may only override the default/heal
   // seed, never a human choice — reset per table, set by the selector's onChange.
@@ -166,13 +179,16 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
 
   // Load the selected table's policy → seed the form.
   useEffect(() => {
-    if (!selected) return;
+    if (!policyFetchAllowed(selected, tables.map((t) => t.name))) return;
+    // A model change can refresh this document while the person is typing in the policy form. Keep that draft;
+    // replacing it from the server here made Save policy silently throw away a value that had just been entered.
+    if (policyDraftDirtyRef.current) return;
     dateColTouched.current = false;
     let cancelled = false;
     (async () => {
       try {
         const p = await rpc<RefreshPolicyInfo>('getIncrementalRefreshPolicy', 'table:' + selected);
-        if (cancelled) return;
+        if (cancelled || policyDraftDirtyRef.current) return;
         setPolicy(p);
         setEnabled(!!p?.enabled);
         setForm((f) => p?.enabled ? {
@@ -185,10 +201,14 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
           mode: (p.mode === 'Hybrid' ? 'Hybrid' : 'Import'),
           polling: p.pollingExpression ?? '',
         } : DEFAULT_FORM);
-      } catch (e) { if (!cancelled) setErr(String((e as Error).message ?? e)); }
+        setErr(null);
+      } catch (e) {
+        if (!cancelled) setErr('Could not load refresh settings for this table. Pick another table and try again.');
+        void e;
+      }
     })();
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [selected, tables]);
 
   // Default the date column once columns are known (prefer a date/time column).
   useEffect(() => {
@@ -220,7 +240,10 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     setForm((f) => f.dateColumn === wiredColumn ? f : { ...f, dateColumn: wiredColumn });
   }, [wiredColumn]);
 
-  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => {
+    policyDraftDirtyRef.current = true;
+    setForm((f) => ({ ...f, [k]: v }));
+  };
 
   const createParams = useCallback(async () => {
     if (busyRef.current[PARAMS_BUSY_KEY] || Object.keys(busyRef.current).some((key) => key.startsWith('policy:'))) return;
@@ -266,6 +289,10 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     const filterKey = `prerequisite:filter:${t}`;
     const errorKey = `save-policy:${t}`;
     if (busyRef.current[busyKey] || busyRef.current[PARAMS_BUSY_KEY] || busyRef.current[filterKey]) return;
+    if (!refreshWindowFitsArchive(form.storePeriods, form.storeGranularity, form.refreshPeriods, form.refreshGranularity)) {
+      setActionError(errorKey, new Error(`The refresh window (${periodsLabel(form.refreshPeriods, form.refreshGranularity)}) is wider than the store window (${periodsLabel(form.storePeriods, form.storeGranularity)}). Shrink refresh, or store at least as far back as you refresh.`));
+      return;
+    }
     if (!beginBusy(busyKey, 'save-policy')) return;
     clearActionError(errorKey);
     try {
@@ -277,7 +304,19 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
       setToast({ text: r?.warning ? `✓ policy saved. ${r.warning}` : '✓ incremental refresh policy saved', tone: 'ok' });
       await loadDoc();
       const p = await rpc<RefreshPolicyInfo>('getIncrementalRefreshPolicy', 'table:' + t);
-      if (selectedRef.current === t) { setPolicy(p); setEnabled(!!p?.enabled); }
+      if (selectedRef.current === t) {
+        setPolicy(p); setEnabled(!!p?.enabled);
+        setForm((f) => ({ ...f,
+          storePeriods: p.rollingWindowPeriods || DEFAULT_FORM.storePeriods,
+          storeGranularity: (GRANS.includes(p.rollingWindowGranularity as Gran) ? p.rollingWindowGranularity : DEFAULT_FORM.storeGranularity) as Gran,
+          refreshPeriods: p.incrementalPeriods || DEFAULT_FORM.refreshPeriods,
+          refreshGranularity: (GRANS.includes(p.incrementalGranularity as Gran) ? p.incrementalGranularity : DEFAULT_FORM.refreshGranularity) as Gran,
+          offset: p.incrementalPeriodsOffset || 0,
+          mode: p.mode === 'Hybrid' ? 'Hybrid' : 'Import',
+          polling: p.pollingExpression ?? '',
+        }));
+        policyDraftDirtyRef.current = false;
+      }
     } catch (e) { setActionError(errorKey, e); }
     finally { endBusy(busyKey); }
   }, [selected, form, loadDoc, beginBusy, clearActionError, setActionError, endBusy]);
@@ -293,7 +332,10 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     try {
       await rpc('removeIncrementalRefreshPolicy', 'table:' + t);
       setToast({ text: '✓ incremental refresh policy removed', tone: 'ok' });
-      if (selectedRef.current === t) { setEnabled(false); setPolicy(null); setForm(DEFAULT_FORM); }
+      if (selectedRef.current === t) {
+        policyDraftDirtyRef.current = false;
+        setEnabled(false); setPolicy(null); setForm(DEFAULT_FORM);
+      }
       await loadDoc();
     } catch (e) { setActionError(errorKey, e); }
     finally { endBusy(busyKey); }
@@ -304,7 +346,6 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     window.setTimeout(() => refreshPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   }, []);
 
-  if (err) return <div className="p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
   if (!doc) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model…</div>;
   if (!tables.length) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No import/query tables in this model. Incremental refresh applies to tables loaded by a query (M).</div>;
 
@@ -355,6 +396,9 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 min-h-0 overflow-auto relative">
+        {err && (
+          <div className="mx-4 mt-3 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div>
+        )}
         {toast && (
           <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] shadow-lg"
             style={{ background: 'var(--sem-surface)', borderColor: toast.tone === 'ok' ? 'var(--sem-good)' : 'var(--sem-bad)', color: 'var(--sem-fg)' }}>
@@ -412,7 +456,7 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                   <div className="flex items-center gap-3 flex-wrap">
                     <div id="refresh-policy-heading" className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>Policy</div>
                     <label className="flex items-center gap-2 text-[11px]">
-                      <input type="checkbox" checked={enabled} disabled={!!policyBusy} onChange={(e) => setEnabled(e.target.checked)} />
+                      <input type="checkbox" checked={enabled} disabled={!!policyBusy} onChange={(e) => { policyDraftDirtyRef.current = true; setEnabled(e.target.checked); }} />
                       Configure incremental refresh for <b>{selected}</b>
                     </label>
                   </div>
@@ -421,9 +465,11 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                     <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2 xl:grid-cols-3">
                       <PolicyField label="Date column" hintText={policy?.wiredDateField
                         ? `This query already filters on [${policy.wiredDateField}]. Edit the M or remove the range filter before moving it.`
-                        : undefined}>
-                        <select value={form.dateColumn} disabled={!!policyBusy} onChange={(e) => { dateColTouched.current = true; set('dateColumn', e.target.value); }} style={{ ...input, width: '100%', maxWidth: 'unset' }}>
-                          {dateColumns.length === 0 && <option value="">(no date column found)</option>}
+                        : (dateColumnOptions.length === 0
+                          ? 'No date column on this table is loaded from the source. Calculated columns and columns with no source name cannot be used.'
+                          : undefined)}>
+                        <select value={form.dateColumn} disabled={!!policyBusy || dateColumnOptions.length === 0} onChange={(e) => { dateColTouched.current = true; set('dateColumn', e.target.value); }} style={{ ...input, width: '100%', maxWidth: 'unset' }}>
+                          {dateColumnOptions.length === 0 && <option value="">(no source-loaded date column)</option>}
                           {dateColumnOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </PolicyField>
@@ -477,7 +523,7 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                       </div>
                     )}
                     <div className="flex flex-col items-end gap-1">
-                      <button onClick={save} disabled={policyBlocked || !enabled} style={primaryBtn}>{policyBusy === 'save-policy' ? 'Applying…' : 'Save policy'}</button>
+                      <button onClick={save} disabled={policyBlocked || !enabled || dateColumnOptions.length === 0} style={primaryBtn}>{policyBusy === 'save-policy' ? 'Applying…' : 'Save policy'}</button>
                       {actionErrors[`save-policy:${selected}`] && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 360 }}>{actionErrors[`save-policy:${selected}`]}</span>}
                     </div>
                   </div>
@@ -555,12 +601,16 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
   }, [initialTarget, targets, onToast]);
   const target = useMemo(() => targets.find((t) => t.id === targetId) ?? targets[0] ?? null, [targets, targetId]);
   const targetIdRef = useRef(target?.id ?? ''); targetIdRef.current = target?.id ?? '';
+  const editorDirtyRef = useRef(false);
   const [text, setTextState] = useState('');
   const textRef = useRef('');
   const [original, setOriginalState] = useState('');
   const originalRef = useRef('');
   const loadedTargetRef = useRef('');
   const [serverConflict, setServerConflict] = useState<string | null>(null);
+  const confirmDiscard = useCallback((destination: string) =>
+    !(editorDirtyRef.current || textRef.current !== originalRef.current)
+      || window.confirm(`This M query has unsaved typing. Switch to ${destination} and discard it?`), []);
   currentContextRef.current = mContextToken(selectedTable, target?.id ?? '', textRevisionRef.current);
   const invalidateContext = useCallback((tableName = selectedTable, queryId = targetIdRef.current) => {
     textRevisionRef.current += 1;
@@ -574,11 +624,13 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     setTextState(next); setOriginalState(next); setServerConflict(null); invalidateContext();
   }, [invalidateContext]);
   const selectTarget = useCallback((id: string) => {
+    if (id !== targetIdRef.current && !confirmDiscard('another query')) return;
     invalidateContext(selectedTable, id); setTargetId(id);
-  }, [invalidateContext, selectedTable]);
+  }, [confirmDiscard, invalidateContext, selectedTable]);
   const selectTable = useCallback((name: string) => {
+    if (name !== selectedTable && !confirmDiscard('another table')) return;
     invalidateContext(name, ''); onSelectTable(name);
-  }, [invalidateContext, onSelectTable]);
+  }, [confirmDiscard, invalidateContext, onSelectTable, selectedTable]);
   const [profileRevision, setProfileRevision] = useState(0);
   const [validity, setValidity] = useState<{ ok: boolean; error?: string } | null>(null);
   const [codeBusy, setCodeBusy] = useState<CodeBusy | null>(null);
@@ -702,6 +754,8 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     let live = true;
     // Drive the strip from the SAME validator the inline squiggles use (syntax + duplicate identifiers), so a
     // green "✓ valid M" never sits next to red squiggles. ok only when there are no error/warning diagnostics.
+    // Empty text is not a query: do not wear a valid M chip on a table with nothing to edit (D-158).
+    if (!text.trim()) { setValidity(null); return; }
     const id = window.setTimeout(async () => {
       const diags = (await mDiagnostics(text)).filter((d) => d.severity <= 2);
       if (!live) return;
@@ -710,6 +764,7 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     return () => { live = false; window.clearTimeout(id); };
   }, [text]);
   const dirty = text !== original;
+  editorDirtyRef.current = dirty;
 
   const doFormat = async () => {
     if (!target) return;
@@ -796,6 +851,7 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     ? `Table and query selectors are unavailable while ${codeBusyActivity}.`
     : tableSwitchDisabled ? 'The table selector is unavailable while the policy action finishes.' : null;
 
+  const hasEditableM = !!target && text.trim().length > 0;
   const contextStrip = (
     <div className="border-b" style={{ borderColor: 'var(--sem-border)' }}>
       <div className="flex items-center gap-2 px-4 py-2 text-[11px] flex-wrap">
@@ -809,7 +865,7 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
           {targets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         {codeBusyReason && <span role="status" style={hint}>{codeBusyReason}</span>}
-        {validity && <span className="ml-auto" style={{ fontSize: 10.5, color: validity.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{validity.ok ? '✓ valid M' : (validity.error || 'M needs attention')}</span>}
+        {hasEditableM && validity && <span className="ml-auto" style={{ fontSize: 10.5, color: validity.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{validity.ok ? '✓ valid M' : (validity.error || 'M needs attention')}</span>}
       </div>
       <div className="flex items-center gap-2 px-4 py-1.5 text-[10.5px]" style={{ borderTop: '1px solid var(--sem-border)' }}>
         <span style={{ color: 'var(--sem-muted)' }}>Refresh:</span>
@@ -899,6 +955,12 @@ const hint: React.CSSProperties = { color: 'var(--sem-muted)', fontSize: 10.5 };
 
 function periodsLabel(periods: number, granularity: string): string {
   return `${periods} ${granularity.toLowerCase()}${periods === 1 ? '' : 's'}`;
+}
+function granDays(gran: Gran): number {
+  return gran === 'Day' ? 1 : gran === 'Month' ? 30 : gran === 'Quarter' ? 90 : 365;
+}
+function refreshWindowFitsArchive(storePeriods: number, storeGran: Gran, refreshPeriods: number, refreshGran: Gran): boolean {
+  return storePeriods * granDays(storeGran) >= refreshPeriods * granDays(refreshGran);
 }
 function PolicyField({ label, hintText, children }: { label: string; hintText?: string; children: React.ReactNode }) {
   return (

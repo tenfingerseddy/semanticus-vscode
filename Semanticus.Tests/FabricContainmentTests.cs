@@ -148,7 +148,7 @@ namespace Semanticus.Tests
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => engine.ListDeploymentPipelinesAsync("azcli", null, cts.Token));
+                () => engine.ListDeploymentPipelinesAsync("azcli", null, cancellationToken: cts.Token));
         }
 
         [Fact]
@@ -159,7 +159,7 @@ namespace Semanticus.Tests
                 Task.FromException<HttpResponseMessage>(new TaskCanceledException("HTTP client timeout")));
             using var engine = new LocalEngine(new SessionManager());
 
-            var timedOut = await engine.FabricGitStatusAsync("workspace", "azcli", null, CancellationToken.None);
+            var timedOut = await engine.FabricGitStatusAsync("workspace", "azcli", null, cancellationToken: CancellationToken.None);
             Assert.Contains("HTTP client timeout", timedOut.Error);
 
             FabricRest.TestClientFactory = () => Client(async (_, ct) =>
@@ -169,7 +169,7 @@ namespace Semanticus.Tests
             });
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => engine.FabricGitStatusAsync("workspace", "azcli", null, cts.Token));
+                () => engine.FabricGitStatusAsync("workspace", "azcli", null, cancellationToken: cts.Token));
         }
 
         [Fact]
@@ -253,7 +253,7 @@ namespace Semanticus.Tests
                 remote = await RemoteEngine.ConnectAsync(pipe);
                 using var callCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                    () => remote.ListDeploymentPipelinesAsync("azcli", null, callCts.Token));
+                    () => remote.ListDeploymentPipelinesAsync("azcli", null, cancellationToken: callCts.Token));
             }
             finally
             {

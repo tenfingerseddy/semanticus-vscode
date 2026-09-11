@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { PANEL_ONLY_CHORDS } from './copy';
 
 // ===================================================================================================
 // Keyboard shortcuts — the single source of truth the '?' overlay renders from.
@@ -45,6 +46,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { win: mod('Ctrl+F'), action: 'Search & Replace across the model', note: 'names, descriptions, DAX; the Search tab, find box focused' },
       { win: mod('Ctrl+S'), action: 'Save the model to disk' },
+      { win: mod('Ctrl+Z'), action: 'Undo the last model change', note: 'when you are not typing; Ctrl+Alt+Z always undoes a model change' },
       { win: 'Ctrl+Alt+Z', action: 'Undo the last model change', note: 'the shared you-and-AI timeline, not text undo' },
       { win: 'Ctrl+Alt+Shift+Z', action: 'Redo a model change' },
       { win: 'Ctrl+Alt+T', action: 'Focus the Model tree (side bar)' },
@@ -101,6 +103,21 @@ export function isTypingTarget(t: EventTarget | null): boolean {
   return !!el?.closest?.('input, textarea, select, [contenteditable="true"], .cm-editor');
 }
 
+// Webview iframes swallow chords before VS Code's keybinding service sees them (D-149). Map the ones a
+// person still expects (Save, model undo when not typing, the command palette) so the page can hand them
+// to the host. Alt chords stay out: Ctrl+Alt+Z is the in-page model-undo that must not collide with AltGr.
+export function hostCommandForKey(e: KeyboardEvent): string | null {
+  const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+  if (!mod || e.altKey) return null;
+  const key = e.key.toLowerCase();
+  if (e.shiftKey && key === 'p') return 'workbench.action.showCommands';
+  if (!e.shiftKey && key === 's') return 'semanticus.save';
+  if (isTypingTarget(e.target)) return null;
+  if (key === 'z') return e.shiftKey ? 'semanticus.redo' : 'semanticus.undo';
+  if (!e.shiftKey && key === 'y') return 'semanticus.redo';
+  return null;
+}
+
 function Key({ children }: { children: React.ReactNode }) {
   return (
     <kbd className="text-[11px] px-1.5 py-0.5 rounded tnum whitespace-nowrap"
@@ -148,7 +165,8 @@ export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: ()
           </div>
         </div>
         <div className="px-5 py-3 border-t text-[11px] shrink-0" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
-          Every Ctrl-chord here is a normal VS Code keybinding. Change any of them in <b>File → Preferences → Keyboard Shortcuts</b> (search “Semanticus”).
+          Most chords here are standard VS Code keys. Change any of those in <b>File → Preferences → Keyboard Shortcuts</b> (search “Semanticus”).
+          These work only inside this panel, so the Keyboard Shortcuts editor cannot change them: <b>{PANEL_ONLY_CHORDS}</b>.
           Shortcuts only ever apply inside Semanticus surfaces (Studio, the Model tree, DAX editors). Your usual VS Code keys are untouched everywhere else.
           Full map with scoping notes: <span style={{ color: 'var(--sem-fg)' }}>docs/keyboard-shortcuts.md</span>.
         </div>

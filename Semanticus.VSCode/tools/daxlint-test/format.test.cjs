@@ -54,5 +54,11 @@ for (const s of samples) {
 // empty / whitespace input is safe
 eq('empty', formatDax('   '), '');
 
+// D-070: a leading comment on a VAR/RETURN body must survive Format Document
+const kept = formatDax('-- keep this\nVAR x = 1\nRETURN x');
+ok('leading comment kept with var/return', kept.startsWith('-- keep this') && kept.includes('VAR x'), kept);
+const keptSlash = formatDax('// keep me\nVAR x = SUM(Sales[Amount]) RETURN x');
+ok('leading slash comment kept with var/return', keptSlash.includes('// keep me'), keptSlash);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

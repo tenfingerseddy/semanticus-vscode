@@ -374,8 +374,16 @@ namespace Semanticus.Tests
         public async Task Renamed_bpa_violation_is_not_net_new()
         {
             var (engine, sm, _) = await FreshAsync();
-            // Lowercase-named measure trips UPPERCASE_FIRST_LETTER_MEASURES_TABLES (severity 2 = Warning+).
+            // A visible measure with no format string trips PROVIDE_FORMAT_STRING_FOR_MEASURES (severity 3).
             var m2 = await engine.CreateMeasureAsync("table:Sales", "lowercase probe", "1", "agent");
+
+            // Precondition, asserted rather than assumed: this lane only tests rename-identity if the measure
+            // really does carry a Warning+ BPA violation. Previously the scenario leaned on a severity-2 rule
+            // without checking, so a corpus change that dropped or downgraded that rule left the test asserting
+            // the ABSENCE of a delta and passing vacuously — green while testing nothing.
+            var pre = await engine.BpaScanAsync();
+            Assert.Contains(pre.Violations, v => v.ObjectRef == m2 && v.Severity >= 2);
+
             await engine.PullAgentHealthAsync();   // drain the create's own block
 
             // Rename to another lowercase name: still violating, but the SAME finding — its tag key is unchanged.

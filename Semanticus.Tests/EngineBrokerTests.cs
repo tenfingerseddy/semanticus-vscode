@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Semanticus.Engine;
 using Xunit;
 
@@ -39,6 +40,88 @@ namespace Semanticus.Tests
 
             // A new-format record whose identity can't even be parsed is untrustworthy — not alive.
             Assert.False(EngineBroker.IsAlive(SelfInfo(startUtc: "not-a-timestamp")));
+        }
+
+        // ---- D-118: a live OWNER must not read as dead because its executable name contains a dot ------------------
+        // The packaged engine on Unix is a self-contained apphost named "Semanticus.Engine" with NO extension. The
+        // name check derived the expected name with Path.GetFileNameWithoutExtension, which treats ".Engine" as an
+        // extension and yields "Semanticus" — so IsAlive reported a LIVE owner as dead, and the agent door could
+        // never join it (measured on Linux, 2026-09-11). The Windows apphost carries ".exe", so the same code
+        // matched there and hid the defect from every Windows run.
+        [Fact]
+        public void IsAlive_accepts_a_live_owner_whose_executable_file_name_contains_a_dot()
+        {
+            if (OperatingSystem.IsWindows())
+                return;   // the Windows apphost is "Semanticus.Engine.exe"; the bare dotted name is a Unix shape.
+
+            // A real, live process whose executable file is named like the product's Unix apphost. Its identity
+            // (pid + start time) is genuine, which is what makes this a faithful reproduction of the door's gate.
+            var exe = CopyLongLivedBinary("Semanticus.Engine");
+            Assert.NotNull(exe);
+            Process child = null;
+            try
+            {
+                child = Process.Start(new ProcessStartInfo { FileName = exe, Arguments = "60", UseShellExecute = false });
+                Assert.NotNull(child);
+                var info = new EngineInfo
+                {
+                    PipeName = "semanticus-test",
+                    Workspace = "test",
+                    Pid = child.Id,
+                    ProcessStartUtc = child.StartTime.ToUniversalTime().ToString("o"),
+                    ExePath = exe,
+                };
+                Assert.True(EngineBroker.IsAlive(info), "a live process named 'Semanticus.Engine' was reported dead");
+            }
+            finally
+            {
+                try { if (child != null && !child.HasExited) child.Kill(); } catch { }
+                try { child?.Dispose(); } catch { }
+                try { Directory.Delete(Path.GetDirectoryName(exe), recursive: true); } catch { }
+            }
+        }
+
+        // The spawn above is Unix-only (the Windows apphost carries .exe), so the derivation rule is pinned here on
+        // BOTH platforms: what name counts as a match for a given executable path, and which differences are real.
+        [Fact]
+        public void Process_name_matching_handles_the_apphost_extension_rule_and_kernel_truncation()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                // Windows reports "Semanticus.Engine" for the apphost file "Semanticus.Engine.exe" — matching, and
+                // the bare stem "Semanticus" is NOT a match (it must not accept an unrelated process).
+                Assert.True(EngineBroker.ProcessNameMatches(@"C:\app\Semanticus.Engine.exe", "Semanticus.Engine"));
+                Assert.False(EngineBroker.ProcessNameMatches(@"C:\app\Semanticus.Engine.exe", "Semanticus"));
+            }
+            else
+            {
+                // Unix keeps the dotted file name and compares it whole.
+                Assert.True(EngineBroker.ProcessNameMatches("/opt/semanticus/Semanticus.Engine", "Semanticus.Engine"));
+                // A 15-character kernel record is the same process (the truncation the old check could not see).
+                Assert.True(EngineBroker.ProcessNameMatches("/opt/semanticus/Semanticus.Engine", "Semanticus.Engi"));
+                // An unrelated shorter name is a genuine mismatch, not truncation.
+                Assert.False(EngineBroker.ProcessNameMatches("/opt/semanticus/Semanticus.Engine", "Semanticus"));
+                Assert.False(EngineBroker.ProcessNameMatches("/opt/semanticus/Semanticus.Engine", "Something Else"));
+            }
+
+            // Absent evidence never contradicts: a record with no source, or a process the OS won't name.
+            Assert.True(EngineBroker.ProcessNameMatches(null, "anything"));
+            Assert.True(EngineBroker.ProcessNameMatches("", "anything"));
+            Assert.True(EngineBroker.ProcessNameMatches("/opt/semanticus/Semanticus.Engine", null));
+        }
+
+        /// <summary>Copies a long-lived system binary to <paramref name="name"/> in a temp folder so a test can run
+        /// a real process under that exact executable file name. Null when the platform has no such binary.</summary>
+        private static string CopyLongLivedBinary(string name)
+        {
+            var source = new[] { "/bin/sleep", "/usr/bin/sleep" }.FirstOrDefault(File.Exists);
+            if (source == null) return null;
+            var dir = Path.Combine(Path.GetTempPath(), "smx-name-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(dir);
+            var target = Path.Combine(dir, name);
+            File.Copy(source, target);
+            File.SetUnixFileMode(target, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return target;
         }
 
         [Fact]
@@ -121,6 +204,38 @@ namespace Semanticus.Tests
 
             if (OperatingSystem.IsWindows())
                 Assert.True(EngineBroker.ExecutableMatches(SelfInfo(exePath: current.ToUpperInvariant())));
+        }
+
+        [Fact]
+        public void WriteInfo_stamps_the_absolute_pipe_path_from_this_process_temp_directory()
+        {
+            var ws = Path.Combine(Path.GetTempPath(), "smx-broker-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            try
+            {
+                EngineBroker.WriteInfo(ws, new EngineInfo
+                {
+                    PipeName = "semanticus-test",
+                    Pid = Environment.ProcessId,
+                    StartedUtc = DateTime.UtcNow.ToString("o"),
+                    Workspace = ws,
+                });
+                var read = EngineBroker.ReadInfo(ws);
+                Assert.Equal(EngineBroker.PipePathFor("semanticus-test"), read.PipePath);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        [Fact]
+        public void Attach_failure_advice_does_not_tell_you_to_delete_the_lock_when_the_owner_is_alive()
+        {
+            var alive = EngineBroker.McpAttachFailureMessage(TimeSpan.FromSeconds(5), ownerAlive: true);
+            Assert.DoesNotContain("engine.lock", alive, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("delete", alive, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("already open", alive, StringComparison.OrdinalIgnoreCase);
+
+            var cold = EngineBroker.McpAttachFailureMessage(TimeSpan.FromSeconds(5), ownerAlive: false);
+            Assert.DoesNotContain("engine.lock", cold, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("delete", cold, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -26,6 +26,17 @@ export interface ModelGraph { tables: GraphTable[]; relationships: GraphRelation
 // regular data table. A date table is a data-CATEGORY, not a kind, so it counts as a regular data table here.
 type TableKind = 'data' | 'calc' | 'fp';
 const kindOf = (t: GraphTable): TableKind => (t.isFieldParameter ? 'fp' : t.isCalculated ? 'calc' : 'data');
+function plainRelType(t: string): string {
+  switch (t.toLowerCase()) {
+    case 'int64': return 'whole number';
+    case 'string': return 'text';
+    case 'datetime': return 'date';
+    case 'boolean': return 'true/false';
+    case 'decimal': return 'decimal';
+    case 'double': return 'decimal number';
+    default: return t;
+  }
+}
 
 const NODE_W = 190;   // minimum node width (collapsed)
 const NODE_H = 92;    // minimum node height (collapsed)
@@ -953,6 +964,11 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     if (!c.source || !c.target || !s || !t) return;   // ignore drags that aren't column→column (e.g. routing anchors)
     if (c.source === c.target) { setToast({ text: 'A relationship needs two different tables.', tone: 'error' }); return; }
     const srcRef = `column:${c.source}/${s}`, tgtRef = `column:${c.target}/${t}`;
+    const srcType = colByRef.get(srcRef)?.dataType, tgtType = colByRef.get(tgtRef)?.dataType;
+    if (srcType && tgtType && srcType !== tgtType) {
+      setToast({ text: `A relationship needs two columns of the same type. ${s} is ${plainRelType(srcType)} and ${t} is ${plainRelType(tgtType)}.`, tone: 'error' });
+      return;
+    }
     // Pick the ONE (lookup) side. TOM IsKey is rarely set on real key columns, so also treat a *Key/*Id-named column
     // as key-like. If exactly one side looks like a key, that's the ONE side; otherwise default to drag order
     // (source=many → target=one) and let the user fix a wrong guess with the one-click "Swap direction" below.
@@ -982,7 +998,7 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
       rollback();
       const msg = String((e as Error).message ?? e);
       if (/already exist/i.test(msg)) {
-        setToast({ text: 'An active relationship already exists on that column pair.', tone: 'error', action: { label: 'Add inactive', run: async () => {
+        setToast({ text: 'An active relationship already exists between those tables.', tone: 'error', action: { label: 'Add inactive', run: async () => {
           try { await rpc('createRelationship', manyRef, oneRef, null, false); setToast({ text: `✓ added inactive ${label(manyRef, oneRef)}`, tone: 'ok' }); await load(); }
           catch (e2) { setToast({ text: String((e2 as Error).message ?? e2), tone: 'error' }); }
         } } });

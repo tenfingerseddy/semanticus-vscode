@@ -69,5 +69,19 @@ namespace Semanticus.Tests
                         Assert.False(string.IsNullOrWhiteSpace(input.Question),
                             $"'{d.Name}' {step.Id} input '{input.Name}' has no question for the agent to ask.");
         }
+
+        // D-095: step 1 help says the date column and fiscal start may be left blank. Those inputs must be optional.
+        [Fact]
+        public void Calendar_setup_step1_optional_fields_match_the_help()
+        {
+            var cal = LoadStock().Single(d => d.Name == "calendar-setup");
+            var step1 = cal.Steps[0];
+            var byName = step1.Gate.Inputs.ToDictionary(i => i.Name, StringComparer.Ordinal);
+            Assert.Equal("required", byName["template"].Required);
+            Assert.Equal("optional", byName["targetTable"].Required);
+            Assert.Equal("optional", byName["dateColumn"].Required);
+            Assert.Equal("optional", byName["fiscalStart"].Required);
+            Assert.Contains("leave blank", byName["dateColumn"].Question, StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

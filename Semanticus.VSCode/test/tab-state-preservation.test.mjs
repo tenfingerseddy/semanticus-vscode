@@ -83,8 +83,8 @@ ok('Storage activates lazily on first visit (active={tab === stats}) rather than
 ok('Lineage model-identity invalidation lives in the holder and still bumps the generations + clears discovery', () => {
   const provider = lineage.slice(lineage.indexOf('export function LineageTabStateProvider'), lineage.indexOf('export function LineageView'));
   assert.match(provider, /const modelSwitched = prevIdentity\.current !== undefined && prevIdentity\.current !== ident/);
-  assert.match(provider, /if \(modelSwitched\) \{[\s\S]*cloudGen\.current\+\+; localGen\.current\+\+;[\s\S]*activeCloudRunId\.current = null;[\s\S]*setReports\(null\); setSel\(new Set\(\)\); setConsent\(false\); setError\(null\); onAnalyzed\(null, null\);/,
-    'a model swap must still orphan in-flight cloud/local work and clear every discovered thing');
+  assert.match(provider, /if \(modelSwitched\) \{[\s\S]*cloudGen\.current\+\+; localGen\.current\+\+;[\s\S]*activeCloudRunId\.current = null;[\s\S]*setReports\(null\); setSel\(new Set\(\)\); setConsent\(false\); setError\(null\); clearAnalysis\(\);/,
+    'a model swap must still orphan in-flight cloud/local work and clear every discovered thing (clearAnalysis also bumps the freshness token and drops the stale hint)');
 });
 ok('Lineage progress correlation stays exact and outlives the tab (holder-scoped onProgress by runId)', () => {
   const provider = lineage.slice(lineage.indexOf('export function LineageTabStateProvider'), lineage.indexOf('export function LineageView'));
@@ -109,6 +109,12 @@ ok('DAX Lab reflections + the execution-context key live in the holder (results/
 ok('DAX Lab equivalence staleness is still DERIVED from the live context key (a swap/edit invalidates the verdict)', () => {
   assert.match(daxlab, /eqEv\.contextKey != null && eqEv\.contextKey !== execContextKey/,
     'evidence must go stale when the execution context changes, whether or not the tab was hidden');
+});
+ok('DAX Lab visual auto-run only fires after the user changes wells, never on tab open or model switch', () => {
+  assert.match(daxlab, /wellsTouched/);
+  assert.match(daxlab, /!wellsTouched\.current\) return/);
+  assert.match(daxlab, /lab\.config\.' \+ persistKey/,
+    'visual config is stored per model session so a leftover visual cannot run against the next model');
 });
 
 // ---- M Code stays a cancellation boundary (rendered inside the tab body → unmounts on switch) ----

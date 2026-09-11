@@ -47,10 +47,11 @@ namespace Semanticus.Tests
         {
             // 1 passing RI probe + 2 unprobed relationships: the unknowns must not dilute (or inflate) the grade.
             var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
-            Assert.Equal("A", h.Grade);
+            Assert.Equal(100.0, h.Categories.Single(c => c.Category == "Integrity").Score);
             Assert.True(h.NotVerifiable > 0);
-            // ...and coverage discloses exactly how thin the decisive base is (I2's other half).
             Assert.True(h.CoveragePct < 100.0);
+            Assert.True(h.Overall <= h.CoveragePct + 0.05);
+            Assert.NotEqual("A", h.Grade);
         }
 
         // A category that decided NOTHING is dormant — it must not average in at 100 (unknown-as-healthy).
@@ -72,8 +73,9 @@ namespace Semanticus.Tests
         {
             var h = TestHealthAnalyzer.Analyze(
                 Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
-            Assert.Equal("A", h.Grade);                 // the one decisive check passed…
-            Assert.True(h.CoveragePct <= 25.0);         // …and the same object says how little that proves
+            Assert.True(h.CoveragePct <= 25.0);
+            Assert.True(h.Overall <= h.CoveragePct + 0.05);
+            Assert.NotEqual("A", h.Grade);
             Assert.True(h.Checked >= 12);               // 4 relationships × 3 checks each
         }
 
@@ -132,6 +134,7 @@ namespace Semanticus.Tests
             var h = TestHealthAnalyzer.Analyze(Rels(), NoSec, null);
             Assert.Equal(0.0, h.CoveragePct);
             Assert.Equal(0, h.Checked);
+            Assert.Equal("F", h.Grade);
         }
 
         // ---- static security semantics ----
@@ -189,8 +192,9 @@ namespace Semanticus.Tests
             var perf = h.Categories.Single(c => c.Category == "Performance");
             Assert.False(perf.HasChecks);
             Assert.Equal(1, perf.NotVerifiable);
-            Assert.Equal("A", h.Grade);
+            Assert.NotEqual("A", h.Grade);
             Assert.True(h.CoveragePct < 100.0);
+            Assert.True(h.Overall <= h.CoveragePct + 0.05);
         }
     }
 }

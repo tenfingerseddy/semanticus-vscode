@@ -244,7 +244,7 @@ namespace Semanticus.Tests
             // keeps its "fix the DAX" advice; with AuthFailed=true it becomes the sign-in probe hint.
             var q = new InterviewQuestion();
             var dax = InterviewScoring.ScoreValue(q, new ResultSet { Error = "Unauthorized", AuthFailed = false });
-            Assert.Contains("fix the DAX", dax.Detail);
+            Assert.Contains("Fix the DAX", dax.Detail);
             var authy = InterviewScoring.ScoreValue(q, new ResultSet { Error = "whatever", AuthFailed = true });
             Assert.Contains("not signed in", authy.Detail);
             Assert.DoesNotContain("fix the DAX", authy.Detail);
@@ -336,6 +336,35 @@ namespace Semanticus.Tests
 
             Assert.True(r.Applied);
             Assert.Equal("interactive", pushedWithMode);   // the write reused the credential the snapshot proved, not azcli
+        }
+
+        // ---- round-3 (sol BLOCKER slice): an agent-origin push acquires NON-INTERACTIVELY — it can never construct a
+        // prompt-capable credential (a stale cache throws AuthenticationRequiredException instead of prompting). A human may prompt. ----
+        [Fact]
+        public async Task An_agent_origin_push_acquires_non_interactively_while_a_human_may_prompt()
+        {
+            // The agent push is governance-gated (Publish@prod needs approval, tested elsewhere), so isolate the policy
+            // store to this test's temp dir and disable the guardrail for the AGENT case only to reach the push and
+            // observe how it acquires. The restore-root collection runs sequentially, so this is contained; RootOverride
+            // is restored in the finally and the temp dir is deleted in Dispose.
+            var prevRoot = ConnectionRegistry.RootOverride;
+            ConnectionRegistry.RootOverride = _root;
+            try
+            {
+                foreach (var (origin, expectNonInteractive) in new[] { ("human", false), ("agent", true) })
+                {
+                    using var engine = new LocalEngine(new SessionManager(), new Fake());
+                    if (origin == "agent") await engine.SetAgentPolicyEnabledAsync(false, "human");   // skip the gate; here we test the PUSH acquisition, not the gate
+                    engine.WorkspaceTokenExportForTests = mode => Task.FromResult(Snap(Db("1")));      // live has Total = 1
+                    bool? pushNonInteractive = null;
+                    engine.PushDisableInteractiveForTests = d => pushNonInteractive = d;
+                    engine.WorkspacePushHook = (_, __) => new DeployReport { Committed = true, TotalChanges = 1, SyncedRefs = new[] { "measure:Sales/Total" } };
+                    var r = await engine.ApplyDiffAsync(FileRef(Db("2")), Ws(), new[] { "measure:Sales/Total" }, commit: true, origin: origin);
+                    Assert.True(pushNonInteractive.HasValue, $"the push was not reached for origin={origin} (r.Error={r.Error})");
+                    Assert.Equal(expectNonInteractive, pushNonInteractive);   // agent → non-interactive; human → may prompt
+                }
+            }
+            finally { ConnectionRegistry.RootOverride = prevRoot; }
         }
 
         // ---- CRITICAL 1a (round 5): a QUOTED credential value with embedded spaces must be redacted WHOLE — the round-4

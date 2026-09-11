@@ -13,15 +13,15 @@ slots:
     required: required
     example: "the FY26 Exec Dashboard"
   - name: kpi_dictionary
-    question: "Your KPI dictionary — one line per measure: measure ref · business definition · OWNER · where the signed-off figure comes from."
+    question: "Your KPI dictionary, one line per measure: measure ref · business definition · OWNER · where the signed-off figure comes from."
     type: text
     required: required
-    example: "measure:Sales/Net Sales — total net sales after returns — owner: CFO — signed off from the FY25 board pack"
+    example: "measure:Sales/Net Sales · total net sales after returns · owner: CFO · signed off from the FY25 board pack"
   - name: escalation_rule
-    question: "What happens on a discrepancy (e.g. 'stop and raise with the owner — finance figures are never adjusted to match the model')?"
+    question: "What happens on a discrepancy (e.g. 'stop and raise with the owner: finance figures are never adjusted to match the model')?"
     type: text
     required: required
-    example: "stop and raise with the owner — finance figures are never adjusted to match the model"
+    example: "stop and raise with the owner: finance figures are never adjusted to match the model"
   - name: certification_tag
     question: "The stamp for certified measures (e.g. 'Certified FY26-Q1 · Finance')."
     type: text
@@ -33,20 +33,20 @@ slots:
 ## Step 1: Confirm the dictionary still holds
 
 {{kpi_dictionary}} is the certification scope. Confirm with the owners that every definition and
-figure-source is current for this cycle — a certification against a stale dictionary certifies the
+figure-source is current for this cycle. A certification against a stale dictionary certifies the
 wrong thing.
 
 ```yaml gate
 inputs:
   - name: dictionaryConfirmed
-    question: "Is the dictionary current — every measure, definition, owner and figure-source confirmed for this cycle?"
+    question: "Is the dictionary current (every measure, definition, owner and figure-source confirmed for this cycle)?"
     type: text
     required: required
 ```
 
 ## Step 2: Check every KPI at its stated context
 
-For EACH dictionary line, collect this cycle's signed-off figure from the owner (per-run evidence —
+For EACH dictionary line, collect this cycle's signed-off figure from the owner (per-run evidence:
 never reuse last cycle's), evaluate the measure with probe_measure at the exact stated context, and
 record match or mismatch. On any discrepancy: {{escalation_rule}}.
 
@@ -61,7 +61,7 @@ inputs:
 
 ## Step 3: Prove the anchor number
 
-The single most business-critical measure gets the engine's proof, not an attestation — an equivalence
+The single most business-critical measure gets the engine's proof, not an attestation: an equivalence
 between the owner's signed-off number and what the model actually returns at the stated context.
 
 ```yaml gate
@@ -86,4 +86,4 @@ verify:
 ## Step 4: Stamp and save
 
 set_description on every passing measure with the stamp "{{certification_tag}}: <figure> @ <context> on
-<date>, owner <name>" — provenance travels with the measure so trust is legible later. Then save_model.
+<date>, owner <name>". Provenance travels with the measure so trust is legible later. Then save_model.

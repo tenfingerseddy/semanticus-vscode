@@ -243,7 +243,7 @@ namespace Semanticus.Engine
             if (exact.Count > 0)
                 parts.Add($"{CollisionMessage(exact)} Q&A requires unique names; set_synonyms refuses writes until you rename or hide one object in each group.");
             if (foldOnly.Count > 0)
-                parts.Add($"After plural folding these may also collide: {CollisionMessage(foldOnly)} set_synonyms still writes them — the commit-time backstop reports it only if the validator actually rejects the schema.");
+                parts.Add($"After plural folding these may also collide: {CollisionMessage(foldOnly)} set_synonyms still writes them. The commit-time backstop reports it only if the validator actually rejects the schema.");
             return parts.Count == 0 ? null : string.Join(" ", parts);
         }
 

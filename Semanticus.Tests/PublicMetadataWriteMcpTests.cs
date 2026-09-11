@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
 using Semanticus.Engine;
 using Xunit;
 
@@ -11,6 +14,19 @@ namespace Semanticus.Tests
     /// agent-attributed commit on the shared timeline; every bad argument must fail without a revision or broadcast.</summary>
     public sealed class PublicMetadataWriteMcpTests
     {
+        [Theory]
+        [InlineData(nameof(McpTools.SubmitWorkflowStepWire))]
+        [InlineData(nameof(McpTools.InstantiateWorkflowTemplateWire))]
+        public void Workflow_tools_can_build_their_wire_schema(string methodName)
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            using var services = new ServiceCollection().AddSingleton<IEngine>(engine).BuildServiceProvider();
+            var tool = McpServerTool.Create(typeof(McpTools).GetMethod(methodName), target: null,
+                options: new McpServerToolCreateOptions { Services = services });
+            Assert.Equal(JsonValueKind.Object, tool.ProtocolTool.InputSchema.ValueKind);
+        }
+
         [Fact]
         public async Task Set_data_category_is_public_broadcast_undoable_and_failure_atomic()
         {
@@ -24,7 +40,14 @@ namespace Semanticus.Tests
             AssertAgentCommit(result, change, city, "DataCategory");
             Assert.Equal("City", Column(await McpTools.ListColumns(engine), city).DataCategory);
 
-            Assert.False((await McpTools.SetDataCategory(engine, city, "City")).Changed);
+            var noOp = await McpTools.SetDataCategory(engine, city, "City");
+            Assert.False(noOp.Changed);
+            Assert.Equal(result.Revision, noOp.Revision);
+
+            await AssertNoCommitAsync(sessions, async () =>
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SetDataCategory(engine, city, "Bogus"));
+            });
 
             await AssertNoCommitAsync(sessions, async () =>
             {
@@ -53,7 +76,17 @@ namespace Semanticus.Tests
             AssertAgentCommit(result, change, month, "SortByColumn");
             Assert.Equal("Month Number", Column(await McpTools.ListColumns(engine), month).SortByColumn);
 
-            Assert.False((await McpTools.SetSortByColumn(engine, month, "Month Number")).Changed);
+            var noOp = await McpTools.SetSortByColumn(engine, month, "Month Number");
+            Assert.False(noOp.Changed);
+            Assert.Equal(result.Revision, noOp.Revision);
+
+            var year = await McpTools.CreateColumn(engine, table, "Year", "Int64");
+            await McpTools.SetSortByColumn(engine, year, "Month Name");
+            await AssertNoCommitAsync(sessions, async () =>
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SetSortByColumn(engine, month, "Year"));
+                Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
+            });
 
             await AssertNoCommitAsync(sessions, async () =>
             {
@@ -67,10 +100,15 @@ namespace Semanticus.Tests
             });
             Assert.Equal("Month Number", Column(await McpTools.ListColumns(engine), month).SortByColumn);
 
-            await engine.UndoAsync("human");
+            // Clear the current link as the final successful write, so the following undo/redo pair tests this
+            // operation itself rather than depending on unrelated table/column creation entries in the history.
+            var clear = await McpTools.SetSortByColumn(engine, month, "(none)");
+            Assert.True(clear.Changed);
             Assert.Null(Column(await McpTools.ListColumns(engine), month).SortByColumn);
-            await McpTools.RedoChange(engine);
+            await engine.UndoAsync("human");
             Assert.Equal("Month Number", Column(await McpTools.ListColumns(engine), month).SortByColumn);
+            await McpTools.RedoChange(engine);
+            Assert.Null(Column(await McpTools.ListColumns(engine), month).SortByColumn);
         }
 
         [Fact]
@@ -124,7 +162,16 @@ namespace Semanticus.Tests
             AssertAgentCommit(result, change, partition, "Expression");
             Assert.Equal(after, await McpTools.GetPartitionM(engine, partition));
 
-            Assert.False((await McpTools.SetPartitionM(engine, partition, after)).Changed);
+            var noOp = await McpTools.SetPartitionM(engine, partition, after);
+            Assert.False(noOp.Changed);
+            Assert.Equal(result.Revision, noOp.Revision);
+
+            await AssertNoCommitAsync(sessions, async () =>
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    McpTools.SetPartitionM(engine, partition, "let Source = (1 in Source"));
+                Assert.Contains("M", ex.Message, StringComparison.OrdinalIgnoreCase);
+            });
 
             await AssertNoCommitAsync(sessions, async () =>
             {
@@ -137,6 +184,48 @@ namespace Semanticus.Tests
             Assert.Equal(before, await McpTools.GetPartitionM(engine, partition));
             await McpTools.RedoChange(engine);
             Assert.Equal(after, await McpTools.GetPartitionM(engine, partition));
+        }
+
+        [Fact]
+        public async Task Set_partition_m_rejects_balanced_but_incomplete_M_without_mutation()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.CreateModelAsync("McpIncompleteM", 1604);
+            const string before = "let Source = 1 in Source";
+            var table = await McpTools.CreateImportTable(engine, "Sales", before);
+            var partition = (await McpTools.ListPartitions(engine, table)).Single().Ref;
+            var revision = sessions.Current.Revision;
+
+            foreach (var invalid in new[] { "let Source = 1 in", "Table.SelectRows(Source, each [x] = )" })
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    McpTools.SetPartitionM(engine, partition, invalid));
+                Assert.Contains("not valid M", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            Assert.Equal(revision, sessions.Current.Revision);
+            Assert.Equal(before, await McpTools.GetPartitionM(engine, partition));
+        }
+
+        // D-238 / M-02 s1-malformed-m-saves-as-saved
+        [Fact]
+        public async Task Set_partition_m_rejects_a_missing_let_step_separator_without_mutation()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.CreateModelAsync("McpMalformedM", 1604);
+            const string before = "let Source = 1 in Source";
+            var table = await McpTools.CreateImportTable(engine, "Sales", before);
+            var partition = (await McpTools.ListPartitions(engine, table)).Single().Ref;
+            var revision = sessions.Current.Revision;
+
+            foreach (var invalid in new[] { "let Source = 1 Filtered = Source in Filtered", "Table.SelectRows(Source each [x] = 1)", "Table.SelectRows(Source [x] = 1)" })
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SetPartitionM(engine, partition, invalid));
+                Assert.Contains("not valid M", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            Assert.Equal(revision, sessions.Current.Revision);
+            Assert.Equal(before, await McpTools.GetPartitionM(engine, partition));
         }
 
         private static ColumnRow Column(IEnumerable<ColumnRow> columns, string objectRef)

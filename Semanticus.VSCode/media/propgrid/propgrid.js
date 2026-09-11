@@ -30,8 +30,22 @@ window.addEventListener('message', e => {
   else if (m.type === 'focusName') { pendingFocusKey = (m.key != null ? m.key : true); tryFocusName(); }   // F2 rename: caret into the Name row (keyed to its object)
   else if (m.type === 'setError') { lastError = { name: m.name, error: m.error }; render(); }
   else if (m.type === 'formatTemplates') { templates = m.templates || []; if (state) render(); }
+  else if (m.type === 'applyFocused') { applyFocusedField(); }
   else if (m.type === 'empty') { state = null; root.innerHTML = '<div class="empty">Open a model to inspect its properties. Select model objects to edit them; clear the selection to return to model settings.</div>'; }
 });
+function applyFocusedField() {
+  if (!state) return;
+  const fxApply = root.querySelector('[data-fx-apply]');
+  if (fx.open && fxApply) { fxApply.click(); return; }
+  const el = document.activeElement;
+  if (!el || !el.getAttribute || !el.getAttribute('data-prop')) return;
+  const name = el.getAttribute('data-prop');
+  const value = el.type === 'checkbox' ? String(el.checked) : el.value;
+  const canonical = (state.props || []).find((p) => p.name === name);
+  if (canonical && !canonical.varies && el.type !== 'checkbox' && value === (canonical.value || '')) return;
+  lastError = null;
+  vscode.postMessage({ type: 'set', name: name, value: value });
+}
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 // F2 rename (host 'focusName'): put the caret in the Name row with its text selected. The rename intent
@@ -59,6 +73,19 @@ function tryFocusName() {
 // scrollbar arrows that read like number-spinners.
 function isMultiline(p){ return p.kind === 'string' && (p.name === 'Description' || /Expression/.test(p.name) || (p.value||'').indexOf('\n') >= 0); }
 function oneLine(s){ return String(s||'').replace(/\s+/g, ' ').trim(); }
+function enumSelectHtml(p, inv, dp) {
+  const opts = (p.options || []).slice();
+  if (!p.varies && p.value && opts.indexOf(p.value) < 0) opts.unshift(p.value);
+  const clearable = p.name === 'DataCategory' || opts.indexOf('') >= 0;
+  let h = '<select class="' + inv + '" ' + dp + '>';
+  if (p.varies) h += '<option value="" disabled selected>(multiple)</option>';
+  else if (clearable) h += '<option value=""' + (p.value === '' ? ' selected' : '') + '>None</option>';
+  for (const o of opts) {
+    if (o === '') continue;
+    h += '<option value="' + esc(o) + '"' + (!p.varies && o === p.value ? ' selected' : '') + '>' + esc(o) + '</option>';
+  }
+  return h + '</select>';
+}
 
 function render() {
   if (!state) return;
@@ -90,9 +117,14 @@ function rowHtml(p) {
   if (p.kind === 'formatExpression') editor = fxHtml(p);   // before the readOnly branch: a locked row states WHY
         else if (p.readOnly) editor = '<span class="ro" title="' + esc(p.value) + '">' + (p.varies ? '<em>(multiple)</em>' : esc(p.value) || 'Not set') + '</span>';
   else if (p.kind === 'bool') editor = '<input type="checkbox" class="' + inv + '" ' + dp + (p.value === 'True' ? ' checked' : '') + (p.varies ? ' indeterminate' : '') + '>';
-  else if (p.kind === 'enum') editor = '<select class="' + inv + '" ' + dp + '>' + (p.varies ? '<option value="" disabled selected>(multiple)</option>' : '') + (p.options||[]).map(o => '<option' + (!p.varies && o === p.value ? ' selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
+  else if (p.kind === 'enum') editor = enumSelectHtml(p, inv, dp);
   else if (p.kind === 'number') editor = '<input type="number" class="' + inv + '" ' + dp + ph + ' value="' + esc(p.value) + '">';
-  else if (isMultiline(p)) editor = '<textarea class="' + inv + '" ' + dp + ph + ' rows="' + Math.min(8, Math.max(2, (p.value||'').split('\n').length)) + '">' + esc(p.value) + '</textarea>';
+  else if (isMultiline(p)) {
+    const commitEnter = p.name === 'Description';
+    const rows = Math.min(commitEnter ? 3 : 8, Math.max(2, (p.value||'').split('\n').length));
+    editor = '<textarea class="' + inv + '" ' + dp + ph + (commitEnter ? ' data-commit-enter' : '') + ' rows="' + rows + '">' + esc(p.value) + '</textarea>';
+    if (commitEnter) editor += '<div class="hint">Enter applies. Shift+Enter adds a line.</div>';
+  }
   else {
     // Plain text input — plus the two prefill affordances: engine-supplied suggestions (e.g. display folders
     // already in use) as a native autocomplete, and the curated format-string picker on Format String rows.
@@ -161,6 +193,29 @@ function fxHtml(p) {
 
 // Cheap structural check before an apply — balanced quotes/parentheses OUTSIDE string literals and quoted names
 // ("" and '' are the DAX escapes). Catches the obvious paste accidents without pretending to be a DAX parser.
+function formatStringProblem(s) {
+  if (!s) return null;
+  let inQuote = false, brackets = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQuote) {
+      if (c !== '"') continue;
+      if (s[i + 1] === '"') { i++; continue; }
+      inQuote = false;
+      continue;
+    }
+    if (c === '"') { inQuote = true; continue; }
+    if (c === '[') { brackets++; continue; }
+    if (c === ']') {
+      if (brackets === 0) return "This format string has a ']' with no matching '['.";
+      brackets--;
+    }
+  }
+  if (inQuote) return 'This format string has an unclosed quote.';
+  if (brackets > 0) return "This format string has an unclosed '['. Add the missing ']'.";
+  return null;
+}
+
 function daxBalanceProblem(s) {
   let depth = 0, inStr = false, inName = false;
   for (let i = 0; i < s.length; i++) {
@@ -183,13 +238,26 @@ function wire() {
   const fi = document.getElementById('f');
   if (fi) fi.addEventListener('input', () => { filter = fi.value; const at = fi.selectionStart; render(); const nf = document.getElementById('f'); if (nf) { nf.focus(); try { nf.setSelectionRange(at, at); } catch(_){} } });
   root.querySelectorAll('textarea').forEach(ta => { autoGrow(ta); ta.addEventListener('input', () => autoGrow(ta)); });   // size to content → no overflow scrollbar arrows
+  root.querySelectorAll('textarea[data-commit-enter]').forEach(ta => {
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      lastError = null;
+      vscode.postMessage({ type: 'set', name: ta.getAttribute('data-prop'), value: ta.value });
+    });
+  });
   root.querySelectorAll('.cat').forEach(el => el.addEventListener('click', () => { const c = el.getAttribute('data-cat'); if (collapsed.has(c)) collapsed.delete(c); else collapsed.add(c); render(); }));
   root.querySelectorAll('[data-prop]').forEach(el => {
     if (el.hasAttribute('indeterminate')) el.indeterminate = true;   // multi-select varies → tri-state checkbox
     el.addEventListener('change', () => {
       lastError = null;
       const value = el.type === 'checkbox' ? String(el.checked) : el.value;
-      vscode.postMessage({ type: 'set', name: el.getAttribute('data-prop'), value });
+      const name = el.getAttribute('data-prop');
+      if (name === 'FormatString') {
+        const problem = formatStringProblem(value);
+        if (problem) { lastError = { name, error: problem }; render(); return; }
+      }
+      vscode.postMessage({ type: 'set', name, value });
     });
   });
 
@@ -237,4 +305,21 @@ function wire() {
 document.addEventListener('click', (e) => {
   if (comboOpen && !(e.target instanceof Element && e.target.closest('.combo'))) { comboOpen = null; render(); }
 });
+document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || e.isComposing) return;
+  const mac = /mac/i.test(navigator.platform || '');
+  const mod = mac ? e.metaKey : e.ctrlKey;
+  if (!mod || e.altKey) return;
+  const typing = !!(e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]'));
+  const key = (e.key || '').toLowerCase();
+  let command = null;
+  if (e.shiftKey && key === 'p') command = 'workbench.action.showCommands';
+  else if (!e.shiftKey && key === 's') command = 'semanticus.save';
+  else if (!typing && key === 'z') command = e.shiftKey ? 'semanticus.redo' : 'semanticus.undo';
+  else if (!typing && !e.shiftKey && key === 'y') command = 'semanticus.redo';
+  if (!command) return;
+  e.preventDefault();
+  e.stopPropagation();
+  vscode.postMessage({ type: 'runCommand', command });
+}, true);
 vscode.postMessage({ type: 'ready' });

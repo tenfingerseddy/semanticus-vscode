@@ -145,6 +145,49 @@ namespace Semanticus.Tests
                 _engine.SetIncrementalRefreshPolicyAsync(_tableRef, "CalcDate", null, null, null, null, null, null, null, autoWire: true, "agent"));
             Assert.Contains("'CalcDate' is calculated", ex.Message);
         }
+
+        // D-048: the refresh window must sit inside the archive window. Power BI rejects store 5 years / refresh 10 years.
+        [Fact]
+        public async Task Policy_rejects_a_refresh_window_wider_than_the_archive_window()
+        {
+            await _engine.CreateColumnAsync(_tableRef, "OrderDate", "DateTime", "order_dt", "agent");
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                _engine.SetIncrementalRefreshPolicyAsync(_tableRef, "OrderDate", 5, "Year", 10, "Year", 0, "Import", null, autoWire: true, "agent"));
+            Assert.Contains("refresh", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("store", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False((await _engine.GetIncrementalRefreshPolicyAsync(_tableRef)).Enabled);
+        }
+
+        [Fact]
+        public async Task Policy_accepts_a_refresh_window_that_fits_inside_the_archive_window()
+        {
+            await _engine.CreateColumnAsync(_tableRef, "OrderDate", "DateTime", "order_dt", "agent");
+            await _engine.SetIncrementalRefreshPolicyAsync(_tableRef, "OrderDate", 5, "Year", 10, "Day", 0, "Import", null, autoWire: true, "agent");
+            var policy = await _engine.GetIncrementalRefreshPolicyAsync(_tableRef);
+            Assert.True(policy.Enabled);
+            Assert.Equal(5, policy.RollingWindowPeriods);
+            Assert.Equal(10, policy.IncrementalPeriods);
+        }
+
+        // D-060: correcting the partition M after the policy is saved must refresh the captured sourceExpression.
+        [Fact]
+        public async Task Policy_source_expression_tracks_the_current_partition_M()
+        {
+            await _engine.CreateColumnAsync(_tableRef, "OrderDate", "DateTime", "order_dt", "agent");
+            await _engine.SetIncrementalRefreshPolicyAsync(_tableRef, "OrderDate", 5, "Year", 10, "Day", 0, "Import", null, autoWire: true, "agent");
+            var first = await _engine.GetIncrementalRefreshPolicyAsync(_tableRef);
+            Assert.Contains("[order_dt]", first.SourceExpression);
+
+            var partition = (await _engine.ListPartitionsAsync(_tableRef)).Single();
+            var current = await _engine.GetPartitionMAsync($"partition:IR_Wire/{partition.Name}");
+            var corrected = current.Replace("[order_dt]", "[order_dt_fixed]", StringComparison.Ordinal);
+            await _engine.SetPartitionMAsync($"partition:IR_Wire/{partition.Name}", corrected, "agent");
+            await _engine.SetIncrementalRefreshPolicyAsync(_tableRef, "OrderDate", null, null, null, null, null, null, null, autoWire: true, "agent");
+
+            var after = await _engine.GetIncrementalRefreshPolicyAsync(_tableRef);
+            Assert.Contains("[order_dt_fixed]", after.SourceExpression);
+            Assert.DoesNotContain("[order_dt] >=", after.SourceExpression);
+        }
     }
 
     public sealed class IncrementalRefreshWiringTests
@@ -282,6 +325,31 @@ namespace Semanticus.Tests
             // parse stands down as UNKNOWN (safe under the tier table) instead of pairing a name it cannot read.
             Assert.False(IncrementalRefreshWiring.TryParseRangeField(
                 "Table.SelectRows(S, each [#\"Order Date\"] >= RangeStart and [#\"Order Date\"] < RangeEnd)", out _));
+        }
+
+        // D-027: a trailing comment on the `let` line used to be swallowed into the step name, so the filter
+        // referenced a quoted identifier that spanned a newline and did not exist.
+        [Fact]
+        public void Range_filter_skips_a_comment_on_the_let_line_when_reading_the_step_name()
+        {
+            var source = "let // LaneEM Orders\n    Source = #table(type table [Date = datetime], {})\nin\n    Source";
+
+            var result = IncrementalRefreshWiring.AppendRangeFilter(source, "Date");
+
+            Assert.Contains("Table.SelectRows(Source, each [Date] >= RangeStart and [Date] < RangeEnd)", result);
+            Assert.Contains("// LaneEM Orders", result);
+            Assert.DoesNotContain("#\"//", result);
+        }
+
+        [Fact]
+        public void Range_filter_does_not_swallow_the_separator_comma_into_a_trailing_comment()
+        {
+            var source = "let\n    Source = #table(type table [Date = datetime], {}) // keep this\nin\n    Source";
+
+            var result = IncrementalRefreshWiring.AppendRangeFilter(source, "Date");
+
+            Assert.Contains("Table.SelectRows(Source, each [Date] >= RangeStart and [Date] < RangeEnd)", result);
+            Assert.DoesNotContain("// keep this,", result);
         }
     }
 }

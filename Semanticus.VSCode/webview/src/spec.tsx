@@ -100,6 +100,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
   const edit = (mut: (s: ModelSpec) => void) => {
     setDraft((prev) => { if (!prev) return prev; const next = clone(prev); mut(next); return next; });
     setDirty(true);
+    setReport(null);
   };
 
   async function run(label: string, fn: () => Promise<unknown>) {
@@ -121,7 +122,14 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
     setSnap(await rpc<SpecSnapshot>('autogenerateSpecFromFabric', ...args));
     setShowFabric(false);
   });
-  const build = () => run('build', async () => setReport(await rpc<SpecBuildReport>('buildModelFromSpec', 'human')));
+  const build = () => {
+    if (dirty) {
+      setErr('Save your spec changes first. Build uses the last saved draft, not what you see on screen.');
+      setReport(null);
+      return;
+    }
+    void run('build', async () => setReport(await rpc<SpecBuildReport>('buildModelFromSpec', 'human')));
+  };
   const clear = () => run('clear', async () => { setReport(null); setDirty(false); setSnap(await rpc<SpecSnapshot>('clearSpec', 'human')); });
   const save = () => run('save', async () => {
     if (!draft) return;
@@ -174,7 +182,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
           <Btn onClick={() => setShowFabric((v) => !v)}>Autogenerate from SQL…</Btn>
           <Btn onClick={() => { if (editingJson) setEditingJson(false); else openJson(); }}>{editingJson ? 'Hide JSON' : 'Edit JSON'}</Btn>
           <Btn onClick={clear} busy={busy === 'clear'}>Clear</Btn>
-          <Btn primary onClick={build} busy={busy === 'build'} disabled={!spec.tables?.length || dirty}
+          <Btn primary onClick={() => void build()} busy={busy === 'build'} disabled={!dirty && !spec.tables?.length}
             title={dirty ? 'Save your spec changes first' : 'Adds the reviewed objects in one undoable step. It does not publish.'}>Build into model →</Btn>
         </>}
       </div>
@@ -226,7 +234,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
             <div className="flex items-center gap-2">
               <Btn primary onClick={applyJson} busy={busy === 'apply'}>Apply JSON</Btn>
               <Btn onClick={() => setEditingJson(false)}>Cancel</Btn>
-              <span style={{ color: 'var(--sem-muted)' }} className="text-[11px]">Edit the spec as JSON, or let your AI Assistant refine it through the shared connection; both update here live.</span>
+              <span style={{ color: 'var(--sem-muted)' }} className="text-[11px]">Edit the spec as JSON, or let your AI Assistant refine it through the shared connection. Changes appear here in the VS Code view, and the AI Assistant sees them on its next call.</span>
             </div>
           </div>
         ) : !spec ? (

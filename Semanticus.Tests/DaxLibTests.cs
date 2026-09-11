@@ -326,6 +326,58 @@ function 'Sample.Mul' = (a: INT64, b: INT64) => a * b
         }
 
         [Fact]
+        public async Task Install_says_out_loud_when_it_moves_the_model_compatibility_level()
+        {
+            // D-197. Functions need a newer compatibility level than this model had, and the install moves the
+            // model up to get it. Doing that quietly leaves the user with a model that no longer opens where it
+            // used to, and nothing on either door said so. The move stays (the functions cannot exist without
+            // it), but the result has to carry it, so the Studio panel and the agent both get told.
+            var (engine, sessions) = await NewProModelAsync(1604);
+            using (engine)
+            {
+                ServeSamplePackage();
+                var res = await engine.DaxLibInstallAsync("Sample", null, false, "human");
+                AssertWarnsAboutLevel(res.Warning);
+
+                // Both doors go through the same engine call, so both results carry it. Undo between them
+                // because the level move is one-way per install: a second install into an already-raised model
+                // has nothing to report, which is the point of the sibling test below.
+                await engine.UndoAsync("human");
+
+                var agent = await McpTools.DaxLibInstall(engine, "Sample", null, false);       // the agent door
+                AssertWarnsAboutLevel(agent.Warning);
+                await engine.UndoAsync("human");
+
+                var studio = await new EngineRpcTarget(engine).daxLibInstall("Sample", null, false);   // the UI door
+                AssertWarnsAboutLevel(studio.Warning);
+            }
+        }
+
+        // The install result is the whole story both doors tell: the Studio panel joins its parts into one
+        // message (advmodels.tsx), and the agent gets the object. So the sentence is asserted once, here.
+        private static void AssertWarnsAboutLevel(string warning)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(warning));
+            Assert.Contains("1604", warning);            // names where the model was
+            Assert.Contains("1702", warning);            // and where it went
+            Assert.DoesNotContain("—", warning);         // plain words, no em dashes
+            Assert.DoesNotContain("daxlib_", warning);   // and no tool names at the reader
+        }
+
+        [Fact]
+        public async Task Install_stays_quiet_when_the_model_is_already_high_enough()
+        {
+            // The other half of D-197: the warning must name a real move, never fire on every install.
+            var (engine, sessions) = await NewProModelAsync(1702);
+            using (engine)
+            {
+                ServeSamplePackage();
+                var res = await engine.DaxLibInstallAsync("Sample", null, false, "human");
+                Assert.Null(res.Warning);
+            }
+        }
+
+        [Fact]
         public async Task Install_skips_or_replaces_existing_functions()
         {
             var (engine, sessions) = await NewProModelAsync(1702);

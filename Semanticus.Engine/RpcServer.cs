@@ -42,6 +42,7 @@ namespace Semanticus.Engine
             _sessions.Bus.LayoutChanged += OnLayoutChanged;
             _sessions.Bus.WorkflowChanged += OnWorkflowChanged;
             _sessions.Bus.WorkflowLibraryChanged += OnWorkflowLibraryChanged;
+            _sessions.Bus.WorkflowLayoutChanged += OnWorkflowLayoutChanged;
         }
 
         public string PipeName => _pipeName;
@@ -54,6 +55,7 @@ namespace Semanticus.Engine
         private void OnLayoutChanged(LayoutChange v) => Broadcast("layout/didChange", v);
         private void OnWorkflowChanged(WorkflowRunView v) => Broadcast("workflow/didChange", v);
         private void OnWorkflowLibraryChanged(WorkflowInfo[] v) => Broadcast("workflow/libraryDidChange", v);
+        private void OnWorkflowLayoutChanged(WorkflowLayout v) => Broadcast("workflow/layoutDidChange", v);
 
         private void Broadcast(string method, object payload)
         {
@@ -163,6 +165,7 @@ namespace Semanticus.Engine
             _sessions.Bus.LayoutChanged -= OnLayoutChanged;
             _sessions.Bus.WorkflowChanged -= OnWorkflowChanged;
             _sessions.Bus.WorkflowLibraryChanged -= OnWorkflowLibraryChanged;
+            _sessions.Bus.WorkflowLayoutChanged -= OnWorkflowLayoutChanged;
             JsonRpc[] snapshot;
             lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); }
             foreach (var c in snapshot) { try { c.Dispose(); } catch { } }

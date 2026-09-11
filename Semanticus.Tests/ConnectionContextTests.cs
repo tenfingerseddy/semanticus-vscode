@@ -175,7 +175,8 @@ namespace Semanticus.Tests
             Assert.True(context.Editing.SourceControlled);
             Assert.False(File.Exists(Path.Combine(repo, WorkingCopyPlanner.MarkerFile)));
             Assert.Single(Directory.GetFiles(repo));
-            Assert.DoesNotContain(await engine.ListConnectionsAsync(), r => string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(await engine.ListConnectionsAsync(), r => string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Endpoint, Path.GetFullPath(model), StringComparison.OrdinalIgnoreCase));
 
             var local = ConnectionRegistry.Remember("localDesktop", "localhost:51234", "LocalTest", "Local test model");
             var secondPublish = ConnectionRegistry.Remember("xmla", "powerbi://example/other", "OtherPublished", "Other published", null, "interactive");
@@ -190,6 +191,65 @@ namespace Semanticus.Tests
             await engine.OpenAsync(second);
             Assert.False((await engine.ConnectionContextAsync()).Publishing.Available);
         }
+        // The two tests below cover the TWO selection routes PublishingSide has, one each, deliberately not folded
+        // into one case: they reach the same defect through different state, so one failing must not hide the other.
+
+        [Fact]
+        public async Task Legacy_loopback_xmla_is_not_a_publish_destination_on_the_liveorigin_fallback_route()
+        {
+            // ORDER IS LOAD-BEARING: Remember front-inserts (newest first) and FindByEndpoint is kind-blind, so the
+            // reachable sequence is open_local FIRST and remember_xmla_connection on the same endpoint + database
+            // SECOND, which leaves the legacy xmla row newest and makes it the EDITING record. The reverse order
+            // returns the localDesktop row instead and never reaches the fallback at all.
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var local = ConnectionRegistry.Remember("localDesktop", "localhost:51234", "LocalTest", "Local test model");
+            var loopbackXmla = ConnectionRegistry.Remember("xmla", "localhost:51234", "LocalTest", "Legacy loopback");
+            sessions.Current.LiveOrigin = new LiveOrigin(local.Endpoint, local.Database, null);
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("local", local.Endpoint, local.Database));
+
+            var context = await engine.ConnectionContextAsync();
+
+            // Route pin, so a pass can never mean "the fallback was never reached": the kind-blind newest-first
+            // lookup must have returned the legacy xmla row, which is the record the fallback promotes.
+            Assert.Equal(loopbackXmla.Id, context.Editing.ConnectionId);
+            Assert.False(context.Publishing.Available);
+            Assert.Null(context.Publishing.Endpoint);
+        }
+
+        [Fact]
+        public async Task Legacy_loopback_xmla_is_not_a_publish_destination_on_the_explicit_publish_link_route()
+        {
+            // The explicit route does not depend on list order: a FILE-BOUND editing record (found by working folder,
+            // with NO LiveOrigin on the session) names its publish destination by id. A fresh folder and a fresh
+            // session keep this off the fallback route entirely.
+            var folder = Path.Combine(_root, "explicit-link");
+            Directory.CreateDirectory(folder);
+            var model = Path.Combine(folder, "model.bim");
+            File.Copy(TestModels.FindBim(), model);
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(model);
+            var source = ConnectionRegistry.Remember("localDesktop", "localhost:51234", "DesktopModel", "Desktop source");
+            var published = ConnectionRegistry.Remember("xmla", "powerbi://example/workspace", "Published", "Published", null, "interactive");
+            var loopbackXmla = ConnectionRegistry.Remember("xmla", "localhost:51234", "LocalTest", "Legacy loopback");
+
+            // Positive control FIRST: the explicit link is live on this session, so a later refusal is the guard
+            // working and not the route being unreachable.
+            ConnectionRegistry.SetWorkingCopy(source.Id, folder, published.Id);
+            var control = await engine.ConnectionContextAsync();
+            Assert.True(control.Publishing.Available);
+            Assert.Equal(published.Id, control.Publishing.ConnectionId);
+            Assert.Null(sessions.Current.LiveOrigin);
+
+            ConnectionRegistry.SetWorkingCopy(source.Id, folder, loopbackXmla.Id);
+            var context = await engine.ConnectionContextAsync();
+
+            Assert.False(context.Publishing.Available);
+            Assert.Null(context.Publishing.Endpoint);
+        }
+
         [Fact]
         public async Task Matching_endpoint_with_a_different_dataset_stays_two_models()
         {

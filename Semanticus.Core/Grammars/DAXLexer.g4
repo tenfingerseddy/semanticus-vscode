@@ -1,3 +1,50 @@
+// ---------------------------------------------------------------------------------------------------
+// THIRD-PARTY FILE. This is not first-party Semanticus work.
+//
+// Upstream project: Tabular Editor 2
+// Author/copyright: Copyright (c) Tabular Editor ApS
+// License:          MIT
+// Upstream URL:     https://github.com/TabularEditor/TabularEditor
+// Upstream path:    AntlrGrammars/DAXLexer.g4
+//
+// Copied from the vendored Tabular Editor 2 submodule at external/TabularEditor, pinned at
+// 7029129aa3f45d35f987d8f6ac7e5a971f28771c. The copy exists because Semanticus.Core runs
+// Antlr4.CodeGenerator over a grammar inside its own project directory; the vendored donor clone is kept
+// pristine. This header is the ONLY local change: every grammar rule below is upstream's, unmodified.
+// Provenance evidence, reproducible from a checkout with the submodule initialised:
+//   git hash-object external/TabularEditor/AntlrGrammars/DAXLexer.g4
+//     -> 63d27cccf2ba9ac26a4e8b87418609614d471faa
+// which is the blob this file was taken from, and was also this file's own hash before this header
+// was added (introduced by commit 00fcbf94, which wired the ANTLR DAX layer into Semanticus.Core).
+//
+// MIT requires the copyright notice AND this permission notice to travel with the file, so both are here
+// rather than only in THIRD-PARTY-NOTICES.md, which a file published on its own does not carry:
+//
+//   MIT License
+//
+//   Copyright (c) 2025 Tabular Editor ApS
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+//   associated documentation files (the "Software"), to deal in the Software without restriction,
+//   including without limitation the rights to use, copy, modify, merge, publish, distribute,
+//   sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+//   furnished to do so, subject to the following conditions:
+//
+//   The above copyright notice and this permission notice shall be included in all copies or substantial
+//   portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+//   LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+//   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+//   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// Semanticus itself is licensed under the Elastic License 2.0 (root LICENSE); that license does NOT apply
+// to this file.
+//
+// If you re-sync this grammar from upstream, keep this header and re-check the hash. An unattributed
+// verbatim donor copy is caught by Semanticus.VSCode/test/attribution-and-license.test.mjs.
+// ---------------------------------------------------------------------------------------------------
 lexer grammar DAXLexer;
 
 channels { COMMENTS_CHANNEL, KEYWORD_CHANNEL }

@@ -7,6 +7,1406 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
+## [Unreleased]
+
+## [1.1.2] - 2026-09-12
+
+Post-fix UAT release, including the merged save, publish, workflow Submit, licence,
+copy and expression-validation repairs. Final checks also corrected remaining faults:
+M validation rejected valid quoted values when building a model from a spec, and a stale
+Change Plan could overwrite a newer column aggregation setting (D-026). Optional workflow
+inputs now let the MCP server generate its tool schemas without crashing at startup.
+The final CI check also corrected argument counting for quoted DAX values and narrowed
+an M comma check that rejected valid row filters. Existing test fixtures now create the
+objects their expressions reference.
+
+Linux and Windows automated checks passed. Installed Linux acceptance passed, including
+shared UI/MCP edits, workflow Submit, Save, validation and Undo. An independently checked
+live Publish-and-restore round trip returned the test model to its starting values.
+
+The [1.1.2 GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.2)
+provides Windows x64 and ARM64, Linux x64, macOS Intel and Apple Silicon installers
+with SHA-256 checksums. Each package is built on a matching runner, then its bundled
+engine is extracted and executed. Marketplace publication remains a separate step.
+Further UAT findings remain tracked for later work.
+
+### Added: explicit workflow format upgrade preview (T243)
+
+Studio and the agent can preview a saved workflow's v1-to-v2 upgrade, then apply the
+reviewed change. The upgrade adds the format marker and stable step ids through exact
+source edits, preserving unrelated text and refusing changes that alter parsed meaning.
+Applying requires the original path and byte hash. Normal saves never upgrade a file,
+v2 files need no changes, and stock workflows must first be copied into the project.
+Safe previews return a structured apply action with the reviewed file path, byte hash and
+current session, so agents can act without extracting arguments from prose.
+
+The stock library is not migrated by this change. Thirteen of its fifteen current files
+produce valid previews; calendar-setup and model-hygiene-pass refuse because their
+existing unquoted description colons are invalid under the strict v2 parser.
+
+### Added: saved workflow source editing and shared Canvas layouts (T241, T242)
+
+Studio can edit a saved workflow's exact Markdown, including a file that needs parse-error
+repair. Saves check the original file path and byte hash. Refused saves keep the draft, and
+stock workflows offer an explicit project copy. The agent has the same document read and
+edit tools. Untouched text retains its comments, line endings and UTF-8 byte order mark.
+
+Canvas positions now live in the project's workflow layout sidecar and update Studio when
+the agent moves steps. The agent can read and save those positions too. Revisions include
+the project path, workflow bytes and layout bytes, so an old view cannot overwrite another
+project or a changed layout. Conflicts keep the local positions visible with a reload action.
+Arrange and Reset save layout changes; Fit all changes only the view.
+An explicit action in the saved-file comparison lets users keep a draft and adopt the
+reviewed file as its next save base. Newer shared layout notifications received before a
+local save reply are retained and applied once no local edits remain.
+
+### Added: workflow calls with inputs and returned answers (T240)
+
+Workflows can call other workflows through the UI and MCP using one run and certificate.
+Calls receive only named inputs and return only declared answers. Calls within loops bind
+each item's value, and nested calls can relay returned answers to their caller. Invalid call
+graphs refuse before a run is registered. Existing gate checks and per-workflow edit permissions
+apply to the workflow that owns each step.
+
+The run view groups nested calls and loops, shows received and returned names, and prefills
+supplied answers while keeping them editable. Evidence identifies each step's workflow and
+frozen version, and records the supplied values used by its gate.
+Frame completion walks the plan once per transition, and completed calls retain their return
+position so later answer reads do not repeatedly scan every call's rows.
+
+### Added: movable workflow Canvas and loop run navigation (T239)
+
+The Author Canvas now supports dragging steps, zooming, fitting and resetting the layout,
+and selecting a step to read its details. Positions are remembered in the Studio panel.
+Arrows still follow file order, and moving a step does not edit the workflow file.
+Loop runs show each item value and its progress, keep the current item open, and let users
+expand finished items to read their records. Both views use the existing workflow definitions
+and run state. Saved-file editing and public call starts remain unfinished.
+
+Workflow verification now takes an answer's object-reference type from the row that
+supplied it. Nested loop answers stay inside their workflow call, and a callee's final
+answer cannot prepare a caller's following loop.
+
+### Fixed: complete date marking and offline waiver handling (T214)
+
+Direct date marking and change-plan items now make the same complete mark: exact `Time`
+category, correcting lowercase `time`, and a valid `DateTime` column marked as the key.
+An omitted column is chosen only when there is exactly one date column. Invalid or ambiguous
+choices make no model changes; other plan items can still apply. Offline readiness scans
+preserve valid live-rule waivers without calling them orphaned, evaluating live rules or
+changing offline scores. Those waivers still apply when statistics are supplied later.
+
+BPA corrections keep unsupported scopes and aborted evaluations unknown and block deployment
+for severity 2/3 rules, even when a fix expression is syntactically valid. Unknown coverage has
+no known repair target. Severity-1 unknowns stay visible without blocking; known empty scopes
+stay clean. Identified violations collected before a failure retain their own fixability. Quoted fix values treat semicolons as data and decode Unicode
+escapes once, so percentage-format previews match the applied value; multiple statements
+remain refused.
+
+Recorded offline evidence includes 22 date-marking tests, 112 waiver/readiness/custom-rule
+tests and focused verification against the real date BPA rules. Live XMLA/Fabric checks remain
+unavailable and unverified. The engine battery was not rerun for this documentation change.
+
+### Added: internal bare-call workflow execution (T236)
+
+The internal runner can resolve and splice a bare callee into the current execution plan,
+preserving frozen ownership and rejecting stale or altered plans before mutation. Nested
+call completion and disposal finish before certificate computation. Four independent byte
+comparisons preserve no-call views and records under both serializers. T-3970 passed the
+focused verification and all 33 call cases. Full integration results are recorded separately.
+Public call starts, argument binding and declared returns remain unavailable.
+
+### Fixed: nested blocks and inline literals in the task register (T229)
+
+An unclosed fenced or HTML block inside a list item no longer hides later task allocations
+after the item ends. Decoded Unicode whitespace cannot hide a heading allocation, and encoded
+brackets in code spans remain literal citations. The offline scanner keeps its canonical count
+of 76 rows and zero duplicates. Independent source review passed; the full core battery passed
+3,287 cases and the supported extension battery passed 44 files. Live Air/Fabric remain
+unavailable. The product workflow parser is unchanged.
+
+### Added: frozen ownership for planned workflow rows (T234)
+
+Each planned row retains the frozen definition that authored its step. Gate strictness,
+condition roots and start-time inventories use the reachable ownership closure. The engine
+validates that closure before the remaining public call refusal. Public loop starts keep
+working. The saved foundation was recovered with one stale loop-control assertion updated
+and one overbroad source comment corrected. Core 3,042 and 367 focused tests passed, as did
+44 extension files on Node 20.20.2/npm11.6.2. Live Air/Fabric checks remain unavailable and
+one existing DAX case remains skipped. Late review corrections now keep witness declarations
+within the captured frame and honor required-callee activation. Coordinator core Release 3,046
+passed on Yoga, the offline battery and final Codex verification passed. The internal call splice is tracked separately in T236.
+
+### Fixed: loop setup grants no iteration permission (T235)
+
+An unexpanded loop setup row no longer grants a body-operation binding exemption or marks
+an edit as workflow-authored. Real iterations retain their existing behavior. The correction
+uses the runner's existing expansion-only classification and has regression coverage through
+the engine routes. It passed final verification with the ownership correction.
+
+### Added: public starts for the existing loop runner (T231)
+
+Workflows containing `forEach:` now start through the shared local, RPC and MCP engine.
+Start returns setup instructions until the first applicable iteration is ready. Call-only
+and combined call/loop workflows remain refused without allocating a run. No new runner,
+public operation or workflow-file editor was added. The no-loop saved records keep their
+existing golden bytes. The build passed 3022 core tests and all applicable offline smokes;
+live Air and Fabric checks remain unavailable, and one existing DAX case remains skipped.
+
+
+### Added: read-only Boxes view of a workflow file (T2395 repair / T2416)
+
+Authoring now has a Boxes view of the parsed file. Outline still edits the lossless subset. Any present provenance key, including an empty value, blocks the lossy emitter. Lossy files stay on Boxes. Lossless files get an Outline/Boxes control. Boxes follows file order with arrow connectors, labels explicit versus positional ids, shows full forEach maxIterations and full call with/returns, and says it is not a run. An agent save refreshes Boxes while a dirty Outline draft remains. The banner does not claim omitted raw text is displayed.
+
+### Fixed: the dependency advisory gate is green again on all four lockfile roots (T-3821)
+
+`dependency-audit.test.mjs` had gone red on locks that were byte-identical to `origin/main`: the
+advisory database moved, not the tree. Eight newly published advisories matched three transitive
+dev dependencies. `fast-uri` 3.1.5 to 3.1.7 and `qs` 6.15.3 to 6.16.0 in the extension lock;
+`browserslist` 4.28.4 to 4.28.9 in the webview lock, which pulls its own five declared dependencies
+(`baseline-browser-mapping`, `caniuse-lite`, `electron-to-chromium`, `node-releases`,
+`update-browserslist-db`) up to the floors 4.28.9 names. Every depender already declared a range
+wide enough, so no `package.json` changed. No package was added or removed and no licence field
+changed, so no attribution update was owed. The test stops at the first failing root, so `webview`
+was found by auditing each root directly rather than by reading the test output. Audit totals are
+now 0 at all four roots, `lockfile-drift.test.mjs` passes 10 of 10 (both rewritten locks are
+offline-complete and byte-canonical under npm 11.6.2), the extension suite passes 43 of 43 files,
+and `npm run build:webview` succeeds on the new closure. Dev-only and peer packages only, so no
+shipped runtime dependency moved and this carries no release claim. Detail:
+[`docs/notes/T-3821-dependency-repair.md`](docs/notes/T-3821-dependency-repair.md).
+
+### Fixed: CommonMark heading allocations cannot reuse a task id (T205)
+
+Task ids at the start of real top-level ATX or Setext headings now join duplicate-allocation detection while
+canonical definition counts remain unordered-list rows. The scanner preserves fenced code, comments, type-1 and
+custom type-7 HTML blocks, nested list headings and fences, and emphasis-wrapped headings. It follows CommonMark
+ordered markers, tab stops, case-sensitive entities, encoded brackets, quoted HTML attributes, link definitions,
+reference-link headings, and code-span escape rules. Ordered items and table cells remain citations. The T165
+heading is prose-first and remains a citation. The focused task-register suite and live register pass at exactly
+73 rows, 73 ids and zero duplicate allocations. F-018 stays scheduled until the repair has a squash commit on main.
+
+### Fixed: CicdSmoke headlines UNAVAILABLE when live Fabric did not run (T228)
+
+When every offline check passed and the live Fabric lane was unavailable, the smoke still printed
+`CICD SMOKE: PASS` with a qualifier. The headline is now `CICD SMOKE: UNAVAILABLE`, exit 0, and the
+line never contains PASS. Plain PASS remains only for a successful live lane. Prior failures and
+disagreement still exit 1. Offline CicdSmoke passed 134 checks, exit 0. Live Fabric remains unverified.
+
+### Fixed: CicdSmoke tells a dead Fabric credential apart from a broken door (T199)
+
+A live Fabric authentication failure is no longer recorded as a failed check. `FabricRest` now keeps
+non-success HTTP status on an inner `FabricHttpException` through wrapping. `Semanticus.CicdSmoke`
+classifies only exact `Azure.Identity.AuthenticationFailedException` or `CredentialUnavailableException`
+and a typed Fabric 401 as UNAVAILABLE. Typed 403 and every other exception are disagreement. UNAVAILABLE
+prints fixed text, adds no failure, qualifies the final summary, and exits 0 when every other check
+passed. Disagreement adds one failure and exits 1. An outer crash still exits 2. `XmlaAuthHint.IsAuthFailure`
+is not used for this control flow, and an auth exception message is never printed. F-005 stays scheduled
+until this lands on main. Offline CicdSmoke passed 134 checks, exit 0, with live Fabric UNAVAILABLE.
+Live Fabric and tenant paths remain unverified.
+
+### Fixed: A folded certificate can only ever weaken the exported verdict, never strengthen it
+
+The evidence export used to compute its headline verdict from the step rows alone, so a run whose folded
+certificate said PARTIAL or OVERRIDDEN could still export as Verified. The fold repair closed that by reading
+the certificate instead of the steps, which opened the same false certainty pointing the other way. The
+certificate ladder is deliberately blind to warn-strictness rows, and the spec says a warn-only skip does not
+demote the certificate, so a FULL certificate was lifting a run with a skipped warn step, or with a warn-gate
+verify that came back failed or unavailable, all the way to Verified.
+
+The exported verdict is now the worst of both: the worst step verdict and the certificate's own verdict. A
+certificate may weaken the headline and may never strengthen it. `OverrideReason` returns with it, because it
+is populated only when the headline is Overridden. Three watched-red cases pin the three ways a FULL
+certificate used to over-claim, and a fourth pins that clean steps under a FULL certificate still export
+Verified rather than being weakened for no reason. This repair is `T-2211`; the fold it repairs is `T-1820`.
+
+The full engine suite passed 2,947 of 2,947 with no failures or skips, measured on this tree with
+`dotnet test Semanticus.Tests/Semanticus.Tests.csproj`. The coverage oracle stayed byte-current at 306 MCP
+operations with zero untested; no test file was added, so its inventory is unchanged. The fold entry below
+recorded 2,933, which this tree does not reproduce; it is corrected to 2,945, that same measured 2,947 less
+the two facts this repair adds. Extension tests, the .NET smokes, DAX mode runs and every live XMLA, Power BI
+Desktop, Fabric, tenant and authentication path were not re-run here and remain unverified for this repair.
+
+### Fixed: T182 visitor 3,000 is not an overflow
+
+The deep probe now has a `visitor` command. Two `LiteralCountingVisitor` subclasses (void and generic)
+count `VisitLiteralExpression` callbacks exactly. Linux Debug and Release complete 2,000 and 3,000 with
+matching counts, so 3,000 is not a visitor overflow. The durable floor stays 2,000. `DeepFormulaTests`
+still skips `walker` at 3,000 and `rewriter` at 5,000. Step 4 must migrate those two visitor subclasses
+plus `CountingWalker` and `IdentityRewriter`. The T182 note now points at section 2.3 for that command,
+not 2.5, and no longer asks the reader to add a command that already exists.
+
+### Fixed: DAX CI now runs Debug as well as Release on both OS legs
+
+T182 step 1 lacked Windows Debug because CI ran `Semanticus.Dax.Tests` only in Release. The existing OS
+matrix job now runs explicit Debug and Release commands, and its contract test pins both commands inside
+the Linux-and-Windows matrix. Hosted run 33249582723 passed all four combinations at 477 passed and one
+disclosed callback skip each. That closes T182 step 1. T182 remains open for the visitor, walker and
+rewriter work in steps 2-4.
+
+### Fixed: Coverage oracle records the evidence path set
+
+The coverage inventory field `trackedEvidenceFiles` is now the ordinal-sorted set of evidence paths, not a
+count. Two lines of work that each add a different test file can no longer both match the same recorded number
+while the merged tree matches neither. The coverage-oracle extension test proves count drift: it refuses a
+count-shaped value. Exact path-set drift is proved by the whole `pwsh -File tools/coverage-oracle.ps1 -Check`
+byte-compare of the inventory, including the path set. That check reported 306 MCP operations and zero
+without a tracked test reference, and the focused extension test passed.
+
+### Fixed: The CI gate battery runs from PowerShell
+
+The decide child PATH prepended the gh shim with a colon. Windows PATH uses a
+semicolon, so from PowerShell bash lost cat, wc and the shim while Git Bash still
+passed (F-003). The join now uses `path.delimiter`. On Unix that is still a colon,
+so Bash behavior is unchanged. The shim is marked executable so Linux honors it
+the way Git Bash already did.
+
+A watched-red extension test rejects a colon join. The focused battery held all
+64 cases. The coverage oracle moved tracked evidence files from 238 to 239.
+
+### Security: Odd-offset UTF-16 scanning no longer aborts Node 26
+
+The release-security scanner still reads a one-byte-shifted UTF-16LE view so a token that starts on an
+odd byte stays visible. Node 26 aborted when that view was decoded in place, because the decoder saw an
+odd `byteOffset`. The shifted bytes are copied first. A child-process probe on the sizes that aborted,
+plus an odd-offset token assertion, passed on Node 20.19.5, 24.20.0 and 26.7.0. The coverage oracle
+stayed current at 306 operations. No CI or lockfile change. (T221)
+
+### Added: A deferred `forEach` loop expands at its own row (T220 runner unit 18, DECISION 1.6.1d)
+
+A deferred loop that reaches the run still unexpanded because its list source was answered two or more
+rows back, or because the adjacent step that answered it was then skipped, now takes exactly one
+expansion-only submission addressed to its base id and carrying no answers. It resolves the list from the
+loop's own loop-entry projection and splices, running no gate, no verification and no receipt, and not
+completing the submitted top-level body frame. Because the splice happens at the loop's own row, the frozen
+iteration seed is taken at actual loop entry, so an answer recorded between the declarer and the loop is
+inside it; seed capture itself did not move. This closes the one bounded stop Unit 17 left open: the runner
+now expands from every declarer position `check_workflow` accepts, so the parser and the runner agree on
+position and only the inherited `scope: run` and call-boundary rules remain.
+
+The advance walk now defers **every** condition on an unexpanded template, and the explicit base-id setup
+call validates its source before setup parses `when:` once for classification. Expanded rows then use the
+existing per-iteration parse and evaluation walk. Missing, explicit null, declined, disallowed blank,
+over-bound and cross-frame scope cases all refuse before anything is recorded, each naming
+`skip_workflow_step` and what the skip costs. Blank ownership follows the winning visible answer's own
+declaration through one backwards resolution shared with the gap path's scope branch, so the two can never
+disagree about the winner; an answer excluded only by the absence of `scope: run` gets the scope refusal,
+while one behind a `call:` boundary reports as missing, because scope cannot reach across one and offering it
+would be advice that cannot be followed. A loop-free false or unreadable condition then records
+`not_applicable` with zero iterations through the same recorder the advance walk uses, and a predicate
+referencing any loop fact expands first and is judged per iteration. The runner walks to the first applicable
+iteration; if none exists it leaves the loop. The view teaches the actual current row or none. A skipped declarer's recorded answer is resolved fresh while the
+decision that step abandoned stays `abandoned`, and the certificate stays `OVERRIDDEN`.
+
+`docs/workflow-canvas-spec.md` carries this as **DECISION 1.6.1d** beside 1.6.1a, 1.6.1b and 1.6.1c, with
+one condition rule shared by all three explicit current-row setup shapes. There is no new public state, no
+new wire member, no parser change, and `start_workflow` still refuses `forEach:`.
+
+### Fixed: Four corrections found while completing unit 18, recorded rather than quietly patched
+
+**A `condition_false` decision leaves its target for its own setup call.** Unit 17's adjacent `expand` and
+`empty` paths keep their timing and do not reach the template. `condition_false` splices nothing, so its target *is* reached current
+and unexpanded, and its `not_applicable` is now recorded by that row's own setup call rather than by the
+advance walk. The verdict and the row are unchanged and only the moment moved later, which is the
+direction the deferral exists for. Two shipped Unit 17 cases asserted the old moment and were retargeted.
+
+**The blast-radius measurement was scoped too narrowly.** "No shipped test puts a loop fact in the `when:`
+of an unexpanded template" held. What moved instead were the **loop-free** conditions on a Unit 17 target,
+which that measurement did not look for.
+
+**The quoted and hyphen controls could no longer fail.** `inputs.team.value == 'loop.index'` and
+`inputs.loop-mode.answered` prove the runner decides loop-dependence from the parsed predicate's referenced
+roots and never by text-matching the authored string. They proved it by asserting an unexpanded plan, but
+after the deferral a template held back *as* a loop fact is also unexpanded until its setup call, so that
+assertion passes either way. Both controls now drive the setup call and pin the loop-free verdict by its
+note carrying **no** resolved loop binding, with a real loop fact as the contrast beside them.
+
+**Self-sourced preparation named no way past an unusable source.** The inline and deferred setup paths
+append `skip_workflow_step` and the skip's certificate consequence to every unusable-source refusal.
+Preparation's missing, explicit null and disallowed-blank refusals carried neither, and its decline sentence
+carried the route without the consequence on the one shape that reaches the row holding the only answer
+that could make the source usable. All four now carry both.
+
+The `submit_workflow_step` description also regained the ratified "pre-pair checks this unit owns" wording
+that `CHANGELOG.md`, `TASKS.md`, `docs/PLAN.md` and the Unit 17 note all carry, and now teaches the
+`scope: run` route and the no-gate, no-verification, no-receipt rule in those words.
+
+Red first: 8 of 211 focused cases failed against the exact base, then 211 of 211 passed across
+`WorkflowRunPlanTests`, `WorkflowRunFrameTests` and `WorkflowStepConditionTests`. All 2,895
+`Semanticus.Tests` cases passed with zero skips. The coverage oracle moved exactly one line, the
+`McpTools.cs` `sourceHash`, with the operation count unchanged at 306 and no new test file. The 15
+pre-existing condition cases all stayed green, which is the behaviour-preserving check on the shared
+recorder extraction. At Unit 18 delivery, the full gate passed the Release solution build, all 2,895 unit
+cases, all 43 extension test files, the current 306-operation coverage inventory and all seven .NET smokes.
+After integrating #322, the same gate passed 2,902 unit cases, all 43 extension test files, the 306-operation
+inventory and all seven .NET smokes. AirSmoke and CicdSmoke ran their offline lanes. Live XMLA, Power BI
+Desktop, Fabric, tenant and authentication paths remain **unverified**.
+
+### Fixed: RPC dual-drive paste observation no longer races a straggler
+
+The paste check's `WaitNextAsync` took the next `model/didChange`, so an in-flight notification from the
+previous mutation could be observed as the paste (F-001 / T195). The waiter now matches the paste, consumes
+each event once so a returned match or ignored straggler cannot satisfy a later wait, throws on an overlapping
+wait instead of orphaning the first, and still uses the five-second deadline. RpcSmoke mutation waits name
+origin and label so an own echo cannot pass a later check. Watched red: a returned match and an ignored
+straggler both completed a later wait, and an overlapping wait threw nothing. Focused tests 7 of 7;
+RpcSmoke dual-drive PASS.
+
+### Fixed: The millisecond verify-budget proof no longer bets on runner timing
+
+The expected-values test for a 1.9-second cancellation budget slept for 1.4 seconds and assumed the hosted
+runner would schedule it within the remaining half second. Windows run 33251621002 exposed that test flaw:
+the result genuinely finished after the deadline even though the product still preserved the exact budget.
+The existing production arithmetic is now one internal pure helper used by the live path and tested with a
+fixed 1,900ms value. The cancellation duration stays exactly 1,900ms and only the integer server timeout
+rounds up to 2 seconds. Restoring the historical integer-floor calculation made the new test fail; the
+ExpectedValues suite then passed 103 of 103 with exact arithmetic restored.
+
+### Added: The workflow certificate is folded from every frame, not from whichever one submitted last
+
+The certificate was the one part of the runner that never learned about frames. It read run-level
+compatibility accessors, so a future looped or called run could have been graded from whichever frame was
+ambient when the certificate was requested. No user could reach that state because `start_workflow` still
+refuses both `forEach:` and `call:`. This is required foundation before either form can execute.
+
+`ComputeCertificate` now takes every frame explicitly. It computes each frame's level from that frame's
+hard rows and surface state, then gives the run the weakest level. One shared existence rule governs the
+certificate and its OVERRIDDEN consequence. Receipts and counters sum across all frames in run order, while
+the evidence lattice remains the top frame's own so separate proofs can never combine into a stronger claim
+than any frame made.
+
+The agent claim is read only from the top frame. A callee or iteration cannot assert the run's level. Five
+null-omitted fields add the frame projections and iteration totals, including a bounded sample of failed
+iteration values. A no-loop run keeps its recorded JSON bytes unchanged, and the certificate frame order
+matches `get_workflow_run` so clients can join them by index without exposing internal frame ids.
+
+The full engine suite passed 2,945 of 2,945 with no failures or skips. Both DAX modes passed 477 tests with
+the one documented callback skip. All 43 extension test files and all seven .NET smokes passed. Coverage
+remained current at 306 MCP operations with zero untested. Live XMLA, Power BI Desktop, Fabric, tenant and
+authentication paths remain unverified.
+
+No call splice, planned-row ownership, public `forEach:` or `call:` start, parser change or UI ships here.
+
+### Fixed: R13c C2 is an iteration-frame silent-top claim control, and F1-F8 reached the spec
+
+T-1820 shipped the per-frame certificate fold with R13c C2 built as a call frame. That subrun cannot catch
+the rejected `AccumulatedAnswers(run, Frames[0], cutoff)` reuse, which already hides callee rows. C2 is now
+one iteration frame whose `scope: run` claim cannot supply the run's claim while the top frame is silent,
+matching C3's replace direction. `docs/workflow-canvas-spec.md` takes the eight fold findings in place:
+`failedIterationValues` names iteration frames that did not complete as `passed`, the min-fold takes the
+frame as a parameter and sums across every frame, the existence gate is named separately from the
+contributing set, `PartitionLocks` are kept apart by the per-frame move rather than unrolled ids, stale
+line citations for the claim reader, `ComputeCertificate`, `MinimumCertificateLevel` and the conditional-
+equivalence shortcut are current, check 17 joins the two frame lists by index, check 17b names the twelve-
+store set as per-frame rather than the certificate's six inputs, and `SkipConsequence` is recorded as
+run-wide.
+
+### Fixed: Every shipped workflow now has admission coverage
+
+The stock workflow admission theory now includes `check-blast-radius`, closing the only gap across the 15
+shipped workflows. Its case passed on the first focused run, so the shipped YAML was already valid and stayed
+unchanged. The focused theory passed 15 of 15, the coverage oracle remained current at 306 MCP operations with
+zero untested, the Release solution build completed with zero warnings and zero errors, and the full affected
+Release suite passed 2,850 of 2,850 with zero skips.
+
+### Fixed: DAX reliability controls now fail closed
+
+The local corpus bar now returns a failure for every partial snapshot instead of printing `PARTIAL` and
+returning success. Its README states the same contract. Controlled partial, exact-baseline, BIM one-short,
+TMDL one-short and empty fixtures returned 1, 0, 1, 1 and 1.
+
+The existing CI contract test now pins the explicit `Semanticus.Dax.Tests` Release command and proves that
+removing it makes the guard fail. The dependency-free DAX projects remain outside `Semanticus.sln` by
+design.
+
+Four exact parser goldens now pin `&` against `+` on both sides, `*`, and `&&`. The normative parser catalog
+contains the same four rows. The focused four passed, and the full DAX Release suite passed 470 tests with
+the one disclosed T182 deep-walker skip.
+
+The T180 record now reflects the reproducible corpus-pin mechanism that already reached main in #289. Its
+local fixture proves fresh and existing checkouts return to the saved commit, dirty and untracked files are
+repaired, and the pin file stays byte-identical.
+
+### Fixed: Deferred loop decisions now survive the permanent run record
+
+Unit 17 kept each deferred `forEach` decision in the live run view, but the terminal experience-log
+projection dropped it. `BuildRunRecord` now carries a deep copy of `pendingForEach`, including its target,
+values, outcome and final state. Rows without a decision still omit the member, so the exact no-loop record
+stays byte-identical. Red-first recovery coverage also pins retry replacement, skip abandonment, abort
+preservation, view snapshots and both wire serializers. The focused plan, frame and experience-log suites
+passed **141 of 141** with no skips.
+
+### Added: A deferred forEach call decides the next loop; condition_false does not expand
+
+Answering a list input that the **immediately following** `forEach:` step reads now runs that declaring
+step's own gate, verification and receipt **and** decides the next loop, all in the same submission. That
+loop expands only when the usable-list decision is `expand` or `empty`. A loop-free false or unreadable
+`when:` records `applied` `condition_false` and creates no iterations. The declaring call is an ordinary
+submission, not a setup call.
+
+The submission is three ordered parts rather than one atomic transition. First a decision taken before any
+mutation. Then **one paired write** of the source answer and that decision, with no `await` between them.
+Then execution of the recorded decision at the top of the synchronous tail, before the row is marked
+`passed` and before its advance. A blocked hard gate therefore leaves the answer and an **unexecuted**
+decision together on a `failed`, retryable row, and every retry re-decides and replaces both. Nothing
+re-executes a recorded decision on a later call.
+
+The one public wire addition is a null-omitted `pendingForEach` member on `StepResult`, ignored when null by
+both serializers, so a run with no deferred loop keeps the no-loop golden bytes exact. It carries one
+outcome of `expand`, `empty` or `condition_false` and one state of `pending`, `applied` or `abandoned`.
+Every executed decision reaches `applied`, including the `condition_false` one that splices nothing.
+`skip_workflow_step` marks an outstanding decision `abandoned` beside the skip; `abort_workflow` leaves it
+on the terminal record.
+
+Ownership is structural, not searched: a step declares only for the loop on the row immediately after it, so
+no plan index but the next one is read, and a step declaring the same input name while another row owns the
+loop is an ordinary submission that is never refused on that loop's account. A deferred loop no adjacent row
+owns is left alone, reached unexpanded, and refused there with the skip route.
+
+One rule governs the source. The decision is made against the exact answer map the loop's own seed will
+hold. An unusable list is refused by the pre-pair checks this unit owns, before anything is recorded, with
+**no** exception for an omitted optional name, and **before** the target's `when:` is read. A
+condition referencing `loop.index` or `loop.<as>`, including one that also reads `inputs`, is deferred
+**whole** and judged per iteration on its own bindings, so `condition_false` is a loop-free outcome only.
+The committed answer map became run-owned so the recorded decision and the frozen iteration seeds cannot
+disagree; every submission now stores answer clones, so `result.Answers` is no longer reference-identical to
+the caller's object.
+
+No source is frozen, so every iteration carries the **full** authored gate. An empty list marks the loop
+`not_applicable` with the existing note, records no answers on that row, and is walked past exactly once.
+
+**The next current row is the first APPLICABLE expanded iteration, not always `#0`.** The `submit_workflow_step`
+help and the Unit 17 contract both claimed `#0` unconditionally. The same advance walk that lands the index
+judges each deferred loop-dependent `when:`, so it can mark `#0`, and any run of leading iterations,
+`not_applicable` with their own loop facts and land on a later `#n`, or leave the loop entirely when the
+condition excludes every iteration. Both the help and the contract were corrected.
+
+**A fifth repair after T-1498.** Pre-pair refusal wording now names only the refusals this unit owns, so a
+hard-gate failure is not claimed to land before the pair. A deferred call decides the next loop and expands
+only when the usable-list decision is `expand` or `empty`; a loop-free false or unreadable `when:` records
+`applied` `condition_false` and creates no iterations. `TotalStepsProvisional` remains true for that
+unexpanded row even after `not_applicable`, as a conservative accepted cost. The `submit_workflow_step` help,
+the contract, **DECISION 1.6.1c** (heading, intro, and the 1.6.1b prior-shape lead), check 13b, and two existing tests were corrected. `WorkflowRunner` was not.
+Focused plan and frame suites passed **121 of 121** with no skips after those assertions. Coverage oracle
+`-Check` passed after regenerating only the `McpTools.cs` sourceHash. `git diff --check` was clean.
+
+`docs/workflow-canvas-spec.md` carries this as **DECISION 1.6.1c** beside 1.6.1a and 1.6.1b. Acceptance
+checks 12, 13, 13b, 13c and 14 were tightened **in place**, so the section's enumerated count did not grow;
+13b is the one this finally makes real for a deferred source. Check 5 now **records** that the parser and the
+runner do not agree on who may declare a deferred source: the parser accepts any strictly preceding step,
+the runner only the immediate predecessor. That gap is written down rather than described as agreement, and
+must be reconciled before `forEach:` may start. `start_workflow` still refuses `forEach:` and still accepts
+no answers. Public signatures, `CurrentStepView` members, Studio, RPC and the MCP operation count are
+unchanged.
+
+Red first: the red cases were committed separately at `663f28f` before the implementation. Four repairs then
+landed on the saved candidate. `WorkflowRunPlanTests` expected `StepIndex` 1 where `review-region#1` is plan
+index **2**. The caller-mutation-during-verify case blocked the executor on a `ManualResetEventSlim` that the
+test thread itself had to release, so `SubmitStepAsync` could never yield; it now uses a
+`TaskCompletionSource` with `RunContinuationsAsynchronously` and additionally asserts the submission is
+genuinely incomplete at the mutation point. The null-gap case banned the word "empty" from the refusal, which
+would have banned the required Unit 9 gap sentence itself, since that sentence exists to say a blank list is
+an empty loop and a gap is not; it now proves the gap **state** (no decision, no expansion, no committed
+answer, the row still an unexpanded template).
+
+Verification on this machine: the focused plan and frame suites passed **121 of 121** with no skips (62 plan,
+59 frame), and the `submit_workflow_step` description test passed after the help change. The exact v1
+goldens passed **4 of 4** and both golden files stayed byte-identical. A Release solution build completed
+with **zero errors and 471 existing warnings**. All **2,840** engine tests passed with zero skips. Smoke,
+RpcSmoke, McpSmoke, LearnSmoke, AirSmoke and CicdSmoke all reported PASS, and LearnBench reported a
+**+100 percentage-point** lift. Coverage stayed current at **306** operations with zero untested; the
+inventory hash moved because `McpTools.cs` changed, and the only other movement was two test-reference
+paths added under `submit_workflow_step`. `git diff --check` was clean and the task/findings register
+passed with 0 problems.
+
+Not run here, with reasons: the VS Code extension tests, because `Semanticus.VSCode/node_modules` does not
+exist in this checkout and installs are shared-tree-forbidden. Skipped, not passed: live XMLA
+(`SEMANTICUS_LIVE_XMLA`/`_DB` unset) and live Fabric (no service-principal env), both of which the smokes
+named as offline-green degradations.
+
+### Added: One expansion-only submission expands an inline InLiteral loop
+
+A current unexpanded `forEach:` whose list is an authored inline `InLiteral` now takes exactly one
+**expansion-only** submission addressed to the base id. Null and an empty object are equivalent and mean no
+named fields. Any named field is refused before mutation and stays an ordinary iteration question after a clean
+expansion. The call copies the authored strings verbatim into `<id>#0 .. <id>#N-1` without running verify,
+completing a frame, or executing `#0`. An empty list keeps the template result, records `not_applicable`
+with the existing empty-list note, records no answers, creates no receipt, and advances once.
+
+One helper projects every `CurrentStepView` member for both expansion-only shapes. Title may stay authored.
+Instructions are the synthetic setup phrase. Questions are source-only for Unit 15 and empty for inline.
+Verify kinds and ops are empty, and effective strictness is null. After a nonempty expansion the runner walks
+to the first applicable iteration; if none exists it leaves the loop. The view teaches the actual current row
+or none. That current iteration, when there is one, restores authored instructions after loop render, remaining
+questions, authored verify kinds, authored ops, and authored effective strictness. Ordinary rows, earlier-source templates, and real iterations keep today's
+projection.
+
+LocalEngine classifies both shapes with one union before `CaptureSubmissionFrame`, so neither setup call
+stamps a witness lock. `submit_workflow_step` help now teaches both setup shapes. The generic accepted-
+submission activity label is unchanged. `start_workflow` still refuses `forEach:`. Public signatures and
+`CurrentStepView` members are unchanged.
+
+`docs/workflow-canvas-spec.md` carries this as **DECISION 1.6.1b** beside 1.6.1a. Acceptance checks 12, 13
+and 14(a) were tightened in place. 1.6.1a's pre-expansion view now matches the shared setup projection.
+
+Red first: focused plan and frame suites failed **19 of 95** against origin/main, then passed **95 of 95**
+with no skips (44 plan facts, 51 frame cases). The exact no-loop golden stayed byte-identical. A Release
+solution build completed with **zero errors**. All **2,814** engine tests passed with zero skips. Smoke
+passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported a +100 percentage-point lift,
+AirSmoke passed, and CicdSmoke passed. Coverage stayed current at 306 operations; the inventory hash moved
+because `McpTools.cs` changed, and no evidence list moved. `git diff --check` and the task/findings
+register passed. Extension tests were not run here because this checkout has no `node_modules` and
+installs are shared-tree-forbidden. Live XMLA and Fabric were unavailable and remain unverified.
+
+### Changed: submit_workflow_step tells the truth after a Unit 15 preparation
+
+`submit_workflow_step` no longer claims the engine always runs the current step's verify checks, and its
+success activity no longer always says the step passed. An ordinary or iteration submission still runs its
+gate and verification. An unexpanded self-sourced loop first accepts only its source answer, prepares the
+iterations without body verification or a receipt, and walks to the first applicable iteration for the first real body submit; if none exists it leaves the loop. Success
+activity uses one generic `submission accepted` label for both that preparation and an ordinary passing
+submit. The label still names the resulting current id or `run COMPLETED`. It does not guess the transition
+kind from string ids. No new public field. Runner behavior, LocalEngine behavior, public signatures, Studio,
+RPC, and MCP operation count are unchanged.
+
+Red first: the three new `WorkflowRunFrameTests` cases failed 3 of 3 against the old copy. The description
+lacked `ordinary or iteration`, and both public-door activities still said `step passed`. After the copy
+change those three passed, then the focused plan and frame suites passed **75 of 75** with no skips (33
+plan, 42 frame). A clean Release solution build, after `dotnet clean` and removal of every project `obj/`
+and `bin/`, completed with **zero errors and 466 existing warnings**. All **2,794** engine tests passed with
+zero skips. Smoke passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported a +100
+percentage-point lift, AirSmoke 283, and CicdSmoke 110. Coverage stayed current at 306 operations; the
+inventory hash moved because `McpTools.cs` changed, and no evidence list moved. Source-byte hygiene passed
+4 of 4. Attribution passed all 38 declared checks. Task, findings, fixed-commit, and `git diff --check`
+passed. Under node 20.19.5 and npm 11.6.2, a clean install added 291 packages with zero known
+vulnerabilities and all **42 of 42** extension test files passed, including `release-security.test.mjs`.
+Live Codex coverage failed here for want of a repository credential and is not counted as a pass. Live XMLA
+and Fabric were unavailable and remain unverified. Full verification is in `docs/notes/T220-unit15-findings.md`.
+
+### Added: One preparation submission expands a self-sourced input-backed loop
+
+A current `forEach:` template whose list source is declared on that same step now takes exactly one **preparation**
+submission. It answers only that source, resolves the list with the existing comma and line-break semantics, and
+splices the plan into aligned iteration rows and frames. It runs no verify executor, completes no iteration frame,
+and does not execute the loop body: the runner walks to the first applicable iteration; if none exists it leaves the loop. The view teaches the actual current row or none.
+Both visible result rows and both frame seeds get independent frozen clones of the answer.
+
+The run view is a two-sided projection of that one gate. **Before expansion it offers only the list source
+question**, because the template's other inputs are per-iteration questions this submission refuses, and advertising
+them taught the agent to submit a payload the row cannot accept. After expansion every iteration hides the frozen source
+and offers the rest in authored order. Inline literal loops, sources declared on an earlier step, an expanded
+non-iteration row and ordinary steps match neither projection and keep the full authored gate.
+
+The list source's own `required:` rule binds inside the preparation. It runs no input gate — it must not enforce the
+questions it refuses to accept — so a `required` or `answer-or-decline` source answered blank, or with separators
+only, now **refuses atomically**, naming that input's question and its rule and naming no other input. Only
+`required: optional` may spell blank or separators-only as an empty list, which is the same rule an ordinary
+submission has always had through `EnforceInputs`.
+
+A payload naming anything besides the self source is refused rather than dropped or shared, because the preparation
+does not run the gate that would enforce a second answer and the iteration it creates is where that answer belongs.
+The whole replacement — payload shape, the source answer, the resolved list, the bound, and every synthetic frame
+identity — is validated before any run object changes, and the submitted answer is never written to the template row
+and rolled back. Missing, null, declined, malformed, over-max, stale-address, incoherent-frame, duplicate-frame and
+repeated preparations refuse with plan, results, answer objects, proof stores, status, index, frames, history, origin,
+locks and revisions unchanged. An answered blank optional source keeps its visible audit answer on the surviving
+`not_applicable` row, records the expansion, and advances exactly once, including terminal completion.
+
+The engine classifies the preparation after parsing and after the address and coherence refusals but **before** it
+installs submission-frame and witness-receipt bookkeeping, so a preparation stamps no witness lock: the first real
+`#0` submission remains the first verification and the first receipt event, and a hard failure there keeps `#0`
+current for retry. Ordinary and already-expanded iteration submissions keep the existing receipt path. Inline loops,
+sources declared on earlier steps, ordinary steps, the exact acceptance-check-34 no-loop terminal bytes, start
+refusals, public signatures, Studio, RPC, MCP, certificates, calls and returns are unchanged.
+
+`docs/workflow-canvas-spec.md` now carries this as a canonical decision rather than a runner behaviour nobody wrote
+down. **DECISION 1.6.1a** defines the source-only preparation call: section 1.6.1 previously said a loop expands "at
+the submission of the step that answers the list input", which is complete only while that step is an earlier one and
+silent on the case where the answering step and the loop step are the same row. Acceptance checks 12, 13 and 14 were
+tightened in place, so the section's enumerated count is unchanged. `start_workflow` is unchanged and still accepts
+no answers.
+
+A stale comment above `WorkflowRunner.ValidateSubmission` was also corrected. It claimed to validate every request
+property that can refuse before the engine installs receipt bookkeeping. It does not, and now says the exact
+boundary: the address, the current row's coherence and iteration-frame state, and a frozen-source rewrite.
+Submission-limit, input-gate, input-policy and verification refusals stay inside normal receipt bookkeeping on
+purpose, because each is decided against accumulated answers or executed evidence. No behaviour changed for this.
+
+Red first, twice. The original plan focus failed 4 of 30 and the frame focus 3 of 38. The view, blank-source and
+engine-door cases then failed 3 of 33 and 1 of 39 against that tree — the pre-expansion view returned
+`["finding", "regions", "note"]` where only `["regions"]` is answerable, and a blank `required` source expanded to an
+empty loop instead of refusing. Both suites now pass **72 of 72** with no skips. The exact no-loop golden passed 1 of
+1. A clean Release solution build completed with zero errors and 466 existing warnings, and all **2,791** engine
+tests passed with zero skips. Smoke passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported a +100
+percentage-point lift, AirSmoke 283, and CicdSmoke 110. Coverage stayed current at 306 operations, and byte hygiene,
+attribution, task, findings, fixed-commit and diff checks passed against the exact base. The architect then repeated
+the gate on exact commit `4e3345fd`: the same clean build, all 2,791 engine tests, the 72 focused cases, the exact
+no-loop golden, all seven smoke programs, coverage, byte hygiene, attribution, task, findings, fixed-commit,
+exact-base, diff, and live Codex coverage all passed. A clean install under the CI versions, node 20.19.5 and npm
+11.6.2, added 291 packages with zero known vulnerabilities and all 42 extension test files passed, including the
+release-security boundary. Independent source check `T-1472` passed. The worker's node 26.7.0 scanner abort remains
+useful environment evidence, not a product result. Live XMLA and Fabric were unavailable and remain unverified.
+Full verification and limits are in `docs/notes/T220-unit15-findings.md`.
+
+### Changed: Expanded iterations freeze a self-declared input list source
+
+When an input-backed loop declares its own list-source input on the loop step, expansion now copies the answered
+loop-entry control value into every synthetic iteration result. Each row owns an independent `AnswerValue` clone.
+The current iteration view omits only that frozen source from its ordered questions, and a fresh submission or
+hard-gate retry preserves a new clone while resetting ordinary iteration answers. Supplying or declining the frozen
+name against an iteration id refuses before status, note, answers, verify results or history, effective strictness,
+index, frame state, or proof stores can change. The refusal explains that expansion fixed the list and only the
+remaining iteration questions may be submitted.
+
+The engine wrapper now runs that same validation after parsing answers and before it installs submission-frame and
+witness-receipt bookkeeping, so a rejected frozen-source rewrite cannot alter hidden locks or revisions. Expansion
+also refuses atomically when a self-declared source was never answered in the loop-entry seed. Missing, null, and
+declined sources cannot create iterations that hide an uncaptured control answer.
+
+An empty expansion keeps the source answer on its surviving `not_applicable` result. A source declared only on an
+earlier step remains only on that earlier result, even though it is present in the iteration frame seed. Inline loops,
+ordinary rows, and no-loop behavior remain unchanged. This unit does not enable `forEach:` or `call:` at start, wire
+automatic preparation or expansion to LocalEngine, expose frame seeds, add an answer ledger, fold certificates,
+unroll calls, implement returns, or change public, Studio, RPC, or MCP source.
+
+The red-first plan focus failed 1 of 24 cases because iteration results had no frozen answer. The red-first frame focus
+failed 4 of 34 cases because the source was missing from results or remained in the current questions. The two
+receipt-boundary tests were also red first. One intermediate repair protected the source only in hidden frame seeds
+and lost the visible step-result audit answer; gatekeeper review rejected it despite its automatic check passing. The
+exact candidate was then composed with the valid repair. Final independent source review passed and confirmed that
+canvas, call, and live behavior remain outside this unit. Final focused runs passed 25 plan and 35 frame cases with
+no skips. The exact no-loop golden passed. A clean Release solution build completed with zero errors and 466 existing
+warnings, and all 2,779 engine tests passed with zero skips.
+Smoke passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported a +100 percentage-point lift, AirSmoke 283,
+and CicdSmoke 110. Coverage, byte hygiene, attribution, task, findings, fixed-commit, exact-base, and diff checks passed.
+The clean extension install added 291 locked packages with zero known vulnerabilities, and all 42 test files passed.
+Live XMLA and Fabric were skipped for absent credentials or endpoints and remain unverified. Full verification and limits are recorded in
+`docs/notes/T220-unit14-findings.md`.
+
+### Changed: Terminal iterations complete their exact run frame
+
+An already-expanded iteration now completes the exact `RunFrame` captured by the shared current-step coherence
+path beside its terminal result transition. Success completes that frame as passed before normal advancement. An
+audited skip completes it as failed. A false or unreadable step condition still records `not_applicable`, then
+completes the iteration frame as passed because the row is outside the applicable population. A hard-gate failure
+records failed evidence but leaves both the row current and its frame in progress for an exact retry.
+
+A current iteration frame already outside `in_progress` refuses submission, skip, and automatic condition advancement
+before result status, note, answers, evidence, index, or any frame changes. Existing plan, result, and frame metadata
+checks remain on the same shared path. Completion uses the captured frame directly, never an authored id or iteration
+search. Frame object identity and all twelve proof-store identities remain intact, another iteration frame is untouched,
+and ordinary top-level or synthetic non-iteration nested rows do not complete a projected frame. Certificates, public
+DTOs, RPC, MCP, Studio, parser and authored workflow shapes, calls, abort policy, start refusals, list resolution, and
+expansion wiring are unchanged.
+
+After one invalid ordinary-row expectation in the test draft was corrected, the valid red-first focused frame run
+failed 8 of 29 cases before the runner change. The combined frame and condition focus then passed all 65 cases with
+no skips. The exact acceptance-check-34 no-loop golden passed, and the full engine suite
+passed all 2,768 tests with no skips. A clean Release solution build completed with zero errors and 466 existing
+warnings. Smoke passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported a +100 percentage-point lift,
+AirSmoke 283, and CicdSmoke 110. Coverage, source-byte hygiene, attribution, task and findings registers,
+fixed-commit, and diff checks passed. The worker lacked extension dependencies. The clean gate installed 291 packages
+from the committed lockfile with zero known vulnerabilities. The normal extension aggregate repeated the documented
+host cleanup failure in `release-security.test.mjs` and finished 41 of 42. That exact file passed alone and directly
+after `release-docs.test.mjs`; all 42 files passed against the same candidate with a one-second cleanup gap. This is
+host cleanup timing evidence, not an aggregate-run pass. AirSmoke skipped live XMLA because credentials and an endpoint
+were absent, and CicdSmoke skipped live Fabric because service principal credentials were absent. Both live paths
+remain unverified. Full evidence is in
+`docs/notes/T220-unit13-findings.md`.
+
+### Changed: Expanded iterations use their exact planned identity
+
+One already-expanded loop iteration is now directly addressable without enabling loop starts. The current-step
+view teaches the exact `PlannedStep.InstanceId`, such as `review#0`. Submit and skip require that exact id for an
+iteration and enter the same fail-closed plan, result, and frame coherence path used by conditions and instruction
+rendering before they mutate the run. The authored base id, another iteration id, a stale prior id, a blank id,
+missing planned index, and every existing frame metadata mismatch refuse. A successful first iteration advances
+and teaches the second exact id. The address rule is the planned id for every row, so a qualified nested row cannot
+fall back to its authored id. Ordinary top-level rows still teach and accept their unchanged authored id, including
+the legacy blank-id route, and the authored `WorkflowStep.Id` remains unchanged.
+
+The focused suite failed 3 of 36 cases before the runner change: both iteration views taught the authored id, and
+submission refused the exact planned id. It then passed all 36 with no skips. The first full run found three older
+synthetic iteration fixtures that used base ids or incomplete authored loop metadata; after those fixtures modeled
+coherent iterations, all 2,757 engine tests passed with no skips. Gate review then removed an iteration-only identity
+fork and pinned the exact planned id on a synthetic qualified non-iteration row. The repeated independent check found
+that an invalid iteration id still entered LocalEngine's receipt-finally path, where existing seeded DAX evidence could
+rewrite witness locks or revisions without a published run update. LocalEngine now validates the exact address and
+coherence before installing that receipt scope, while hard-gate failures after a valid submission keep the existing
+receipt behavior. Two gate regressions bring the final engine total to 2,759 passing tests with no skips. The exact
+no-loop terminal-record golden passed.
+
+The clean Release solution build passed with zero errors and 466 existing warnings. Seven .NET smokes, coverage,
+source-byte hygiene, attribution, task and findings registers, fixed-commit, and diff checks passed. The clean gate
+installed 291 packages from the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2 with zero known
+vulnerabilities. The normal extension aggregate repeated the native host cleanup abort in
+`release-security.test.mjs` after 29 earlier children and finished 41 of 42. That exact file passed alone and directly
+after `release-docs.test.mjs`; all 42 files passed against the same source with a one-second cleanup gap. This is host
+cleanup timing evidence, not an aggregate-run pass. Live XMLA and Fabric remain unverified. Resolution, expansion,
+start refusals, frame completion, calls, public signatures, RPC, MCP, and TypeScript are unchanged. Full evidence is
+in `docs/notes/T220-unit12-findings.md`.
+
+### Changed: Current iteration instructions render from their exact run frame
+
+The current run view now replaces exact `[[loop.index]]` and `[[loop.<as>]]` references in an already-expanded
+iteration's instruction text. The zero-based index uses invariant text, and replacement is ordinal, literal, and
+single-pass, so dollar signs, backslashes, line breaks, or another loop token inside the value are never interpreted.
+The authored step and instructions remain unchanged. A well-shaped reference to any other loop binding refuses, while
+a non-iteration step's instructions remain byte-for-byte exact.
+
+Conditions and rendering share one fail-closed current plan, result, and frame coherence path. Result identity, frame
+kind, iteration index, authored step id, loop variable, and non-null value must agree before either door can act.
+`CurrentStep.StepId` remains the authored id because submission still addresses it. Titles, questions, ops, call values,
+authored definitions, resolution, expansion, submission wiring, start refusals, frame completion, certificate folding,
+calls, Studio, RPC, MCP, and public DTOs are unchanged.
+
+The worker's focused suite was red first with 8 failures and 10 existing passes; its final focused set passed all 19
+cases. Gate review then found that the view entered the shared coherence path only when the plan still carried an
+iteration index, so a corrupt iteration frame whose planned index was missing could masquerade as an ordinary row.
+The view now always uses the shared path. The square-bracket token grammar is also shared with call bindings, keeping
+their optional inner whitespace and fail-closed name set aligned. A seventh coherence regression brings the focused
+set to 20, and an older provisional-total fixture now models its call frame and result identity honestly. All 2,741
+engine tests passed with no skips. The exact no-loop golden, clean Release solution build with zero errors and 466
+existing warnings, seven .NET smokes, coverage, source-byte, attribution, task, findings, fixed-commit, and diff checks
+passed.
+
+The worker could not run the extension aggregate because its dependency tree was absent and installs were forbidden.
+The clean gate installed 291 packages from the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2
+with zero known vulnerabilities. The normal aggregate driver repeated the documented host cleanup fault: a native
+allocator abort in `release-security.test.mjs` after 29 earlier child processes left the aggregate at 41 of 42. The
+exact file passed alone and directly after `release-docs.test.mjs`, and all 42 files passed against the same candidate
+with a one-second cleanup gap. This is host process-cleanup timing evidence, not an aggregate-run pass. Live XMLA and
+Fabric remain unverified. Full evidence is in `docs/notes/T220-unit11-findings.md`.
+
+### Changed: Expanded iteration conditions read their exact run frame
+
+A step-level condition on an already-expanded loop iteration now reads the zero-based `loop.index` and exactly
+one `loop.<as>` value from the `RunFrame` named by that planned row. Before evaluation can change the run, the
+runner verifies the planned iteration index, authored step, loop variable, frame kind, and result-row identity all
+agree. Inconsistent internal state refuses atomically. Outside an iteration, both loop facts remain unavailable even
+if stale or injected values exist in the start snapshot. Existing model, connection, git, session, date, and
+frame-aware accumulated input facts are preserved.
+
+This remains internal runner foundation only. It does not wire list resolution or expansion to submission, remove
+the existing `forEach:` or `call:` start refusals, substitute instructions, complete frames, fold certificates,
+unroll calls, change public DTOs, Studio, MCP signatures, or public behaviour. The focused suite was red first:
+9 new cases failed while 5 existing cases passed because iteration facts were absent, injected top-level loop facts
+acted, and five forms of incoherent plan/frame metadata did not refuse. The repaired focused suite passed all 14
+cases with no skips. The first full run then exposed one older hand-built frame fixture whose plan, result rows,
+and frame identities were incoherent; after making it a real two-iteration plan, all 2,735 engine tests passed with
+no skips. The exact no-loop golden passed. The Release build completed with zero errors and 466 existing warnings.
+Smoke passed 24 checks, RPC 77, MCP 251, LearnSmoke 14, LearnBench reported +100 percentage-point lift, AirSmoke
+283, and CicdSmoke 110. Coverage, source-byte hygiene, attribution, task, findings, fixed-commit, and diff checks
+passed.
+
+The worker could not run the extension aggregate because its dependency tree was absent and installs were forbidden.
+The clean gate installed 291 packages from the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2,
+with zero known vulnerabilities. The normal aggregate driver then repeated the documented host cleanup fault: a
+native allocator abort in `release-security.test.mjs` after 29 earlier child processes left the aggregate at 41 of
+42. The exact file passed alone and directly after `release-docs.test.mjs`, and all 42 files passed against the same
+candidate when each child received a one-second cleanup gap. This is host process-cleanup timing evidence, not an
+aggregate-run pass. Live XMLA and Fabric remain unverified.
+
+### Fixed: Empty loop-value resolution keeps its fresh-allocation promise
+
+Repeated resolution of either an inline empty `forEach:` list or an answered-blank input now returns a distinct
+mutable array on every call. The resolver explicitly allocates and copies zero-length as well as non-empty lists;
+inline strings, input splitting rules, and run state are unchanged. Red-first identity checks failed on both empty
+routes against the merged unit 9 implementation before the repair. The repaired focused suite passed 20 cases, the
+exact no-loop golden passed, all 2,726 engine tests passed with no skips, and all seven .NET smokes passed. Coverage,
+source-byte, attribution, task/finding-register, fixed-commit, and diff checks also passed. The extension gate was
+unavailable because this worker had neither the linked dependency tree nor the pinned npm version and is forbidden
+to install packages. A clean gate then installed all 291 packages with the pinned JavaScript and npm versions and
+found zero known vulnerabilities. The aggregate test driver hit a native allocator abort in
+`release-security.test.mjs` twice after 29 preceding child processes. That exact file passed on its own, and all 42
+files passed against the same candidate when isolated with a one-second cleanup gap. This is recorded as a diagnosed
+host timing fault, not counted as an aggregate-run pass. Live XMLA and Fabric skipped and remain unverified.
+
+### Changed: A current loop's value list resolves internally, without touching the run
+
+The workflow runner can now read the item list for the current unexpanded `forEach:` plan entry. Resolution is
+pure: refusal or success, it leaves plan, results, frames, statuses, index and the immutable definition exactly
+as they were, and always returns a freshly allocated list. It stays a separate step from the splice added in the
+previous unit, so a resolution that fails can never half-expand a loop.
+
+An inline literal list is handed back verbatim as a defensive copy, so an authored item keeps its exact string
+including padding and any comma inside it. An input-backed list reads the current planned step's own frame through
+a cutoff that includes that step's own row. This keeps an answer collected by an earlier step visible and also
+admits one collected on the loop step's own submission, without reading any later row. That answer is split on
+commas and line breaks, each item trimmed, and blanks dropped, so a
+trailing comma or a CRLF pair adds no phantom iteration and an optional input answered blank is an empty loop
+rather than one pass over the empty string. A missing, null or declined input is refused with text naming the
+input and what to do; a decline is never quietly downgraded to an empty list, because those are different claims.
+Terminal runs, missing current entries, misaligned plan and result rows, non-loop rows, iteration rows and
+already-expanded templates are all refused.
+
+This remains foundation only: submission wiring, loop-variable substitution, frame completion, certificate
+folding, call unrolling, Studio and MCP signatures are unchanged, and the existing `forEach:` and `call:` start
+refusals remain.
+
+Seven red-first cases bring the focused plan suite to 20 passing tests. All seven first failed to compile. Five
+mutations were then run against the finished resolver; the one that made an answered-blank list refuse survived,
+which exposed a real gap in the blank fixture, and that case now covers five blank spellings and bites. The exact
+no-loop terminal golden passed. The clean Release build completed with zero errors and 466 existing warnings; all
+2,726 engine tests passed with zero skips. Smoke passed 24 checks, RPC 77, MCP 251, and LearnSmoke 14. Coverage
+remained current at 306 operations; source-byte hygiene passed 4 checks, and the findings and task registers and
+the diff check passed.
+
+The worker could not run the extension suite because its dependencies were absent and its JavaScript runtime did
+not match the lockfile contract; the identical failure reproduced on unchanged `main`. The clean gate then used
+JavaScript runtime 20.19.5 and npm 11.6.2, installed 291 packages from the committed lockfile with zero known
+vulnerabilities, and passed all 42 extension test files. LearnBench, AirSmoke, and CicdSmoke also passed in the
+gate. Live XMLA and Fabric remain unverified.
+
+### Changed: Resolved loop values can atomically splice the internal run plan
+
+The workflow runner now has one internal transition for an unexpanded `forEach:` plan entry after its values
+have already been resolved. A non-empty list replaces the current source plan/result row in place with aligned
+iteration rows whose instance and frame ids extend the planned source identity and frame, fresh statuses, ordered
+iteration frames, and deep-isolated copies of the answers visible at loop entry. An empty list keeps one authored
+source row, records
+`not_applicable` with the reason, marks only the planned template expanded, advances normally, and makes the total
+exact. The immutable workflow definition and its authored `ForEach` remain untouched.
+
+Every refusal is atomic. An over-bound count names the actual count and authored bound without truncating or
+changing status. A null value list, terminal runs, non-loop rows, iteration rows, and second expansion attempts likewise
+leave plan, results, frames, status, and index unchanged. This is foundation only: list resolution, loop-variable
+substitution, submission wiring, frame completion, certificate folding, calls, Studio, and MCP signatures remain
+out of scope, and the existing `forEach:` and `call:` start refusals remain.
+
+Seven red-first cases bring the focused plan suite to 13 passing tests, including two planned occurrences of the
+same authored loop under distinct parent frames. The exact no-loop terminal golden passed. The clean Release build
+completed with zero errors and 466 existing warnings; all 2,719 engine tests passed with zero skips. A clean install
+from the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2 found zero known vulnerabilities, and
+all 42 extension test files passed. Smoke passed 24 checks, RPC 77, MCP 251, and LearnSmoke 14. Coverage remained
+current at 306 operations; source-byte hygiene, findings, task-register, and diff checks passed. Live XMLA and
+Fabric remain unverified.
+
+### Changed: Loop-bearing workflow totals are marked provisional
+
+Workflow run views now expose nullable `totalStepsProvisional`. A run whose definition and current plan contain no
+loop omits it through both public serializers, preserving the v1 wire shape. A loop-bearing definition or current
+plan reports true exactly while the plan contains an authored loop template with no iteration index, and false after
+only synthetic iteration instances remain. `TotalSteps` continues to report the current plan count, which is a lower
+bound while provisional. Studio routes all five visible total phrases through one formatter that says `at least N
+steps`, and the MCP start activity uses the same honest wording. Exact totals keep their normal `N steps` wording.
+
+A red-first engine regression covers a loop injected through the current plan when the top definition has no loop.
+Existing coverage preserves the expanded false case, both serializers, no-loop omission, and the byte-identical
+terminal-record golden. The Release build completed with zero errors and 466 existing warnings; all 2,712 engine
+tests passed with zero skips, including the six focused plan cases and the exact no-loop golden. A clean install from
+the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2 found zero known vulnerabilities, and all 42
+extension test files passed. Smoke, RPC, MCP, and LearnSmoke passed, as did the coverage, source-byte, findings,
+task-register, and diff checks. This unit does not splice plans, execute loops or calls, parse answer lists,
+substitute loop values, or alter certificates. Live XMLA and Fabric paths remain unverified. Full details are
+recorded with T220 unit 7 in `TASKS.md` and `docs/notes/T220-unit7-findings.md`.
+
+### Changed: Workflow answers resolve inside their captured frame
+
+Each run frame now starts from one frozen, deep-cloned answer seed that never appears in the frame view or
+terminal record. Answer reads overlay only same-frame step rows through the selected plan cutoff, with later
+answers winning. The narrow `scope: run` escape hatch crosses iteration frames, while ordinary iteration answers
+stay isolated. A call frame can neither import nor export result answers implicitly, even when an input declares
+run scope; explicit returns remain later work. During a submission, `AllAnswers` retains the frame and plan index
+captured before execution so post-submit witness receipts see the submitted context. In contrast, automatic
+advancement evaluates each newly current step with that planned step's own frame and cutoff. Outside a submission,
+the current planned frame is used; terminal reads return to the top frame. Existing linear runs keep their
+latest-wins behavior and exact terminal record bytes. This foundation does not expand a plan, execute loops or
+calls, or implement returned values.
+
+Seven red-first cases bring the focused frame suite to 18 passing cases. The exact no-loop golden passed. The
+Release solution build completed with zero errors and 466 existing warnings; all 2,709 engine tests passed with
+zero skips; Smoke, RPC, MCP, and LearnSmoke passed; and coverage, source-byte, findings-register, and diff checks
+passed. A clean install from the committed lockfile under JavaScript runtime 20.19.5 and npm 11.6.2 found zero
+known vulnerabilities, and all 42 extension test files passed. Live XMLA and Fabric paths remain unverified.
+
+### Changed: Workflow submissions keep proof state on their captured frame
+
+Each workflow-step submission now captures the frame named by its current planned step before execution. All
+existing proof accessors stay routed to that frame through verification and witness-lock receipt bookkeeping,
+even when the runner advances or rejects the submission. The scope clears on every exit. Reads and records outside
+a submission retain top-level behavior, preserving the no-loop terminal record bytes. Unknown or duplicate frame
+ids and nested scopes fail loudly. This unit does not expand plans or execute loops or calls.
+
+Eleven focused frame cases pass, including executable local-engine cases for both advancement and a throwing hard
+gate. The Release build completed with zero errors and 466 existing warnings; all 2,702 engine tests passed with
+none skipped; Smoke, RPC, MCP, and LearnSmoke passed; and the coverage, source-byte, findings-register, and diff
+checks passed. A clean install from the committed lockfile under Node 20.19.5 and npm 11.6.2 completed with zero
+known vulnerabilities, and all 42 extension test files passed. Live XMLA and Fabric-tenant paths remain unverified.
+
+### Changed: Workflow run views can project iteration and call frames
+
+The runner now has the frame view contract needed by later loop and nested-workflow units. Ordered iteration
+and call frames carry only their ratified kind-specific metadata, grouped step rows, and cloned proof receipts.
+The grouped rows are the same point-in-time clones held by the flat top-level step list. A linear run still emits
+no `frames` member, so its current wire JSON is unchanged. The public carrier is one concrete typed frame array,
+which survives the Newtonsoft RPC round trip into `RemoteEngine` before System.Text.Json writes the MCP result.
+Frame completion mutates the same internal frame from `in_progress` to `passed` or `failed`, preserving every
+proof-store object. This unit does not expand plans, execute loops or calls, change certificates or evidence
+records, or add visible Studio UI.
+
+Seven focused frame cases pass. The serializer regression was red first: both public `object[]` elements returned
+from the RPC round trip as `JObject` rather than frame DTOs. The Release build completed with zero errors and 466
+existing warnings; all 2,698 engine tests passed with none skipped; Smoke, RPC, MCP, and LearnSmoke passed; and the
+coverage, source-byte, and findings-register checks passed. A clean install from the committed lockfile under
+Node 20.19.5 and npm 11.6.2 completed with zero known vulnerabilities, and all 42 extension test files passed.
+Live XMLA and Fabric-tenant paths remain unverified.
+
+### Changed: Workflow proof state now lives behind one run frame
+
+Every workflow run now creates one internal `RunFrame`, keyed by the run id. The full twelve-store proof set
+lives on that frame. Compatibility accessors keep all current executors on the same state, and the existing
+no-loop terminal record stays byte-identical. This foundation does not expand plans, add wire fields, or execute
+loops or calls.
+
+The three focused frame tests were red first and now pass. Independent review found that the first structural
+test also barred future frame metadata required by the spec. The repaired test still checks all twelve stores
+one by one without barring that metadata. The Release build completed with zero errors and 466 existing warnings;
+all 2,694 tests passed with none skipped; all 42 extension test files and the four required smoke programs passed;
+and the coverage inventory remained current at 306 operations. Live XMLA and Fabric-tenant paths were not
+available and remain unverified.
+
+### Changed: Workflow step conditions now execute honestly
+
+Workflow runs now evaluate each step-level `when:` through the shared predicate evaluator. A false condition
+records a terminal `not_applicable` result and advances automatically. That result is not passed or skipped, is
+outside certificate and evidence verdict counts, and remains visible with its reason in the engine, MCP results,
+evidence document, and Studio run rail. Missing optional `answered` and `declined` facts are false while an
+unavailable value remains unknown. An unreadable condition fails closed and never runs its guarded step.
+
+Five focused red-first condition cases pass. Release and Debug builds completed with zero errors and 466 existing
+warnings; all 2,691 tests passed with none skipped; all 42 extension test files passed; Smoke, RPC, MCP, Learn, and
+LearnBench passed; the headless Air and Cicd checks passed; and the coverage inventory remained current at 306
+operations. The Studio screenshot harness rendered the packaged run rail. Live XMLA and Fabric-tenant paths were
+not available and remain unverified.
+
+### Fixed: Studio rebuilds remain byte-clean
+
+The Studio build could minify low-control separators from first-party source and Graphlib into invisible raw
+bytes in the committed JavaScript bundles. First-party cache keys now use JSON tuples, the bundle emitter turns
+raw controls back into printable JavaScript escapes without changing their runtime values, and the byte-hygiene
+gate refuses low-control escapes in webview source. Every webview build now runs the byte-wise sweep against its
+own output.
+
+### Changed: Workflow runs now own a mutable execution plan
+
+The first runner unit for workflow stage 1 slice 2 is in place. Each run now owns a mutable plan of
+`PlannedStep` entries and a matching mutable result list. Current-step lookup, advancement, certificates,
+view totals, skipped-step checks, evidence rendering, and result-to-step lookup all read through that plan.
+This is the seam needed by later control-flow work. The next unit now executes `when:` as described above;
+`forEach:` and `call:` still refuse at start.
+
+The no-loop terminal record stays byte-identical. The Release build passed with zero warnings and errors;
+all 2,687 tests passed with none skipped; Smoke, RPC, MCP and Learn smokes passed; and the coverage inventory
+remained current at 306 operations. Live XMLA and tenant paths were not exercised and remain unverified.
+
+### Changed: Every directly referenced NuGet package is checked, not just one
+
+The attribution gate used to prove notices only for declared source copies and the webview bundle.
+ANTLR and the Dax libraries already rode the same packaging path into the engine, with stub
+sections and no check that the licence text was actually there. The gate now reads `kind: nuget`
+from the manifest and scans the PackageReferences that ship in Core, Analysis and Engine. Each
+shipping package must be declared or classified, and each declared package must have its licence
+text in `THIRD-PARTY-NOTICES.md`. The ANTLR BSD notice, the Dax MIT notice and the Newtonsoft.Json
+MIT notice were filled in from the pinned upstream versions.
+
+**What this covers, stated exactly.** The population is the package and project references written
+literally in the project files of the three packaged projects, and in the extension's tracked webview
+lockfile. It is a reading of project text, not of a build: no MSBuild import is read as a source of
+references, no property is expanded beyond a single unconditioned definition in the same file, no
+condition is evaluated, and nothing is proved about which references a build copies into the payload.
+An asset setting removes nothing on its own; it fails the gate unless a named exemption carries measured
+evidence for that exact package, version, project and setting. A repo-controlled file the projects import
+fails the gate if it declares a reference, because the gate cannot see one there. It is NOT the resolved
+publish closure: transitive packages those references pull in, and the whole .NET 8 runtime pack the
+self-contained publish copies into the payload, are outside it. Deriving the resolved publish closure is
+the named open item on the board and is not claimed here. The earlier wording said "every shipped
+third-party library", which the gate did not and does not prove.
+
+### Fixed: Three defects in the new DAX reader, caught by a line-by-line review
+
+An adversarial review of the merged lexer against its own specification found three real faults. The size
+limit was only checked after a whole candidate had been read, so a limit of ten thousand units still let two
+hundred thousand be scanned; the cancellation check only fired when the scan landed exactly on a 4,096
+boundary, so scanners that move two characters at a time skipped every check; and a line break inside a block
+comment was invisible, so the space after it was attached to the wrong token. Each fault was reproduced first
+(27 new cases fail before the fix and none after), the random-input run was raised from 6,000 to the specified
+100,000 inputs, and the suite grew from 102 to 215 tests. Nothing in the product behaves differently yet: this
+code still sits outside the shipping solution. (PR #268)
+
+### Added: A first-party DAX reader and the specification it implements
+
+The first build step of the Kernel program. `Semanticus.Dax` turns DAX text into tokens with no outside
+dependencies at all (no TOM, no ANTLR, no Tabular Editor, no Semanticus core), written against a normative spec
+that names every token, the rules that make the tokens re-tile the exact source text, about 82 named
+regressions, and a 12-point exit gate. It fixes what the vendored reader could not do: a bad character is
+reported instead of silently vanishing, dotted names such as `INFO.VIEW.MEASURES` keep every character, and a
+scientific number stays one token. 102 tests green, and the 3,555-expression corpus still rebuilds byte for
+byte. Three rows of the exit gate (the 100,000-input CI fuzz, byte-identical snapshots across operating
+systems, and scaling benchmarks) are CI work that is not done, and they are called out rather than claimed. No
+production path changes: the projects are deliberately outside the solution and the shipping engine still runs
+on the vendored core. (PR #266)
+
+### Security: The postcss path-traversal advisory is patched
+
+A high-severity advisory against postcss 8.5.17 and earlier turned the build red for days with no code change,
+because the dependency check requires a clean audit in every package root. postcss arrives indirectly through
+the webview styling stack, so auditing the extension root on its own reported nothing and made the failure easy
+to misread. The lockfile now carries postcss 8.5.23, and every package root audits clean. (PR #267)
+
+### Changed: The Connections hub, fixed from a live pass, plus a check before you connect
+
+A live run through the new hub found real dead ends, and all of them are fixed. "Query this model" did nothing
+when nobody was signed in; it now routes to the account picker, attaches for queries only rather than opening
+for editing, shows visible progress, reports the engine's real error, and says "Already used for queries"
+instead of going quietly grey. Accounts is no longer a dead end: it offers a sign-in button, an actionable empty
+state, and a targeted "Sign in and use" for a saved account that is signed out. "Open a new model" is now a
+full-width strip at the top, and the remembered list and the detail pane each own their scrolling, so nothing is
+cut off. A new read-only operation on both doors, `probe_auth_prerequisites`, reports what the engine can
+actually see before you connect: which service-principal environment variables are present by name (never a
+value) and which az login account is detected. The Add view states plainly that the secret is never stored and
+that a Key Vault reference is not resolved in the app, so you put the value in the environment yourself.
+(PR #265)
+
+### Changed: The Kernel decision and its first spike are recorded
+
+Mostly paperwork, and it gives you nothing new to use. It records the decision to build a first-party DAX layer,
+the measured result of the exploratory spike (3,555 real expressions rebuilt byte for byte, and the vendored
+reader ruled out on measurement rather than opinion), and a schedule that retires the earlier three-month
+estimate. The one real code addition is a set of characterization tests proving the existing calendar API works
+as documented, which removed one of the stated reasons for replacing it. (PR #264)
+
+### Added: Many saved Microsoft accounts, and a real account choice each time you open
+
+Saved account profiles replace the single sign-in per tenant. Only identity details are written to disk (a test
+proves no token material is stored), tokens stay in Microsoft's own encrypted store, and the account you already
+had becomes your first profile with no new sign-in. Choosing an account when you open a model applies to that
+open alone; making it the tenant default is a separate, explicit act that states how many things the default
+affects; and every switch lands in History. A failed authorization returns you to the account choice, never to
+an endpoint form. The AI Assistant can list and select accounts that are already signed in, while interactive
+sign-in, setting a default, and forcing a fresh sign-in stay human-only and are refused before anything happens.
+Opening another tenant's model as a guest is not supported in this release and is tracked as follow-up work.
+(PR #263)
+
+### Changed: Connections is a full hub instead of a drawer
+
+The side drawer is replaced by a full-screen manager in four parts: Open a model (your remembered models, a
+detail pane, and quick-open cards), Current setup, Accounts, and a filterable History timeline. It is one
+component serving both doors, so "Manage connections" opens a standalone panel when Studio is closed instead of
+dragging all of Studio up. Creating a model while the open session has unsaved work now asks for a name and
+explicit consent first, on both doors. No engine or AI Assistant operations changed: the hub drives the
+connection registry that already existed, so live updates and undo behave exactly as before. (PR #262)
+
+### Changed: Compare picks a remembered model, never a typed endpoint
+
+The standalone "diff any two models" picker no longer exposes a free-text endpoint box. It selects from the
+shared connection list, shows each record's environment chip (an unlabelled record reads "Production
+safeguards"), threads the record's tenant into the snapshot, and sends "Add a published model" to the one
+sanctioned add form in the Connections manager. Adding or relabelling a connection now reaches views that are
+already open, from either door, so a new record shows up without a reload. (PR #261)
+
+### Changed: The Connections design of record and the plan to finish it are in the repo
+
+Paperwork only, with nothing for you to use. The ratified design, both competing proposals from the original
+bake-off, and a brief on what shipped versus what was left undone are now stored in the repo instead of living
+only in a chat artifact, and the remaining Connections work is written down as a numbered plan with the hub as
+the agreed end state. (PRs #259 and #260)
+
+### Added: Verified-measure v7: shaped anchors, grain coverage, an engine-computed certificate
+
+The verified-measure workflow's proof is hardened again. Anchors can carry an optional axis (shaped anchors:
+parsed refs only, the axis a subset of the declared context, width-capped, canonically distinct so a locked-axis
+change is refused by the shipped revision-equality check), Step 2 must cover the declared grains, open shapes are
+countersigned, and the certificate level is computed by the engine from the evidence rather than asserted by the
+author. A live-pilot follow-up fixes the certificate claim normalizer to accept any non-alphanumeric boundary
+after the level keyword, so an honest claim beginning "FULL." is parsed instead of being dragged to OVERRIDDEN
+by its punctuation.
+
+### Fixed: Report lineage is honest about parts it could not read
+
+A report definition that parsed only partially still counted as readable, so a field used only in an unreadable
+part could be graded safe to remove. Skipped parts (malformed JSON or a failed file read) are now counted, any
+report with skipped parts makes coverage INCOMPLETE, and every would-be "safe" verdict degrades to caution: the
+same honesty rule already applied to unreadable and wrong-model reports.
+
+### Fixed: Cloud report analysis is fast and fail-loud
+
+Analyzing a published report could sit silent for eight minutes before timing out, because the interactive
+definition read inherited the write lane's polling ceiling. The report-read chain now has its own scoped poll
+budget and fails loudly in seconds when a definition is not coming, and the Removal Candidates view gains an
+object-type filter.
+
+### Fixed: Safe-to-remove is report-aware and deletes re-verify at apply
+
+Whenever a loaded analysis actually read a report, the Safe to remove view shows the report-aware list
+(report-used fields excluded) with a scope badge instead of silently reverting to the model-only list, and every
+"safe" delete routes through the single-item remove path that recomputes the unused verdict at apply time.
+
+### Added: Report-reference completeness: bookmarks, hierarchies, filter aliases, named residue
+
+An audit of unresolved report references (184/184 resolved on two real PBIR reports) showed the remaining gaps
+were parser completeness, not inherent opacity. Local report reads now walk bookmarks (a stale bookmark can be a
+field's only remaining user; the cloud door already walked every part, so this closes a local/cloud asymmetry),
+hierarchy bindings resolve to the model hierarchy, filter aliases resolve to their fields, and any residue is
+named in the result instead of silently dropped.
+
+### Changed: Em dashes are swept from every user-facing product string
+
+The product copy rulebook bans em dashes in user-facing copy. After the lineage surface was swept, a dedicated
+repo-wide pass rewrote 856 string literals across 61 files in the product surfaces (Engine, Core, License,
+Deploy, VSCode webview) with meaning preserved exactly; comments and internal strings are untouched.
+
+## [1.1.1] - 2026-09-11
+
+The 1.1.0 UAT repair wave. The Inspiron survey found 170 defects. Every one of them has a fix on
+main, and every fix has a test. This list says, in plain words, what changed for the person using
+Semanticus, and the commit that carries it. One line per defect, no id twice.
+
+### Groundwork and design
+
+- The live publish path moved out of the big engine file into its own file, so the live cards and
+  the editor cards stop fighting over one file. (`88839388`)
+- A recorded stand-in for the live target lets later cards test a publish with no real endpoint.
+  (`2bbefd9b`)
+- A retest map and a lane relaunch check name the survey cases each card has to re-run.
+  (`5c1b56a7`)
+- The one-click publish design note and three mockups, one per place the control could live.
+  (`48a0994d`, `e36f5ac0`)
+- The Tests authoring design note and mockup, so a person can write tests without the agent.
+  (`3a67e3da`, `461f941e`)
+
+### One click to live
+
+- **D-001** Deletions on the live model are listed and left unticked. Nothing is removed on the
+  server unless you tick it. (`877d881e`)
+- **D-002** The "the live model already matches" line appears only when there is truly nothing to
+  send. (`877d881e`)
+- **D-003** Every write to live saves a restore point first, and Roll back can list it.
+  (`74acb1b6`)
+- **D-005** The deploy gate checks the change you are pushing, not the whole model. Older warnings
+  become a count you can open. (`377a12ae`)
+- **D-006** A live write is previewed first. The write is refused without the token the preview
+  handed back. (`091dba43`)
+- **D-007** Publish is one word for the act, wherever it appears. (`a9fffba9`)
+- **D-008** Switching models forgets the previous publish target. (`a9fffba9`)
+- **D-009** A calculation-group column no longer blocks a live push. A real data column with no
+  source still fails. (`974f28f6`)
+- **D-010** The Deploy page header loads instead of hanging on loading. (`a9fffba9`)
+- **D-011** Fabric Git Status names a missing workspace id instead of doing nothing. (`a9fffba9`)
+- **D-012** The one confirm names the account and the destination. (`a9fffba9`)
+- **D-044** Ctrl+S saves the file in front of you and never publishes. (`a9fffba9`)
+- **D-112** A dry run of a publish change is refused, so it cannot write. (`091dba43`)
+- **D-116** A merge with no changes rewrites nothing. (`091dba43`)
+- **D-128** The agent can merge into the open model, and the whole merge is one undo step.
+  (`d8112adb`)
+
+### Sign-in, accounts and the licence
+
+- **D-013** A signed-in account is remembered across a Code restart on Linux. (`72ac8c21`)
+- **D-014** A cancelled sign-in shows as cancelled, and the page stops waiting. (`e88a7e5e`)
+- **D-015** Connections shows the saved account name after a restart instead of unknown.
+  (`e7113665`)
+- **D-016** A stuck open can be cancelled and times out on its own. (`8bafd7ed`)
+- **D-017** An expired token asks you to sign in again. (`8bafd7ed`)
+- **D-018** A missing OS keyring is not reported as a working keychain. (`45cb70b0`)
+- **D-019** The Pro token is read from stdin, never from the command line. (`45cb70b0`)
+- **D-020** The keychain claim and the keyring error cannot both appear. (`45cb70b0`)
+- **D-021** Every sign-in error carries a support id, and no secret. (`8bafd7ed`)
+- **D-155** A button that needs Pro says why at the click. (`45cb70b0`)
+- **D-168** The Pro options button shows the licence, not the marketing page. (`45cb70b0`)
+
+### Connections and opening
+
+- **D-004** Typing in Add a published model keeps what you type. (`8fa5c68b`)
+- **D-032** A .bim file opens and saves in place on Linux. (`6580996b`)
+- **D-033** Tabular Editor folder models open with their backslash paths. (`6580996b`)
+- **D-035** The Reference Model tree loads. (`c4fdca15`)
+- **D-143** A model you opened from a local file joins Recent. (`8fa5c68b`)
+- **D-144** The open file or folder is named on screen, not only on a hover. (`8fa5c68b`)
+- **D-145** A rejected path keeps the box open and puts the cursor back in it. (`8fa5c68b`)
+- **D-146** The chooser can pick a file as well as a folder. (`c4fdca15`)
+- **D-162** Open Model always opens the hub, not a second picker. (`8fa5c68b`)
+
+### Nothing loses your work
+
+- **D-023** A DAX tab for a gone object or a gone model cannot write. (`5c7ab7cb`)
+- **D-024** A folder save is written to a temp tree and swapped in, or rolled back. (`bba2e122`)
+- **D-025** The first save of a new model asks where to put it. (`75246ede`)
+- **D-026** A stale Change Plan item refuses to apply over a newer edit. (`7bbfeb78`)
+- **D-029** Opening or switching models asks before unsaved work is lost. (`75246ede`)
+- **D-030** Restarting the engine asks before unsaved work is lost. (`75246ede`)
+- **D-031** A newer edit on disk is found before an overwrite. (`bba2e122`)
+- **D-039** A restored .dax tab opens. (`5c7ab7cb`)
+- **D-042** The AI badge is honest about who made a change. (`7bbfeb78`)
+- **D-043** An open measure gets one editor, not two. (`5c7ab7cb`)
+- **D-047** Sidecar files are written outside the definition tree. (`bba2e122`)
+- **D-054** A plan item's status follows undo. (`7bbfeb78`)
+- **D-055** The M Code tab resets when the model switches. (`51ce9b27`)
+- **D-062** The unsaved marker clears after a real save. (`bba2e122`)
+- **D-064** A rename no longer adds an extra native prompt. (`bba2e122`)
+- **D-067** The Properties grid refreshes. (`51ce9b27`)
+- **D-075** DAX Lab resets when the model switches. (`51ce9b27`)
+- **D-080** A checkout that changes files on disk is reported. (`75246ede`)
+- **D-082** A window reload keeps the engine, so the session can come back. (`75246ede`)
+- **D-089** A checkpoint includes untracked model folders. (`bba2e122`)
+- **D-093** A checkpoint copy says what it did. (`bba2e122`)
+- **D-096** Restore says what it did. (`bba2e122`)
+- **D-117** Project notes travel with a save-as. (`bba2e122`)
+- **D-127** The engine log no longer blocks git. (`bba2e122`)
+- **D-165** A Pro refusal points at a control that really exists. (`51ce9b27`)
+- **D-169** The Properties grid stays honest after a model swap. (`51ce9b27`)
+
+### Editing is correct
+
+- **D-022** A calendar mapping refuses a column of the wrong type. (`b2d11524`)
+- **D-027** A range filter stays valid, because comments are skipped when the step name is read.
+  (`c2d052e9`)
+- **D-028** Calendar delete works, with a confirm inside the panel. (`b2d11524`)
+- **D-034** A field parameter partition is just the list. (`c2d052e9`)
+- **D-036** A stored calculation-item format stays Dynamic after reopen. (`a397d4cb`)
+- **D-037** A static format with an unclosed bracket is refused. (`a397d4cb`)
+- **D-038** A relationship between mismatched column types is refused. (`88d12550`)
+- **D-040** Only one active relationship is allowed between the same tables. (`88d12550`)
+- **D-041** Summarization is checked against the column type. (`88d12550`)
+- **D-045** Deleting a column made by a table formula is refused, not faked. (`88d12550`)
+- **D-046** Deleting a role asks first and names the filters. (`14a92e9c`)
+- **D-048** A refresh window wider than the store window is refused. (`1ed778f9`)
+- **D-049** Invalid RLS DAX is refused before save. (`14a92e9c`)
+- **D-050** New Table no longer leaves a phantom data source. (`c2d052e9`)
+- **D-051** Deleting several objects undoes in one step. (`bf79d6d1`)
+- **D-052** Member identities are checked. (`14a92e9c`)
+- **D-053** Sort by column is readable and settable on the shared grid. (`88d12550`)
+- **D-056** OLS is not offered on a calculation group. (`14a92e9c`)
+- **D-057** Edit DAX in the palette uses the tree selection. (`a397d4cb`)
+- **D-058** Generate Time-Intelligence uses the tree selection from the palette. (`b2d11524`)
+- **D-059** The perspective matrix counts the right members. (`bf79d6d1`)
+- **D-060** Saving a refresh policy re-reads the current M, so the source cannot go stale.
+  (`1ed778f9`)
+- **D-061** A save refusal names the real line. (`a397d4cb`)
+- **D-063** Renaming a table also renames its matching default partition. (`c2d052e9`)
+- **D-065** F2 opens the rename box. (`88d12550`)
+- **D-066** The date-column picker only offers columns loaded from the source. (`1ed778f9`)
+- **D-070** Offline Format keeps a leading comment on a VAR/RETURN body. (`a397d4cb`)
+- **D-073** Query errors no longer show raw markup tags. (`a397d4cb`)
+- **D-074** SUMX with one argument gets a clear warning. (`a397d4cb`)
+- **D-077** A broken date mapping shows as a readiness finding. (`b2d11524`)
+- **D-095** The calendar playbook no longer asks for fields its help says to leave blank.
+  (`b2d11524`)
+- **D-113** A refused batch keeps the previous redo. (`bf79d6d1`)
+- **D-115** Moving a calculation item's order undoes. (`bf79d6d1`)
+- **D-148** The Add button stays inside the roles rail and is clickable. (`14a92e9c`)
+- **D-156** A rename warns that names in reports are not rewritten. (`88d12550`)
+- **D-158** An empty M is not shown as a valid chip. (`c2d052e9`)
+- **D-159** A duplicate member is reported and does not move the revision. (`14a92e9c`)
+- **D-161** Inactive relationships are marked in the tree. (`88d12550`)
+- **D-167** The validity count opens on click. (`a397d4cb`)
+- **D-170** Calculation-group precedence redraws after undo. (`bf79d6d1`)
+
+### Evidence tells the truth
+
+- **D-081** A thin test suite cannot wear grade A. (`020add1d`)
+- **D-083** A run shows as Verified only when its checks really verified. (`020add1d`)
+- **D-084** The step badge follows the record. (`020add1d`)
+- **D-085** A skipped probe cannot wave a hard gate through. (`020add1d`)
+- **D-086** A playbook cannot certify an unchanged model. (`020add1d`)
+- **D-087** You can write, edit and delete a test, a question and a mapping from the Tests tab.
+  (`4c16b391`)
+- **D-088** A refusal is written for a person. (`4c16b391`)
+- **D-090** A gate input can be satisfied from the UI alone. (`4c16b391`)
+- **D-091** You can delete a workflow the product made. (`031eb697`)
+- **D-092** An edited export no longer claims to be tamper-evident. (`020add1d`)
+- **D-094** You can pick a subset before a run. (`4c16b391`)
+- **D-097** The evidence dialog shows evidence, and Export exports. (`020add1d`)
+- **D-098** The Customise control exists, or the copy that promised it is gone. (`031eb697`)
+- **D-099** Free can review the latest run; signing stays a Pro step. (`020add1d`)
+- **D-100** Home search lists matches as you type. (`031eb697`)
+- **D-101** A parent card shows its callee's gate. (`29ab8c76`)
+- **D-102** Gate inputs are ones a person using only the UI can answer. (`4c16b391`)
+- **D-103** A failed git pull shows the real reason, not "From remote". (`b2bfc18e`)
+- **D-122** A run with a thin suite cannot show grade A. (`020add1d`)
+- **D-126** The grade respects the coverage floor. (`020add1d`)
+- **D-131** The warn copy matches what the product does. (`29ab8c76`)
+- **D-132** Abort keeps the step state instead of rewinding it. (`29ab8c76`)
+- **D-137** Starting a workflow answers with the one it created. (`29ab8c76`)
+- **D-138** One model identity is used across the sidecar files. (`020add1d`)
+- **D-152** A hand-off warning speaks plainly. (`4c16b391`)
+
+### The agent door
+
+- **D-114** A bad DAX block rolls the whole script back. (`8aa1a37a`)
+- **D-118** The agent door joins the engine that is already running, using the path the extension
+  advertises. (`17b2784b`)
+- **D-119** The model spec keeps a formula sent as an expression. (`8aa1a37a`)
+- **D-120** Updating a measure validates it. (`8aa1a37a`)
+- **D-121** A merge that would break a relationship by changing a column type is refused.
+  (`8aa1a37a`)
+- **D-123** Every DAX write validates, and a bad block rolls back. (`8aa1a37a`)
+- **D-124** Autogenerate assigns roles by the shape of the model. (`8aa1a37a`)
+- **D-125** Saving a model overwrites its source and speaks plainly. (`f65172d4`)
+- **D-133** The primer keeps a blank line. (`f65172d4`)
+- **D-134** Bare table names are accepted in tool calls. (`f65172d4`)
+- **D-135** Direction words are accepted. (`f65172d4`)
+- **D-136** The diff shows untracked files. (`f65172d4`)
+- **D-139** A restore reports true when the files really went back. (`f65172d4`)
+- **D-140** A downvote gets an answer. (`f65172d4`)
+- **D-141** The team profile is visible. (`f65172d4`)
+- **D-076** A duplicate BPA rule id is refused out loud. (`dcbfaa09`)
+- **D-078** A fixed tick clears when you undo or rescan. (`643f69e5`)
+- **D-079** The waived count opens the accepted list. (`643f69e5`)
+- **D-129** Untrusted learning is held unapproved and shown with a marker. (`dcbfaa09`)
+- **D-130** Waived findings are counted, not hidden. (`643f69e5`)
+
+### DAX Lab
+
+- **D-068** A capped result says more rows exist. (`0d6eeee0`)
+- **D-069** Stop cancels the running query. (`0d6eeee0`)
+- **D-071** The result pane names the query that produced it. (`0d6eeee0`)
+- **D-072** A timing under a millisecond is labelled, not shown as a round trip. (`0d6eeee0`)
+
+### Spec, docs and knowledge
+
+- **D-104** Authored overview prose gets a provenance marker. (`b2f2b1eb`)
+- **D-105** Building into the model warns when the spec has unsaved changes. (`b2f2b1eb`)
+- **D-106** Markdown export keeps the Prep for AI section. (`b2f2b1eb`)
+- **D-107** Insights, Recall and Purge are back on the Knowledge tab. (`9ed6bb9f`)
+- **D-108** The rescan step compares against the record. (`9dff2346`)
+- **D-109** Perspectives are included in the export. (`b2f2b1eb`)
+- **D-110** Print says so when nothing opened. (`b2f2b1eb`)
+- **D-111** Save spec does not add a second .json. (`b2f2b1eb`)
+
+### Copy and keyboard
+
+- **D-142** The hidden palette commands are visible. (`413f287a`)
+- **D-147** Compatibility level can be raised from the model property grid. (`413f287a`)
+- **D-149** Shortcuts pass through a focused webview. (`704cbd3d`)
+- **D-150** UI copy no longer names MCP operations, environment variables or dotfiles.
+  (`413f287a`)
+- **D-151** Pickers show the current value and offer a clear entry. (`704cbd3d`)
+- **D-153** An empty model offers New Table. (`704cbd3d`)
+- **D-154** A long description scrolls inside its box instead of pushing the next field down.
+  (`704cbd3d`)
+- **D-157** The missing space is fixed. (`413f287a`)
+- **D-160** Enter commits a description. (`704cbd3d`)
+- **D-163** Grid labels are readable at the default width. (`704cbd3d`)
+- **D-164** Studio navigation collapses into a More menu. (`704cbd3d`)
+- **D-166** The build TODO is gone from the Data Agent empty state. (`413f287a`)
+
+### Fresh-eyes walks
+
+- The Publish surface was read with no builder context, against the ratified design (C1.6).
+  Fourteen findings, each naming a picture from the walk. No product code changed. (`bf2064ff`)
+- The Tests authoring surface was read the same way (C6.3). Fourteen findings, no product code
+  changed. (`e94a3bfe`)
+
+### The 1.1.1 build
+
+C11.1 sets the package version to 1.1.1 and writes the build note. No installer was built and
+nothing was installed: three suites were already red on main before this card ran, so it names them
+and stops before packaging instead of shipping over them. (`0bcc1e66`, `9f8f2ce9`)
+
+### Not closed in 1.1.1
+
+Nothing. Every defect the survey found has a fix on main.
+
 ## [1.1.0] - 2026-07-17
 
 The authoring-and-evidence wave. Studio task surfaces now keep their results and progress while you move
@@ -895,8 +2295,8 @@ The four items PR #84 deferred, each deliberately minimal and honest:
   SYSTEM browser: Ctrl+P / "Save as PDF" work properly there. New `printDoc`/`openExternal` webview→host
   messages (openExternal is http/https-only).
 - **Data Agent: workspaces from the wrong tenant.** The tab hard-coded `azcli` auth — the az CLI can be
-  signed into a DIFFERENT tenant than the model's XMLA session (hit live: client-tenant workspaces against a
-  nexwave-bound model). The header gains a persisted auth-mode picker (az cli / Entra interactive / device
+  signed into a DIFFERENT tenant than the model's XMLA session (hit live: one tenant's workspaces listed against
+  a model bound to a different tenant). The header gains a persisted auth-mode picker (az cli / Entra interactive / device
   code / service principal) + a tenant field (non-azcli), threaded through EVERY Fabric call on the tab
   (list/get/create/update/publish/delete). Help guide updated. (The Deploy tab's Fabric panels still assume
   azcli — follow-up.)
@@ -1322,7 +2722,7 @@ hardening, and live-tenant verification. Every capability ships on **both doors*
 the user's own Claude Code over MCP) on one shared `IEngine`/`SessionManager`/`ChangeBus`/undo timeline;
 the .NET engine runs **no inference** and holds **zero Anthropic credentials**. Each item below is
 build-green and smoke-/xUnit-verified; live items are confirmed against a real tenant (Contoso / the
-curated Finance PBIP / the Nexwave Fabric service principal).
+curated Finance PBIP / a private-tenant Fabric service principal).
 
 ### Added — engine & dual-drive foundation
 - **The dual-drive engine** — **166 MCP tools + 178 RPC methods** over one shared `IEngine`, a single-writer
@@ -1466,7 +2866,7 @@ curated Finance PBIP / the Nexwave Fabric service principal).
 - **Persistent encrypted interactive-auth token cache** — one Entra browser sign-in is reused silently across
   engine restarts (DPAPI-encrypted MSAL cache + `AuthenticationRecord`); Windows-gated, degrades safely.
 - **Recent XMLA connections** picker — one-click reconnect (no secrets stored), with per-item forget.
-- **Live-tenant verification** (Nexwave Fabric service principal) — read-only Fabric REST + XMLA model lanes,
+- **Live-tenant verification** (private-tenant Fabric service principal) — read-only Fabric REST + XMLA model lanes,
   the DAX-equivalence keystone, and a supervised `deploy_live` write round-trip, all confirmed against a live
   tenant (CI-gated; off when secrets absent). End-to-end on Contoso: connect → grade C → AI-readiness
   optimise → `deploy_live` → re-read live = grade A.

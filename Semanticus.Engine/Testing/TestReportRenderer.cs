@@ -290,6 +290,8 @@ namespace Semanticus.Engine
             if (health == null || health.Checked == 0 || health.Passed + health.Failed == 0) return SemEvidence.Verdict.Unknown;
             if (health.Failed > 0) return SemEvidence.Verdict.Broken;
             if (health.Suspect > 0) return SemEvidence.Verdict.NeedsReview;
+            // Verified means the checks were verified. Remaining unknowns keep the suite Unknown.
+            if (health.NotVerifiable > 0) return SemEvidence.Verdict.Unknown;
             return SemEvidence.Verdict.Verified;
         }
 

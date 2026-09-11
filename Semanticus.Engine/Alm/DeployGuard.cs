@@ -53,7 +53,7 @@ namespace Semanticus.Engine
             if (!gatePass && !forceOverride)
                 return "Deploy is blocked by the readiness gate (BPA / AI-readiness). Pass forceOverride=true AND an overrideReason to deploy anyway (the override is recorded).";
             if (!gatePass && forceOverride && !hasOverrideReason)
-                return "forceOverride needs an overrideReason — say why you're shipping past the gate (it is recorded in the audit trail).";
+                return "forceOverride needs an overrideReason: say why you're shipping past the gate (it is recorded in the audit trail).";
             return null;
         }
     }

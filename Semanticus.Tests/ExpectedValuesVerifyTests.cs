@@ -177,19 +177,21 @@ verify:
 ";
 
         private static async Task<(LocalEngine Engine, string Workspace, string RunId)> SetupRevisableRunAsync(
-            SessionManager sessions, Func<string, ResultSet> execute, double candidate = 2)
+            SessionManager sessions, Func<string, ResultSet> execute, double candidate = 2, string initialAnchors = null)
         {
             var ws = NewWorkspace();
             WriteUserWorkflow(ws, "revisable-anchors.md", RevisableAnchorsMd);
             var engine = new LocalEngine(sessions, new Pro(), ws);
             await engine.CreateModelAsync("RevisionModel", 1604);
             await engine.CreateTableAsync("Sales", "human");
+            await engine.CreateColumnAsync("table:Sales", "Category", "String", "Category", "human");
+            await engine.CreateColumnAsync("table:Sales", "Region", "String", "Region", "human");
             sessions.Current.LiveOrigin = new LiveOrigin("endpoint-revision", "RevisionModel", null);
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-revision", "RevisionModel", execute));
             var target = await engine.CreateMeasureAsync("table:Sales", "Candidate", candidate.ToString(System.Globalization.CultureInfo.InvariantCulture), "human");
             var run = await engine.StartWorkflowAsync("revisable-anchors", "human");
             await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", AnswersJson(
-                ("target", target), ("expectedValues", "[{\"context\":{},\"expect\":100}]")), "human");
+                ("target", target), ("expectedValues", initialAnchors ?? "[{\"context\":{},\"expect\":100}]")), "human");
             return (engine, ws, run.RunId);
         }
 
@@ -281,6 +283,85 @@ verify:
                 Assert.Equal("EVALUATE 'Sales'", change.ExtractQuery);
                 Assert.Equal(1, change.ExtractRowCount);
                 Assert.Equal(64, change.ExtractResultHash.Length);
+            }
+            finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Runner_accepts_a_receipted_flat_to_shaped_anchor_form_repair()
+        {
+            var sessions = new SessionManager();
+            string ws = null!;
+            try
+            {
+                const string initial = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\"},\"expect\":100}]";
+                var receiptCalls = 0;
+                var setup = await SetupRevisableRunAsync(sessions, query =>
+                {
+                    if (query == "EVALUATE 'Sales'") receiptCalls++;
+                    return OneRow(100);
+                }, initialAnchors: initial);
+                ws = setup.Workspace;
+                const string shaped = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\"},"
+                    + "\"axis\":[\"'Sales'[Category]\"],\"expect\":100,\"originalExpect\":100,"
+                    + "\"correctedExpect\":100,\"extractQuery\":\"EVALUATE 'Sales'\"}]";
+
+                var after = await setup.Engine.SubmitWorkflowStepAsync(setup.RunId, "step-2",
+                    AnswersJson(("expectedValues", shaped)), "human");
+
+                Assert.Equal("completed", after.Status);
+                Assert.Equal(1, receiptCalls);
+                Assert.Single(after.AnchorRevisions);
+                Assert.Equal("100", Assert.Single(after.AnchorRevisions[0].Changes).CorrectedExpect);
+            }
+            finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Runner_refuses_a_shaped_to_flat_anchor_form_revision()
+        {
+            var sessions = new SessionManager();
+            string ws = null!;
+            try
+            {
+                const string initial = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\"},"
+                    + "\"axis\":[\"'Sales'[Category]\"],\"expect\":100}]";
+                var setup = await SetupRevisableRunAsync(sessions, _ => OneRow(100), initialAnchors: initial);
+                ws = setup.Workspace;
+                const string flat = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\"},\"expect\":100,"
+                    + "\"originalExpect\":100,\"correctedExpect\":100,\"extractQuery\":\"EVALUATE 'Sales'\"}]";
+
+                await Assert.ThrowsAsync<InvalidOperationException>(() => setup.Engine.SubmitWorkflowStepAsync(
+                    setup.RunId, "step-2", AnswersJson(("expectedValues", flat)), "human"));
+
+                var verify = (await setup.Engine.GetWorkflowRunAsync(setup.RunId)).Steps[1].VerifyResults.Single();
+                Assert.Equal("unavailable", verify.Status);
+                Assert.Contains("anchor form may only move toward visual semantics; start a new run to weaken it", verify.Detail);
+            }
+            finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Runner_refuses_an_axis_change_after_an_anchor_is_shaped()
+        {
+            var sessions = new SessionManager();
+            string ws = null!;
+            try
+            {
+                const string initial = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\",\"'Sales'[Region]\":\"East\"},"
+                    + "\"axis\":[\"'Sales'[Category]\"],\"expect\":100}]";
+                var setup = await SetupRevisableRunAsync(sessions, _ => OneRow(100), initialAnchors: initial);
+                ws = setup.Workspace;
+                const string changedAxis = "[{\"context\":{\"'Sales'[Category]\":\"Bikes\",\"'Sales'[Region]\":\"East\"},"
+                    + "\"axis\":[\"'Sales'[Region]\"],\"expect\":100,\"originalExpect\":100,"
+                    + "\"correctedExpect\":100,\"extractQuery\":\"EVALUATE 'Sales'\"}]";
+
+                await Assert.ThrowsAsync<InvalidOperationException>(() => setup.Engine.SubmitWorkflowStepAsync(
+                    setup.RunId, "step-2", AnswersJson(("expectedValues", changedAxis)), "human"));
+
+                var verify = (await setup.Engine.GetWorkflowRunAsync(setup.RunId)).Steps[1].VerifyResults.Single();
+                Assert.Equal("unavailable", verify.Status);
+                Assert.Contains("anchor form may only move toward visual semantics; start a new run to weaken it", verify.Detail);
             }
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
@@ -556,6 +637,173 @@ verify:
             Assert.Contains($"cap of {AnchorGate.MaxContextPairs} context pairs", err);
         }
 
+        [Fact]
+        public void Parse_accepts_a_shaped_anchor_and_exposes_parsed_axis_partitions()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'Region'[Name]\":\"Pacific\",\"'Product'[Subcategory]\":\"Laptops\",\"'Date'[Year]\":2023},"
+                + "\"axis\":[\"'Product'[Subcategory]\",\"'Date'[Year]\"],\"expect\":0.1905}]",
+                out var error);
+            var reordered = AnchorGate.Parse(
+                "[{\"expect\":0.1905,\"axis\":[\"'Date'[Year]\",\"'Product'[Subcategory]\"],"
+                + "\"context\":{\"'Date'[Year]\":2023,\"'Product'[Subcategory]\":\"Laptops\",\"'Region'[Name]\":\"Pacific\"}}]",
+                out var reorderedError);
+
+            Assert.Null(error);
+            Assert.Null(reorderedError);
+            var anchor = Assert.Single(anchors);
+            Assert.True(anchor.IsShaped);
+            Assert.Equal(new[] { "'Product'[Subcategory]", "'Date'[Year]" }, anchor.AxisColumns.Select(AnchorGate.CanonicalRef));
+            Assert.Equal(new[] { "'Product'[Subcategory]", "'Date'[Year]" }, anchor.RowCoordinate.Select(AnchorGate.CanonicalRef));
+            Assert.Equal(new[] { "'Region'[Name]" }, anchor.Slicers.Select(AnchorGate.CanonicalRef));
+            Assert.Equal(AnchorGate.CanonicalContextKey(anchor), AnchorGate.CanonicalContextKey(Assert.Single(reordered)));
+            Assert.Equal(AnchorGate.CanonicalHash(anchors), AnchorGate.CanonicalHash(reordered));
+        }
+
+        [Fact]
+        public void Parse_refuses_an_unknown_property_after_axis_is_admitted()
+        {
+            var anchors = AnchorGate.Parse("[{\"context\":{},\"axis\":[\"'T'[C]\"],\"expect\":1,\"surprise\":true}]", out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("unknown property 'surprise'", error);
+            Assert.Contains("Only 'context', 'axis', 'expect'", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_an_axis_injection_attempt()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C] = 1 || TRUE\"],\"expect\":1}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("axis entry #1 is not a qualified column reference", error);
+            Assert.Contains("Use exactly 'Table'[Column]", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_an_axis_column_that_is_not_in_context()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[Slicer]\":1},\"axis\":[\"'T'[Coordinate]\"],\"expect\":1}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("is not a key of 'context'", error);
+            Assert.Contains("Add that column and its row-coordinate value", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_duplicate_axis_columns_case_insensitively()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\",\"'t'[c]\"],\"expect\":1}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("more than once", error);
+            Assert.Contains("Remove duplicate axis entries", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_an_axis_wider_than_the_shared_cap()
+        {
+            var pairs = string.Join(",", Enumerable.Range(0, AnchorGate.MaxAxisColumns + 1).Select(i => $"\"'T'[C{i}]\":{i}"));
+            var refs = string.Join(",", Enumerable.Range(0, AnchorGate.MaxAxisColumns + 1).Select(i => $"\"'T'[C{i}]\""));
+            var anchors = AnchorGate.Parse("[{\"context\":{" + pairs + "},\"axis\":[" + refs + "],\"expect\":1}]", out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains($"cap of {AnchorGate.MaxAxisColumns} columns", error);
+            Assert.Contains($"Keep at most {AnchorGate.MaxAxisColumns} axis columns", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_an_empty_axis_instead_of_treating_it_as_flat()
+        {
+            var anchors = AnchorGate.Parse("[{\"context\":{},\"axis\":[],\"expect\":1}]", out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains($"must contain 1 to {AnchorGate.MaxAxisColumns}", error);
+            Assert.Contains("Omit 'axis' for a flat anchor", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_a_shaped_anchor_that_expects_BLANK()
+        {
+            // A single-measure visual prunes a row whose only measure is BLANK, so a shaped BLANK expectation would
+            // pass at a coordinate no visual renders. Refuse it at the parser boundary and name the flat-anchor repair.
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\"],\"expect\":\"BLANK\"}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("a shaped anchor cannot expect BLANK", error);
+            Assert.Contains("Prove blankness with a flat anchor", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_a_shaped_anchor_whose_correctedExpect_is_BLANK()
+        {
+            // Neither expect nor a declared correctedExpect may be BLANK on a shaped anchor, so a shaped anchor
+            // corrected to BLANK is refused even though `expect` still reads as a number.
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\"],\"expect\":5,"
+                + "\"originalExpect\":5,\"correctedExpect\":\"BLANK\",\"extractQuery\":\"EVALUATE 'T'\"}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("a shaped anchor cannot expect BLANK", error);
+            Assert.Contains("Prove blankness with a flat anchor", error);
+        }
+
+        [Fact]
+        public void Parse_refuses_a_shaped_anchor_with_expect_BLANK_even_when_correctedExpect_is_concrete()
+        {
+            // The inverse inconsistent pair: evaluation reads the expect-derived fields (Matches consumes Blank), so
+            // expect BLANK + correctedExpect 5 would still evaluate as BLANK and restore the false pass. The rule is
+            // that NEITHER field may be BLANK on a shaped anchor.
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\"],\"expect\":\"BLANK\","
+                + "\"originalExpect\":\"BLANK\",\"correctedExpect\":5,\"extractQuery\":\"EVALUATE 'T'\"}]",
+                out var error);
+
+            Assert.Null(anchors);
+            Assert.Contains("a shaped anchor cannot expect BLANK", error);
+            Assert.Contains("Prove blankness with a flat anchor", error);
+        }
+
+        [Fact]
+        public void Parse_still_accepts_a_flat_anchor_that_expects_BLANK()
+        {
+            // Flat BLANK is existing v6 behavior and the sanctioned way to prove blankness — it must keep working.
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"expect\":\"BLANK\"}]",
+                out var error);
+
+            Assert.Null(error);
+            var anchor = Assert.Single(anchors);
+            Assert.False(anchor.IsShaped);
+            Assert.True(anchor.Blank);
+        }
+
+        [Fact]
+        public void Parse_accepts_a_shaped_anchor_whose_only_BLANK_is_the_historical_originalExpect()
+        {
+            // A receipted flat-to-shaped repair records the prior flat BLANK in originalExpect; that historical value
+            // is not what is enforced, so a shaped anchor corrected to a concrete number is admitted.
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\"],\"expect\":5,"
+                + "\"originalExpect\":\"BLANK\",\"correctedExpect\":5,\"extractQuery\":\"EVALUATE 'T'\"}]",
+                out var error);
+
+            Assert.Null(error);
+            var anchor = Assert.Single(anchors);
+            Assert.True(anchor.IsShaped);
+            Assert.True(anchor.OriginalExpect.Blank);
+            Assert.Equal(5, anchor.Number);
+        }
+
         // ============================ AnchorGate.Matches — the gold-style tolerance ============================
 
         private static AnchorGate.Anchor Num(double n) => new AnchorGate.Anchor { Number = n };
@@ -653,6 +901,32 @@ verify:
         }
 
         // ============================ AnchorGate — canonical fingerprint (anti-laundering, injective) ============================
+
+        [Fact]
+        public void CanonicalHash_keeps_representative_flat_anchor_bytes_stable()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'Product'[Category]\":\"Bikes\",\"'Date'[Year]\":2023},\"expect\":1234.5},"
+                + "{\"context\":{\"'Product'[Active]\":true},\"expect\":\"BLANK\"},"
+                + "{\"context\":{},\"expect\":\"All products\"}]",
+                out var error);
+
+            Assert.Null(error);
+            Assert.All(anchors, anchor => Assert.False(anchor.IsShaped));
+            Assert.Equal("287200ec0f71c3703e84c64299adee5cc72d2d69a831d48c4abb79833fa65dbb", AnchorGate.CanonicalHash(anchors));
+        }
+
+        [Fact]
+        public void Canonical_keys_distinguish_shaped_and_flat_anchors_with_the_same_context_and_expectation()
+        {
+            var flat = AnchorGate.Parse("[{\"context\":{\"'T'[C]\":1},\"expect\":2}]", out var flatError);
+            var shaped = AnchorGate.Parse("[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C]\"],\"expect\":2}]", out var shapedError);
+
+            Assert.Null(flatError);
+            Assert.Null(shapedError);
+            Assert.NotEqual(AnchorGate.CanonicalContextKey(Assert.Single(flat)), AnchorGate.CanonicalContextKey(Assert.Single(shaped)));
+            Assert.NotEqual(AnchorGate.CanonicalHash(flat), AnchorGate.CanonicalHash(shaped));
+        }
 
         [Fact]
         public void CanonicalHash_is_reorder_insensitive_but_value_sensitive()
@@ -762,6 +1036,56 @@ verify:
             var q = DaxBench.BuildMeasureContextQuery("SUM('Sales'[Amount])", new[] { "'Date'[Year] = 2023" }, new DaxQuerySpec { Trusted = false }, out var note);
             Assert.NotNull(note);                                    // the fidelity caveat the executor turns into 'unavailable'
             Assert.NotNull(q);
+        }
+
+        [Fact]
+        public void CompileSlicerArg_preserves_parser_typed_literals_and_axis_injection_is_refused_upstream()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'Region'[Name]\":\"Pacific\",\"'Date'[Year]\":2023,\"'Date'[Date]\":\"2023-12-31\"},\"expect\":1}]",
+                out var error);
+
+            Assert.Null(error);
+            Assert.Equal("TREATAS ( { \"Pacific\" }, 'Region'[Name] )", DaxBench.CompileSlicerArg(anchors[0].Context[0]));
+            Assert.Equal("TREATAS ( { 2023 }, 'Date'[Year] )", DaxBench.CompileSlicerArg(anchors[0].Context[1]));
+            Assert.Equal("TREATAS ( { \"2023-12-31\" }, 'Date'[Date] )", DaxBench.CompileSlicerArg(anchors[0].Context[2]));
+
+            var injected = AnchorGate.Parse(
+                "[{\"context\":{\"'T'[C]\":1},\"axis\":[\"'T'[C] = 1 || TRUE\"],\"expect\":1}]",
+                out var injectionError);
+            Assert.Null(injected);
+            Assert.Contains("not a qualified column reference", injectionError);
+        }
+
+        [Fact]
+        public void BuildShapedAnchorQuery_emits_the_exact_measure_faithful_two_axis_DAX()
+        {
+            var anchors = AnchorGate.Parse(
+                "[{\"context\":{\"'Region'[Name]\":\"Pacific\",\"'Date'[Year]\":2023,\"'Product'[Subcategory]\":\"Laptops\"},"
+                + "\"axis\":[\"'Product'[Subcategory]\",\"'Date'[Year]\"],\"expect\":1}]",
+                out var error);
+            var spec = new DaxQuerySpec { HomeTable = "Sales", TargetMeasureName = "Total", ModelMeasureNames = new[] { "Total" } };
+
+            var query = DaxBench.BuildShapedAnchorQuery("SUM('Sales'[Amount])", Assert.Single(anchors), spec, out var note);
+
+            Assert.Null(error);
+            Assert.Null(note);
+            Assert.Equal("DEFINE\n"
+                + "    MEASURE 'Sales'[Total] = (\n"
+                + "SUM('Sales'[Amount])\n"
+                + "    )\n"
+                + "EVALUATE\n"
+                + "FILTER (\n"
+                + "    SUMMARIZECOLUMNS (\n"
+                + "        'Product'[Subcategory],\n"
+                + "        'Date'[Year],\n"
+                + "        TREATAS ( { \"Pacific\" }, 'Region'[Name] ),\n"
+                + "        \"v\", [Total],\n"
+                + "        \"__present\", 1\n"
+                + "    ),\n"
+                + "    'Product'[Subcategory] = \"Laptops\" &&\n"
+                + "    'Date'[Year] = 2023\n"
+                + ")", query);
         }
 
         // ============================ executor — the fail-closed branches (offline engine) ============================
@@ -920,6 +1244,228 @@ verify:
 
         private static DateTime In(int seconds) => DateTime.UtcNow.AddSeconds(seconds);
         private static DateTime InMs(int ms) => DateTime.UtcNow.AddMilliseconds(ms);
+
+        [Fact]
+        public async Task Shaped_anchor_zero_rows_is_unavailable_with_coordinate_and_nearby_members()
+        {
+            var sessions = new SessionManager();
+            var (e, ws) = EngineWithModel(sessions, "Absent");
+            try
+            {
+                var queryCount = 0;
+                var live = LiveConnection.ForTest("xmla", "endpoint-absent", execute: query =>
+                {
+                    queryCount++;
+                    if (query.Contains("TOPN (", StringComparison.Ordinal))
+                        return new ResultSet
+                        {
+                            Columns = new[] { new ColumnDef { Name = "Product[Subcategory]" }, new ColumnDef { Name = "__present" } },
+                            Rows = new[] { new object[] { "Desktops", 1 }, new object[] { "Laptops", 1 } },
+                            RowCount = 2,
+                        };
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "Product[Subcategory]" }, new ColumnDef { Name = "v" }, new ColumnDef { Name = "__present" } },
+                        Rows = Array.Empty<object[]>(),
+                        RowCount = 0,
+                    };
+                });
+                e.SetLiveConnectionForTest(live);
+                // A concrete (non-BLANK) expectation: the absent-row-coordinate path returns `unavailable` before any
+                // value is compared, and a shaped anchor may not expect BLANK (that would only be provable at a flat
+                // anchor), so the expectation here is a plain number.
+                var anchors = AnchorGate.Parse(
+                    "[{\"context\":{\"'Product'[Subcategory]\":\"Laptoops\",\"'Region'[Name]\":\"Pacific\"},"
+                    + "\"axis\":[\"'Product'[Subcategory]\"],\"expect\":5}]",
+                    out var parseError);
+                var spec = new DaxQuerySpec { HomeTable = "Sales", TargetMeasureName = "M", ModelMeasureNames = new[] { "M" } };
+
+                var result = await e.EvaluateAnchorsAsync("expected_values", anchors, "1", spec, live, "");
+
+                Assert.Null(parseError);
+                Assert.Equal("unavailable", result.Status);
+                Assert.NotEqual("failed", result.Status);
+                Assert.Contains("row coordinate", result.Detail);
+                Assert.Contains("was absent from the visible set under these slicers", result.Detail);
+                Assert.Contains("Laptoops", result.Detail);
+                Assert.Contains("Pacific", result.Detail);
+                Assert.Contains("Nearby members for first axis column", result.Detail);
+                Assert.Contains("Desktops", result.Detail);
+                Assert.Contains("Laptops", result.Detail);
+                Assert.Equal(2, queryCount);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Flat_failure_with_a_grid_and_different_visual_value_includes_shaped_skeleton_hint()
+        {
+            var sessions = new SessionManager();
+            var (e, ws) = EngineWithModel(sessions, "Hint");
+            try
+            {
+                var flatQueries = 0;
+                var shapedQueries = 0;
+                var live = LiveConnection.ForTest("xmla", "endpoint-hint", execute: query =>
+                {
+                    if (query.Contains("FILTER (", StringComparison.Ordinal))
+                    {
+                        shapedQueries++;
+                        return new ResultSet
+                        {
+                            Columns = new[] { new ColumnDef { Name = "Product[Subcategory]" }, new ColumnDef { Name = "v" }, new ColumnDef { Name = "__present" } },
+                            Rows = new[] { new object[] { "Laptops", 15.0, 1 } },
+                            RowCount = 1,
+                        };
+                    }
+                    flatQueries++;
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { 10.0 } },
+                        RowCount = 1,
+                    };
+                });
+                e.SetLiveConnectionForTest(live);
+                var anchors = AnchorGate.Parse(
+                    "[{\"context\":{\"'Product'[Subcategory]\":\"Laptops\",\"'Date'[Year]\":2023},\"expect\":20}]",
+                    out var parseError);
+                var spec = new DaxQuerySpec { HomeTable = "Sales", TargetMeasureName = "M", ModelMeasureNames = new[] { "M" } };
+
+                var result = await e.EvaluateAnchorsAsync("expected_values", anchors, "1", spec, live, "", new[] { "'Product'[Subcategory]" });
+
+                Assert.Null(parseError);
+                Assert.Equal("failed", result.Status);
+                Assert.Contains("Flat and visual semantics disagree at this coordinate; the anchor form is load-bearing.", result.Detail);
+                Assert.Contains("Copy-paste shaped-anchor skeleton", result.Detail);
+                Assert.Contains("\"axis\":[\"'Product'[Subcategory]\"]", result.Detail);
+                Assert.Contains("\"expect\":20", result.Detail);
+                Assert.Equal(1, flatQueries);
+                Assert.Equal(1, shapedQueries);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task V6_flat_failure_with_an_equivalence_grid_keeps_the_legacy_detail_and_runs_no_hint_query()
+        {
+            var sessions = new SessionManager();
+            var ws = NewWorkspace();
+            try
+            {
+                WriteUserWorkflow(ws, "v6-grid-anchors.md", @"---
+name: v6-grid-anchors
+title: V6 grid anchors
+version: 6
+strictness: hard
+---
+## Step 1: Declare
+Declare the target and legacy evidence.
+```yaml gate
+inputs:
+  - name: target
+    question: ""Target?""
+    type: objectRef
+    required: required
+  - name: anchorSet
+    question: ""Anchors?""
+    type: text
+    required: required
+  - name: equivalenceGrid
+    question: ""Grid?""
+    type: text
+    required: required
+```
+## Step 2: Prove
+Prove the flat anchor.
+```yaml gate
+verify:
+  - kind: expected_values
+    anchors: anchorSet
+```
+");
+                var engine = new LocalEngine(sessions, new Pro(), ws);
+                await engine.CreateModelAsync("V6Hint", 1604);
+                await engine.CreateTableAsync("Sales", "human");
+                await engine.CreateTableAsync("Product", "human");
+                await engine.CreateColumnAsync("table:Product", "Category", "String", "Category", "human");
+                var target = await engine.CreateMeasureAsync("table:Sales", "Candidate", "1", "human");
+                var run = await engine.StartWorkflowAsync("v6-grid-anchors", "human");
+                await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", AnswersJson(
+                    ("target", target),
+                    ("anchorSet", "[{\"context\":{\"'Product'[Category]\":\"Bikes\"},\"expect\":20}]"),
+                    ("equivalenceGrid", "'Product'[Category]")), "human");
+
+                var flatQueries = 0;
+                var shapedQueries = 0;
+                sessions.Current.LiveOrigin = new LiveOrigin("endpoint-v6-hint", "V6Hint", null);
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-v6-hint", "V6Hint", query =>
+                {
+                    if (query.Contains("FILTER (", StringComparison.Ordinal)) shapedQueries++;
+                    else flatQueries++;
+                    return OneRow(10);
+                }));
+
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    engine.SubmitWorkflowStepAsync(run.RunId, "step-2", "{}", "human"));
+                var after = await engine.GetWorkflowRunAsync(run.RunId);
+                var detail = after.Steps[1].VerifyResults.Single(x => x.Kind == "expected_values").Detail;
+
+                Assert.DoesNotContain("load-bearing", detail, StringComparison.Ordinal);
+                Assert.Contains("expected 20 but got 10", detail, StringComparison.Ordinal);
+                Assert.Equal(1, flatQueries);
+                Assert.Equal(0, shapedQueries);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Sibling_dependence_hint_evaluations_are_capped_at_two_per_gate_run()
+        {
+            var sessions = new SessionManager();
+            var (e, ws) = EngineWithModel(sessions, "HintCap");
+            try
+            {
+                var flatQueries = 0;
+                var shapedQueries = 0;
+                var live = LiveConnection.ForTest("xmla", "endpoint-hint-cap", execute: query =>
+                {
+                    if (query.Contains("FILTER (", StringComparison.Ordinal))
+                    {
+                        shapedQueries++;
+                        return new ResultSet
+                        {
+                            Columns = new[] { new ColumnDef { Name = "Product[Subcategory]" }, new ColumnDef { Name = "v" }, new ColumnDef { Name = "__present" } },
+                            Rows = new[] { new object[] { "visual", 1.0, 1 } },
+                            RowCount = 1,
+                        };
+                    }
+                    flatQueries++;
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { 0.0 } },
+                        RowCount = 1,
+                    };
+                });
+                e.SetLiveConnectionForTest(live);
+                var anchors = AnchorGate.Parse(
+                    "[{\"context\":{\"'Product'[Subcategory]\":\"A\"},\"expect\":5},"
+                    + "{\"context\":{\"'Product'[Subcategory]\":\"B\"},\"expect\":5},"
+                    + "{\"context\":{\"'Product'[Subcategory]\":\"C\"},\"expect\":5}]",
+                    out var parseError);
+                var spec = new DaxQuerySpec { HomeTable = "Sales", TargetMeasureName = "M", ModelMeasureNames = new[] { "M" } };
+
+                var result = await e.EvaluateAnchorsAsync("expected_values", anchors, "1", spec, live, "", new[] { "'Product'[Subcategory]" });
+
+                Assert.Null(parseError);
+                Assert.Equal("failed", result.Status);
+                Assert.Equal(3, flatQueries);
+                Assert.Equal(2, shapedQueries);
+                Assert.Equal(2, result.Detail.Split("Flat and visual semantics disagree at this coordinate", StringSplitOptions.None).Length - 1);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
 
         [Fact]
         public async Task Active_wedged_query_still_retires_the_connection()
@@ -1304,36 +1850,16 @@ verify:
         }
 
         [Fact]
-        public async Task A_1_9s_budget_is_not_falsely_truncated_to_1s()
+        public void A_1_9s_budget_is_not_falsely_truncated_to_1s()
         {
-            // Item 2 (direction 2): only the ADOMD CommandTimeout property rounds (up) — the cancellation token
-            // gets the exact 1.9s, so a 1.4s query under a 1.9s budget SUCCEEDS (an integer floor to 1s would
-            // have falsely refused it).
-            var sessions = new SessionManager();
-            var (e, ws) = EngineWithModel(sessions, "Exact");
-            try
-            {
-                e.VerifyCeilingOverrideForTest = 5;
-                e.VerifyGraceOverrideForTest = 3;
-                var live = LiveConnection.ForTest("xmla", "endpoint-exact", execute: q =>
-                {
-                    System.Threading.Thread.Sleep(1400);            // > 1s (the false truncation), < 1.9s (the budget)
-                    return new ResultSet
-                    {
-                        Columns = new[] { new ColumnDef { Name = "v" } },
-                        Rows = new[] { new object[] { 42.0 } },
-                        RowCount = 1,
-                    };
-                });
-                e.SetLiveConnectionForTest(live);
+            // Item 2 (direction 2): only the ADOMD CommandTimeout property rounds, and it rounds UP. Exercise the
+            // same calculation production uses with a fixed duration. A wall-clock sleep made this proof depend on
+            // hosted-runner scheduling and occasionally turned a correct 1.9s budget into a false timeout.
+            var (token, commandTimeout) = LocalEngine.ComputeVerifyQueryTiming(
+                TimeSpan.FromMilliseconds(1900), ceilingSeconds: 5);
 
-                var (rs, timedOut, retired, cause) = await e.RunVerifyQueryAsync("EVALUATE ROW(\"v\", 1)", 10, live, InMs(1900));
-                Assert.False(timedOut);                             // the exact 1.9s token never fired
-                Assert.False(retired);
-                Assert.Equal(LocalEngine.VerifyTimeoutCause.None, cause);
-                Assert.Equal(42.0, rs.Rows[0][0]);
-            }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            Assert.Equal(TimeSpan.FromMilliseconds(1900), token);  // never truncated to the integer 1s
+            Assert.Equal(2, commandTimeout);                       // the integer server bound rounds up
         }
 
         [Fact]

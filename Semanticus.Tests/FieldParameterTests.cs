@@ -88,6 +88,39 @@ namespace Semanticus.Tests
             }
         }
 
+        // D-034: a partition source is the list, not `Name = { ... }`. The table already has the name.
+        [Fact]
+        public async Task Partition_expression_is_the_list_without_a_table_name_assignment()
+        {
+            var (engine, sessions) = await NewPbiModelAsync();
+            using (engine)
+            {
+                var t = await engine.CreateTableAsync("Sales", "human");
+                var mRef = await engine.CreateMeasureAsync(t, "Total Amount", "1", "human");
+                var cRef = await engine.CreateMeasureAsync(t, "Order Count", "1", "human");
+
+                await engine.CreateFieldParameterAsync("UAT Metric", new[]
+                {
+                    new FieldParameterItem { ObjectRef = mRef },
+                    new FieldParameterItem { ObjectRef = cRef },
+                }, "human");
+
+                var expr = await sessions.Require().ReadAsync(m => ((CalculatedTable)m.Tables["UAT Metric"]).Expression);
+                Assert.StartsWith("{", expr.Trim());
+                Assert.DoesNotContain("UAT Metric =", expr);
+
+                var mcpRef = await McpTools.CreateFieldParameter(engine, "UAT Metric 2", new[]
+                {
+                    new FieldParameterItem { ObjectRef = mRef },
+                    new FieldParameterItem { ObjectRef = cRef },
+                });
+                Assert.Equal("table:UAT Metric 2", mcpRef);
+                var mcpExpr = await sessions.Require().ReadAsync(m => ((CalculatedTable)m.Tables["UAT Metric 2"]).Expression);
+                Assert.StartsWith("{", mcpExpr.Trim());
+                Assert.DoesNotContain("UAT Metric 2 =", mcpExpr);
+            }
+        }
+
         [Fact]
         public async Task Model_graph_flags_a_field_parameter_and_leaves_a_plain_calc_table_unmarked()
         {

@@ -71,7 +71,7 @@ verify:
                 Task.FromResult(new VerifyResult { Kind = s.Kind, Status = "unavailable", Missing = "a live connection", Detail = "offline" });
 
             await WorkflowRunner.SubmitStepAsync(run, "step-1", null, unavail);   // does NOT throw at warn
-            Assert.Equal("passed", run.Results[0].Status);
+            Assert.Equal("failed", run.Results[0].Status);                        // the badge follows the record: unavailable is failed
             Assert.Equal("completed", run.Status);
             Assert.Contains("warn gate", run.Results[0].Note);
             Assert.Contains("unavailable", run.Results[0].Note);
@@ -104,7 +104,7 @@ verify:
             await WorkflowRunner.SubmitStepAsync(run, "step-1",
                 new Dictionary<string, AnswerValue> { ["witness"] = Decline("no reference figure") }, null);
 
-            Assert.Equal("passed", run.Results[0].Status);
+            Assert.Equal("done", run.Results[0].Status);                          // declined with no passing check: proof-free, not passed
             Assert.Equal("completed", run.Status);
             Assert.Equal("not_applicable", run.Results[0].VerifyResults[0].Status);
         }
@@ -1151,6 +1151,622 @@ verify:
                 Assert.Contains("live connection", v.Detail);
             }
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        // ==================== T220 — the row-owned and closure-wide start seams ====================
+        // Direct cases over the seams that used to read the run's ROOT for a question that belongs to the row
+        // or to the whole reachable closure. T11-T14 drive the factored Phase B helpers, because today's valid
+        // `call:` still stops at the Phase A refusal, and they inject offline scan results rather than claiming
+        // any live BPA or readiness pass. Every name and value below is invented.
+
+        private static WorkflowDef OwnerDef(string name, string strictness, params WorkflowStep[] steps) => new WorkflowDef
+        {
+            SchemaVersion = 2, Name = name, Version = 1, Strictness = strictness, Steps = steps,
+        };
+
+        private static WorkflowRunState ClosureRun(string runId, string global,
+            params (WorkflowDef Def, string Settings)[] members) =>
+            WorkflowOwnerFixtures.ClosureRun(runId, global, members);
+
+        [Fact]
+        public async Task Closure_refusals_precede_registration_and_valid_calls_start(/* T15/T16 start ordering */)
+        {
+            string Caller(string callee) => string.Join("\n",
+                "---", "schemaVersion: 2", "name: invented-start-caller", "title: Caller", "strictness: off", "---", "",
+                "## Step 1: Hand off", "", "```yaml step", "id: hand-off", "call:", "  workflow: " + callee, "```", "", "Hand off.", "");
+            string Plain(string name) => string.Join("\n",
+                "---", "schemaVersion: 2", "name: " + name, "title: " + name, "strictness: off", "---", "",
+                "## Step 1: Do", "", "Do a thing.", "");
+
+            async Task Refuses(string calleeName, string calleeMd, string expected)
+            {
+                var ws = NewWorkspace();
+                WriteUserWorkflow(ws, "invented-start-caller.md", Caller(calleeName));
+                if (calleeMd != null) WriteUserWorkflow(ws, calleeName + ".md", calleeMd);
+                var sessions = new SessionManager();
+                try
+                {
+                    var e = new LocalEngine(sessions, new Pro(), ws);
+                    var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+                        () => e.StartWorkflowAsync("invented-start-caller", "human"));
+                    Assert.Contains(expected, refusal.Message, StringComparison.Ordinal);
+                    // The REAL reason, not the sentence that says this version cannot run calls at all.
+                    Assert.DoesNotContain("does not run it yet", refusal.Message, StringComparison.Ordinal);
+                    // Nothing was registered: the run store is still empty.
+                    var none = await Assert.ThrowsAsync<InvalidOperationException>(() => e.GetWorkflowRunAsync(null));
+                    Assert.Contains("No workflow run exists", none.Message, StringComparison.Ordinal);
+                }
+                finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            }
+
+            await Refuses("invented-absent-callee", null, "is not a workflow this library holds");
+            await Refuses("invented-broken-callee", string.Join("\n",
+                "---", "schemaVersion: 2", "name: invented-broken-callee", "title: Broken", "notAKey: 1", "---", "",
+                "## Step 1: Do", "", "Do.", ""), "cannot be read");
+            await Refuses("invented-start-caller", null, "is this workflow itself");
+
+            // A valid graph is frozen, entitled and expanded into the same registered run.
+            var validWs = NewWorkspace();
+            WriteUserWorkflow(validWs, "invented-start-caller.md", Caller("invented-good-callee"));
+            WriteUserWorkflow(validWs, "invented-good-callee.md", Plain("invented-good-callee"));
+            WriteUserWorkflow(validWs, "invented-loop.md", string.Join("\n",
+                "---", "schemaVersion: 2", "name: invented-loop", "title: Loop", "strictness: off", "---", "",
+                "## Step 1: Repeat", "", "```yaml step", "id: repeat", "forEach:", "  in: [North, South]", "  as: region", "```", "",
+                "Repeat.", ""));
+            var validSessions = new SessionManager();
+            try
+            {
+                var e = new LocalEngine(validSessions, new Pro(), validWs);
+                var callRun = await e.StartWorkflowAsync("invented-start-caller", "human");
+                Assert.Equal(new[] { "hand-off", "hand-off/step-1" }, callRun.Steps.Select(s => s.StepId));
+                Assert.Equal("invented-good-callee", Assert.Single(callRun.Frames).Workflow);
+
+                // [T-3854] This control originally also pinned a `forEach:` start refusal beside the `call:`
+                // one. T-3839 admitted public loop starts, so that half is now false and the assertion is
+                // inverted rather than deleted: resolving, freezing and entitling the whole closure at start
+                // must not re-refuse a loop the runner can execute. It runs AFTER the no-run check above,
+                // because unlike the refusals this one legitimately registers a run.
+                var loopRun = await e.StartWorkflowAsync("invented-loop", "human");
+                Assert.Equal("invented-loop", loopRun.Workflow);
+            }
+            finally { validSessions.Dispose(); Directory.Delete(validWs, true); }
+        }
+
+        [Fact]
+        public async Task A_force_active_callee_starts_without_changing_its_disabled_setting(/* F-121 */)
+        {
+            string Caller(string callee) => string.Join("\n",
+                "---", "schemaVersion: 2", "name: invented-f121-caller", "title: Caller", "strictness: off", "---", "",
+                "## Step 1: Hand off", "", "```yaml step", "id: hand-off", "call:", "  workflow: " + callee, "```", "", "Hand off.", "");
+            string Plain(string name) => string.Join("\n",
+                "---", "schemaVersion: 2", "name: " + name, "title: " + name, "strictness: off", "---", "",
+                "## Step 1: Do", "", "Do a thing.", "");
+
+            async Task<string> Attempt(string settingsJson, bool shouldStart = false)
+            {
+                var ws = NewWorkspace();
+                WriteUserWorkflow(ws, "invented-f121-caller.md", Caller("invented-f121-callee"));
+                WriteUserWorkflow(ws, "invented-f121-callee.md", Plain("invented-f121-callee"));
+                File.WriteAllText(Path.Combine(ws, ".semanticus", "workflow-settings.json"), settingsJson);
+                var sessions = new SessionManager();
+                try
+                {
+                    var e = new LocalEngine(sessions, new Pro(), ws);
+                    string message = null;
+                    if (shouldStart)
+                    {
+                        var run = await e.StartWorkflowAsync("invented-f121-caller", "human");
+                        Assert.Equal("invented-f121-callee", Assert.Single(run.Frames).Workflow);
+                    }
+                    else
+                    {
+                        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+                            () => e.StartWorkflowAsync("invented-f121-caller", "human"));
+                        message = refusal.Message;
+                        var none = await Assert.ThrowsAsync<InvalidOperationException>(() => e.GetWorkflowRunAsync(null));
+                        Assert.Contains("No workflow run exists", none.Message, StringComparison.Ordinal);
+                    }
+                    // The callee is still `enabled:false` in the file afterwards: admitting a required callee
+                    // must never quietly flip its own setting.
+                    Assert.Contains(@"""enabled"": false",
+                        File.ReadAllText(Path.Combine(ws, ".semanticus", "workflow-settings.json")), StringComparison.Ordinal);
+                    return message;
+                }
+                finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            }
+
+            // A manually disabled callee that nothing requires still refuses before registration.
+            var unforced = await Attempt(
+                @"{ ""workflows"": { ""invented-f121-callee"": { ""enabled"": false } } }");
+            Assert.Contains("hands off to 'invented-f121-callee', which is turned off", unforced, StringComparison.Ordinal);
+            Assert.DoesNotContain("does not run it yet", unforced, StringComparison.Ordinal);
+
+            // The defect. The ROOT honours force-active (the E1 deadlock breaker); the callee rule did not,
+            // so a workflow a hard binding REQUIRES could not be reached through a hand-off. Owner plan
+            // section 5.2 row 4 gives each owner its own force-active state and stop condition 4 forbids the
+            // root and callee rules differing. The required callee executes while its setting stays off.
+            var forced = await Attempt(
+                @"{ ""workflows"": { ""invented-f121-callee"": { ""enabled"": false } },
+                    ""bindings"": { ""create_measure"": { ""require"": [""invented-f121-callee""], ""mode"": ""hard"" } } }", shouldStart: true);
+            Assert.Null(forced);
+
+            // A binding that does not ENFORCE (mode off) requires nothing, so it force-activates nothing.
+            var unenforced = await Attempt(
+                @"{ ""workflows"": { ""invented-f121-callee"": { ""enabled"": false } },
+                    ""bindings"": { ""create_measure"": { ""require"": [""invented-f121-callee""], ""mode"": ""off"" } } }");
+            Assert.Contains("which is turned off", unenforced, StringComparison.Ordinal);
+
+            // Menu activation is NOT permission: a rule that puts the callee on the menu never lifted the
+            // manual kill switch for a root, and it must not lift it for a callee either.
+            var onMenu = await Attempt(
+                @"{ ""workflows"": { ""invented-f121-callee"": { ""enabled"": false } },
+                    ""activation"": [ { ""workflow"": ""invented-f121-callee"", ""set"": ""on"" } ] }");
+            Assert.Contains("which is turned off", onMenu, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Callee_only_witness_probe_is_inventoried_and_revised(/* T7 */)
+        {
+            WorkflowStep ProbeStep(string id, string probe) => new WorkflowStep
+            {
+                Id = id, Number = 1, Title = id,
+                Gate = new GateSpec
+                {
+                    Inputs = new[] { new GateInput { Name = probe, Question = "Witness?" } },
+                    Verify = new[] { new VerifySpec { Kind = "dax_equivalence", Probe = probe } },
+                },
+            };
+
+            var run = ClosureRun("wfr-t7", null,
+                (OwnerDef("invented-t7-caller", "off", ProbeStep("ask", "callerWitness"),
+                    new WorkflowStep { Id = "prove-it", Number = 2, Title = "Prove it" }), null),
+                (OwnerDef("invented-t7-callee", "off", ProbeStep("use", "calleeWitness")), null));
+
+            var call = RunFrame.CreateCall("wfr-t7:prove-it", "prove-it", "invented-t7-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            run.Frames.Add(call);
+            run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, "invented-t7-callee", 0, "prove-it/use", call.FrameId);
+            run.Results[1].StepId = "prove-it/use";
+            run.Results[1].Answers["calleeWitness"] = Answer("SUM ( Sales[Units] )");
+            run.StepIndex = 1;
+
+            // The callee probe is inventoried only because the whole frozen closure is scanned: the ROOT
+            // declares no input and no verify by that name, so a root-only inventory locks nothing here.
+            Assert.DoesNotContain(run.Def.Steps.SelectMany(st => st.Gate?.Verify ?? Array.Empty<VerifySpec>()),
+                v => v.Probe == "calleeWitness");
+            using (run.CaptureSubmissionFrame())
+            {
+                LocalEngine.RecordWitnessLocks(run, "prove-it/use");
+                var locked = Assert.Single(call.WitnessLocks);
+                Assert.Equal("calleeWitness", locked.Key);
+                Assert.Empty(call.WitnessRevisions);
+
+                run.Results[1].Answers["calleeWitness"] = Answer("SUMX ( Sales, Sales[Units] )");
+                LocalEngine.RecordWitnessLocks(run, "prove-it/use");
+                var revision = Assert.Single(call.WitnessRevisions);
+                Assert.Equal("calleeWitness", revision.Probe);
+                Assert.Equal(locked.Value, revision.BeforeHash);
+                Assert.NotEqual(locked.Value, call.WitnessLocks["calleeWitness"]);
+            }
+            // The receipt is the CALL frame's; the top frame never saw a callee probe.
+            Assert.Empty(run.Frames[0].WitnessLocks);
+            Assert.Empty(run.Frames[0].WitnessRevisions);
+
+            // Same-named probes on caller and callee keep separate inventory entries and separate receipts,
+            // because each locks inside the frame that recorded it.
+            var shared = ClosureRun("wfr-t7-shared", null,
+                (OwnerDef("invented-t7-shared-caller", "off", ProbeStep("ask", "witnessDax"),
+                    new WorkflowStep { Id = "prove-it", Number = 2, Title = "Prove it" }), null),
+                (OwnerDef("invented-t7-shared-callee", "off", ProbeStep("use", "witnessDax")), null));
+            var sharedCall = RunFrame.CreateCall("wfr-t7-shared:prove-it", "prove-it", "invented-t7-shared-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            shared.Frames.Add(sharedCall);
+            shared.Plan[1] = WorkflowOwnerFixtures.CalleeRow(shared, "invented-t7-shared-callee", 0, "prove-it/use", sharedCall.FrameId);
+            shared.Results[1].StepId = "prove-it/use";
+            shared.Results[0].Answers["witnessDax"] = Answer("SUM ( Sales[Amount] )");
+            shared.Results[1].Answers["witnessDax"] = Answer("SUM ( Sales[Units] )");
+
+            shared.StepIndex = 0;
+            using (shared.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(shared, "ask");
+            shared.StepIndex = 1;
+            using (shared.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(shared, "prove-it/use");
+
+            var callerHash = Assert.Single(shared.Frames[0].WitnessLocks).Value;
+            var calleeHash = Assert.Single(sharedCall.WitnessLocks).Value;
+            Assert.NotEqual(callerHash, calleeHash);
+            Assert.Empty(shared.Frames[0].WitnessRevisions);
+            Assert.Empty(sharedCall.WitnessRevisions);
+        }
+
+        [Fact]
+        public void A_callee_only_witness_probe_never_mints_a_caller_frame_receipt(/* F-120 */)
+        {
+            // T7 proved a CALLEE-declared probe locks in the callee's own frame, but both of its frames
+            // declared the shared name. The other half was never covered: a probe only the CALLEE declares,
+            // answered by a caller input of the SAME name. The inventory was taken from every frozen
+            // definition while the answers were resolved in the captured frame, so the caller minted a
+            // witness receipt for a probe it never declared.
+            var caller = OwnerDef("invented-f120-caller", "off",
+                new WorkflowStep
+                {
+                    Id = "ask", Number = 1, Title = "Ask",
+                    Gate = new GateSpec
+                    {
+                        Inputs = new[]
+                        {
+                            new GateInput { Name = "calleeWitness", Question = "Witness?" },
+                            new GateInput { Name = "originalDax", Question = "The original, verbatim?" },
+                        },
+                    },
+                },
+                new WorkflowStep { Id = "hand-off", Number = 2, Title = "Hand off" },
+                // The shipped shape (optimize-dax collects `originalDax` at step 1 and declares the probe at
+                // step 4): the declaring row is LATER, in the same frame, and E3(a) still locks on first sight.
+                new WorkflowStep
+                {
+                    Id = "confirm", Number = 3, Title = "Confirm",
+                    Gate = new GateSpec { Verify = new[] { new VerifySpec { Kind = "dax_equivalence", Probe = "originalDax" } } },
+                });
+            var callee = OwnerDef("invented-f120-callee", "off", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use",
+                Gate = new GateSpec
+                {
+                    Inputs = new[] { new GateInput { Name = "calleeWitness", Question = "Witness?" } },
+                    Verify = new[] { new VerifySpec { Kind = "dax_equivalence", Probe = "calleeWitness" } },
+                },
+            });
+
+            var run = ClosureRun("wfr-f120", null, (caller, null), (callee, null));
+            var call = RunFrame.CreateCall("wfr-f120:hand-off", "hand-off", "invented-f120-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            run.Frames.Add(call);
+            run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, "invented-f120-callee", 0, "hand-off/use", call.FrameId);
+            run.Results[1].StepId = "hand-off/use";
+
+            // The caller answers ITS OWN inputs. `calleeWitness` is a plain caller input here: the caller
+            // declares no verify by that name anywhere in its own file.
+            run.Results[0].Answers["calleeWitness"] = Answer("SUM ( Sales[Amount] )");
+            run.Results[0].Answers["originalDax"] = Answer("SUMX ( Sales, Sales[Amount] )");
+            Assert.DoesNotContain(caller.Steps.SelectMany(st => st.Gate?.Verify ?? Array.Empty<VerifySpec>()),
+                v => v.Probe == "calleeWitness");
+
+            // Submitting the caller's own row: the only probe in play is the one a CALLER row declares.
+            run.StepIndex = 0;
+            using (run.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(run, "ask");
+            Assert.Equal(new[] { "originalDax" }, run.Frames[0].WitnessLocks.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
+            Assert.Empty(run.Frames[0].WitnessRevisions);
+
+            // And still not after the call row is behind the cutoff: the callee's declaration belongs to the
+            // callee's frame, not to whichever caller row happens to run next.
+            run.StepIndex = 2;
+            using (run.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(run, "confirm");
+            Assert.Equal(new[] { "originalDax" }, run.Frames[0].WitnessLocks.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
+            Assert.Empty(run.Frames[0].WitnessRevisions);
+            Assert.Empty(call.WitnessLocks);
+
+            // The legitimate half is untouched: the callee's own submission locks the callee's own probe in
+            // the call frame, and a later change there still records a revision. (T7 owns the matching
+            // independent same-named caller/callee positive.)
+            run.StepIndex = 1;
+            run.Results[1].Answers["calleeWitness"] = Answer("SUM ( Sales[Units] )");
+            using (run.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(run, "hand-off/use");
+            var locked = Assert.Single(call.WitnessLocks);
+            Assert.Equal("calleeWitness", locked.Key);
+            run.Results[1].Answers["calleeWitness"] = Answer("SUMX ( Sales, Sales[Units] )");
+            using (run.CaptureSubmissionFrame()) LocalEngine.RecordWitnessLocks(run, "hand-off/use");
+            Assert.Equal("calleeWitness", Assert.Single(call.WitnessRevisions).Probe);
+            Assert.Equal(new[] { "originalDax" }, run.Frames[0].WitnessLocks.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
+            Assert.Empty(run.Frames[0].WitnessRevisions);
+        }
+
+        [Fact]
+        public void Latest_objectRef_is_cutoff_bounded_plan_order(/* T8 */)
+        {
+            WorkflowStep RefStep(string id, int number) => new WorkflowStep
+            {
+                Id = id, Number = number, Title = id,
+                Gate = new GateSpec { Inputs = new[] { new GateInput { Name = id + "Ref", Type = "objectRef", Question = "Which?" } } },
+            };
+            var caller = OwnerDef("invented-t8-caller", "off", RefStep("first", 1), RefStep("second", 2), RefStep("third", 3));
+            var callee = OwnerDef("invented-t8-callee", "off", RefStep("calleeRef", 1));
+            var run = ClosureRun("wfr-t8", null, (caller, null), (callee, null));
+
+            // Plan order deliberately differs from the root's definition order: the callee row sits between
+            // the first and third caller rows, and a FUTURE row already carries an answer.
+            var call = RunFrame.CreateCall("wfr-t8:call", "second", "invented-t8-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            run.Frames.Add(call);
+            run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, "invented-t8-callee", 0, "second/calleeRef", run.RunId);
+            run.Results[1].StepId = "second/calleeRef";
+
+            run.Results[0].Answers["firstRef"] = Answer("measure:Sales/Invented First");
+            run.Results[1].Answers["calleeRefRef"] = Answer("measure:Sales/Invented Callee");
+            run.Results[2].Answers["thirdRef"] = Answer("measure:Sales/Invented Future");
+
+            run.StepIndex = 1;
+            var answers = WorkflowRunner.AllAnswers(run);
+            Assert.Equal("measure:Sales/Invented Callee", LocalEngine.LatestObjectRefAnswer(run, answers));
+
+            // The linear control: with the cutoff on the last row, the last PLAN row wins, which is the same
+            // answer definition order gave before this became a plan-order walk.
+            run.StepIndex = 2;
+            Assert.Equal("measure:Sales/Invented Future",
+                LocalEngine.LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run)));
+
+            run.StepIndex = 0;
+            Assert.Equal("measure:Sales/Invented First",
+                LocalEngine.LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run)));
+        }
+
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void Latest_objectRef_uses_the_visible_answers_own_type(bool callBoundary, bool returnToCaller)
+        {
+            WorkflowStep Input(string id, string type) => new WorkflowStep
+            {
+                Id = id, Title = id,
+                Gate = new GateSpec { Inputs = new[] { new GateInput { Name = "target", Type = type, Scope = "run" } } },
+            };
+            var caller = OwnerDef("ref-owner", "off", Input("first", returnToCaller ? "text" : "objectRef"),
+                Input("second", "text"), new WorkflowStep { Id = "after", Title = "After" });
+            var callee = OwnerDef("text-owner", "off", Input("inside", returnToCaller ? "objectRef" : "text"));
+            var run = ClosureRun("wfr-ref-type", null, (caller, null), (callee, null));
+            if (callBoundary)
+            {
+                var call = RunFrame.CreateCall("ref-call", "second", callee.Name, 2,
+                    Array.Empty<string>(), Array.Empty<string>(), "in_progress", parentFrameId: run.RunId);
+                run.Frames.Add(call);
+                run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, callee.Name, 0, "second/inside", call.FrameId);
+                run.Results[1].StepId = "second/inside";
+            }
+            run.Results[0].Answers["target"] = Answer(returnToCaller ? "caller text" : "measure:Sales/Revenue");
+            run.Results[1].Answers["target"] = Answer(returnToCaller ? "measure:Sales/Other" : "callee text");
+            run.StepIndex = returnToCaller ? 2 : 1;
+
+            Assert.Null(LocalEngine.LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run)));
+        }
+
+        [Fact]
+        public void Latest_objectRef_uses_last_declared_input_when_later_step_reorders_names()
+        {
+            WorkflowStep Inputs(string id, params string[] names) => new WorkflowStep
+            {
+                Id = id, Title = id, Gate = new GateSpec
+                {
+                    Inputs = names.Select(name => new GateInput { Name = name, Type = "objectRef" }).ToArray(),
+                },
+            };
+            var run = new WorkflowRunState("wfr-reordered-refs",
+                OwnerDef("ordered-refs", "off", Inputs("first", "a", "b"), Inputs("second", "b", "a")), null);
+            foreach (var result in run.Results)
+            {
+                result.Answers["a"] = Answer("measure:Sales/Revenue");
+                result.Answers["b"] = Answer("measure:Sales/Cost");
+            }
+            run.StepIndex = 1;
+            Assert.Equal("measure:Sales/Revenue", LocalEngine.LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run)));
+        }
+
+        [Fact]
+        public void Latest_objectRef_keeps_the_parent_answer_in_an_iteration_seed()
+        {
+            var def = OwnerDef("seeded-ref", "off",
+                new WorkflowStep { Id = "choose", Title = "Choose", Gate = new GateSpec
+                {
+                    Inputs = new[] { new GateInput { Name = "target", Type = "objectRef" } },
+                } },
+                new WorkflowStep { Id = "repeat", Title = "Repeat", ForEach = new ForEachSpec
+                {
+                    InLiteral = new[] { "one" }, As = "item",
+                } });
+            var run = new WorkflowRunState("wfr-seeded-ref", def, null);
+            run.Results[0].Answers["target"] = Answer("measure:Sales/Revenue");
+            run.Results[0].Status = "passed";
+            run.StepIndex = 1;
+            run.Results[1].Status = "in_progress";
+            WorkflowRunner.ExpandCurrentForEach(run, new[] { "one" });
+
+            Assert.Equal("measure:Sales/Revenue", LocalEngine.LatestObjectRefAnswer(run, WorkflowRunner.AllAnswers(run)));
+        }
+
+        [Fact]
+        public void Control_totals_come_from_the_submitted_rows_frozen_owner(/* T9 */)
+        {
+            var caller = OwnerDef("invented-t9-caller", "off",
+                new WorkflowStep { Id = "ask", Number = 1, Title = "Ask" },
+                new WorkflowStep { Id = "prove-it", Number = 2, Title = "Prove it" });
+            caller.Provenance["slot_values"] = "{\"control_totals\":\"measure:Sales/Caller ~ (grand total) ~ 11\"}";
+            var callee = OwnerDef("invented-t9-callee", "off", new WorkflowStep { Id = "use", Number = 1, Title = "Use" });
+            callee.Provenance["slot_values"] = "{\"control_totals\":\"measure:Sales/Callee ~ (grand total) ~ 22\"}";
+            var run = ClosureRun("wfr-t9", null, (caller, null), (callee, null));
+
+            var call = RunFrame.CreateCall("wfr-t9:prove-it", "prove-it", "invented-t9-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            run.Frames.Add(call);
+            run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, "invented-t9-callee", 0, "prove-it/use", call.FrameId);
+            run.Results[1].StepId = "prove-it/use";
+
+            // Post-start mutation of both source definitions, exactly as a mid-run file reload would.
+            caller.Provenance["slot_values"] = "{\"control_totals\":\"mutated\"}";
+            callee.Provenance["slot_values"] = "{\"control_totals\":\"mutated\"}";
+
+            run.StepIndex = 0;
+            Assert.Equal("measure:Sales/Caller ~ (grand total) ~ 11", LocalEngine.ControlTotalsSlotText(run));
+            run.StepIndex = 1;
+            Assert.Equal("measure:Sales/Callee ~ (grand total) ~ 22", LocalEngine.ControlTotalsSlotText(run));
+        }
+
+        [Fact]
+        public void Purity_guard_reads_the_exact_planned_row(/* T10 */)
+        {
+            // The root declares NO input of that shape and, in this fixture, no gate at all: the guard must
+            // find the declaration on the exact earlier planned row that supplied the probe answer.
+            var caller = OwnerDef("invented-t10-caller", "off",
+                new WorkflowStep { Id = "ask", Number = 1, Title = "Ask" },
+                new WorkflowStep { Id = "prove-it", Number = 2, Title = "Prove it" });
+            var callee = OwnerDef("invented-t10-callee", "off", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use",
+                Gate = new GateSpec
+                {
+                    Inputs = new[] { new GateInput { Name = "witnessDax", Question = "Witness?", DaxPurity = "no-bare-measures" } },
+                },
+            });
+            var run = ClosureRun("wfr-t10", null, (caller, null), (callee, null));
+            var call = RunFrame.CreateCall("wfr-t10:prove-it", "prove-it", "invented-t10-callee", 2,
+                Array.Empty<string>(), Array.Empty<string>(), "in_progress");
+            run.Frames.Add(call);
+            run.Plan[1] = WorkflowOwnerFixtures.CalleeRow(run, "invented-t10-callee", 0, "prove-it/use", call.FrameId);
+            run.Results[1].StepId = "prove-it/use";
+            run.Results[1].Answers["witnessDax"] = Answer("SUMX ( Sales, Sales[Units] * Sales[Price] )");
+            run.StepIndex = 1;
+
+            Assert.True(LocalEngine.ProbeRequiresCurrentDaxPurity(run, "witnessDax"));
+            Assert.False(LocalEngine.ProbeRequiresCurrentDaxPurity(run, "somethingElse"));
+            Assert.Empty(run.Def.Steps.SelectMany(st => st.Gate?.Inputs ?? Array.Empty<GateInput>()));
+        }
+
+        [Fact]
+        public void Callee_gates_participate_in_pro_entitlement(/* T11 */)
+        {
+            var freeRoot = OwnerDef("invented-t11-caller", "off",
+                new WorkflowStep
+                {
+                    Id = "ask", Number = 1, Title = "Ask",
+                    Gate = new GateSpec { Inputs = new[] { new GateInput { Name = "note", Question = "Why?" } } },
+                });
+            var hardCallee = OwnerDef("invented-t11-callee", "hard", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use",
+                Gate = new GateSpec { Verify = new[] { new VerifySpec { Kind = "dax_probe" } } },
+            });
+
+            var rootOnly = ClosureRun("wfr-t11-root", null, (freeRoot, null));
+            Assert.False(LocalEngine.ClosureRequiresPro(rootOnly.OwnerClosure, null));
+
+            var whole = ClosureRun("wfr-t11-whole", null, (freeRoot, null), (hardCallee, null));
+            Assert.True(LocalEngine.ClosureRequiresPro(whole.OwnerClosure, null));
+
+            // The model-wide kill switch still sits above everything: enforcement off means nothing is gated,
+            // so the same closure runs free.
+            Assert.False(LocalEngine.ClosureRequiresPro(whole.OwnerClosure, "off"));
+
+            // And the callee's own per-workflow setting is what its rows resolve against.
+            var relaxed = ClosureRun("wfr-t11-relaxed", null, (freeRoot, null), (hardCallee, "off"));
+            Assert.False(LocalEngine.ClosureRequiresPro(relaxed.OwnerClosure, null));
+        }
+
+        [Fact]
+        public async Task Callee_only_bpa_verify_takes_the_start_baseline(/* T12 */)
+        {
+            var root = OwnerDef("invented-t12-caller", "off", new WorkflowStep { Id = "ask", Number = 1, Title = "Ask" });
+            var callee = OwnerDef("invented-t12-callee", "off", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use",
+                Gate = new GateSpec { Verify = new[] { new VerifySpec { Kind = "bpa_clean" } } },
+            });
+
+            var bpaCalls = 0;
+            var readinessCalls = 0;
+            Task<Semanticus.Analysis.BpaScorecard> Bpa()
+            {
+                bpaCalls++;
+                return Task.FromResult(new Semanticus.Analysis.BpaScorecard
+                {
+                    Violations = new[]
+                    {
+                        new Semanticus.Analysis.BpaViolation { RuleId = "INVENTED-1", ObjectRef = "measure:Sales/Invented", Waived = false },
+                        new Semanticus.Analysis.BpaViolation { RuleId = "INVENTED-2", ObjectRef = "measure:Sales/Waived", Waived = true },
+                    },
+                });
+            }
+            Task<Semanticus.Analysis.Scorecard> Readiness()
+            {
+                readinessCalls++;
+                return Task.FromResult(new Semanticus.Analysis.Scorecard());
+            }
+
+            var rootOnly = ClosureRun("wfr-t12-root", null, (root, null));
+            var noScan = await LocalEngine.CaptureStartSnapshotsAsync(rootOnly.OwnerClosure, Bpa, Readiness);
+            Assert.Null(noScan.BpaKeys);
+            Assert.Equal(0, bpaCalls);
+
+            var whole = ClosureRun("wfr-t12-whole", null, (root, null), (callee, null));
+            var aux = await LocalEngine.CaptureStartSnapshotsAsync(whole.OwnerClosure, Bpa, Readiness);
+            Assert.Equal(1, bpaCalls);
+            Assert.Equal(0, readinessCalls);
+            Assert.Equal(new[] { "INVENTED-1|measure:Sales/Invented" }, aux.BpaKeys);
+            Assert.Null(aux.ReadinessKeys);
+
+            // A null scanner is the offline case: no baseline, and never a claimed pass.
+            var offline = await LocalEngine.CaptureStartSnapshotsAsync(whole.OwnerClosure, null, null);
+            Assert.Null(offline.BpaKeys);
+            Assert.Equal(1, bpaCalls);
+        }
+
+        [Fact]
+        public async Task Callee_only_readiness_verify_takes_both_baseline_values(/* T13 */)
+        {
+            var root = OwnerDef("invented-t13-caller", "off", new WorkflowStep { Id = "ask", Number = 1, Title = "Ask" });
+            var callee = OwnerDef("invented-t13-callee", "off", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use",
+                Gate = new GateSpec { Verify = new[] { new VerifySpec { Kind = "readiness_rescan" } } },
+            });
+
+            var readinessCalls = 0;
+            Task<Semanticus.Analysis.Scorecard> Readiness()
+            {
+                readinessCalls++;
+                return Task.FromResult(new Semanticus.Analysis.Scorecard
+                {
+                    Overall = 61.5,
+                    Findings = new[]
+                    {
+                        new Semanticus.Analysis.ReadinessFinding { RuleId = "INVENTED-R1", ObjectRef = "table:Sales", Waived = false },
+                        new Semanticus.Analysis.ReadinessFinding { RuleId = "INVENTED-R2", ObjectRef = "table:Waived", Waived = true },
+                    },
+                });
+            }
+
+            var whole = ClosureRun("wfr-t13", null, (root, null), (callee, null));
+            var aux = await LocalEngine.CaptureStartSnapshotsAsync(whole.OwnerClosure, null, Readiness);
+
+            // TWO values and a scan of its own, which is why this stays distinct from the BPA case.
+            Assert.Equal(1, readinessCalls);
+            Assert.Equal(new[] { "INVENTED-R1|table:Sales" }, aux.ReadinessKeys);
+            Assert.Equal(61.5, aux.ReadinessOverall);
+            Assert.Null(aux.BpaKeys);
+        }
+
+        [Fact]
+        public void Callee_predicates_contribute_condition_roots(/* T14 */)
+        {
+            var root = OwnerDef("invented-t14-caller", "off", new WorkflowStep
+            {
+                Id = "ask", Number = 1, Title = "Ask", When = "model.measures > 0",
+            });
+            var callee = OwnerDef("invented-t14-callee", "off", new WorkflowStep
+            {
+                Id = "use", Number = 1, Title = "Use", When = "git.clean",
+            });
+
+            var rootOnly = ClosureRun("wfr-t14-root", null, (root, null));
+            Assert.Single(LocalEngine.ClosureConditionRoots(rootOnly.OwnerClosure));
+
+            var whole = ClosureRun("wfr-t14-whole", null, (root, null), (callee, null));
+            var roots = LocalEngine.ClosureConditionRoots(whole.OwnerClosure).ToArray();
+            Assert.Equal(2, roots.Length);
+            Assert.All(roots, Assert.NotNull);
+
+            // A mutation of the source callee condition after the freeze cannot add a root or change one.
+            callee.Steps[0].When = "model.measures > 999 and git.clean and model.tables > 5";
+            var again = LocalEngine.ClosureConditionRoots(whole.OwnerClosure).ToArray();
+            Assert.Equal(2, again.Length);
+            Assert.Equal("git.clean", whole.OwnerClosure.Require("invented-t14-callee").Steps[0].When);
         }
     }
 }

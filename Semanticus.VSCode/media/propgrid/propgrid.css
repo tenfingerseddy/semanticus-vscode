@@ -9,11 +9,12 @@ body { font: var(--vscode-font-size)/1.45 var(--vscode-font-family); color: var(
 .cat:hover { color: var(--vscode-foreground); }
 .twist { display: inline-block; width: 9px; transition: transform .1s; }
 .collapsed .twist { transform: rotate(-90deg); }
-.rowx { display: grid; grid-template-columns: 42% 58%; align-items: start; gap: 6px; padding: 2px var(--gap); }
-.rowx label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; cursor: help; }
+.rowx { display: grid; grid-template-columns: minmax(7rem, 42%) minmax(0, 1fr); align-items: start; gap: 6px; padding: 2px var(--gap); }
+.rowx label { font-size: 12px; white-space: normal; overflow-wrap: break-word; padding-top: 2px; cursor: help; }
 .rowx.changed label { color: var(--vscode-charts-green, var(--vscode-foreground)); }
 input[type=text], input[type=number], select, textarea { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 2px 5px; font-size: 12px; border-radius: 3px; font-family: inherit; }
 textarea { resize: none; overflow: hidden; min-height: 22px; line-height: 1.4; }
+textarea[data-commit-enter] { max-height: 4.6em; overflow-y: auto; }
 input::placeholder, textarea::placeholder { color: var(--vscode-input-placeholderForeground); font-style: italic; }
 input[type=checkbox] { accent-color: var(--vscode-checkbox-foreground); justify-self: start; margin: 2px 0 0; width: 15px; height: 15px; }
 .ro { font-size: 12px; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; }

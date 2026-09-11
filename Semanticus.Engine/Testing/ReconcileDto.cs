@@ -50,6 +50,20 @@ namespace Semanticus.Engine
         public string TenantId { get; set; }
     }
 
+    /// <summary>The request for one expected-total test (kind measureValue). The number is the caller's trusted
+    /// answer. Optional filter narrows the measure; optional provenance is stored with the test and shown in evidence.</summary>
+    public sealed class MeasureValueRequest
+    {
+        public string MeasureRef { get; set; }
+        public string ExpectedValue { get; set; }
+        public string FilterColumn { get; set; }
+        public string FilterValue { get; set; }
+        public string FilterDax { get; set; }
+        public string Provenance { get; set; }
+        public double? ToleranceAbsolute { get; set; }
+        public double? ToleranceRelative { get; set; }
+    }
+
     /// <summary>Read-only source-mapping review for a saved reconciliation. Detection comes from the measure's
     /// dependency tables and their partitions; overrides are echoed separately so the UI never confuses a human
     /// choice with model-derived metadata. TestConnection performs only a connectivity probe, never the accepted SQL.</summary>

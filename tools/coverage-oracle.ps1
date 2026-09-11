@@ -28,12 +28,12 @@ function Get-Family([string]$operation) {
         '^(bpa_|load_bpa_rules|reset_bpa_rules|list_waivers|waive_finding|unwaive_finding)' { return 'bpa-and-waivers' }
         '^(get_lineage|impact_of|impact_assessment|unused_objects|remove_safe_objects|analyze_reports|analyze_cloud_reports|list_reports)' { return 'lineage-and-impact' }
         '^(model_diff|apply_model_diff|cherry_pick|get_reference_tree|git_|create_history_checkpoint|list_history_checkpoints|restore_history_checkpoint)' { return 'compare-and-source-control' }
-        '^(list_connections|list_connection_history|probe_connection_accounts|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy)' { return 'connections' }
+        '^(list_connections|list_connection_history|probe_connection_accounts|probe_auth_prerequisites|list_account_profiles|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy)' { return 'connections' }
         '^(deploy_|preview_deploy|deployment_history|list_workspaces|list_deployment_pipelines|get_pipeline_stages|get_stage_items|fabric_git_|cicd_|rollback_push|list_restore_points|purge_restore_points|refresh_partition)' { return 'deployment-and-fabric' }
         '^(list_data_agents|get_data_agent|generate_data_agent_config|create_data_agent|update_data_agent|delete_data_agent|publish_data_agent)' { return 'data-agent' }
         '^(propose_plan|get_plan|set_plan_item|add_plan_item|apply_plan|clear_plan|capture_baseline|compare_baseline|get_verified_mode|set_verified_mode|list_verified_edits|export_verified_edits)' { return 'change-plan-and-verified-edits' }
-        '^(save_test|delete_test|list_tests|run_tests|list_test_runs|review_reconcile_mapping|add_interview_question|delete_interview_question|list_interview_questions|list_interview_seeds|run_interview|get_evidence|list_evidence|save_evidence|export_test_report)' { return 'tests-and-evidence' }
-        '^(list_workflows|get_workflow|save_workflow|delete_workflow|check_workflow|start_workflow|get_workflow_run|submit_workflow_step|skip_workflow_step|abort_workflow|get_op_catalog|set_workflow_|get_workflow_|export_workflow_evidence|replay_check_workflow|list_workflow_templates|get_workflow_template|save_workflow_template|delete_workflow_template|instantiate_workflow_template|list_workflow_profiles|activate_workflow_profile)' { return 'workflows' }
+        '^(save_test|delete_test|list_tests|run_tests|try_test|list_test_runs|review_reconcile_mapping|add_interview_question|delete_interview_question|list_interview_questions|list_interview_seeds|run_interview|get_evidence|list_evidence|save_evidence|export_test_report)' { return 'tests-and-evidence' }
+        '^(list_workflows|get_workflow|save_workflow|edit_workflow_document|upgrade_workflow|delete_workflow|check_workflow|start_workflow|get_workflow_run|submit_workflow_step|skip_workflow_step|abort_workflow|get_op_catalog|set_workflow_|get_workflow_|export_workflow_evidence|replay_check_workflow|list_workflow_templates|get_workflow_template|save_workflow_template|delete_workflow_template|instantiate_workflow_template|list_workflow_profiles|activate_workflow_profile)' { return 'workflows' }
         '^(get_model_primer|set_model_primer|list_primer_suggestions|accept_primer_suggestion|reject_primer_suggestion|get_model_fingerprint|recall_experience|add_insight|edit_insight|delete_insight|approve_insight|upvote_insight|downvote_insight|list_insights|purge_knowledge)' { return 'primer-and-learning' }
         '^(get_agent_policy|set_agent_policy|list_pending_approvals|approve_agent_action|deny_agent_action)' { return 'agent-governance' }
         '^(get_doc_|set_doc_|get_spec|set_spec|clear_spec|save_spec|load_spec|build_model_from_spec|autogenerate_spec_)' { return 'documentation-and-spec' }
@@ -79,13 +79,25 @@ foreach ($file in $evidenceFiles) {
     }
 }
 
+# This oracle is deliberately lexical, so reflection over DTO properties and receipt member names can look like
+# MCP calls. Keep reviewed false matches explicit instead of crediting tests that never exercise the operation.
+$falsePositiveReferences = @{
+    'get_lineage' = @('Semanticus.Tests/WorkflowRunFrameTests.cs')
+    'get_properties' = @(
+        'Semanticus.Tests/CertificateComputationTests.cs',
+        'Semanticus.Tests/WorkflowRunFrameTests.cs'
+    )
+}
+
 $operations = foreach ($tool in $toolNames) {
     $pascal = Get-PascalName $tool
     $searchNames = @($tool, $pascal)
     if ($tool -eq 'vpaq_scan') { $searchNames += 'VertiPaqScan' }
+    $excluded = @($falsePositiveReferences[$tool])
     $hits = @($evidenceText.Keys | Where-Object {
         $text = $evidenceText[$_]
-        @($searchNames | Where-Object { $text.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0
+        $_ -notin $excluded -and
+            @($searchNames | Where-Object { $text.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0
     } | Sort-Object)
     [ordered]@{
         operation = $tool
@@ -118,6 +130,10 @@ $allStudioTabs = @([regex]::Matches($studioType, "'([^']+)'") |
 $sourceHashInput = ($mcpSource + "`n" + $rpcSource + "`n" + $iEngineSource + "`n" + $groupText) -replace "`r`n?", "`n"
 $hashBytes = [Text.Encoding]::UTF8.GetBytes($sourceHashInput)
 $sourceHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($hashBytes)).ToLowerInvariant()
+# A count lets two branches that each add a different file agree with the recorded number while the
+# merged tree matches neither (F-002 / T196). Record the sorted paths; -Check compares the whole set.
+$trackedEvidencePaths = [string[]](@($evidenceText.Keys))
+[Array]::Sort($trackedEvidencePaths, [StringComparer]::Ordinal)
 
 $unclassified = @($operations | Where-Object { $_.family -eq 'unclassified' })
 $withoutReference = @($operations | Where-Object { $_.referenceEvidence.Count -eq 0 })
@@ -131,7 +147,7 @@ $inventory = [ordered]@{
         engineMethods = $iEngineCount
         studioDestinations = $allStudioTabs.Count
         groupedStudioDestinations = $studioTabs.Count
-        trackedEvidenceFiles = $evidenceText.Count
+        trackedEvidenceFiles = @($trackedEvidencePaths)
         operationsWithoutTrackedTestReference = $withoutReference.Count
         unclassifiedOperations = $unclassified.Count
     }

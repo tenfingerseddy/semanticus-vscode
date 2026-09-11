@@ -156,6 +156,54 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Public_publish_routes_refuse_a_loopback_xmla_destination()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var rpc = new EngineRpcTarget(engine);
+            await engine.OpenAsync(TestModels.FindBim());
+            var loopback = ConnectionRegistry.Remember("xmla", "localhost:51234", "LocalLoop", "Local loop");
+            var remote = ConnectionRegistry.Remember("xmla", "powerbi://example/workspace", "Published", "Published");
+
+            var mcpSet = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => McpTools.SetPublishDestination(engine, loopback.Id));
+            var rpcSet = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => rpc.setPublishDestination(loopback.Id));
+            Assert.Contains("loopback", mcpSet.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("loopback", rpcSet.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False((await engine.ConnectionContextAsync()).Publishing.Available);
+
+            var parent = Path.Combine(_root, "models");
+            var mcpPrep = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => McpTools.PrepareWorkingCopy(engine, remote.Id, parent, false, null, loopback.Id));
+            var rpcPrep = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => rpc.prepareWorkingCopy(remote.Id, parent, false, null, loopback.Id));
+            Assert.Contains("loopback", mcpPrep.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("loopback", rpcPrep.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(parent));
+        }
+
+        [Fact]
+        public async Task Opening_a_local_file_is_remembered_on_both_doors()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var rpc = new EngineRpcTarget(engine);
+            var bim = TestModels.FindBim();
+            var full = Path.GetFullPath(bim);
+
+            await McpTools.OpenModel(engine, bim);
+            var mcpList = await McpTools.ListConnections(engine);
+            Assert.Contains(mcpList, r => r.Kind == "file"
+                && string.Equals(r.Endpoint, full, StringComparison.OrdinalIgnoreCase));
+
+            await rpc.open(bim);
+            var rpcList = await rpc.listConnections();
+            Assert.Contains(rpcList, r => r.Kind == "file"
+                && string.Equals(r.Endpoint, full, StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
         public async Task Forget_public_doors_report_success_missing_and_governance_refusal_without_model_changes()
         {
             using var sessions = new SessionManager();

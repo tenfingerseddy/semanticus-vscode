@@ -94,10 +94,15 @@ const oldGenerated = {
 };
 const newGenerated = {
   command: 'C:\\Users\\Kane\\.vscode\\extensions\\semanticus-1.0.2\\engine\\Semanticus.Engine.exe',
-  args: ['mcp', '--workspace', workspace, '--license', 'new-test-token'],
+  args: ['mcp', '--workspace', workspace],
 };
 assert.equal(shouldAutoHealMcpEntry(oldGenerated, newGenerated, 'win32'), true,
   'activation must refresh a generated bundled entry after an extension upgrade');
+assert.equal(shouldAutoHealMcpEntry(
+  { command: newGenerated.command, args: ['mcp', '--workspace', workspace, '--license', 'test-token'] },
+  newGenerated,
+  'win32'), true,
+  'activation must strip a leftover --license token from a generated bundled entry');
 assert.equal(shouldAutoHealMcpEntry(newGenerated, newGenerated, 'win32'), false,
   'activation must not rewrite an already-current entry');
 assert.equal(shouldAutoHealMcpEntry({ ...oldGenerated, env: { CUSTOM: '1' } }, newGenerated, 'win32'), false,

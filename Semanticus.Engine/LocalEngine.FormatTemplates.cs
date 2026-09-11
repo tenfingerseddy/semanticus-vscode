@@ -33,7 +33,7 @@ namespace Semanticus.Engine
                 if (_formatTemplates != null) return _formatTemplates;
                 var asm = typeof(LocalEngine).Assembly;
                 var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("format-templates.json", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("format-templates.json is not embedded in Semanticus.Engine — the format-template catalog is missing from the build.");
+                    ?? throw new InvalidOperationException("format-templates.json is not embedded in Semanticus.Engine: the format-template catalog is missing from the build.");
                 using var stream = asm.GetManifestResourceStream(name);
                 using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
                 var json = reader.ReadToEnd();
@@ -77,22 +77,33 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             var expr = string.IsNullOrWhiteSpace(formatExpression) ? null : formatExpression.Trim();
             var changed = false;
-            var rev = await s.MutateAsync(origin, "set measure format expression", m =>
+            long rev;
+            try
             {
-                if (!(ObjectRefs.Resolve(m, objRef) is Measure me))
-                    throw new InvalidOperationException($"{objRef} is not a measure — pass a 'measure:Table/Name' ref; run list_measures to see the model's measures. (This sets a DYNAMIC format string; for a static literal use set_measure_format.)");
-                // A measure dynamic format string (FormatStringDefinition) needs CL 1601+ (verified vs the MS TMDL docs:
-                // "1550 is below the required level of 1601 for the FormatStringDefinition property"). Clearing is always
-                // safe (below 1601 the property can't exist, so it's a no-op).
-                if (expr != null && (m.Database?.CompatibilityLevel ?? 0) < 1601)
-                    throw new InvalidOperationException($"A measure dynamic format string requires compatibility level 1601 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}; raise it with set_compatibility_level, or set a static format with set_measure_format).");
-                var before = me.FormatStringExpression;
-                if (!string.Equals(before ?? string.Empty, expr ?? string.Empty, StringComparison.Ordinal))
+                rev = await s.MutateAsync(origin, "set measure format expression", m =>
                 {
-                    me.FormatStringExpression = expr;   // wrapper auto-clears the static FormatString when non-blank
-                    changed = true;
-                }
-            });
+                    if (!(ObjectRefs.Resolve(m, objRef) is Measure me))
+                        throw new InvalidOperationException($"{objRef} is not a measure: pass a 'measure:Table/Name' ref; run list_measures to see the model's measures. (This sets a DYNAMIC format string; for a static literal use set_measure_format.)");
+                    // A measure dynamic format string (FormatStringDefinition) needs CL 1601+ (verified vs the MS TMDL docs:
+                    // "1550 is below the required level of 1601 for the FormatStringDefinition property"). Clearing is always
+                    // safe (below 1601 the property can't exist, so it's a no-op).
+                    if (expr != null && (m.Database?.CompatibilityLevel ?? 0) < 1601)
+                        throw new InvalidOperationException($"A measure dynamic format string requires compatibility level 1601 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}). Raise Compatibility level in Properties, or set a static format.");
+                    if (expr != null)
+                    {
+                        var v = DaxValidator.Validate(m, expr);
+                        RefuseDaxForWrite(v, expr, "this format expression");
+                    }
+                    var before = me.FormatStringExpression;
+                    if (!string.Equals(before ?? string.Empty, expr ?? string.Empty, StringComparison.Ordinal))
+                    {
+                        me.FormatStringExpression = expr;   // wrapper auto-clears the static FormatString when non-blank
+                        changed = true;
+                    }
+                    if (!changed) throw new NoopMutationException();
+                });
+            }
+            catch (NoopMutationException) { return Noop(s); }
             return new SetResult { Revision = rev, Changed = changed };
         }
     }

@@ -13,6 +13,9 @@ namespace Semanticus.Engine
         private const string CheckpointSubject = "Semanticus checkpoint: ";
         private const string CheckpointMarker = "Semanticus-Checkpoint: 1";
 
+        /// <summary>Test seam: when a checkpoint label contains this text, CreateHistoryCheckpoint returns an error instead of committing.</summary>
+        internal string FailCheckpointCommitMatchingForTest;
+
         private sealed class CheckpointContext
         {
             public Session Session;
@@ -53,16 +56,21 @@ namespace Semanticus.Engine
                 return new HistoryCheckpointResult { Preview = !commit, Error = "The repository is on a detached commit. Check out a branch before creating a checkpoint." };
 
             var cleanLabel = CleanCheckpointLabel(label, context.Session.Revision);
-            var ownedNow = context.Status.Files.Where(f => IsOwned(f.Path, context.Paths)).Select(f => f.Path).Distinct(PathComparer).ToArray();
+            if (!string.IsNullOrEmpty(FailCheckpointCommitMatchingForTest)
+                && cleanLabel.IndexOf(FailCheckpointCommitMatchingForTest, StringComparison.Ordinal) >= 0)
+                return new HistoryCheckpointResult { Error = "forced test failure", SavedModelFirst = context.Session.HasUnsavedChanges };
+            var ownedNow = context.Status.Files.Where(f => IsOwned(f.Path, context.Paths)).Select(f => f.Path).Distinct(PathComparer).ToList();
+            if (context.Session.HasUnsavedChanges && !ownedNow.Contains(context.ModelKey, PathComparer))
+                ownedNow.Add(context.ModelKey);
             if (!commit)
                 return new HistoryCheckpointResult
                 {
                     Preview = true,
-                    Files = ownedNow,
+                    Files = ownedNow.ToArray(),
                     SavedModelFirst = context.Session.HasUnsavedChanges,
                     Note = context.Session.HasUnsavedChanges
-                        ? "Preview only. Creating the checkpoint saves the open model first, then commits only its model and .semanticus paths."
-                        : "Preview only. Creating the checkpoint commits only this model's files; unrelated repository changes stay untouched.",
+                        ? "Preview only. The open model will be saved first, then only its model files and project notes are committed."
+                        : "Preview only. Creating the checkpoint commits only this model's files. Other repository changes stay untouched.",
                 };
 
             var saved = false;
@@ -88,10 +96,15 @@ namespace Semanticus.Engine
                     SavedModelFirst = saved,
                 };
 
-            // Exclude the volatile broker files anywhere in the pathspec: engine.lock is held FileShare.None (staging
-            // it throws "Permission denied") and engine.json is churn, so neither belongs in a durable checkpoint.
-            var add = await GitCli.RunAsync(context.RepoRoot, new[] { "add", "-A", "--" }.Concat(context.Paths)
-                .Concat(new[] { ":(exclude,glob)**/engine.lock", ":(exclude,glob)**/engine.json" }).ToArray());
+            // The sidecar .gitignore keeps the live log and lock out. Magic exclude pathspecs after -- can fail
+            // on some git builds ("pathspec did not match"), which would drop primers and workflows from the commit.
+            var add = await GitCli.RunAsync(context.RepoRoot, "add", "-A", "--", context.ModelKey);
+            foreach (var spec in context.Paths.Where(p => !string.Equals(p, context.ModelKey, PathComparison)))
+            {
+                var side = await GitCli.RunAsync(context.RepoRoot, "add", "-A", "--", spec);
+                if (!side.Ok && (side.Stderr ?? "").IndexOf("ignored", StringComparison.OrdinalIgnoreCase) < 0)
+                    add = side;
+            }
             if (!add.Ok) return new HistoryCheckpointResult { Error = GitCli.Combine(add), SavedModelFirst = saved };
             var cached = await GitCli.RunAsync(context.RepoRoot, new[] { "diff", "--cached", "--name-only", "--" }.Concat(context.Paths).ToArray());
             if (!cached.Ok) return new HistoryCheckpointResult { Error = GitCli.Combine(cached), SavedModelFirst = saved };
@@ -160,11 +173,14 @@ namespace Semanticus.Engine
                     Error = "The current state is safe in the rescue checkpoint, but git could not restore the target: " + GitCli.Combine(rr),
                 };
 
-            await OpenAsync(sourcePath);
+            await OpenAsync(sourcePath, discardUnsaved: true);
+            var opened = _sessions.Current;
+            if (opened != null) PublishSaveNotification(opened, "restore");
             var restored = await CreateHistoryCheckpointAsync("Restored to " + target.ShortHash + " - " + target.Label, commit: true, origin);
             if (!string.IsNullOrEmpty(restored.Error))
                 return new HistoryRestoreResult
                 {
+                    Restored = true,
                     Target = target, RescueCheckpoint = rescue.Checkpoint, Paths = context.Paths,
                     Error = "The model files were restored and reopened, but the restored state was not committed: " + restored.Error,
                 };
@@ -194,14 +210,12 @@ namespace Semanticus.Engine
             if (modelKey == null) return null;
             var paths = new List<string> { modelKey };
             var sidecar = LayoutStore.DirFor(source);
-            var sidecarKey = string.IsNullOrWhiteSpace(sidecar) ? null : RepoRelative(root, Path.GetFullPath(sidecar));
-            if (sidecarKey != null && !paths.Contains(sidecarKey, PathComparer))
+            if (!string.IsNullOrWhiteSpace(sidecar) && Directory.Exists(sidecar))
             {
-                // Add the sidecar ONLY when git already tracks it (never merely because the directory exists on disk):
-                // a gitignored .semanticus makes `git add` error "paths are ignored", and staging it wholesale would
-                // try to add the broker's locked engine.lock. Tracked-only matches the "tracked files" UI promise.
-                var tracked = await GitCli.RunAsync(root, "ls-files", "--", sidecarKey);
-                if (tracked.Ok && Lines(tracked.Stdout).Length > 0) paths.Add(sidecarKey);
+                LayoutStore.EnsureRuntimeIgnore(sidecar);
+                var sidecarKey = RepoRelative(root, Path.GetFullPath(sidecar));
+                if (sidecarKey != null && !paths.Contains(sidecarKey, PathComparer))
+                    paths.Add(sidecarKey);
             }
             return new CheckpointContext { Session = s, RepoRoot = root, ModelKey = modelKey, Paths = paths.ToArray(), Status = status };
         }

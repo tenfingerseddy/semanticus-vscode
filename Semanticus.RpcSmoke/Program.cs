@@ -36,6 +36,10 @@ namespace Semanticus.RpcSmoke
             Client ui = null, agent = null;
             try
             {
+                // CRASH-01 (round 4 UAT): the owner's own front door, proven against the REAL engine binary. It runs
+                // first because it needs no model and is the only leg that leaves this process.
+                CheckUiChallengeArguments();
+
                 var bim = FindTestBim();
                 Console.WriteLine($"[i] pipe={pipeName}  model={Path.GetFileName(bim)}");
 
@@ -57,8 +61,11 @@ namespace Semanticus.RpcSmoke
                 Console.WriteLine($"[i] original DAX: {Trunc(original)}");
 
                 // ---- DUAL-DRIVE #1: UI edits -> AGENT must see it live -------------------------
+                // Mutation waits name origin+label (or a monotonic revision). DidChangeWaiter is a
+                // consume-once cursor, so an unfiltered wait can take an own echo leftover from an
+                // earlier mutation and pass the later check vacuously. Deadline stays 5s.
                 var edited = (original ?? "") + " /* edit-by-ui */";
-                var wait1 = agent.Notify.WaitNextAsync();
+                var wait1 = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set DAX");
                 var set1 = await ui.Invoke<SetResult>("setDax", measureRef, edited);
                 Check("setDax reported changed", set1.Changed);
                 var n1 = await wait1.WaitAsync(TimeSpan.FromSeconds(5));
@@ -81,7 +88,7 @@ namespace Semanticus.RpcSmoke
                 Check("the refused stale-revision write did not mutate", await agent.Invoke<string>("getDax", measureRef) == edited);
 
                 // ---- DUAL-DRIVE #2: AGENT edits -> UI must see it live -------------------------
-                var wait2 = ui.Notify.WaitNextAsync();
+                var wait2 = ui.Notify.WaitNextAsync(n => n.Origin == "agent" && n.Label == "set DAX");
                 // The CURRENT revision (+ live session id) passes both fences and lands exactly like the unfenced call.
                 var set2 = await agent.Invoke<SetResult>("setDax", measureRef, edited2, "human", fenceInfo.SessionId, fenceInfo.Revision);
                 var n2 = await wait2.WaitAsync(TimeSpan.FromSeconds(5));
@@ -94,7 +101,12 @@ namespace Semanticus.RpcSmoke
                 var srcTable = measureRef.Substring("measure:".Length, measureRef.IndexOf('/') - "measure:".Length);
                 var roots = await ui.Invoke<TreeNode[]>("listTree", (object)null);
                 var otherTable = roots.First(t => t.Kind == "table" && t.Name != srcTable);
-                var waitDup = agent.Notify.WaitNextAsync();
+                // Predicate-filtered: a one-shot next-event waiter is consumed by a straggler
+                // model/didChange from the previous mutation still in flight on the agent pipe
+                // after that mutation's RPC response returned (RpcServer.Broadcast does not await
+                // NotifyAsync). Same class as McpSmoke's workflow waiter. The deadline stays 5s.
+                var waitDup = agent.Notify.WaitNextAsync(n => n.Origin == "human"
+                    && (n.Label ?? "").StartsWith("duplicate ", StringComparison.Ordinal));
                 // NEW wire shape: (objRef, newName, origin, targetRef) — targetRef APPENDED after origin.
                 var dupRef = await ui.Invoke<string>("duplicateObject", measureRef, null, "human", otherTable.Ref);
                 Check("duplicateObject(targetRef) lands the copy on the OTHER table", dupRef.StartsWith("measure:" + otherTable.Name + "/"));
@@ -108,7 +120,8 @@ namespace Semanticus.RpcSmoke
 
                 // LEGACY wire shape: the pre-targetRef 3-arg positional call (objRef, newName, ignored origin slot).
                 // The positional shape remains compatible, while connection authentication owns the real origin.
-                var waitLegacy = ui.Notify.WaitNextAsync();
+                var waitLegacy = ui.Notify.WaitNextAsync(n => n.Origin == "agent"
+                    && (n.Label ?? "").StartsWith("duplicate ", StringComparison.Ordinal));
                 var legacyRef = await agent.Invoke<string>("duplicateObject", measureRef, "Legacy Dup Smoke", "human");
                 Check("LEGACY 3-arg duplicateObject stays in-place (3rd positional arg not misread as targetRef)",
                     legacyRef == "measure:" + srcTable + "/Legacy Dup Smoke");
@@ -133,7 +146,7 @@ namespace Semanticus.RpcSmoke
 
                 // ---- DOCUMENTATION NARRATIVE: dual-drive round-trip (annotation, MutateAsync broadcast, undo) ----
                 const string docCtx = "Revenue grain: one row per order line.";
-                var waitDoc = agent.Notify.WaitNextAsync();
+                var waitDoc = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set doc narrative");
                 var setDoc = await ui.Invoke<SetResult>("setDocSection", measureRef, "businessContext", docCtx, "human");
                 Check("setDocSection reported changed", setDoc != null && setDoc.Changed);
                 var ndoc = await waitDoc.WaitAsync(TimeSpan.FromSeconds(5));
@@ -156,7 +169,7 @@ namespace Semanticus.RpcSmoke
                 Check("getDocModel reflects the authored measure narrative",
                     dm.Measures.Any(r => r.Ref == measureRef && r.Narrative != null
                         && r.Narrative.Sections.Any(sec => sec.Key == "businessContext" && sec.Markdown == docCtx)));
-                var waitDocU = agent.Notify.WaitNextAsync();
+                var waitDocU = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "undo");
                 await ui.Invoke<UndoState>("undo");                  // undo the doc-narrative annotation
                 await waitDocU.WaitAsync(TimeSpan.FromSeconds(5));
                 var afterDocUndo = await agent.Invoke<string>("getDocSection", measureRef, "businessContext");
@@ -170,13 +183,13 @@ namespace Semanticus.RpcSmoke
                 {
                     var origFrom = rel0.FromCardinality; var origTo = rel0.ToCardinality;
                     var target = origFrom == "One" ? "Many" : "One";   // pick a from-cardinality different from the current one
-                    var waitCard = agent.Notify.WaitNextAsync();
+                    var waitCard = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set relationship cardinality");
                     var setCard = await ui.Invoke<SetResult>("setRelationshipCardinality", rel0.Name, target, "One", "human");
                     Check("setRelationshipCardinality returns a serializable SetResult (changed)", setCard != null && setCard.Changed);
                     await waitCard.WaitAsync(TimeSpan.FromSeconds(5));
                     var rel1 = (await agent.Invoke<ModelGraph>("getModelGraph")).Relationships.FirstOrDefault(r => r.Name == rel0.Name);
                     Check("AGENT sees the new cardinality on the shared session", rel1 != null && rel1.FromCardinality == target && rel1.ToCardinality == "One");
-                    var waitCardU = agent.Notify.WaitNextAsync();
+                    var waitCardU = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "undo");
                     await ui.Invoke<UndoState>("undo");                 // undo the cardinality change (net-zero on the undo stack)
                     await waitCardU.WaitAsync(TimeSpan.FromSeconds(5));
                     var rel2 = (await agent.Invoke<ModelGraph>("getModelGraph")).Relationships.FirstOrDefault(r => r.Name == rel0.Name);
@@ -184,7 +197,7 @@ namespace Semanticus.RpcSmoke
                 }
 
                 // ---- SHARED UNDO across both drivers ------------------------------------------
-                var waitU = agent.Notify.WaitNextAsync();
+                var waitU = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "undo");
                 var undo = await ui.Invoke<UndoState>("undo");      // UI undoes the agent's edit
                 await waitU.WaitAsync(TimeSpan.FromSeconds(5));
                 var afterUndo = await agent.Invoke<string>("getDax", measureRef);
@@ -256,7 +269,7 @@ namespace Semanticus.RpcSmoke
                 }
                 else
                 {
-                    var openModern = await ui.Invoke<OpenResult>("open", modern);
+                    var openModern = await ui.Invoke<OpenResult>("open", modern, true);
                     Check("LSDL/RPC: opened a modern (CL>=1465) model so the linguistic schema is writable", openModern.Tables > 0);
 
                     // enable_qna over RPC: seeds the linguistic schema; the agent must see the SYN-SCHEMA
@@ -274,7 +287,7 @@ namespace Semanticus.RpcSmoke
                     {
                         // setSynonyms over RPC: a string[] argument must marshal across the wire. Prove the
                         // OTHER client receives model/didChange for it (dual-drive broadcast of an LSDL write).
-                        var synWait = agent.Notify.WaitNextAsync();
+                        var synWait = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set synonyms");
                         var syn = await ui.Invoke<SetResult>("setSynonyms", fieldRef, new[] { "revenue", "turnover" }, null, "human");
                         Check("LSDL/RPC: setSynonyms (string[] terms marshalled) applies, returns SetResult", syn != null && syn.Changed);
                         var synNote = await synWait.WaitAsync(TimeSpan.FromSeconds(5));
@@ -466,6 +479,71 @@ namespace Semanticus.RpcSmoke
 
         private static string Trunc(string s) => string.IsNullOrEmpty(s) ? "(empty)" : (s.Length > 60 ? s.Substring(0, 60) + "..." : s);
 
+        /// <summary>
+        /// CRASH-01 (round 4 UAT): an out-of-range --ui-challenge-stdin used to reach RpcServer's constructor
+        /// unguarded, so the ArgumentException escaped Serve() and the runtime aborted the process (exit 134,
+        /// "Unhandled exception", core dump). The owner must refuse with a plain message and a non-zero exit,
+        /// exactly the way the missing-value case already does.
+        /// </summary>
+        private static void CheckUiChallengeArguments()
+        {
+            Check("engine refuses a short --ui-challenge-stdin without crashing", RefusesChallenge("short"));
+            Check("engine refuses a long --ui-challenge-stdin without crashing", RefusesChallenge(new string('a', 129)));
+            Check("engine refuses a missing --ui-challenge-stdin without crashing", RefusesChallenge(null));
+        }
+
+        /// <summary>Launches the REAL engine binary the way the VS Code extension does
+        /// (<c>serve --workspace &lt;tmp&gt; --ui-challenge-stdin</c>) with one line on stdin, and requires a clean
+        /// refusal: exit 2, a plain message naming the flag, and no unhandled-exception text on stderr. False on
+        /// anything else, a hang included.</summary>
+        private static bool RefusesChallenge(string challenge)
+        {
+            var dir = AppContext.BaseDirectory;
+            var apphost = Path.Combine(dir, OperatingSystem.IsWindows() ? "Semanticus.Engine.exe" : "Semanticus.Engine");
+            var dll = Path.Combine(dir, "Semanticus.Engine.dll");
+            if (!File.Exists(apphost) && !File.Exists(dll))
+                throw new FileNotFoundException("The engine binary is not beside the smoke runner; build the solution first.", dll);
+
+            var workspace = Path.Combine(Path.GetTempPath(), "semanticus-challenge-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(workspace);
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = workspace,
+                };
+                if (File.Exists(apphost)) psi.FileName = apphost;
+                else { psi.FileName = "dotnet"; psi.ArgumentList.Add(dll); }
+                psi.ArgumentList.Add("serve");
+                psi.ArgumentList.Add("--workspace");
+                psi.ArgumentList.Add(workspace);
+                psi.ArgumentList.Add("--ui-challenge-stdin");
+
+                using var child = System.Diagnostics.Process.Start(psi);
+                var stdout = child.StandardOutput.ReadToEndAsync();
+                var stderrTask = child.StandardError.ReadToEndAsync();
+                try { child.StandardInput.WriteLine(challenge ?? string.Empty); child.StandardInput.Close(); }
+                catch (IOException) { /* the child left before reading; its stderr still carries the verdict */ }
+                var exited = child.WaitForExit(60000);
+                if (!exited) { try { child.Kill(true); } catch { } return false; }
+                var stderr = stderrTask.GetAwaiter().GetResult();
+                _ = stdout.GetAwaiter().GetResult();   // drained so the child can never block on a full pipe
+
+                var clean = child.ExitCode == 2
+                    && stderr.Contains("--ui-challenge-stdin", StringComparison.Ordinal)
+                    && !stderr.Contains("Unhandled exception", StringComparison.Ordinal);
+                if (!clean)
+                    Console.WriteLine($"[x] challenge {(challenge == null ? "(missing)" : challenge.Length + " chars")}: exit {child.ExitCode}; stderr {Trunc(stderr.Replace("\r", "").Replace("\n", " "))}");
+                return clean;
+            }
+            finally { try { Directory.Delete(workspace, true); } catch { } }
+        }
+
         private static string FindTestBim() => FindTestData("AdventureWorks.bim")
             ?? throw new FileNotFoundException("Could not locate AdventureWorks.bim by walking up from " + AppContext.BaseDirectory);
 
@@ -538,7 +616,7 @@ namespace Semanticus.RpcSmoke
         private sealed class NotifyCollector
         {
             private readonly object _gate = new object();
-            private TaskCompletionSource<ChangeNotification> _next;
+            private readonly DidChangeWaiter _didChange = new DidChangeWaiter();
             private TaskCompletionSource<ChangePlanView> _nextPlan;
             private Func<ChangePlanView, bool> _nextPlanMatch;
             private TaskCompletionSource<ActivityEvent> _nextActivity;
@@ -550,12 +628,8 @@ namespace Semanticus.RpcSmoke
             [JsonRpcMethod("model/didChange")]
             public void OnDidChange(ChangeNotification n)
             {
-                lock (_gate)
-                {
-                    All.Add(n);
-                    var t = _next; _next = null;
-                    t?.TrySetResult(n);
-                }
+                lock (_gate) All.Add(n);
+                _didChange.Observe(n);
             }
 
             [JsonRpcMethod("plan/didChange")]
@@ -585,14 +659,8 @@ namespace Semanticus.RpcSmoke
                 }
             }
 
-            public Task<ChangeNotification> WaitNextAsync()
-            {
-                lock (_gate)
-                {
-                    _next = new TaskCompletionSource<ChangeNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    return _next.Task;
-                }
-            }
+            public Task<ChangeNotification> WaitNextAsync(Func<ChangeNotification, bool> match = null) =>
+                _didChange.WaitAsync(match);
 
             public Task<ChangePlanView> WaitNextPlanAsync(Func<ChangePlanView, bool> match = null)
             {

@@ -24,7 +24,7 @@ namespace Semanticus.Engine
         {
             var kind = NormalizeTemplate(template);
             if (fiscalStartMonth < 1 || fiscalStartMonth > 12)
-                throw new ArgumentException($"fiscalStartMonth must be 1–12 (got {fiscalStartMonth}).");
+                throw new ArgumentException($"Fiscal year start month must be 1 to 12 (got {fiscalStartMonth}).");
             tableName = string.IsNullOrWhiteSpace(tableName) ? "Date" : tableName.Trim();
 
             var s = _sessions.Require();
@@ -46,7 +46,7 @@ namespace Semanticus.Engine
                 var plan = BuildTemplate(kind, dateColName, fiscalStartMonth);
                 calName = string.IsNullOrWhiteSpace(calendarName) ? plan.CalendarName : calendarName.Trim();
                 if (!isNew && CalendarOps.Raw(t).Calendars.ContainsName(calName))
-                    throw new InvalidOperationException($"Table '{t.Name}' already has a calendar named '{calName}'. Pass a different calendarName, or delete_calendar first.");
+                    throw new InvalidOperationException($"Table '{t.Name}' already has a calendar named '{calName}'. Delete that calendar first, or pick a different table.");
 
                 void ApplyTemplate(TOM.Table tom)
                 {
@@ -65,7 +65,7 @@ namespace Semanticus.Engine
                     {
                         if (tom.Columns.Find(c.Name) != null)
                         {
-                            skipped.Add($"{c.Name} (column existed — kept its expression, mapped as-is)");
+                            skipped.Add($"{c.Name} (column existed: kept its expression, mapped as-is)");
                             continue;
                         }
                         tom.Columns.Add(new TOM.CalculatedColumn
@@ -110,7 +110,7 @@ namespace Semanticus.Engine
                 Note = (createdTable ? $"Created calculated table '{tableName}'. " : "")
                      + $"Calendar-aware DAX can target it: TOTALYTD(expr, '{calName}'). Generated columns materialize on deploy/process."
                      + (kind == "fiscal" ? $" Fiscal years are labeled by ENDING year (start month {fiscalStartMonth}: FY2025 spans {new DateTime(2024, fiscalStartMonth, 1):MMM yyyy}–{new DateTime(2025, fiscalStartMonth, 1).AddMonths(-1):MMM yyyy})." : "")
-                     + " Persist with save_model.",
+                     + " Save the model to keep this change.",
             };
         }
 
@@ -138,15 +138,15 @@ namespace Semanticus.Engine
             {
                 var name = dateColumn.Trim();
                 if (tom.Columns.Find(name) == null)
-                    throw new InvalidOperationException($"Table '{t.Name}' has no column named '{name}' — run list_columns on '{t.Name}' to see its columns, then pass an existing dateColumn.");
+                    throw new InvalidOperationException($"Table '{t.Name}' has no column named '{name}'. Pick an existing date column.");
                 return name;
             }
             if (tom.Columns.Find("Date") != null) return "Date";
             var dateCols = tom.Columns.Where(c => c.DataType == TOM.DataType.DateTime).Select(c => c.Name).ToArray();
             if (dateCols.Length == 1) return dateCols[0];
             throw new InvalidOperationException(dateCols.Length == 0
-                ? $"Table '{t.Name}' has no DateTime column — pass dateColumn, or omit tableName to create a fresh date table."
-                : $"Table '{t.Name}' has multiple DateTime columns ({string.Join(", ", dateCols)}) — pass dateColumn to pick one.");
+                ? $"Table '{t.Name}' has no date column. Pick a date column, or leave the table blank to create a new date table."
+                : $"Table '{t.Name}' has multiple date columns ({string.Join(", ", dateCols)}). Pick one.");
         }
 
         // ---- Template definitions -------------------------------------------------------------------

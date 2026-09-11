@@ -14,6 +14,27 @@ Semanticus vendors and compiles portions of the Tabular Editor 2 source
 (TOMWrapper change-tracking/undo, FormulaFixup, BPALib and related headless
 libraries) into its engine. The vendored source and its license are retained
 under external/TabularEditor/.
+
+One Tabular Editor 2 file is additionally COPIED into this repository rather than
+compiled in place: the ANTLR DAX lexer grammar, upstream
+AntlrGrammars/DAXLexer.g4, copied to Semanticus.Core/Grammars/DAXLexer.g4 so the
+ANTLR code generator can run inside that project. The copy carries its own MIT
+attribution header. The grammar rules are upstream's, unmodified. See
+THIRD-PARTY-NOTICES.md for the full MIT license text.
+--------------------------------------------------------------------------------
+Best Practice Analyzer rules (BPARules-PowerBI.json)
+Copyright (c) 2016 Microsoft
+Licensed under the MIT License.
+https://github.com/microsoft/Analysis-Services
+
+The default Best Practice Analyzer rule set, Semanticus.Analysis/Rules/
+BPARules-PowerBI.json, is taken from Microsoft's Analysis-Services repository,
+path BestPracticeRules/BPARules.json, at commit
+50e8ce5028dd7046e73974ec69cb79af225e41b0. It is an embedded resource in
+Semanticus.Analysis.dll, so it is redistributed in every build. The file carries
+its own MIT attribution header, and BPARules-PowerBI.PROVENANCE.md beside it
+lists every difference from upstream. See THIRD-PARTY-NOTICES.md for the full
+MIT license text.
 --------------------------------------------------------------------------------
 Microsoft Analysis Services client libraries
 (Microsoft.AnalysisServices / Tabular Object Model, ADOMD.NET)

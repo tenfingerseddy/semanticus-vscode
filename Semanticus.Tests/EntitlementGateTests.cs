@@ -31,7 +31,10 @@ namespace Semanticus.Tests
         public async Task Free_tier_is_refused_bpa_fix_all()
         {
             using var engine = await OpenAsync(pro: false);
-            await Assert.ThrowsAsync<EntitlementException>(() => engine.BpaFixAllAsync("human"));
+            var ex = await Assert.ThrowsAsync<EntitlementException>(() => engine.BpaFixAllAsync("human"));
+            Assert.Contains("Pro feature", ex.Message);
+            Assert.DoesNotContain("SEMANTICUS_LICENSE", ex.Message);
+            Assert.DoesNotContain("~/.semanticus", ex.Message);
         }
 
         [Fact]
@@ -163,11 +166,12 @@ namespace Semanticus.Tests
 
                 // A bulk commit (>1 applicable) is refused BEFORE anything touches the target file...
                 var before = System.IO.File.GetLastWriteTimeUtc(target);
-                await Assert.ThrowsAsync<EntitlementException>(() => engine.ApplyDiffAsync(null, file, null, commit: true, "human"));
+                await Assert.ThrowsAsync<EntitlementException>(() => engine.ApplyDiffAsync(null, file, null, commit: true, "human", overrideReason: null, confirmToken: preview.ConfirmToken));
                 Assert.Equal(before, System.IO.File.GetLastWriteTimeUtc(target));   // the refusal wrote nothing
 
                 // ...but a single selected ref commits free — same rule as the session path.
-                var one = await engine.ApplyDiffAsync(null, file, new[] { $"measure:{table.Name}/Gate Merge A" }, commit: true, "human");
+                var onePreview = await engine.ApplyDiffAsync(null, file, new[] { $"measure:{table.Name}/Gate Merge A" }, commit: false, "human");
+                var one = await engine.ApplyDiffAsync(null, file, new[] { $"measure:{table.Name}/Gate Merge A" }, commit: true, "human", overrideReason: null, confirmToken: onePreview.ConfirmToken);
                 Assert.True(one.Applied);
                 Assert.Equal(1, one.Count);
             }
@@ -184,7 +188,8 @@ namespace Semanticus.Tests
                 var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
                 await engine.CreateMeasureAsync(table.Ref, "Gate Merge A", "1", "human");
                 await engine.CreateMeasureAsync(table.Ref, "Gate Merge B", "2", "human");
-                var r = await engine.ApplyDiffAsync(null, new ModelRef { Kind = "file", Path = target }, null, commit: true, "human");
+                var bulkPreview = await engine.ApplyDiffAsync(null, new ModelRef { Kind = "file", Path = target }, null, commit: false, "human");
+                var r = await engine.ApplyDiffAsync(null, new ModelRef { Kind = "file", Path = target }, null, commit: true, "human", overrideReason: null, confirmToken: bulkPreview.ConfirmToken);
                 Assert.True(r.Applied);   // bulk — must NOT throw the gate
                 Assert.True(r.Count >= 2);
             }

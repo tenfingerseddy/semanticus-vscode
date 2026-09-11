@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(resolve(root, 'webview', 'src', 'bridge.ts'), 'utf8');
-const bundle = readFileSync(resolve(root, 'media', 'studio', 'studio.js'), 'utf8');
+const bundlePath = resolve(root, 'media', 'studio', 'studio.js');
+assert.ok(existsSync(bundlePath), 'media/studio/studio.js is missing. Run npm run build:webview first.');
+const bundle = readFileSync(bundlePath, 'utf8');
 
 const policy = source.match(/const RPC_DEFAULT_TIMEOUT_MS = ([^;]+);[\s\S]*?const RPC_LONG_TIMEOUT_MS = ([^;]+);[\s\S]*?const LONG_RPC = (\/\^\([\s\S]*?\)\/);/);
 assert.ok(policy, 'bridge timeout policy should remain statically testable');

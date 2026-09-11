@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A1 conformance tests. References ONLY Semanticus.Dax (+ the xunit toolchain). NOT in Semanticus.sln. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Semanticus.Dax\Semanticus.Dax.csproj" />
+
+    <!--
+      The out-of-process depth probe (A2PR1-M1, A2PR1-M2). ReferenceOutputAssembly is false because the
+      tests never link against it: they SPAWN it, so that a stack overflow kills the child instead of the
+      test host. The reference exists purely to make `dotnet test` build it and drop it in this project's
+      output directory, where DeepRecursionTests finds it by name.
+    -->
+    <ProjectReference Include="..\tools\dax-deep-probe\Semanticus.DaxDeepProbe\Semanticus.DaxDeepProbe.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

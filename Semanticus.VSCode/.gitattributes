@@ -1,0 +1,14 @@
+# Line endings for the npm manifests, pinned to LF on checkout.
+#
+# npm does NOT always write lockfiles as LF. Measured with npm 11.6.2 on
+# Windows: npm copies package.json's OWN newline style into the lockfile it
+# writes. So with core.autocrlf=true, a CRLF package.json makes npm emit a
+# CRLF package-lock.json, git normalizes it back to LF on commit, and the
+# byte-identity check in test/lockfile-drift.test.mjs can never pass.
+#
+# Pinning BOTH files to eol=lf is the fix: package.json checks out LF, npm
+# therefore writes LF, and the bytes on disk match the bytes git stores.
+package.json text eol=lf
+**/package.json text eol=lf
+package-lock.json text eol=lf
+**/package-lock.json text eol=lf

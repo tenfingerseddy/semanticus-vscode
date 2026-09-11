@@ -68,10 +68,11 @@ Entry shape follows `resolveEngine()`:
 - **Bundled exe** — `command` = the exe path, `args` = `["mcp","--workspace",<ws>]`.
 - **Dev DLL override** — `command` = the resolved `dotnet`, `args` = `[<dll>,"mcp","--workspace",<ws>]`.
 
-If `semanticus.licenseToken` is set, `["--license", <token>]` is appended (the reliable Pro-entitlement channel;
-`.mcp.json` env blocks are historically unreliable, which is why the flag exists).
+The generated entry does not carry a Pro token. Entitlement follows the owner engine over the pipe.
+Do not put the token on the process command line: any local user can read process arguments. When no owner is
+running, a headless engine reads env `SEMANTICUS_LICENSE` or `~/.semanticus/license`.
 
-Sample (bundled exe, no license):
+Sample (bundled exe):
 
 ```json
 {

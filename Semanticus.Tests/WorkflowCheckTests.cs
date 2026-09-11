@@ -130,14 +130,15 @@ verify:
             finally { Directory.Delete(ws, true); }
         }
 
-        // The FULL 14-workflow launch set (all shipped stock workflows are gated): every one must survive the
-        // admission dry-run — its triggers/ops are real ops, every verify probe/when names a collected input,
-        // and each dax_probe/dax_equivalence/object-bpa verify has an objectRef target to act on. Regression-
-        // tests check_workflow admission per shipped workflow, so a future edit naming a phantom op or an
-        // unresolved probe is caught here, not in production.
+        // The shipped stock launch set is 15 workflows (Semanticus.Engine/workflows/*.md), all gated and all
+        // covered below. Every case must survive the admission dry-run: its triggers/ops are real ops, every
+        // verify probe/when names a collected input, and each dax_probe/dax_equivalence/object-bpa verify has
+        // an objectRef target to act on. A future stock-workflow edit naming a phantom op or an unresolved probe
+        // is caught here, not in production.
         [Theory]
         [InlineData("add-relationship")]
         [InlineData("calendar-setup")]
+        [InlineData("check-blast-radius")]
         [InlineData("deploy-to-production")]
         [InlineData("governed-rename")]
         [InlineData("import-table")]

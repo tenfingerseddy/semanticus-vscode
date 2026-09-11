@@ -91,6 +91,19 @@ namespace Semanticus.Engine
             }
         }
 
+        // Display-only: a legacy on-disk row may still carry a pasted connection string. Never rewrite the file on
+        // a read; project safe coordinates so every list/UI/MCP surface is clean even when Append never ran.
+        private static void ProjectForDisplay(ConnectionHistoryEvent ev)
+        {
+            if (ev == null) return;
+            var coords = ConnectionInput.Parse(ev.Endpoint, ev.Database);
+            ev.Endpoint = coords.Safe ? coords.Endpoint : ConnectionInput.Redacted;
+            ev.Database = coords.Database;
+            if (XmlaAuthHint.ContainsSecret(ev.Endpoint)) ev.Endpoint = ConnectionInput.Redacted;
+            ev.Detail = XmlaAuthHint.Scrub(ev.Detail);
+            XmlaAuthHint.ScrubStringProperties(ev);
+        }
+
         // ---- persistence -------------------------------------------------------------------------------------
 
         private static IDisposable AcquireLock()
@@ -113,7 +126,9 @@ namespace Semanticus.Engine
             {
                 var p = FilePath();
                 if (!File.Exists(p)) return new List<ConnectionHistoryEvent>();
-                return JsonSerializer.Deserialize<List<ConnectionHistoryEvent>>(File.ReadAllText(p), JsonOpts) ?? new List<ConnectionHistoryEvent>();
+                var all = JsonSerializer.Deserialize<List<ConnectionHistoryEvent>>(File.ReadAllText(p), JsonOpts) ?? new List<ConnectionHistoryEvent>();
+                foreach (var e in all) ProjectForDisplay(e);
+                return all;
             }
             catch { return new List<ConnectionHistoryEvent>(); }
         }

@@ -180,6 +180,11 @@ function renderVarReturn(nodes: Node[], indent: string, o: Opts): string {
       lines.push(`RETURN\n${indent}${o.indent}${renderSeq(rhs, indent + o.indent, o)}`);
       break;
     } else {
+      if ('tok' in node && (node.tok.k === 'lc' || node.tok.k === 'bc')) {
+        lines.push(node.tok.v);
+        i++;
+        continue;
+      }
       const s = inlineSeq([node], o);
       if (s) lines.push(s);
       i++;

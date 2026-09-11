@@ -108,6 +108,10 @@ namespace Semanticus.Tests
 
         // A clean, gate-PASSING model: a described measure with a format string, the numeric fact column hidden — so
         // neither the >50%-undescribed readiness gate nor a blocking BPA format-string error trips.
+        // It also carries a real date table (DataCategory "Time" + an IsKey DateTime column), because the Microsoft
+        // BPA corpus makes MODEL_SHOULD_HAVE_A_DATE_TABLE a severity-2 rule with no auto-fix, and a model with no
+        // date dimension genuinely is not best-practice clean. The date key gets a FormatString so the
+        // severity-2 SEM_COLUMN_NEEDS_FORMAT_STRING rule is satisfied too.
         private static async Task<LocalEngine> PassingModelAsync()
         {
             var engine = new LocalEngine(new SessionManager(), new Fake(true));
@@ -119,6 +123,11 @@ namespace Semanticus.Tests
             var mref = await engine.CreateMeasureAsync(t, "Total Sales", "SUM ( Sales[Sales Amount] )", "human");
             await engine.SetMeasureFormatAsync(mref, "#,0", "human");
             await engine.SetDescriptionAsync(mref, "The sum of all sales amounts across the model.", "human");
+            var dt = await engine.CreateTableAsync("Date", "human");
+            var dkey = await engine.CreateColumnAsync(dt, "Date", "DateTime", "Date", "human");
+            await engine.SetObjectPropertyAsync(dkey, "IsKey", "true", "human");
+            await engine.SetObjectPropertyAsync(dkey, "FormatString", "yyyy-mm-dd", "human");
+            await engine.MarkDateTableAsync(dt, "Date", "human");   // DataCategory = "Time"
             return engine;
         }
 
@@ -141,7 +150,7 @@ namespace Semanticus.Tests
         public async Task DeployGate_passes_on_a_clean_model_with_no_blockers()
         {
             using var engine = await PassingModelAsync();
-            var gate = await engine.DeployGateAsync(null);
+            var gate = await engine.DeployGateAsync(null, "human");
             Assert.True(gate.Pass, "expected a passing gate, blockers were: " + string.Join(" | ", gate.Blockers));
             Assert.Empty(gate.Blockers);
             Assert.Equal("Gate passed.", gate.Note);
@@ -151,7 +160,7 @@ namespace Semanticus.Tests
         public async Task DeployGate_blocks_and_names_the_blockers_on_a_red_model()
         {
             using var engine = await BlockedModelAsync();
-            var gate = await engine.DeployGateAsync(null);
+            var gate = await engine.DeployGateAsync(null, "human");
             Assert.False(gate.Pass);
             Assert.NotEmpty(gate.Blockers);
             Assert.Contains("Gate blocked", gate.Note);           // the note names the recovery-relevant blockers
@@ -299,7 +308,7 @@ namespace Semanticus.Tests
             using var engine = await PassingModelAsync();   // file-created ⇒ not live-bound
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.DeployLiveAsync(null, null, "serviceprincipal", null, null, commit: false));
-            Assert.Contains("open_live", ex.Message);       // the message names the recovery
+            Assert.Contains("Open a live model", ex.Message);       // the message names the recovery
         }
 
         [Fact]
@@ -316,8 +325,9 @@ namespace Semanticus.Tests
         {
             using var engine = await BlockedModelAsync();
             // commit=true runs the deploy gate BEFORE any auth/network — a RED gate throws with the blockers + recovery.
+            var token = await ReviewFenceTest.TokenAsync(engine, "powerbi://api.powerbi.com/v1.0/myorg/ws", "Sales");
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                engine.DeployLiveAsync("powerbi://api.powerbi.com/v1.0/myorg/ws", "Sales", "serviceprincipal", null, null, commit: true));
+                engine.DeployLiveAsync("powerbi://api.powerbi.com/v1.0/myorg/ws", "Sales", "serviceprincipal", null, null, commit: true, origin: "human", overrideReason: null, confirmToken: token));
             Assert.Contains("blocked by the deploy gate", ex.Message);
             Assert.Contains("overrideReason", ex.Message);
         }

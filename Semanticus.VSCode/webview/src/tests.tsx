@@ -3,6 +3,7 @@ import { rpc, onActivity, onDidChange } from './bridge';
 import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResultW } from './artifactdialog';
 import { InterviewCard, type SuiteInterviewEvidence } from './interview';
 import { uiLabel } from './copy';
+import { AuthorDrawer, NewTestMenu, RunScopePopover, scopeLabel, type AuthorShape, type RunScopeMode } from './tests-authoring';
 
 // ===================================================================================================
 // The Tests tab (the Prove intent, docs/tests-tab-spec.md). The three ratified invariants are LAYOUT
@@ -190,6 +191,10 @@ export function TestsView() {
   // The run survives tab switches, so a model edit can outdate the visible grade. Any change marks it
   // stale; only a fresh run clears it. Over-marking is honest; a stale grade shown as current is not.
   const [stale, setStale] = useState(false);
+  const [author, setAuthor] = useState<AuthorShape | null>(null);
+  const [editing, setEditing] = useState<TestDefinitionW | null>(null);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [scopeMode, setScopeMode] = useState<RunScopeMode>('everything');
   useEffect(() => onDidChange(() => setStale(true)), []);
 
   const loadSuite = () => rpc<TestSuiteInfoW>('listTests').then(setSuite).catch(() => undefined);
@@ -201,11 +206,14 @@ export function TestsView() {
   const runSuite = (persist: boolean) => {
     setBusy(true);
     setErr(null);
-    rpc<TestRunW>('runTests', persist)
+    const only = scopeMode === 'selected' ? [...ticked] : null;
+    const sections = scopeMode === 'section' ? [sub] : null;
+    rpc<TestRunW>('runTests', persist, only, sections)
       .then((next) => { setRun(next); setStale(false); if (next.error) setErr(next.error); })
       .catch((error: unknown) => setErr(error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(false));
   };
+  const partial = scopeMode !== 'everything';
 
   const tabCounts: Record<SubTab, number> = {
     measures: run?.reconciles?.length ?? 0,
@@ -218,29 +226,36 @@ export function TestsView() {
 
   return (
     <div className="h-full overflow-auto">
+      {author && <AuthorDrawer shape={author} editing={editing} onClose={() => { setAuthor(null); setEditing(null); }} onSaved={loadSuite} />}
       {reportOpen && <ReportExportDialog modelName={run?.modelName} onClose={() => setReportOpen(false)} />}
       <main className="sem-centered-page w-full min-w-0 px-7 pt-6 pb-12">
         <header className="mb-3.5 flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-[240px] flex-1"><h1 className="m-0 text-[15px] font-semibold">Tests</h1><div className="mt-1 truncate text-[12px]" style={{ color: 'var(--sem-muted)' }}>{run?.live && <i aria-hidden className="mr-2 inline-block size-1.5 rounded-full" style={{ background: 'var(--sem-good)' }} />}{run?.environment ?? 'Prove the model with data: probe relationships, check role filters and tie saved measures back to accepted source SQL.'}</div></div>
-          <div className="flex flex-wrap gap-2">
-            <button className="min-h-7 rounded-md border px-3 py-1 text-[12px] font-semibold disabled:opacity-50" disabled={busy} onClick={() => runSuite(false)} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{busy ? 'Running…' : 'Run tests'}</button>
-            <button className="min-h-7 rounded-md border px-3 py-1 text-[12px] disabled:opacity-50" disabled={busy} onClick={() => runSuite(true)} title="Record this run in test history" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>Run + record <span style={{ color: 'var(--sem-muted)' }}>Pro</span></button>
+          <div className="flex flex-wrap items-start gap-2">
+            <NewTestMenu onPick={(shape) => { setEditing(null); setAuthor(shape); }} />
+            <div className="flex flex-col gap-0.5">
+              <RunScopePopover mode={scopeMode} selectedCount={ticked.size} section={sub} onMode={setScopeMode} onRun={runSuite} persistOff={partial} />
+              {partial && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>{scopeLabel(scopeMode, ticked.size, sub)}</span>}
+            </div>
+            <button className="min-h-7 rounded-md border px-3 py-1 text-[12px] disabled:opacity-50" disabled={busy || partial} onClick={() => runSuite(true)} title={partial ? 'Only a full run can be recorded.' : 'Record this run in test history'} style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>Run + record <span style={{ color: 'var(--sem-muted)' }}>Pro</span></button>
+            {partial && <span className="self-center text-[10px]" style={{ color: 'var(--sem-muted)' }}>Only a full run can be recorded.</span>}
             <button className="min-h-7 rounded-md border px-3 py-1 text-[12px] disabled:opacity-60" disabled={!run || busy} onClick={() => setReportOpen(true)} title="Preview, print or export the latest current-model report" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>Report… <span style={{ color: 'var(--sem-muted)' }}>Pro</span></button>
           </div>
         </header>
 
         {err && <div className="mb-3"><Banner color="var(--sem-bad)">{err}</Banner></div>}
-        {run?.note && <div className="mb-3"><Banner color="var(--sem-warn)">{run.note}</Banner></div>}
+        {run?.health?.grade === 'Partial' && <div className="mb-3"><Banner color="var(--sem-nv)">{run.note || 'Partial run. No grade for a partial run.'}</Banner></div>}
+        {run?.note && run?.health?.grade !== 'Partial' && <div className="mb-3"><Banner color="var(--sem-warn)">{run.note}</Banner></div>}
         {run?.health && stale && <div className="mb-3"><Banner color="var(--sem-warn)">The model changed after this run. Everything below describes the earlier state; run tests again for current evidence.</Banner></div>}
         {run?.health && <OverviewBand run={run} />}
-        <div className="mb-3.5"><InterviewCard suiteEvidence={run?.interview} suiteNote={run?.interviewNote} /></div>
+        <div className="mb-3.5"><InterviewCard suiteEvidence={run?.interview} suiteNote={run?.interviewNote} onNew={() => { setEditing(null); setAuthor('interview'); }} /></div>
 
         <nav className="mb-3.5 flex h-[38px] items-end gap-6 border-b" aria-label="Test sections" style={{ borderColor: 'var(--sem-border)' }}>
           {(Object.keys(tabCounts) as SubTab[]).map((tab) => <button key={tab} className="h-[38px] border-0 border-b-2 bg-transparent px-0.5 text-[12px] capitalize" onClick={() => setSub(tab)} style={{ color: sub === tab ? 'var(--sem-accent)' : 'var(--sem-muted)', borderBottomColor: sub === tab ? 'var(--sem-accent)' : 'transparent' }}>{tab}{/* history's count is unknown until its lazy load lands: no count beats a false 0 */}{(tab !== 'history' || history != null) && <span className="tnum ml-1 text-[11px]">{tabCounts[tab]}</span>}</button>)}
         </nav>
 
         {!run && !busy && sub !== 'measures' && <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>No run yet. Run the suite to probe every relationship, check every role filter and execute saved reconciliations. {suite?.definitions.length ? `${plural(suite.definitions.length, 'saved test')} will run too.` : 'No saved tests yet: ambient checks still cover relationships and security.'}</span></Card>}
-        {sub === 'measures' && <Measures run={run} suite={suite} onSuiteChanged={loadSuite} />}
+        {sub === 'measures' && <Measures run={run} suite={suite} ticked={ticked} onTick={setTicked} onEdit={(d) => { setEditing(d); setAuthor((d.kind === 'measureValue' ? 'measureValue' : 'measureReconcile') as AuthorShape); }} onSuiteChanged={loadSuite} onNew={() => { setEditing(null); setAuthor('measureValue'); }} />}
         {run && sub === 'relationships' && <Relationships report={run.relationships} />}
         {run && sub === 'security' && <Security report={run.security} />}
         {sub === 'history' && <History history={history} />}
@@ -303,7 +318,7 @@ function OverviewBand({ run }: { run: TestRunW }) {
       <Card className="flex min-h-[160px] flex-col overflow-hidden p-4">
         <Eyebrow>Health grade + coverage</Eyebrow>
         <div className="my-auto flex items-stretch overflow-hidden rounded-md border" style={{ borderColor: 'var(--sem-border)' }}>
-          <div className="flex items-center px-4 text-[38px] font-bold" style={{ color: GRADE_COLOR[h.grade] ?? 'var(--sem-nv)' }}>{h.grade}</div>
+          <div className="flex items-center px-4 text-[38px] font-bold" style={{ color: h.grade === 'Partial' ? 'var(--sem-nv)' : (GRADE_COLOR[h.grade] ?? 'var(--sem-nv)') }}>{h.grade}</div>
           <div className="flex flex-col justify-center border-l px-4" style={{ borderColor: 'var(--sem-border)' }}><strong className="tnum text-[18px]">{h.coveragePct}%</strong><span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>verified coverage</span></div>
         </div>
         {h.gatedBy.length > 0 && <div className="mb-2 text-[11px]" style={{ color: 'var(--sem-bad)' }}>Grade capped: {h.gatedBy.join(', ')}</div>}
@@ -326,14 +341,12 @@ function Kpi({ title, children }: { title: string; children: ReactNode }) {
   return <div className="flex min-h-20 flex-col justify-center border-r border-b px-4 py-3" style={{ borderColor: 'var(--sem-border)' }}><Eyebrow>{title}</Eyebrow><div className="mt-1">{children}</div></div>;
 }
 
-function Measures({ run, suite, onSuiteChanged }: { run: TestRunW | null; suite: TestSuiteInfoW | null; onSuiteChanged: () => void }) {
+function Measures({ run, suite, ticked, onTick, onEdit, onSuiteChanged, onNew }: { run: TestRunW | null; suite: TestSuiteInfoW | null; ticked: Set<string>; onTick: (next: Set<string>) => void; onEdit: (d: TestDefinitionW) => void; onSuiteChanged: () => void; onNew: () => void }) {
   const outcomes = run?.reconciles ?? [];
-  const mappingDefs = (suite?.definitions ?? []).filter((d) => d.kind === 'measureReconcile');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'All' | VerdictKey>('All');
   const [limit, setLimit] = useState(60);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
-  const [mappingOpen, setMappingOpen] = useState(false);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const hasVariants = outcomes.some((o) => (o.variants?.length ?? 0) > 0);
   const counts = useMemo(() => {
@@ -361,20 +374,17 @@ function Measures({ run, suite, onSuiteChanged }: { run: TestRunW | null; suite:
   };
   const columns = hasVariants ? '5px minmax(220px,1.5fr) 118px 150px 125px 100px 30px' : '5px minmax(220px,1.5fr) 118px 150px 125px 30px';
 
-  return <section><SectionIntro title="Measures" sub="Reconcile model measures to human-accepted source SQL, with context-by-context evidence." legend action={
-    <button onClick={() => setMappingOpen((value) => !value)} className="rounded-md border px-2.5 py-1.5 text-[11px] font-semibold"
-      style={{ background: mappingOpen ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)', borderColor: mappingOpen ? 'var(--sem-accent)' : 'var(--sem-border)', color: mappingOpen ? 'var(--sem-accent)' : 'var(--sem-fg)' }}>
-      SQL mappings <span className="tnum">{mappingDefs.length}</span>
-    </button>} />
-    {mappingOpen && <SqlMappingReview definitions={mappingDefs} onClose={() => setMappingOpen(false)} onSaved={onSuiteChanged} />}
+  const saved = suite?.definitions ?? [];
+  return <section><SectionIntro title="Measures" sub="Reconcile model measures to human-accepted source SQL, with context-by-context evidence." legend />
+    {saved.length > 0 && <SavedTestsList definitions={saved} ticked={ticked} onTick={onTick} onEdit={onEdit} onChanged={onSuiteChanged} />}
     {failing.length > 0 && <RootBand count={failing.length} title={failing.length === 1 ? `Root cause in ${failing[0]?.title ?? 'a measure'}` : `Root causes in ${failing.length} measures, worst in ${failing[0]?.title ?? 'a measure'}`} body={failing[0]?.message ?? 'The model result differs from the accepted source result.'} action="Inspect evidence" onAction={inspect} />}
     <div className="mb-2.5 flex flex-wrap items-center gap-2">
       <input aria-label="Search measures" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(60); }} placeholder="Search measures" className="min-h-7 min-w-[210px] rounded-md border px-2.5 text-[12px] outline-none" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-fg)' }} />
       {(['All', 'Fail', 'Suspect', 'NotVerifiable', 'Pass'] as const).map((key) => <button key={key} onClick={() => { setFilter(key); setLimit(60); }} className="rounded-full border px-2.5 py-1 text-[11px]" style={{ background: filter === key ? 'var(--sem-accent-soft)' : 'var(--sem-surface)', borderColor: filter === key ? 'var(--sem-accent)' : 'var(--sem-border)', color: key === 'All' ? 'var(--sem-fg)' : VERDICT[key].color }}>{key === 'NotVerifiable' ? 'Not verifiable' : key} <span className="tnum">{key === 'All' ? outcomes.length : counts[key]}</span></button>)}
     </div>
-    {run == null || outcomes.length === 0 ? <Card className="p-4 text-[12px]" ><span style={{ color: 'var(--sem-muted)' }}>{run == null
-      ? `No run yet. Run the suite to see reconciliation evidence. ${mappingDefs.length ? `${plural(mappingDefs.length, 'saved SQL mapping')} will run.` : 'Ask the AI Assistant to draft source SQL, review it, then accept and save the test.'}`
-      : 'No reconciliation tests yet. Ask the AI Assistant to draft source SQL from lineage, review it, then accept and save the test. The SQL only counts once a person accepts it.'}</span></Card> :
+    {run == null || outcomes.length === 0 ? <Card className="p-4 text-[12px]" ><span style={{ color: 'var(--sem-muted)' }}>{saved.length === 0
+      ? <>No saved tests yet. Add one with New test. You can also ask the AI Assistant to draft one; you review it before it is saved. <button type="button" className="ml-1 font-semibold" style={{ color: 'var(--sem-accent)' }} onClick={onNew}>New test</button></>
+      : run == null ? `No run yet. ${plural(saved.length, 'saved test')} will run.` : 'No reconciliation evidence in this run.'}</span></Card> :
       <Card className="overflow-hidden">
         <div className="grid h-[34px] items-center border-b text-[10px] font-semibold uppercase tracking-[0.06em]" style={{ gridTemplateColumns: columns, background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}><span /><span className="px-3">Measure</span><span className="px-3">Verdict</span><span className="px-3">Contexts</span><span className="px-3">Timing</span>{hasVariants && <span className="px-3">Variants</span>}<span /></div>
         {visible.map((outcome) => <MeasureItem key={outcome.defId} outcome={outcome} run={run} hasVariants={hasVariants} columns={columns} isOpen={open.has(outcome.defId)} toggle={() => toggle(outcome.defId)} rowRef={(node) => { if (node) rowRefs.current.set(outcome.defId, node); else rowRefs.current.delete(outcome.defId); }} />)}
@@ -382,6 +392,58 @@ function Measures({ run, suite, onSuiteChanged }: { run: TestRunW | null; suite:
         {visible.length < filtered.length && <button className="w-full border-0 px-3 py-3 text-[12px]" onClick={() => setLimit((value) => value + 200)} style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-accent)' }}>Show {(filtered.length - visible.length).toLocaleString()} more</button>}
       </Card>}
   </section>;
+}
+
+function SavedTestsList({ definitions, ticked, onTick, onEdit, onChanged }: {
+  definitions: TestDefinitionW[]; ticked: Set<string>; onTick: (next: Set<string>) => void;
+  onEdit: (d: TestDefinitionW) => void; onChanged: () => void;
+}) {
+  const [menu, setMenu] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const toggle = (id: string) => {
+    const next = new Set(ticked);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    onTick(next);
+  };
+  const remove = (id: string) => {
+    rpc<boolean>('deleteTest', id).then(() => { setConfirmId(null); onChanged(); }).catch(() => undefined);
+  };
+  const toggleEnabled = (def: TestDefinitionW) => {
+    rpc('saveTest', { ...def, enabled: !def.enabled }).then(() => onChanged()).catch(() => undefined);
+  };
+  return (
+    <Card className="mb-3 overflow-hidden">
+      <div className="border-b px-3 py-2 text-[11px] font-semibold" style={{ borderColor: 'var(--sem-border)' }}>Saved tests</div>
+      {definitions.map((def) => (
+        <div key={def.id} className="flex items-center gap-2 border-b px-3 py-2 last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
+          <input type="checkbox" checked={ticked.has(def.id)} onChange={() => toggle(def.id)} aria-label={`Select ${def.title}`} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-semibold">{def.title}</div>
+            <div className="truncate text-[10px]" style={{ color: 'var(--sem-muted)' }}>{def.enabled ? (def.kind === 'measureValue' ? 'Expected total' : 'Match source SQL') : 'Turned off'}</div>
+          </div>
+          <div className="relative">
+            <button type="button" className="px-1 text-[14px]" aria-label={`More for ${def.title}`} onClick={() => setMenu(menu === def.id ? null : def.id)}>···</button>
+            {menu === def.id && (
+              <div className="absolute right-0 z-10 mt-1 w-[160px] rounded-md border p-1" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+                <button type="button" className="block w-full rounded px-2 py-1 text-left text-[12px]" onClick={() => { onEdit(def); setMenu(null); }}>Edit</button>
+                <button type="button" className="block w-full rounded px-2 py-1 text-left text-[12px]" onClick={() => { toggleEnabled(def); setMenu(null); }}>{def.enabled ? 'Turn off' : 'Turn on'}</button>
+                <button type="button" className="block w-full rounded px-2 py-1 text-left text-[12px]" style={{ color: 'var(--sem-bad)' }} onClick={() => { setConfirmId(def.id); setMenu(null); }}>Delete</button>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+      {confirmId && (
+        <div className="border-t px-3 py-2 text-[12px]" style={{ borderColor: 'var(--sem-border)' }}>
+          Delete the test '{definitions.find((d) => d.id === confirmId)?.title}'? Past runs keep their record. This cannot be undone.
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="rounded-md border px-2 py-1 text-[12px]" style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }} onClick={() => remove(confirmId)}>Delete</button>
+            <button type="button" className="text-[12px]" onClick={() => setConfirmId(null)}>Keep it</button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function parseReconcileParams(def?: TestDefinitionW): ReconcileParamsW {

@@ -286,6 +286,7 @@ namespace Semanticus.Engine
         public string Note { get; set; }
         public string Error { get; set; }
         public string RestorePointId { get; set; }   // the pre-push snapshot this write can be rolled back to (live pushes only)
+        public string ConfirmToken { get; set; }     // preview token a file or open-model merge commit must echo; binds session, target, and change set
     }
 
     /// <summary>Result of rollback_push (restoring a published model to a pre-push snapshot).</summary>
@@ -312,7 +313,17 @@ namespace Semanticus.Engine
         public int BpaViolations { get; set; }
         public int BpaBlocking { get; set; }          // error-severity BPA violations (waived ones excluded — a waiver is an audited acceptance)
         public int BpaWaivedBlocking { get; set; }    // error-severity violations accepted via waiver (surfaced for honesty, never blocking)
+        /// <summary>Blocking-severity rules the scan could NOT evaluate on this model (the expression threw part way
+        /// through a scope, so coverage is unknown rather than clean). These DO block: a gate that passes because a
+        /// check never finished is a gate reading a truncated scan as a green one. Waivers cannot clear them — you can
+        /// accept a finding you can see, not one nobody checked.</summary>
+        public int BpaUnknownBlocking { get; set; }
         public string[] Blockers { get; set; } = Array.Empty<string>();
+        /// <summary>Blocking findings on objects this change did not touch. Information, never a block.</summary>
+        public int OlderWarnings { get; set; }
+        /// <summary>One-line result of the checks on this change. Whole-model leftovers are a count with a
+        /// pointer to AI Readiness.</summary>
+        public string CheckLine { get; set; }
         public int Changes { get; set; }              // pending changes vs the compare target (when supplied)
         // ADVISORY interview replay (null when the model has no saved question pack — the shape is unchanged for
         // everyone else). Never contributes to Pass/Blockers: it reports per-question outcome deltas so a deploy

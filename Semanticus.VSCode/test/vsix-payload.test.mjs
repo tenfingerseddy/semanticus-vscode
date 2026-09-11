@@ -8,6 +8,7 @@ const required = [
   'extension.vsixmanifest',
   'extension/LICENSE.txt',
   'extension/NOTICE',
+  'extension/THIRD-PARTY-NOTICES.md',
   'extension/package.json',
   'extension/readme.md',
   'extension/out/extension.js',
@@ -63,6 +64,27 @@ for (const [unixTarget, measuredBytes, rejectedBytes] of [
     unixTarget,
   );
 }
+
+// THE NOTICES ENTRY, PROVED RED. The corrected licence texts reach a recipient only because the packager
+// stages THIRD-PARTY-NOTICES.md into the extension folder. A check that merely allows the file would stay
+// green the day the staging step is deleted, so drop the entry from the payload and the verifier must
+// refuse the package by name. Both licence documents are held this way, so neither can leave alone.
+for (const noticeFile of ['extension/NOTICE', 'extension/THIRD-PARTY-NOTICES.md']) {
+  const without = entries.filter((entry) => entry.fileName !== noticeFile);
+  assert.equal(without.length, entries.length - 1, `${noticeFile} is not in the payload fixture`);
+  assert.throws(
+    () => validatePayloadInventory(without, target, manifest, packageJson, scanned(without.length)),
+    new RegExp(`missing required production files[\\s\\S]*${noticeFile.replace('.', '\\.')}`),
+    noticeFile,
+  );
+}
+
+// And the packager must actually produce it: staged from the repository root before vsce runs, removed
+// afterwards so the working tree is left clean.
+const packagerSource = readFileSync(new URL('../scripts/package.mjs', import.meta.url), 'utf8');
+assert.match(packagerSource, /copyFileSync\(path\.join\(repoRoot, 'THIRD-PARTY-NOTICES\.md'\), stagedNotices\)/);
+assert.match(packagerSource, /stageThirdPartyNotices\(\);/);
+assert.match(packagerSource, /cleanThirdPartyNotices\(\);/);
 
 for (const forbidden of [
   'extension/test/regression.test.mjs',
@@ -133,12 +155,12 @@ assert.throws(
 );
 
 const publishWorkflow = readFileSync(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8');
-assert.match(publishWorkflow, /\$expectedTargets = @\('win32-x64', 'win32-arm64', 'linux-x64', 'darwin-x64', 'darwin-arm64'\)/);
-assert.match(publishWorkflow, /foreach \(\$target in \$expectedTargets\)/);
-assert.match(publishWorkflow, /--packagePath "\$\(\$matching\[0\]\.FullName\)"/);
-assert.match(publishWorkflow, /needs: package/);
+assert.match(publishWorkflow, /verify:\s+needs: package/);
 assert.match(publishWorkflow, /SEMANTICUS_REQUIRE_HOST_EXECUTION: '1'/);
 assert.match(publishWorkflow, /verify-vsix-matrix\.mjs Semanticus\.VSCode\/dist/);
+assert.doesNotMatch(publishWorkflow, /VSCE_PAT/);
+assert.doesNotMatch(publishWorkflow, /vsce publish|--packagePath/);
+assert.doesNotMatch(publishWorkflow, /Detect the publisher secret|Publish the verified VSIX/);
 
 const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
 assert.match(ciWorkflow, /needs: vsix/);

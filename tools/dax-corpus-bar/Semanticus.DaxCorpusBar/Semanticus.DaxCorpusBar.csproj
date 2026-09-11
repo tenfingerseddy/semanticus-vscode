@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A2 §12.4, the LOCAL corpus bar. Deliberately NOT in Semanticus.sln and deliberately not a CI gate: the
+    corpus is gitignored working data (the external/TabularEditor submodule plus the tools/readiness-corpus
+    link), so a CI run would measure a different corpus and quietly report a different rate.
+
+    The harvester is LINKED from the D2 spike rather than copied, so the bar and the A2 §6.1 measurement
+    read exactly the same expressions. Semanticus.Dax itself keeps zero dependencies (A2 §12.1 item 11);
+    that rule is about the library, and this tool is not part of it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Semanticus.DaxCorpusBar</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Semanticus.Dax\Semanticus.Dax.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\dax-spike\Semanticus.DaxSpike\Corpus.cs" Link="Corpus.cs" />
+  </ItemGroup>
+
+</Project>

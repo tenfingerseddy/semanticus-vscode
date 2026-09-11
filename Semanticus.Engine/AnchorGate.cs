@@ -28,6 +28,16 @@ namespace Semanticus.Engine
         public const int MaxAnchors = 16;
         /// <summary>Hard cap on context (column→value) pairs per anchor.</summary>
         public const int MaxContextPairs = 8;
+        /// <summary>Hard cap on shaped-anchor axis columns. This matches the equivalence-grid width cap.</summary>
+        public const int MaxAxisColumns = 6;
+
+        /// <summary>One PARSED axis column. Only the unescaped table and column parts survive parsing, so later
+        /// stages can rebuild a canonical reference without carrying authored query text across the boundary.</summary>
+        public sealed class AnchorColumn
+        {
+            public string Table { get; set; }
+            public string Column { get; set; }
+        }
 
         /// <summary>One PARSED context filter: the strictly-parsed table/column (unescaped; the executor rebinds
         /// them to the model's canonical names) and the exact DAX literal the typed JSON value compiled to. The
@@ -47,6 +57,7 @@ namespace Semanticus.Engine
         public sealed class Anchor
         {
             public AnchorFilter[] Context { get; set; } = Array.Empty<AnchorFilter>();
+            public AnchorColumn[] AxisColumns { get; set; } = Array.Empty<AnchorColumn>();
             public double? Number { get; set; }   // set iff expect was a JSON number (finite — parse rejects non-finite)
             public bool Blank { get; set; }        // set iff expect was "BLANK" (case-insensitive)
             public string Text { get; set; }       // set iff expect was any other JSON string
@@ -65,6 +76,23 @@ namespace Semanticus.Engine
             /// <summary>A token-lean label for the filter context ("(grand total)" when empty).</summary>
             public string ContextLabel => Context.Length == 0 ? "(grand total)"
                 : string.Join(", ", Context.Select(f => CanonicalRef(f) + "=" + f.ValueLabel));
+
+            /// <summary>True when this anchor carries visual-axis semantics.</summary>
+            public bool IsShaped => (AxisColumns?.Length ?? 0) != 0;
+
+            /// <summary>The context entries that identify the visible axis row.</summary>
+            public AnchorFilter[] RowCoordinate => ContextPartition(onAxis: true);
+
+            /// <summary>The context entries that slice the visual without becoming row coordinates.</summary>
+            public AnchorFilter[] Slicers => ContextPartition(onAxis: false);
+
+            private AnchorFilter[] ContextPartition(bool onAxis)
+            {
+                var axisKeys = new HashSet<string>((AxisColumns ?? Array.Empty<AnchorColumn>()).Select(ReferenceKey), StringComparer.Ordinal);
+                return (Context ?? Array.Empty<AnchorFilter>())
+                    .Where(f => axisKeys.Contains(ReferenceKey(f)) == onAxis)
+                    .ToArray();
+            }
         }
 
         public sealed class AnchorExpectation
@@ -81,8 +109,16 @@ namespace Semanticus.Engine
         /// (QuoteTable doubles ', BracketName doubles ]), never the authored text.</summary>
         public static string CanonicalRef(AnchorFilter f) => DaxBench.QuoteTable(f.Table) + DaxBench.BracketName(f.Column);
 
+        /// <summary>The canonically escaped reference for a parsed axis column.</summary>
+        public static string CanonicalRef(AnchorColumn c) => DaxBench.QuoteTable(c.Table) + DaxBench.BracketName(c.Column);
+
+        private static string ReferenceKey(AnchorFilter f) => ReferenceKey(f.Table, f.Column);
+        private static string ReferenceKey(AnchorColumn c) => ReferenceKey(c.Table, c.Column);
+        private static string ReferenceKey(string table, string column) =>
+            (table ?? "").ToUpperInvariant() + "\n" + (column ?? "").ToUpperInvariant();
+
         /// <summary>Parse the anchors a text input carries — a fenced ```json array (or a bare JSON array) of
-        /// {context, expect} objects. DEFENSIVE AND STRICT by contract: malformed JSON, an unknown or duplicated
+        /// {context, optional axis, expect} objects. DEFENSIVE AND STRICT by contract: malformed JSON, an unknown or duplicated
         /// property (a "contex" typo must never become a silent grand-total anchor), a context key that is not a
         /// pure qualified column ref, a non-scalar/non-finite value, or a breached cap sets <paramref name="error"/>
         /// (the caller refuses the verify as `unavailable`, naming the defect) and returns null — the enforcement
@@ -93,14 +129,14 @@ namespace Semanticus.Engine
             var json = ExtractJson(raw);
             if (string.IsNullOrWhiteSpace(json))
             {
-                error = "the anchors input carried no JSON — author it as a fenced ```json array of {\"context\": {\"'Table'[Column]\": value}, \"expect\": number|\"BLANK\"|string}.";
+                error = "the anchors input carried no JSON. Author it as a fenced ```json array of {\"context\": {\"'Table'[Column]\": value}, \"expect\": number|\"BLANK\"|string}.";
                 return null;
             }
             JsonDocument doc;
             try { doc = JsonDocument.Parse(json); }
             catch (Exception ex)
             {
-                error = "the anchors JSON did not parse (" + ex.Message + ") — author it as a JSON array of {\"context\": {\"'Table'[Column]\": value}, \"expect\": number|\"BLANK\"|string}.";
+                error = "the anchors JSON did not parse (" + ex.Message + "). Author it as a JSON array of {\"context\": {\"'Table'[Column]\": value}, \"expect\": number|\"BLANK\"|string}.";
                 return null;
             }
             using (doc)
@@ -117,12 +153,12 @@ namespace Semanticus.Engine
                     i++;
                     if (i > MaxAnchors)
                     {
-                        error = $"the anchor set exceeds the cap of {MaxAnchors} anchors per verify — split the proof or keep the strongest {MaxAnchors}.";
+                        error = $"the anchor set exceeds the cap of {MaxAnchors} anchors per verify. Split the proof or keep the strongest {MaxAnchors}.";
                         return null;
                     }
                     if (el.ValueKind != JsonValueKind.Object)
                     {
-                        error = $"anchor #{i} is not an object — each anchor is {{\"context\": {{...}}, \"expect\": ...}}.";
+                        error = $"anchor #{i} is not an object. Each anchor is {{\"context\": {{...}}, \"expect\": ...}}.";
                         return null;
                     }
 
@@ -138,10 +174,10 @@ namespace Semanticus.Engine
                             error = $"anchor #{i} declares '{p.Name}' more than once.";
                             return null;
                         }
-                        if (p.Name != "context" && p.Name != "expect"
+                        if (p.Name != "context" && p.Name != "axis" && p.Name != "expect"
                             && p.Name != "originalExpect" && p.Name != "correctedExpect" && p.Name != "extractQuery")
                         {
-                            error = $"anchor #{i} has an unknown property '{p.Name}' — only 'context', 'expect', 'originalExpect', 'correctedExpect', and 'extractQuery' are allowed (a typo here would silently change what is enforced).";
+                            error = $"anchor #{i} has an unknown property '{p.Name}'. Only 'context', 'axis', 'expect', 'originalExpect', 'correctedExpect', and 'extractQuery' are allowed. Remove the property or correct the typo because it changes what is enforced.";
                             return null;
                         }
                     }
@@ -169,11 +205,11 @@ namespace Semanticus.Engine
                             // query is rebuilt from the parsed parts, never this text.
                             if (!TryParseColumnRef(p.Name, out var tbl, out var col))
                             {
-                                error = $"anchor #{i} context key '{p.Name}' is not a qualified column reference — use exactly 'Table'[Column] (or Table[Column]); '' escapes a quote in the table name, ]] escapes a bracket in the column name. Nothing else is accepted.";
+                                error = $"anchor #{i} context key '{p.Name}' is not a qualified column reference. Use exactly 'Table'[Column] (or Table[Column]); '' escapes a quote in the table name, ]] escapes a bracket in the column name. Nothing else is accepted.";
                                 return null;
                             }
                             // DAX names are case-insensitive: a re-cased duplicate is the same column twice.
-                            if (!seenRefs.Add(tbl.ToUpperInvariant() + "\n" + col.ToUpperInvariant()))
+                            if (!seenRefs.Add(ReferenceKey(tbl, col)))
                             {
                                 error = $"anchor #{i} context declares column '{p.Name}' more than once.";
                                 return null;
@@ -214,6 +250,59 @@ namespace Semanticus.Engine
                         a.Context = filters.ToArray();
                     }
 
+                    if (el.TryGetProperty("axis", out var axis))
+                    {
+                        if (axis.ValueKind != JsonValueKind.Array)
+                        {
+                            error = $"anchor #{i} 'axis' must be an array of 1 to {MaxAxisColumns} qualified column-reference strings. Use exactly 'Table'[Column] for each entry, or omit 'axis' for a flat anchor.";
+                            return null;
+                        }
+                        if (axis.GetArrayLength() == 0)
+                        {
+                            error = $"anchor #{i} 'axis' must contain 1 to {MaxAxisColumns} qualified column references. Omit 'axis' for a flat anchor.";
+                            return null;
+                        }
+                        if (axis.GetArrayLength() > MaxAxisColumns)
+                        {
+                            error = $"anchor #{i} 'axis' exceeds the cap of {MaxAxisColumns} columns. Keep at most {MaxAxisColumns} axis columns.";
+                            return null;
+                        }
+
+                        var columns = new List<AnchorColumn>();
+                        var seenAxisRefs = new HashSet<string>(StringComparer.Ordinal);
+                        var contextRefs = new HashSet<string>(a.Context.Select(ReferenceKey), StringComparer.Ordinal);
+                        var axisIndex = 0;
+                        foreach (var entry in axis.EnumerateArray())
+                        {
+                            axisIndex++;
+                            if (entry.ValueKind != JsonValueKind.String)
+                            {
+                                error = $"anchor #{i} axis entry #{axisIndex} must be a string containing exactly 'Table'[Column]. Replace it with a qualified column-reference string.";
+                                return null;
+                            }
+                            var authoredRef = entry.GetString();
+                            if (!TryParseColumnRef(authoredRef, out var tbl, out var col))
+                            {
+                                error = $"anchor #{i} axis entry #{axisIndex} is not a qualified column reference. Use exactly 'Table'[Column] (or Table[Column]); '' escapes a quote in the table name and ]] escapes a bracket in the column name. Nothing else is accepted.";
+                                return null;
+                            }
+                            var parsed = new AnchorColumn { Table = tbl, Column = col };
+                            var refKey = ReferenceKey(parsed);
+                            if (!seenAxisRefs.Add(refKey))
+                            {
+                                error = $"anchor #{i} axis declares column '{CanonicalRef(parsed)}' more than once. Remove duplicate axis entries.";
+                                return null;
+                            }
+                            if (!contextRefs.Contains(refKey))
+                            {
+                                error = $"anchor #{i} axis column '{CanonicalRef(parsed)}' is not a key of 'context'. Add that column and its row-coordinate value to 'context', or remove it from 'axis'.";
+                                return null;
+                            }
+                            columns.Add(parsed);
+                        }
+                        a.AxisColumns = columns.ToArray();
+                    }
+
                     if (!el.TryGetProperty("expect", out var ex2))
                     {
                         error = $"anchor #{i} is missing 'expect' (the value the measure must produce at that context).";
@@ -245,6 +334,22 @@ namespace Semanticus.Engine
                             return null;
                         }
                         a.ExtractQuery = extractQuery.GetString().Trim();
+                    }
+
+                    // A SHAPED anchor is proven at a VISIBLE row of a single-measure visual, and such a visual never
+                    // renders a row whose only measure is BLANK (SUMMARIZECOLUMNS prunes it). So a BLANK expectation
+                    // is not provable at a visible row coordinate — refuse it here, at the parser boundary every anchor
+                    // acceptance flows through. The rule: NEITHER expect NOR a declared correctedExpect may be BLANK
+                    // on a shaped anchor. Evaluation reads the expect-derived fields (Matches consumes Blank/Number/
+                    // Text) while the revision receipt requires correctedExpect == expect, so a BLANK in either field
+                    // is a false pass or an inconsistent receipt — a legal shaped anchor never carries one. The one
+                    // sanctioned BLANK, originalExpect (the historical record of a receipted flat-to-shaped repair),
+                    // is deliberately left alone. A flat anchor (no axis) keeps its v6 BLANK behavior — a flat anchor
+                    // is exactly how blankness is proven.
+                    if (a.IsShaped && (a.Blank || a.CorrectedExpect?.Blank == true))
+                    {
+                        error = $"anchor #{i}: a shaped anchor cannot expect BLANK. A visual does not render a row whose only measure is BLANK, so a BLANK expectation is not provable at a visible row coordinate. Prove blankness with a flat anchor (no axis) at the same context.";
+                        return null;
                     }
                     list.Add(a);
                 }
@@ -398,11 +503,23 @@ namespace Semanticus.Engine
             o is byte || o is sbyte || o is short || o is ushort || o is int || o is uint
             || o is long || o is ulong || o is float || o is double || o is decimal;
 
-        /// <summary>Canonical identity of an anchor context, independent of authored order and reference casing.</summary>
-        internal static string CanonicalContextKey(Anchor anchor) => JsonSerializer.Serialize((anchor?.Context ?? Array.Empty<AnchorFilter>())
-            .Select(f => new { r = CanonicalRef(f).ToUpperInvariant(), v = f.Literal })
-            .OrderBy(x => x.r, StringComparer.Ordinal)
-            .ToArray());
+        /// <summary>Canonical identity of an anchor context and shape, independent of authored order and reference
+        /// casing. A flat anchor retains the exact v6 context encoding; only a shaped anchor emits an axis component.</summary>
+        internal static string CanonicalContextKey(Anchor anchor)
+        {
+            var context = (anchor?.Context ?? Array.Empty<AnchorFilter>())
+                .Select(f => new { r = CanonicalRef(f).ToUpperInvariant(), v = f.Literal })
+                .OrderBy(x => x.r, StringComparer.Ordinal)
+                .ToArray();
+            if (anchor?.IsShaped != true)
+                return JsonSerializer.Serialize(context);
+
+            var axis = anchor.AxisColumns
+                .Select(c => CanonicalRef(c).ToUpperInvariant())
+                .OrderBy(r => r, StringComparer.Ordinal)
+                .ToArray();
+            return JsonSerializer.Serialize(new { c = context, a = axis });
+        }
 
         /// <summary>Typed expectation identity. A numeric 1 and text "1" are deliberately different.</summary>
         internal static string ExpectationKey(Anchor anchor) => anchor == null ? null
@@ -424,18 +541,37 @@ namespace Semanticus.Engine
         public static string CanonicalHash(Anchor[] anchors)
         {
             var canon = (anchors ?? Array.Empty<Anchor>())
-                .Select(a => JsonSerializer.Serialize(new
+                .Select(a =>
                 {
-                    c = a.Context
+                    var context = a.Context
                         .Select(f => new
                         {
                             r = CanonicalRef(f).ToUpperInvariant(),
                             v = f.Literal,
                         })
                         .OrderBy(x => x.r, StringComparer.Ordinal)
-                        .ToArray(),
-                    e = ExpectationKey(a),
-                }))
+                        .ToArray();
+                    if (!a.IsShaped)
+                    {
+                        // Keep this exact c/e object shape for byte-identical v6 flat-anchor fingerprints.
+                        return JsonSerializer.Serialize(new
+                        {
+                            c = context,
+                            e = ExpectationKey(a),
+                        });
+                    }
+
+                    var axis = a.AxisColumns
+                        .Select(c => CanonicalRef(c).ToUpperInvariant())
+                        .OrderBy(r => r, StringComparer.Ordinal)
+                        .ToArray();
+                    return JsonSerializer.Serialize(new
+                    {
+                        c = context,
+                        a = axis,
+                        e = ExpectationKey(a),
+                    });
+                })
                 .OrderBy(x => x, StringComparer.Ordinal)
                 .ToArray();
             using var sha = SHA256.Create();
@@ -465,7 +601,7 @@ namespace Semanticus.Engine
                 StepId = stepId, TimestampUtc = DateTime.UtcNow.ToString("o"),
             });
             run.AnchorLocks[key] = canonicalHash;   // the NEXT submission evaluates fresh under the new locked set
-            return "the locked anchor set changed after evidence was seen (its expected-value fingerprint no longer matches the set first evaluated) — an anchor-revision receipt was recorded and the prior verify results stay on the run; re-submit to evaluate fresh under the new anchor set.";
+            return "the locked anchor set changed after evidence was seen (its expected-value fingerprint no longer matches the set first evaluated). An anchor-revision receipt was recorded and the prior verify results stay on the run; re-submit to evaluate fresh under the new anchor set.";
         }
     }
 }

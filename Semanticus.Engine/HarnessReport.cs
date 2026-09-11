@@ -53,14 +53,14 @@ namespace Semanticus.Engine
                     LogPath = path,
                     Note = string.IsNullOrEmpty(path)
                         ? "No experience log path could be resolved (no session / no workspace). Empty report."
-                        : "No experience log at the resolved path yet — nothing captured. Empty report.",
+                        : "No experience log at the resolved path yet: nothing captured. Empty report.",
                 };
 
             string[] lines;
             try { lines = File.ReadAllLines(path); }
             catch (Exception ex)
             {
-                return new HarnessReportResult { LogPath = path, Note = "Experience log present but unreadable (" + ex.GetType().Name + ") — skipped." };
+                return new HarnessReportResult { LogPath = path, Note = "Experience log present but unreadable (" + ex.GetType().Name + "): skipped." };
             }
 
             var result = Analyze(lines, topN);
@@ -208,8 +208,8 @@ namespace Semanticus.Engine
 
             if (result.TotalRecords == 0)
                 result.Note = skipped > 0
-                    ? "No parseable records — " + skipped + " line(s) were corrupt and skipped."
-                    : "Log is empty — nothing captured yet.";
+                    ? "No parseable records: " + skipped + " line(s) were corrupt and skipped."
+                    : "Log is empty: nothing captured yet.";
             else if (skipped > 0)
                 result.Note = skipped + " corrupt line(s) were skipped (fail-soft).";
 

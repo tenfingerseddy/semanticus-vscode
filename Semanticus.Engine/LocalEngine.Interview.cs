@@ -290,7 +290,7 @@ namespace Semanticus.Engine
                 var q = live.FirstOrDefault(r => r.Id == id);
                 if (q != null) return (file, scope, q);
             }
-            throw new InvalidOperationException($"Interview question '{id}' not found (it may have been deleted — list_interview_questions shows the saved pack).");
+            throw new InvalidOperationException($"Interview question '{id}' not found (it may have been deleted; list_interview_questions shows the saved pack).");
         }
 
         // ---- reads (free) --------------------------------------------------------------------------------
@@ -347,7 +347,7 @@ namespace Semanticus.Engine
         public async Task<InterviewQuestion> AddInterviewQuestionAsync(
             string question, string tier, string query, string scalarExpr, string paraphraseExpr,
             string[] groupBy, string[] filters, string expectedValue, string expectedMatrixJson,
-            bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin)
+            bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin, string id = null)
         {
             Entitlement.EntitlementGuard.RequirePro(_entitlement,
                 "add_interview_question (saving a question to the model's interview pack, so it replays as a regression check)",
@@ -396,19 +396,24 @@ namespace Semanticus.Engine
             q.ModelWitness = modelName;
             q.ModelLabel = ModelPaneLabel(sess, modelName);
 
-            var id = InterviewStore.NewId();
+            var replaceId = string.IsNullOrWhiteSpace(id) ? null : id.Trim();
             await _interviewGate.WaitAsync();
             try
             {
                 // TOCTOU: the label read above awaited on the dispatcher — a session swap could have landed. Refuse to
                 // write a binding for a model that is no longer the one we read (never stamp B's identity into A's pack).
                 EnsureContextCurrent(context, "Interview question save");
+                var (liveBefore, _) = InterviewStore.Materialize(file, scope);
+                var replacing = replaceId != null && liveBefore.Any(r => string.Equals(r.Id, replaceId, StringComparison.Ordinal));
+                if (replaceId != null && !replacing)
+                    throw new InvalidOperationException("No saved question has that id, so it was not replaced. Save without an id to create one.");
+                id = replacing ? replaceId : InterviewStore.NewId();
                 // Fail-loud, as promised: Append is best-effort by contract (the run-record paths need that),
                 // so the SAVE path must check it — returning a "saved" question that never hit disk would be
                 // the exact silent failure this op's doc-comment forbids.
                 if (!InterviewStore.TryAppend(file, new InterviewStore.Delta
                 {
-                    Op = "add", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent",
+                    Op = replacing ? "edit" : "add", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent",
                     Question = q.Question, Tier = q.Tier, Query = q.Query, ScalarExpr = q.ScalarExpr,
                     ParaphraseExpr = q.ParaphraseExpr, GroupBy = q.GroupBy, Filters = q.Filters,
                     ExpectedValue = q.ExpectedValue, ExpectedMatrix = q.ExpectedMatrix, ExpectRefusal = q.ExpectRefusal,
@@ -416,7 +421,7 @@ namespace Semanticus.Engine
                     ModelIdentity = q.ModelIdentity, ModelLabel = q.ModelLabel,
                     ExecIdentity = q.ExecIdentity, ExecTarget = q.ExecTarget, ModelWitness = q.ModelWitness,
                 }, out var why))
-                    throw new InvalidOperationException($"The question was NOT saved — {why}." + (why.Contains("per-line cap")
+                    throw new InvalidOperationException($"The question was NOT saved: {why}." + (why.Contains("per-line cap")
                         ? " Trim the biggest fields: prefer a scalar expectedValue over a large expectedMatrixJson (or record fewer rows / narrow the query with filters)."
                         : ""));
             }
@@ -438,7 +443,7 @@ namespace Semanticus.Engine
                 // Same fail-loud contract as the save path: a tombstone that never hit disk would leave the
                 // question alive while this op claims Changed=true.
                 if (!InterviewStore.TryAppend(file, new InterviewStore.Delta { Op = "delete", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent" }, out var why))
-                    throw new InvalidOperationException($"The question was NOT deleted — {why}.");
+                    throw new InvalidOperationException($"The question was NOT deleted: {why}.");
             }
             finally { _interviewGate.Release(); }
             await EmitInterviewActivity("delete_interview_question", true, $"Deleted interview question {id}", id, origin);
@@ -491,14 +496,14 @@ namespace Semanticus.Engine
                     throw new InvalidOperationException("inlineJson does not parse as a question. Expected a JSON object like " +
                         "{\"question\":\"What were total sales in 2024?\",\"tier\":\"value\",\"query\":\"EVALUATE ROW(\\\"v\\\", CALCULATE([Total Sales], 'Date'[Year]=2024))\",\"expectedValue\":\"1234567.89\"}. " + ex.Message);
                 }
-                if (q == null) throw new InvalidOperationException("inlineJson parsed to nothing — pass a JSON object with question/tier and the tier's fields.");
+                if (q == null) throw new InvalidOperationException("inlineJson parsed to nothing. Pass a JSON object with question/tier and the tier's fields.");
                 q.Tier = InterviewScoring.NormalizeTier(q.Tier);
                 if (q.Tier == "refusal") q.ExpectRefusal = true;
                 ValidateInterviewQuestion(q, forRun: true, hasAttempt: !string.IsNullOrWhiteSpace(attemptDax), abstained: abstained);
             }
             else
             {
-                throw new InvalidOperationException("Nothing to run — pass questionId (from list_interview_questions) or inlineJson (a one-off question; free).");
+                throw new InvalidOperationException("Nothing to run. Pass questionId (from list_interview_questions) or inlineJson (a one-off question; free).");
             }
 
             // #129: every DAX this call executes is gated under the ENTRY DOOR's origin — saved or not. The earlier
@@ -644,14 +649,14 @@ namespace Semanticus.Engine
             bool wantVa = src == null || src.StartsWith("verified", StringComparison.Ordinal);
             bool wantPack = src == null || src == "hard-pack" || src == "hardpack" || src == "pack";
             if (!wantVa && !wantPack)
-                throw new InvalidOperationException($"Unknown seed source '{source}' — pass 'verified-answers', 'hard-pack', or omit it for both.");
+                throw new InvalidOperationException($"Unknown seed source '{source}'. Pass 'verified-answers', 'hard-pack', or omit it for both.");
 
             var s = _sessions.Current;
             if (s == null)
                 return new InterviewSeedResult
                 {
                     HardPackTemplates = HardQuestionPack.Templates().Length,
-                    Note = "No model is open — open_model/open_local first. Seeds come from the model's own verified answers and from binding the built-in hard-question pack to its objects.",
+                    Note = "No model is open: open_model/open_local first. Seeds come from the model's own verified answers and from binding the built-in hard-question pack to its objects.",
                 };
 
             var candidates = new List<InterviewSeedCandidate>();
@@ -664,7 +669,7 @@ namespace Semanticus.Engine
                 // Invalidate first: the files may have been authored since the last readiness scan memoized them.
                 var folder = await s.ReadAsync(m => { PrepForAiReader.Invalidate(m); return PrepForAiReader.Read(m).ModelFolder; });
                 if (folder == null)
-                    notes.Add("verified answers live in files beside an on-disk model — this session has no readable model folder (a live/XMLA-opened model can't be inspected), so that source was not searched");
+                    notes.Add("verified answers live in files beside an on-disk model; this session has no readable model folder (a live/XMLA-opened model can't be inspected), so that source was not searched");
                 else
                 {
                     var (usable, vaSkips, found) = VerifiedAnswerSeeds.Parse(folder);
@@ -923,7 +928,7 @@ namespace Semanticus.Engine
             var capturedSession = capturedContext.Session;
             var capturedLive = capturedContext.Live;
             if (capturedLive == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline — no live connection, the interview was NOT replayed (open_live/open_local and re-submit for real evidence)." };
+                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline: no live connection, the interview was NOT replayed (open_live/open_local and re-submit for real evidence)." };
             var currentName = await ReadModelNameAsync(capturedSession);
 
             int right = 0, wrong = 0, unverified = 0, refused = 0;
@@ -953,7 +958,7 @@ namespace Semanticus.Engine
                 return new VerifyResult
                 {
                     Kind = kind, Status = "failed",
-                    Detail = $"{wrong}/{live.Count} interview question(s) now come back confidently WRONG — e.g. {string.Join("; ", wrongOnes.Take(3))}. Fix the model (or the mapped readiness finding) and re-submit.",
+                    Detail = $"{wrong}/{live.Count} interview question(s) now come back confidently WRONG: e.g. {string.Join("; ", wrongOnes.Take(3))}. Fix the model (or the mapped readiness finding) and re-submit.",
                 };
             var extras = new List<string>();
             if (refused > 0) extras.Add($"{refused} safely declined");
@@ -972,26 +977,26 @@ namespace Semanticus.Engine
         private static void ValidateInterviewQuestion(InterviewQuestion q, bool forRun = false, bool hasAttempt = false, bool abstained = false)
         {
             if (string.IsNullOrWhiteSpace(q.Question))
-                throw new InvalidOperationException("A question needs its natural-language text — that IS the artifact (e.g. \"What were total sales in 2024?\").");
+                throw new InvalidOperationException("A question needs its natural-language text: that IS the artifact (e.g. \"What were total sales in 2024?\").");
             switch (q.Tier)
             {
                 case "value":
                     if (string.IsNullOrWhiteSpace(q.Query) && !(forRun && hasAttempt))
-                        throw new InvalidOperationException("A value-tier question needs `query` — the full EVALUATE DAX that answers it (e.g. EVALUATE ROW(\"v\", CALCULATE([Total Sales], 'Date'[Year]=2024))). Scalar expressions belong to the paraphrase tier (GAP C: the shapes are not interchangeable).");
+                        throw new InvalidOperationException("A value-tier question needs `query`: the full EVALUATE DAX that answers it (e.g. EVALUATE ROW(\"v\", CALCULATE([Total Sales], 'Date'[Year]=2024))). Scalar expressions belong to the paraphrase tier (GAP C: the shapes are not interchangeable).");
                     // The oracle is required to PERSIST (a saved question must always grade as a regression
                     // check), but an inline RUN without one IS the confirm-and-record flow list_interview_seeds
                     // advertises: it executes and comes back Unverified with the computed number in the detail —
                     // never a pass, and never a refusal of the tool's own guidance.
                     if (!forRun && string.IsNullOrWhiteSpace(q.ExpectedValue) && (q.ExpectedMatrix == null || q.ExpectedMatrix.Length == 0))
-                        throw new InvalidOperationException("A value-tier question needs its trusted answer — `expectedValue` (a single number/text) or `expectedMatrix` (rows) confirmed by the user or a verified answer. Without an oracle the engine can only ever say \"couldn't check\" (run_interview an inline no-oracle question first to see the computed number, then record the confirmed value here).");
+                        throw new InvalidOperationException("A value-tier question needs its trusted answer: `expectedValue` (a single number/text) or `expectedMatrix` (rows) confirmed by the user or a verified answer. Without an oracle the engine can only ever say \"couldn't check\" (run_interview an inline no-oracle question first to see the computed number, then record the confirmed value here).");
                     break;
                 case "paraphrase":
                     if (string.IsNullOrWhiteSpace(q.ScalarExpr) || string.IsNullOrWhiteSpace(q.ParaphraseExpr))
-                        throw new InvalidOperationException("A paraphrase-tier question needs BOTH `scalarExpr` and `paraphraseExpr` — the same question answered two ways as scalar DAX expressions (full EVALUATE queries belong to the value tier).");
+                        throw new InvalidOperationException("A paraphrase-tier question needs BOTH `scalarExpr` and `paraphraseExpr`: the same question answered two ways as scalar DAX expressions (full EVALUATE queries belong to the value tier).");
                     break;
                 case "refusal":
                     if (!q.ExpectRefusal)
-                        throw new InvalidOperationException("A refusal-tier question must set expectRefusal=true — it asserts the model CANNOT answer it.");
+                        throw new InvalidOperationException("A refusal-tier question must set expectRefusal=true: it asserts the model CANNOT answer it.");
                     if (forRun && !hasAttempt && !abstained)
                     {
                         // Allowed: it scores Unverified with a teaching detail. Nothing to validate.
@@ -1010,7 +1015,7 @@ namespace Semanticus.Engine
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException("expectedMatrixJson must be a JSON array of rows, each an array of cell values as strings — e.g. [[\"2023\",\"1200.5\"],[\"2024\",\"1310.0\"]]. " + ex.Message);
+                throw new InvalidOperationException("expectedMatrixJson must be a JSON array of rows, each an array of cell values as strings: e.g. [[\"2023\",\"1200.5\"],[\"2024\",\"1310.0\"]]. " + ex.Message);
             }
         }
 

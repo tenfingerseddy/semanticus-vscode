@@ -310,6 +310,54 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Rejected_batch_keeps_the_existing_redo_stack()
+        {
+            var (engine, sm, ms) = await FreshAsync();
+            using (engine)
+            {
+                await engine.SetObjectPropertiesAsync(new[] { ms[0], ms[1] }, "IsHidden", "true", "human");
+                var undone = await engine.UndoAsync("human");
+                Assert.True(undone.CanRedo);
+                Assert.Equal("False", await HiddenAsync(engine, ms[0]));
+                Assert.Equal("False", await HiddenAsync(engine, ms[1]));
+
+                // Valid first target, invalid second (a table has no DisplayFolder). The refusal must not
+                // destroy the redo the undo above left behind.
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => engine.SetObjectPropertiesAsync(new[] { ms[0], "table:Sales" }, "DisplayFolder", "Finance", "human"));
+                Assert.Contains("table:Sales", ex.Message);
+                Assert.Contains("all-or-nothing", ex.Message);
+                Assert.Equal("False", await HiddenAsync(engine, ms[0]));
+                Assert.True(sm.Current.UndoStateNow().CanRedo);
+
+                await engine.RedoAsync("human");
+                Assert.Equal("True", await HiddenAsync(engine, ms[0]));
+                Assert.Equal("True", await HiddenAsync(engine, ms[1]));
+            }
+        }
+
+        [Fact]
+        public async Task Dry_run_keeps_the_existing_redo_stack()
+        {
+            var (engine, sm, ms) = await FreshAsync();
+            using (engine)
+            {
+                await engine.SetObjectPropertiesAsync(new[] { ms[0], ms[1] }, "IsHidden", "true", "human");
+                Assert.True((await engine.UndoAsync("human")).CanRedo);
+
+                var argsJson = System.Text.Json.JsonSerializer.Serialize(new { objRefs = ms, propertyName = "IsHidden", value = "true" });
+                var rpt = await engine.DryRunOpAsync("set_properties", argsJson);
+                Assert.True(rpt.WouldSucceed);
+                Assert.Equal("False", await HiddenAsync(engine, ms[0]));
+                Assert.True(sm.Current.UndoStateNow().CanRedo);
+
+                await engine.RedoAsync("human");
+                Assert.Equal("True", await HiddenAsync(engine, ms[0]));
+                Assert.Equal("True", await HiddenAsync(engine, ms[1]));
+            }
+        }
+
+        [Fact]
         public async Task Dry_run_of_set_properties_rehearses_without_committing()
         {
             var (engine, sm, ms) = await FreshAsync();

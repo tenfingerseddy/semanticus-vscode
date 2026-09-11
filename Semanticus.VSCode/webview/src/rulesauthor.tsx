@@ -143,6 +143,11 @@ export function CustomRulesPanel({ kind, onChanged }: { kind: Kind; onChanged?: 
     if (!form) return;
     setBusy(true); setErr(null);
     try {
+      const id = form.draft.id.trim();
+      if (!form.editingId && rules.some((r) => String(r.id).toLowerCase() === id.toLowerCase())) {
+        setErr('This id is already used. Pick a new one, or edit the rule that has it.');
+        return;
+      }
       const rule = draftToRule(kind, form.draft);
       if (form.editingId && form.editingId !== form.draft.id.trim()) {
         // A rename while editing: replace the whole set with the old rule swapped out, so the old id never lingers.

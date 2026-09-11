@@ -62,7 +62,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Iferror_as_a_bracketed_measure_ref_is_not_flagged()
         {
-            var (engine, sessions) = await BuildModelAsync(("Sales", "RefsError", "[IfError Rate] * 2"));
+            var (engine, sessions) = await BuildModelAsync(("Sales", "IfError Rate", "1"), ("Sales", "RefsError", "[IfError Rate] * 2"));
             using (engine)
                 Assert.False(Flagged(await ScanAsync(sessions), "DAX_AVOID_IFERROR", "RefsError"));
         }

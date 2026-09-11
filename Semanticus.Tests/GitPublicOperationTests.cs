@@ -238,6 +238,35 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Divergent_pull_error_leads_with_the_fatal_reason_not_From()
+        {
+            var remote = RemoteFixture();
+            try
+            {
+                var sessions = new SessionManager();
+                using var engine = new LocalEngine(sessions, new Free(), remote.Work);
+                await engine.OpenAsync(remote.WorkModel);
+
+                File.AppendAllText(remote.WorkModel, "\n local");
+                Git(remote.Work, "add", "--", "model.bim");
+                Git(remote.Work, "commit", "-q", "-m", "local model change");
+
+                File.AppendAllText(remote.PeerModel, "\n remote");
+                Git(remote.Peer, "add", "--", "model.bim");
+                Git(remote.Peer, "commit", "-q", "-m", "peer model change");
+                Git(remote.Peer, "push", "-q");
+
+                var refused = await McpTools.GitPull(engine);
+                Assert.False(refused.Ok);
+                Assert.False(string.IsNullOrWhiteSpace(refused.Error));
+                Assert.False(refused.Error.TrimStart().StartsWith("From ", StringComparison.OrdinalIgnoreCase));
+                Assert.Contains("fatal:", refused.Error, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("From ", refused.Output, StringComparison.OrdinalIgnoreCase);
+            }
+            finally { Delete(remote.Root); }
+        }
+
+        [Fact]
         public async Task Clone_resolves_relative_to_workspace_and_never_publishes_a_partial_target()
         {
             var source = RepoWithModelChangeBranch("git-public-clone-source-");
@@ -305,6 +334,7 @@ namespace Semanticus.Tests
             };
             var output = GitCli.Combine(run);
             var error = GitCli.Error(run);
+            var reason = GitCli.Reason(run);
 
             Assert.DoesNotContain("alice:super-secret", output, StringComparison.Ordinal);
             Assert.DoesNotContain("ghp_username_only", output, StringComparison.Ordinal);
@@ -313,6 +343,9 @@ namespace Semanticus.Tests
             Assert.Contains("access_token=***", output, StringComparison.Ordinal);
             Assert.DoesNotContain("alice:super-secret", error, StringComparison.Ordinal);
             Assert.DoesNotContain("abc.def.ghi", error, StringComparison.Ordinal);
+            Assert.DoesNotContain("alice:super-secret", reason, StringComparison.Ordinal);
+            Assert.DoesNotContain("abc.def.ghi", reason, StringComparison.Ordinal);
+            Assert.StartsWith("fatal:", reason, StringComparison.OrdinalIgnoreCase);
 
             var malformed = GitCli.Scrub("fatal: unable to access 'https://alice:sec/ret@part@example.invalid/repo': rejected");
             Assert.DoesNotContain("alice:sec/ret", malformed, StringComparison.Ordinal);

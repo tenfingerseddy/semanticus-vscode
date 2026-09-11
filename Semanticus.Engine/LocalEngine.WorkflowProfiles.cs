@@ -70,8 +70,8 @@ namespace Semanticus.Engine
             var file = WorkflowSettingsFile()
                 ?? throw new InvalidOperationException("No workspace can hold workflow settings. Open a model or workspace, then retry.");
             if (profile.Pro)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "activate_workflow_profile (applying a profile with required workflows)",
-                    "Free alternative: use the Solo analyst profile, or follow any workflow manually from list_workflows.");
+                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying a profile with required workflows",
+                    "Free alternative: use the Solo analyst profile, or open a playbook and follow its steps by hand.");
 
             var library = LoadWorkflowDefs().Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
             var missing = profile.Bindings.Select(x => x.workflow).Where(x => !library.Contains(x)).Distinct(StringComparer.Ordinal).ToArray();

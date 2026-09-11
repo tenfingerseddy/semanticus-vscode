@@ -68,13 +68,67 @@ Finish up.
                 Assert.Contains(list, w => w.Name == "advice" && !w.Gated);
                 Assert.Contains("Ask things.", (await e.GetWorkflowAsync("gated")).Steps[0].Instructions);
 
-                await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("gated", "human"));
+                var gated = await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("gated", "human"));
+                Assert.Contains("Pro feature", gated.Message);
+                Assert.DoesNotContain("start_workflow", gated.Message);
+                Assert.DoesNotContain("get_workflow", gated.Message);
+                Assert.DoesNotContain("SEMANTICUS_LICENSE", gated.Message);
+                Assert.DoesNotContain("~/.semanticus", gated.Message);
 
                 // an ungated workflow runs free — what's paid is enforcement, not the playbook
                 var run = await e.StartWorkflowAsync("advice", "human");
                 Assert.Equal("step-1", run.CurrentStep.StepId);
             }
             finally { Directory.Delete(ws, true); }
+        }
+
+        [Fact]
+        public async Task Parent_library_card_follows_a_callee_gate()
+        {
+            var ws = Path.Combine(Path.GetTempPath(), "smx-wfops-call-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(Path.Combine(ws, ".semanticus", "workflows"));
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "gated-child.md"), @"---
+schemaVersion: 2
+name: gated-child
+title: Gated child
+strictness: hard
+---
+## Step 1: Ask
+Ask.
+```yaml gate
+inputs:
+  - name: answer
+    question: ""What?""
+    required: required
+```
+");
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "ungated-parent.md"), @"---
+schemaVersion: 2
+name: ungated-parent
+title: Ungated parent
+strictness: off
+---
+## Step 1: Hand off
+Hand off.
+```yaml step
+id: hand-off
+call:
+  workflow: gated-child
+```
+");
+            var sessions = new SessionManager();
+            var e = new LocalEngine(sessions, new Free(), ws);
+            try
+            {
+                var list = await e.ListWorkflowsAsync();
+                var child = Assert.Single(list, w => w.Name == "gated-child");
+                var parent = Assert.Single(list, w => w.Name == "ungated-parent");
+                Assert.True(child.Gated);
+                Assert.True(parent.Gated);   // the card follows the call graph, same as start
+                Assert.True((await e.GetWorkflowPolicyAsync()).Workflows.Single(w => w.Name == "ungated-parent").Gated);
+                await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("ungated-parent", "human"));
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
         [Fact]
@@ -93,7 +147,7 @@ Finish up.
 
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                     () => e.SubmitWorkflowStepAsync(run.RunId, "step-1", "{}", "human"));
-                Assert.Contains("What is the answer?", ex.Message);            // rejection text = the steering mechanism
+                Assert.Contains("This question still needs an answer.", ex.Message);
                 Assert.Null(terminal);                                         // a rejected submit is not a transition
 
                 var done = await e.SubmitWorkflowStepAsync(run.RunId, "step-1", "{\"answer\": \"42\"}", "human");
@@ -139,11 +193,15 @@ Finish up.
                 sessions.Bus.Activity += a => { if (a.Kind == "workflow_run") terminal = a; };
 
                 var run = await e.StartWorkflowAsync("advice", "human");
+                Assert.Equal("in_progress", run.Steps[0].Status);
                 var aborted = await e.AbortWorkflowAsync(run.RunId, "changed course", "human");
                 Assert.Equal("aborted", aborted.Status);
+                Assert.Equal("in_progress", aborted.Steps[0].Status);          // abort keeps the step that was underway
                 Assert.NotNull(terminal);
                 Assert.False(terminal.Ok);                                     // an abandoned run is data, honestly marked
-                Assert.Equal("aborted", (await e.GetWorkflowRunAsync(run.RunId)).Status);
+                var stored = await e.GetWorkflowRunAsync(run.RunId);
+                Assert.Equal("aborted", stored.Status);
+                Assert.Equal("in_progress", stored.Steps[0].Status);
             }
             finally { Directory.Delete(ws, true); }
         }

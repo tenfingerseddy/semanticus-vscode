@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
     buildDaxHeader, parseDaxHeaderName, parseDaxHeader, splitDaxHeader, reKeyRef, uniqueName, refPartsOf,
     checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken,
+    pickOpenDaxHref, refFromDaxPath, shouldCloseDaxTab,
 } from '../out/daxHeader.js';
 import { Buffer } from 'node:buffer';
 
@@ -107,6 +108,12 @@ test('checkDaxHeader REJECTS a deleted / malformed header (body promoted to line
     assert.equal(checkDaxHeader('measure:Sales/New Measure', 'RETURN x').ok, false);   // header deleted
     assert.equal(checkDaxHeader('measure:Sales/New Measure', 'CALCULATE([Revenue])').ok, false);
 });
+test('checkDaxHeader names the body-on-line-1 rule (D-061)', () => {
+    const r = checkDaxHeader('measure:Measures/New Measure', "MEASURE 'Measures'[New Measure] = SUMX(Sales)");
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /line 2/i);
+    assert.doesNotMatch(r.reason, /must stay the name header/);
+});
 test('checkDaxHeader REJECTS a wrong keyword/kind (TABLE cannot rename a measure)', () => {
     assert.equal(checkDaxHeader('measure:Sales/New Measure', "TABLE 'Sales' =").ok, false);
 });
@@ -141,10 +148,38 @@ test('parseDaxHeader is keyword-driven: it only accepts each keyword\'s canonica
 
 // --- 4d. decideDaxSave: URI-borne identity (CRITICAL 2) — never content-adopted, cross-model refused --------
 const HDR = (uriModelKey = 'm1', modelKey = 'm1') => ({ isHeaderUri: true, uriModelKey, modelKey });
+const BODY = (uriModelKey = 'm1', modelKey = 'm1') => ({ isHeaderUri: false, uriModelKey, modelKey });
 test('decideDaxSave: NOT a header uri -> body (a tree-opened editor never parses line 1 as a header)', () => {
     // even when line 1 LOOKS like a header, a non-header uri stays body (content is never a promotion signal)
-    assert.deepEqual(decideDaxSave('measure:Sales/M', "MEASURE 'Sales'[M] =", '', { isHeaderUri: false }), { kind: 'body' });
-    assert.deepEqual(decideDaxSave('measure:Sales/M', 'CALCULATE([Revenue])', '', { isHeaderUri: false }), { kind: 'body' });
+    assert.deepEqual(decideDaxSave('measure:Sales/M', "MEASURE 'Sales'[M] =", '', BODY()), { kind: 'body' });
+    assert.deepEqual(decideDaxSave('measure:Sales/M', 'CALCULATE([Revenue])', '', BODY()), { kind: 'body' });
+});
+test('decideDaxSave: tree-opened uri from a DIFFERENT model -> reject (must not write into the open model)', () => {
+    const d = decideDaxSave('measure:Sales/M', 'CALCULATE(1)', '', BODY('modelA', 'modelB'));
+    assert.equal(d.kind, 'reject');
+    assert.match(d.reason, /different model/i);
+});
+test('decideDaxSave: tree-opened uri missing identity -> reject (fail closed, same as a header uri)', () => {
+    const d = decideDaxSave('measure:Sales/M', 'CALCULATE(1)', '', { isHeaderUri: false });
+    assert.equal(d.kind, 'reject');
+    assert.match(d.reason, /identity is missing/i);
+});
+test('pickOpenDaxHref focuses the already-open tab for a ref (header wins over body)', () => {
+    const body = { path: '/measure:Sales/M.dax', query: 'mk=m1', href: 'semanticus:/body' };
+    const header = { path: '/measure:Sales/M.dax', query: 'hdr=1&mk=m1', href: 'semanticus:/header' };
+    const other = { path: '/measure:Sales/Other.dax', query: 'mk=m1', href: 'semanticus:/other' };
+    assert.equal(pickOpenDaxHref([body, header, other], 'measure:Sales/M', 'm1'), 'semanticus:/header');
+    assert.equal(pickOpenDaxHref([body, other], 'measure:Sales/M', 'm1'), 'semanticus:/body');
+    assert.equal(pickOpenDaxHref([body, header], 'measure:Sales/M', 'm2'), undefined, 'a tab from another model is not reused');
+});
+test('shouldCloseDaxTab closes foreign and token-less tabs only on a model swap', () => {
+    assert.equal(shouldCloseDaxTab('m1', 'm1', true), false);
+    assert.equal(shouldCloseDaxTab('m1', 'm2', true), true);
+    assert.equal(shouldCloseDaxTab(undefined, 'm2', true), true, 'a tab with no token cannot be proven to belong to the new model');
+    assert.equal(shouldCloseDaxTab(undefined, 'm2', false), false, 'a restored tab before the first model is open is kept');
+});
+test('refFromDaxPath strips the leading slash and .dax suffix', () => {
+    assert.equal(refFromDaxPath('/measure:Sales/M.dax'), 'measure:Sales/M');
 });
 test('decideDaxSave: header uri + same model + valid line 1 -> header (rename+body)', () => {
     assert.deepEqual(decideDaxSave('measure:Sales/M', "MEASURE 'Sales'[M2] =", 'CALCULATE(1)', HDR()), { kind: 'header', name: 'M2' });
@@ -157,6 +192,11 @@ test('decideDaxSave: header uri from a DIFFERENT model -> reject (CRITICAL 2: no
     const d = decideDaxSave('measure:Sales/M', "MEASURE 'Sales'[M] =", '', HDR('modelA', 'modelB'));
     assert.equal(d.kind, 'reject');
     assert.match(d.reason, /different model/i);
+});
+test('decideDaxSave rejects a formula still on the name line (D-061)', () => {
+    const d = decideDaxSave('measure:Measures/New Measure', "MEASURE 'Measures'[Renamed] = 1", '', HDR());
+    assert.equal(d.kind, 'reject');
+    assert.match(d.reason, /line 2/i);
 });
 test('decideDaxSave: header uri + invalid line 1 -> reject (never a silent body-only save)', () => {
     const d = decideDaxSave('measure:Sales/M', 'RETURN x', 'RETURN x', HDR());
@@ -450,6 +490,29 @@ test('the in-memory cache is cleared on model swap; PERSISTED pending renames su
     assert.match(ext, /async function sweepClosedPendingRenames\(\)/, 'an activation sweep drops records whose editor is no longer open');
     assert.match(ext, /for \(const key of keys\) \{ if \(!open\.has\(key\)\) await clearPendingRename\(key\); \}/, 'the sweep clears only records with no open tab/document (keeps a restored dirty doc)');
     assert.match(ext, /setTimeout\(\(\) => \{ void sweepClosedPendingRenames\(\); \}, \d+\)/, 'the sweep runs at activation, deferred so restored tabs/docs are present first');
+});
+test('tree-opened DAX uris stamp the model token so a leftover tab cannot save into the next model', () => {
+    assert.match(ext, /function uriForRef\(ref: string\): vscode\.Uri \{[\s\S]*identityToken\(daxHeaderModelKey\)/,
+        'uriForRef stamps mk on every DAX uri, not only header docs');
+    assert.match(ext, /sendRequest<SetResult>\('setDax', oldRef, raw, 'human', liveSession/,
+        'a body save fences on the live session so a swap cannot land on the wrong model');
+});
+test('openDaxAt reuses an already-open tab for the same ref instead of minting a second editor', () => {
+    const open = fnBody(ext, 'openDaxAt');
+    assert.match(open, /pickOpenDaxHref/, 'tree click must focus the existing editor for that object');
+});
+test('a model swap closes DAX tabs that belong to the previous model', () => {
+    assert.match(ext, /shouldCloseDaxTab/, 'swap must consult the close-stale-tab rule');
+    assert.match(ext, /closeStaleDaxTabs/, 'swap must close leftover DAX tabs');
+});
+test('readFile does not throw a generic error when no model is open yet (restored tabs can retry)', () => {
+    assert.match(ext, /async readFile\(uri: vscode\.Uri\): Promise<Uint8Array> \{[\s\S]*FileSystemError\.Unavailable/,
+        'a restored tab before a model is open must fail as Unavailable, not an unexpected error');
+});
+test('the extension activates on the DAX virtual file system so a restored tab can open', () => {
+    const pkg = JSON.parse(read('package.json'));
+    assert.ok((pkg.activationEvents ?? []).includes('onFileSystem:semanticus'),
+        'a restored semanticus: tab must activate the extension before VS Code tries to read it');
 });
 
 // --- 7. create-then-edit: the five flows create immediately, open the editor, NO name InputBox --------

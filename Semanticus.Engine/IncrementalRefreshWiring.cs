@@ -279,13 +279,50 @@ namespace Semanticus.Engine
                 i++;
             }
             if (equals <= 0) return false;
-            var nameRaw = raw.Substring(0, equals).Trim();
-            if (nameRaw.Length == 0) return false;
-            var name = nameRaw.StartsWith("#\"", StringComparison.Ordinal) && nameRaw.EndsWith("\"", StringComparison.Ordinal)
-                ? nameRaw.Substring(2, nameRaw.Length - 3).Replace("\"\"", "\"", StringComparison.Ordinal)
-                : nameRaw;
+            var name = ReadStepName(raw, equals);
+            if (string.IsNullOrEmpty(name)) return false;
             steps.Add(new Step { Name = name, End = LastCodeEnd(source, start, end) });
             return true;
+        }
+
+        // A let-line comment sits in the same segment as the first binding. Skipping comments and
+        // whitespace before the identifier keeps that comment out of the step name (D-027).
+        private static string ReadStepName(string raw, int equals)
+        {
+            var i = 0;
+            while (i < equals && SkipCommentOrSpace(raw, ref i)) { }
+            if (i >= equals) return null;
+            if (raw[i] == '#' && Peek(raw, i + 1) == '"')
+            {
+                var start = i;
+                SkipNonCode(raw, ref i);
+                if (i - start < 3) return null;
+                var quoted = raw.Substring(start, i - start);
+                if (!quoted.StartsWith("#\"", StringComparison.Ordinal) || !quoted.EndsWith("\"", StringComparison.Ordinal))
+                    return null;
+                return quoted.Substring(2, quoted.Length - 3).Replace("\"\"", "\"", StringComparison.Ordinal);
+            }
+            if (!IsIdentStart(raw[i])) return null;
+            return raw.Substring(i, IdentEnd(raw, i) - i);
+        }
+
+        private static bool SkipCommentOrSpace(string source, ref int i)
+        {
+            if (i >= source.Length) return false;
+            if (char.IsWhiteSpace(source[i])) { i++; return true; }
+            if (source[i] == '/' && Peek(source, i + 1) == '/')
+            {
+                while (i < source.Length && source[i] != '\n') i++;
+                return true;
+            }
+            if (source[i] == '/' && Peek(source, i + 1) == '*')
+            {
+                i += 2;
+                while (i < source.Length && !(source[i] == '*' && Peek(source, i + 1) == '/')) i++;
+                if (i < source.Length) i += 2;
+                return true;
+            }
+            return false;
         }
 
         // The end of a step's CODE within [start,end): past trailing whitespace AND any trailing // or /* */ comment,

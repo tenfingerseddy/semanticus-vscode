@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -13,8 +14,8 @@ namespace Semanticus.Tests
     /// The workflow VERIFY EXECUTORS wired on <see cref="LocalEngine"/> (docs/pro-mode-spec.md §4/§7) —
     /// the engine-evaluated half of a gate that WorkflowKernelTests (pure kernel, injected fake executor)
     /// and WorkflowOpsTests (ops plumbing, no real verify) deliberately do NOT cover. Pinned here:
-    /// dax_probe offline → skipped-not-passed through the real engine (a hard gate does not block on a
-    /// skip); the missing-snapshot honesty for bpa_clean (fails instructively rather than silently
+    /// dax_probe offline → unavailable, and a hard gate blocks on it; the missing-snapshot honesty
+    /// for bpa_clean (fails instructively rather than silently
     /// passing); the bpa_clean happy path (snapshot diff, no new violations); and RPC-door dual-drive
     /// (one run store shared across both doors).
     /// </summary>
@@ -193,24 +194,23 @@ inputs:
             Path.Combine(LayoutStore.DirFor(bimPath), "workflows");
 
         [Fact]
-        public async Task Dax_probe_offline_comes_back_skipped_not_passed_and_a_hard_gate_does_not_block()
+        public async Task Dax_probe_offline_blocks_a_hard_gate()
         {
             var ws = NewWorkspace();
             WriteUserWorkflow(ws, "probe-offline.md", ProbeOfflineMd);
             var sessions = new SessionManager();
             try
             {
-                // Pro (the gate enforces), NO session, NO live connection: the probe executor returns skipped
-                // BEFORE touching the session, so the step passes with an honest skip recorded on the evidence.
                 var e = new LocalEngine(sessions, new Pro(), ws);
                 var run = await e.StartWorkflowAsync("probe-offline", "human");
-                var done = await e.SubmitWorkflowStepAsync(run.RunId, "step-1",
-                    "{\"probeValue\": \"100\", \"target\": \"measure:Sales/Total\"}", "human");
-
-                Assert.Equal("completed", done.Status);            // a hard gate does NOT block on a skip
-                Assert.Equal("passed", done.Steps[0].Status);
-                var probe = done.Steps[0].VerifyResults.Single(v => v.Kind == "dax_probe");
-                Assert.Equal("skipped", probe.Status);             // skipped != passed — the offline honesty contract
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    e.SubmitWorkflowStepAsync(run.RunId, "step-1",
+                        "{\"probeValue\": \"100\", \"target\": \"measure:Sales/Total\"}", "human"));
+                Assert.Contains("hard gate", ex.Message);
+                var after = await e.GetWorkflowRunAsync(run.RunId);
+                Assert.Equal("failed", after.Steps[0].Status);
+                var probe = after.Steps[0].VerifyResults.Single(v => v.Kind == "dax_probe");
+                Assert.Equal("unavailable", probe.Status);
                 Assert.Contains("offline", probe.Detail);
             }
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
@@ -267,25 +267,23 @@ inputs:
         }
 
         [Fact]
-        public async Task Benchmark_delta_offline_comes_back_skipped_not_passed_with_the_open_live_hint()
+        public async Task Benchmark_delta_offline_blocks_a_hard_gate()
         {
             var ws = NewWorkspace();
             WriteUserWorkflow(ws, "benchmark-delta.md", BenchmarkDeltaMd);
             var sessions = new SessionManager();
             try
             {
-                // Valid answered baseline + target, NO live connection: the executor validates the answers, then
-                // SKIPS honestly (it cannot time anything offline) — a skip must never block the hard gate.
                 var e = new LocalEngine(sessions, new Pro(), ws);
                 var run = await e.StartWorkflowAsync("benchmark-delta", "human");
-                var done = await e.SubmitWorkflowStepAsync(run.RunId, "step-1",
-                    "{\"baselineMs\": \"100\", \"target\": \"measure:Sales/Total\"}", "human");
-
-                Assert.Equal("completed", done.Status);
-                var bd = done.Steps[0].VerifyResults.Single(v => v.Kind == "benchmark_delta");
-                Assert.Equal("skipped", bd.Status);
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    e.SubmitWorkflowStepAsync(run.RunId, "step-1",
+                        "{\"baselineMs\": \"100\", \"target\": \"measure:Sales/Total\"}", "human"));
+                Assert.Contains("hard gate", ex.Message);
+                var after = await e.GetWorkflowRunAsync(run.RunId);
+                var bd = after.Steps[0].VerifyResults.Single(v => v.Kind == "benchmark_delta");
+                Assert.Equal("unavailable", bd.Status);
                 Assert.Contains("offline", bd.Detail);
-                Assert.Contains("open_live", bd.Detail);
             }
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
@@ -460,6 +458,66 @@ inputs:
                 sessions.Dispose();
                 Directory.Delete(ws, true);
             }
+        }
+
+        [Fact]
+        public void Make_ai_ready_step_five_still_asks_for_an_improved_grade()
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "make-ai-ready.md");
+            Assert.True(File.Exists(path), "stock playbook was not copied beside the test binary: " + path);
+            var md = File.ReadAllText(path);
+            Assert.Contains("grade improved", md);
+        }
+
+        [Fact]
+        public void Readiness_rescan_fails_when_the_score_falls_even_with_no_new_findings()
+        {
+            var before = new HashSet<string>(StringComparer.Ordinal) { "RULE-A|table:Sales" };
+            var after = new Semanticus.Analysis.Scorecard
+            {
+                Overall = 70,
+                Findings = new[]
+                {
+                    new Semanticus.Analysis.ReadinessFinding { RuleId = "RULE-A", ObjectRef = "table:Sales", ObjectName = "Sales", Waived = false },
+                },
+            };
+            var result = LocalEngine.EvaluateReadinessRescan(before, 80, after);
+            Assert.Equal("failed", result.Status);
+            Assert.Contains("fell", result.Detail);
+        }
+
+        [Fact]
+        public void Readiness_rescan_on_make_ai_ready_fails_when_findings_remain_and_the_score_did_not_improve()
+        {
+            var before = new HashSet<string>(StringComparer.Ordinal) { "RULE-A|table:Sales" };
+            var after = new Semanticus.Analysis.Scorecard
+            {
+                Overall = 80,
+                Findings = new[]
+                {
+                    new Semanticus.Analysis.ReadinessFinding { RuleId = "RULE-A", ObjectRef = "table:Sales", ObjectName = "Sales", Waived = false },
+                },
+            };
+            var result = LocalEngine.EvaluateReadinessRescan(before, 80, after, "make-ai-ready");
+            Assert.Equal("failed", result.Status);
+            Assert.Contains("no more ready", result.Detail);
+        }
+
+        [Fact]
+        public void Readiness_rescan_passes_when_the_score_holds_and_no_new_findings_appear()
+        {
+            var before = new HashSet<string>(StringComparer.Ordinal) { "RULE-A|table:Sales" };
+            var after = new Semanticus.Analysis.Scorecard
+            {
+                Overall = 80,
+                Findings = new[]
+                {
+                    new Semanticus.Analysis.ReadinessFinding { RuleId = "RULE-A", ObjectRef = "table:Sales", ObjectName = "Sales", Waived = false },
+                },
+            };
+            var result = LocalEngine.EvaluateReadinessRescan(before, 80, after);
+            Assert.Equal("passed", result.Status);
+            Assert.Contains("no new readiness findings", result.Detail);
         }
     }
 }

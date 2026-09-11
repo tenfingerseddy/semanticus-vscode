@@ -29,14 +29,19 @@ namespace Semanticus.Engine
         // stage_config allows more; the portal caps at 15k. Refuse past that (nothing is sent).
         private const int AiInstructionsCap = 15000;
 
+        // Test-only observation point for the DATA-AGENT lane (T163). The token itself comes from the one shared
+        // Fabric chokepoint; this only lets the data-agent tests prove their OWN wiring stands up, without reaching
+        // into shared code to manufacture a failure.
+        internal Action<bool> DataAgentDisableInteractiveForTests;
+
         // ---- reads (free) --------------------------------------------------------------------------
 
-        public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, CancellationToken cancellationToken = default)
+        public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(workspaceId)) return new DataAgentList { Error = "A workspaceId is required — list_workspaces shows your workspaces and their ids." };
+            if (string.IsNullOrWhiteSpace(workspaceId)) return new DataAgentList { Error = "A workspaceId is required: list_workspaces shows your workspaces and their ids." };
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 var items = await DataAgentRest.ListItemsAsync(workspaceId, token, cancellationToken);
                 var agents = items.Where(i => DataAgentRest.IsDataAgentType(i.Type))
                     .Select(i => new DataAgentInfo { Id = i.Id, Name = i.DisplayName, Description = i.Description, Type = i.Type, Published = null })
@@ -45,21 +50,19 @@ namespace Semanticus.Engine
                     .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToArray();
                 // Fail-loud on a zero match (docs lag the type string): surface the observed types so the caller can
                 // confirm the real one, rather than silently claiming the workspace has no agents.
-                var note = agents.Length == 0
-                    ? $"No items matched the data-agent type filter (type contains 'dataagent'). Observed item types: {(observed.Length > 0 ? string.Join(", ", observed) : "(none)")}. [verify-at-build] confirm the real data-agent type string from this list."
-                    : null;
+                var note = agents.Length == 0 ? "No data agents in this workspace." : null;
                 return new DataAgentList { Agents = agents, ObservedItemTypes = observed, Note = note };
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return new DataAgentList { Error = FabricRest.Scrub(ex.Message) }; }
         }
 
-        public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, CancellationToken cancellationToken = default)
+        public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId))
-                return new DataAgentDetail { Error = "A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it." };
+                return new DataAgentDetail { Error = "A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it." };
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 var parts = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var parsed = DataAgentRest.ParseDataAgentParts(parts);
                 var published = parsed.PublishInfo != null;
@@ -81,7 +84,7 @@ namespace Semanticus.Engine
         public async Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable = 200)
         {
             // Part of the one-line rule above: configuring data agents (this one-click scope included) is Pro.
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "generate_data_agent_config_from_model (one-click scope of the whole model into a data-agent datasource)",
+            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Building a data-agent source from this model",
                 "Browsing data agents stays free (list_data_agents / get_data_agent); configuring and publishing them is Pro.");
             var s = _sessions.Require();   // an instructive throw when no model is open
             var cap = maxColumnsPerTable <= 0 ? 200 : maxColumnsPerTable;
@@ -147,7 +150,7 @@ namespace Semanticus.Engine
 
                 var aiInstructions = prep?.AiInstructions ?? string.Empty;
                 var notes = new List<string>();
-                notes.Add("artifactId/workspaceId are PLACEHOLDERS — fill them with the target semantic model's Fabric ids before update_data_agent (resolvable from list_workspaces + the workspace items).");
+                notes.Add("artifactId/workspaceId are PLACEHOLDERS. Fill them with the target semantic model's Fabric ids before update_data_agent (resolvable from list_workspaces + the workspace items).");
                 var publish = connectionContext?.Publishing;
                 if (publish?.Available == true)
                     notes.Add($"Publish destination selected: endpoint '{publish.Endpoint}', model '{publish.Database ?? publish.ModelName}'. Resolve the GUIDs from that destination.");
@@ -157,7 +160,7 @@ namespace Semanticus.Engine
                     if (live != null) notes.Add($"Live-bound to endpoint '{live.Endpoint}', dataset '{live.Database}'. Resolve the GUIDs from those.");
                     else notes.Add("No publish destination is selected. Choose one in Connections before applying this source so the live semantic model is unambiguous.");
                 }
-                if (string.IsNullOrEmpty(aiInstructions)) notes.Add("No LSDL AI instructions on the model — aiInstructions seeded empty; author them or set_ai_instructions first.");
+                if (string.IsNullOrEmpty(aiInstructions)) notes.Add("No LSDL AI instructions on the model: aiInstructions seeded empty; author them or set_ai_instructions first.");
                 if (excludedHit > 0) notes.Add($"Scoped from Prep-for-AI: {excludedHit} object(s) unselected by the model's AI data schema.");
 
                 return new DataAgentConfig
@@ -183,9 +186,9 @@ namespace Semanticus.Engine
         {
             RequireProDataAgentWrite("create_data_agent");
             aiInstructions ??= string.Empty;
-            if (string.IsNullOrWhiteSpace(workspaceId)) return Err("A workspaceId is required — list_workspaces shows your workspaces and their ids.");
+            if (string.IsNullOrWhiteSpace(workspaceId)) return Err("A workspaceId is required: list_workspaces shows your workspaces and their ids.");
             if (string.IsNullOrWhiteSpace(name)) return Err("A name is required.");
-            if (aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars — over the {AiInstructionsCap} cap. Nothing was sent.");
+            if (aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars: over the {AiInstructionsCap} cap. Nothing was sent.");
             var summary = $"create_data_agent '{name}' in {workspaceId} → parts: {DataAgentRest.DataAgentJsonPath}, {DataAgentRest.DraftStageConfigPath}; aiInstructions {aiInstructions.Length} chars; 0 datasources";
             // Dry-run path returns BEFORE token acquisition — no HTTP, offline-safe.
             if (!commit) return DryRun(summary);
@@ -194,7 +197,7 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "create_data_agent:" + name); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 var parts = new (string, string)[]
                 {
                     (DataAgentRest.DataAgentJsonPath, JsonSerializer.Serialize(new Dictionary<string, object> { ["$schema"] = DataAgentRest.DataAgentSchema })),
@@ -212,8 +215,8 @@ namespace Semanticus.Engine
         public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("update_data_agent");
-            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
-            if (aiInstructions != null && aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars — over the {AiInstructionsCap} cap. Nothing was sent.");
+            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
+            if (aiInstructions != null && aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars: over the {AiInstructionsCap} cap. Nothing was sent.");
             if ((datasourceJson != null || fewshotsJson != null) && string.IsNullOrWhiteSpace(datasourceFolder))
                 return Err("Choose a data source before saving its schema or examples. Nothing was sent.");
             if (datasourceJson != null)
@@ -241,7 +244,7 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "update_data_agent:" + agentId + "|" + string.Join(",", touched)); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var p in existing) if (!string.IsNullOrEmpty(p.Path)) map[p.Path.Replace('\\', '/')] = p.Content;   // keep ALL existing parts
@@ -258,14 +261,14 @@ namespace Semanticus.Engine
         public async Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("publish_data_agent");
-            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
+            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"publish_data_agent {agentId} → copy {DataAgentRest.DraftPrefix}* to {DataAgentRest.PublishedPrefix}* + write {DataAgentRest.PublishInfoPath}; description {(description ?? string.Empty).Length} chars";
             if (!commit) return DryRun(summary);
             // Agent-permissions gate — publishing makes the draft the LIVE agent users query. A live cloud write.
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "publish_data_agent:" + agentId); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var def = DataAgentRest.BuildDefinitionJson(DataAgentRest.BuildPublishParts(existing, description));
                 var outcome = await DataAgentRest.UpdateDefinitionAsync(workspaceId, agentId, def, token, cancellationToken);
@@ -277,7 +280,7 @@ namespace Semanticus.Engine
         public async Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
             RequireProDataAgentWrite("delete_data_agent");
-            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required — list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
+            if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"delete_data_agent {agentId} → DELETE item in {workspaceId}";
             if (!commit) return DryRun(summary);
             // Agent-permissions gate — deleting a workspace item is IRREVERSIBLE (no restore point covers it), so it
@@ -285,7 +288,7 @@ namespace Semanticus.Engine
             { var refusal = GuardAgent(AgentCapability.DeployDelete, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "delete_data_agent:" + agentId); if (refusal != null) return Err(refusal); }
             try
             {
-                var token = await EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId);
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken, DataAgentDisableInteractiveForTests);
                 await DataAgentRest.DeleteItemAsync(workspaceId, agentId, token, cancellationToken);
                 await EmitDataAgentActivity("delete_data_agent", true, $"Deleted data agent {agentId}", agentId, origin);
                 return new DataAgentWriteReport { Status = "ok", AgentId = agentId, Message = $"Deleted data agent {agentId}.", RequestSummary = summary };
@@ -295,7 +298,7 @@ namespace Semanticus.Engine
 
         // ---- write helpers ----
         private static DataAgentWriteReport Err(string message) => new DataAgentWriteReport { Status = "error", Message = message };
-        private static DataAgentWriteReport DryRun(string summary) => new DataAgentWriteReport { Status = "dry-run", Message = "DRY RUN — this changed NOTHING. Re-run with commit=true to apply.", RequestSummary = summary };
+        private static DataAgentWriteReport DryRun(string summary) => new DataAgentWriteReport { Status = "dry-run", Message = "DRY RUN: this changed NOTHING. Re-run with commit=true to apply.", RequestSummary = summary };
 
         private async Task<DataAgentWriteReport> FinishWrite(string kind, string agentId, string origin, FabricRest.DeployOutcome outcome, string summary, string okMsg)
         {

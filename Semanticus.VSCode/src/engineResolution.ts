@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { argsContainLicenseToken } from './licenseDelivery';
 
 export interface ResolvedEngine { kind: 'dll' | 'exe'; path: string; }
 export interface McpServerEntry { command: string; args: string[]; }
@@ -96,5 +97,7 @@ export function shouldAutoHealMcpEntry(
     const oldWorkspace = normalizedWorkspaceFromArgs(prior.args, platform);
     const newWorkspace = normalizedWorkspaceFromArgs(desired.args, platform);
     if (oldWorkspace !== newWorkspace) return false;
-    return normalizedOwnerPath(prior.command, platform) !== normalizedOwnerPath(desired.command, platform);
+    const commandChanged = normalizedOwnerPath(prior.command, platform) !== normalizedOwnerPath(desired.command, platform);
+    const licenseStripped = argsContainLicenseToken(prior.args) && !argsContainLicenseToken(desired.args);
+    return commandChanged || licenseStripped;
 }

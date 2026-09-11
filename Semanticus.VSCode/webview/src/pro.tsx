@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { manageLicense, onReconnect, rpc } from './bridge';
+import { manageLicense, showLicense, onReconnect, rpc } from './bridge';
 
 // ===================================================================================================
 // The shared Free/Pro presentation kit (hook-fix batch, 2026-07-07). One mechanism for every bulk
@@ -72,7 +72,7 @@ export function LicenseButton() {
   if (tier === 'unknown') return null;
   const isPro = tier === 'pro';
   return (
-    <button onClick={manageLicense} title={isPro ? 'Open Pro plans and support' : 'See Semanticus Pro and upgrade options'}
+    <button onClick={isPro ? showLicense : manageLicense} title={isPro ? 'Show your Pro license' : 'See Semanticus Pro and upgrade options'}
       className="shrink-0 whitespace-nowrap flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md font-semibold transition-colors"
       style={isPro
         ? { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }

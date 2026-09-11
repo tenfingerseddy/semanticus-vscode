@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Deliberately NOT in Semanticus.sln and NOT referenced by Semanticus.Tests. It compiles the PRE-v2
+       parser, so linking it to the engine would defeat the point and give two WorkflowParser types. The
+       pre-v2 sources are not committed either: capture.ps1 fetches them from origin/main into obj/prev2/
+       (git-ignored) at capture time, so there is one copy of that history and it is git's. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>prev2-oracle</AssemblyName>
+    <RootNamespace>Prev2Oracle</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CS0169;CS0414;CS0649</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Shims.cs" />
+    <Compile Include="obj/prev2/WorkflowParser.cs" Condition="Exists('obj/prev2/WorkflowParser.cs')" />
+    <Compile Include="obj/prev2/Workflow.cs" Condition="Exists('obj/prev2/Workflow.cs')" />
+  </ItemGroup>
+
+</Project>

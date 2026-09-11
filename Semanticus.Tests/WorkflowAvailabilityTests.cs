@@ -72,7 +72,8 @@ Just do it. There is no gate here.
                     var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                         () => engine.StartWorkflowAsync("avail-vehicle", "human"));
                     Assert.Contains("turned off", ex.Message);
-                    Assert.Contains("set_workflow_enabled", ex.Message);
+                    Assert.Contains("Workflows tab", ex.Message);
+                    Assert.DoesNotContain("set_workflow_enabled", ex.Message);
 
                     // Enable: back on the menu and startable again.
                     var reenabled = await engine.SetWorkflowEnabledAsync("avail-vehicle", true, "human");

@@ -15,29 +15,32 @@
 //         node lineage-interact.mjs graph     # only the graph scenario
 //         node lineage-interact.mjs tree      # only the tree scenario
 //         node lineage-interact.mjs reports   # only the report-merge scenario
-import puppeteer from 'puppeteer-core';
+import { findBrowser, requireSupportedNode } from './browser.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, extname, normalize } from 'node:path';
-import { existsSync, mkdirSync, statSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, statSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { makeFinanceLineage } from './fixtures/lineage-fixture.mjs';
+
+// THE FLOOR CHECK RUNS BEFORE PUPPETEER IS LOADED, AND THE ORDER IS THE WHOLE POINT. This used to be a
+// static `import puppeteer from 'puppeteer-core'`, which the runtime resolves, parses and evaluates before
+// one line of this file runs. `requireSupportedNode()` therefore could not fire on the Node versions it
+// exists for: on Node 20 the run died inside puppeteer with the opaque error the guard was written to
+// replace, and the guard's message was never reached. A dynamic import after the check is what makes the
+// check reachable. `browser.mjs` imports no puppeteer, so nothing can reorder this again by accident.
+requireSupportedNode();
+const puppeteer = (await import('puppeteer-core')).default;
+
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const webRoot = resolve(__dir, '..', '..');
 const outDir = join(__dir, 'shots', 'lineage');
+if (!existsSync(join(webRoot, 'media', 'studio', 'studio.js'))) {
+  console.error('media/studio/studio.js is missing. Run npm run build:webview in Semanticus.VSCode first.');
+  process.exit(1);
+}
 const only = (process.argv[2] || 'all').trim().toLowerCase();
 
-function findBrowser() {
-  if (process.env.SEMANTICUS_BROWSER && existsSync(process.env.SEMANTICUS_BROWSER)) return process.env.SEMANTICUS_BROWSER;
-  const cacheRoot = join(homedir(), '.cache', 'puppeteer', 'chrome-headless-shell');
-  if (existsSync(cacheRoot)) for (const v of readdirSync(cacheRoot)) {
-    const exe = join(cacheRoot, v, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-    if (existsSync(exe)) return exe;
-  }
-  for (const c of ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe']) if (existsSync(c)) return c;
-  throw new Error('No Chromium found. Run `npm install` here or set SEMANTICUS_BROWSER.');
-}
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.map': 'application/json' };
 function startServer() {
   const server = createServer((req, res) => {
@@ -273,9 +276,9 @@ async function gotoLineage(page, errors) {
   errors.length = 0;
   await page.goto(page.__url, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 15000 });
-  // two-tier nav: open the Inspect group, then the Lineage tab
-  await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === 'Inspect'), { timeout: 15000 });
-  await clickButton(page, 'Inspect');
+  // two-tier nav: open the Understand group, then the Lineage tab
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === 'Understand'), { timeout: 15000 });
+  await clickButton(page, 'Understand');
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === 'Lineage'), { timeout: 15000 });
   await clickButton(page, 'Lineage');
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === 'Graph'), { timeout: 15000 });
@@ -594,6 +597,12 @@ async function smallScenario(page, errors) {
 async function reportsScenario(page, refs, errors) {
   console.log('\n▶ REPORT-LAYER MERGE');
   await gotoLineage(page, errors);
+
+  // BEFORE any analysis, the standalone Safe-to-remove view is honest about its basis: the Model-only badge.
+  await clickButton(page, 'Safe to remove');
+  await sleep(600);
+  await shot(page, 'unused-model-only', 'no analysis loaded → Model-only scope badge');
+
   await clickButton(page, 'Published reports');
   await sleep(800);
   await shot(page, 'reports-pane', 'the analyze panel (offline + cloud)');
@@ -603,6 +612,19 @@ async function reportsScenario(page, refs, errors) {
   await clickButton(page, 'Analyze local PBIR', { prefix: true });
   await sleep(1600);
   await shot(page, 'reports-analyzed', 'report usage + drill');
+
+  // CROSS-VIEW deletion safety: the standalone Safe-to-remove view must now show the SAME report-aware list
+  // (badge), never a silent revert to model-only where a report-used field reappears as "safe". A model edit then
+  // marks it with the SOFT stale banner (removal is never blocked), and the holder re-runs the LOCAL analysis in
+  // place (offline, debounced 350ms) which clears the banner — the whole holder-owned lifecycle, end to end.
+  await clickButton(page, 'Safe to remove');
+  await sleep(600);
+  await shot(page, 'unused-report-aware', 'analysis loaded → Report-aware scope badge on the standalone view');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'didChange', payload: { sessionId: 'uishot', revision: 99, origin: 'user', label: 'edit measure', deltas: [] } } })));
+  await sleep(120);   // inside the 350ms debounce → the stale hint is up, the re-run has not fired yet
+  await shot(page, 'unused-stale-hint', 'model edit → soft stale banner (removal not blocked)');
+  await sleep(1600);
+  await shot(page, 'unused-stale-cleared', 'local analysis auto re-ran in place → banner cleared');
 
   // now the Graph and Tree should carry the field → visual → page → report leg
   await clickButton(page, 'Graph');

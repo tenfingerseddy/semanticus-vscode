@@ -71,10 +71,10 @@ namespace Semanticus.Engine
         private static PolicyDecision Deny(AgentCapability cap, string lbl, string reason) => new(GateOutcome.Deny, cap, lbl, reason);
 
         private const string GovernanceReason =
-            "An agent cannot change governance settings — the policy and the target labels it gates on are the user's to set.";
+            "An agent cannot change governance settings: the policy and the target labels it gates on are the user's to set.";
 
         private static string AskReason(AgentCapability cap, string label) =>
-            $"This action ({Describe(cap)} on a '{label}' target) needs the user's approval. It has been added to the approvals queue — ask the user to approve it, then retry.";
+            $"This action ({Describe(cap)} on a '{label}' target) needs the user's approval. It has been added to the approvals queue: ask the user to approve it, then retry.";
 
         private static string DenyReason(AgentCapability cap, string label) => cap == AgentCapability.Governance
             ? GovernanceReason

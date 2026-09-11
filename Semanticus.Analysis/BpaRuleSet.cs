@@ -51,10 +51,19 @@ namespace Semanticus.Analysis
         /// one-element array). Tolerant of comments / trailing commas / string-encoded numbers and of extra or
         /// missing fields; throws <see cref="JsonException"/> on genuinely malformed JSON so a bad file is
         /// reported, not silently ignored. Drops entries with no ID (a rule needs a stable id) and de-dups by
-        /// ID — last wins, so a re-listed rule overrides rather than double-fires.</summary>
+        /// ID — last wins, so a re-listed rule overrides rather than double-fires. Callers that must REFUSE a
+        /// duplicate id (the load op) use <see cref="ParseDetailed"/>.</summary>
         public static List<BpaRule> Parse(string json)
         {
-            if (string.IsNullOrWhiteSpace(json)) return new List<BpaRule>();
+            var (rules, _) = ParseDetailed(json);
+            return rules;
+        }
+
+        /// <summary>Like <see cref="Parse"/>, plus the ids that appeared more than once. The returned list still
+        /// last-wins (stored annotations stay loadable); the duplicate names are what lets a load refuse out loud.</summary>
+        public static (List<BpaRule> rules, string[] duplicateIds) ParseDetailed(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return (new List<BpaRule>(), Array.Empty<string>());
             var trimmed = json.TrimStart();
             List<BpaRule> rules;
             if (trimmed.StartsWith("{"))   // a single inline rule object → one-element array
@@ -64,9 +73,15 @@ namespace Semanticus.Analysis
             }
             else rules = JsonSerializer.Deserialize<List<BpaRule>>(trimmed, JsonOpts) ?? new List<BpaRule>();
             var byId = new Dictionary<string, BpaRule>(StringComparer.OrdinalIgnoreCase);
+            var dupes = new List<string>();
             foreach (var r in rules)
-                if (r != null && !string.IsNullOrWhiteSpace(r.ID)) byId[r.ID] = r;
-            return byId.Values.ToList();
+            {
+                if (r == null || string.IsNullOrWhiteSpace(r.ID)) continue;
+                if (byId.ContainsKey(r.ID) && !dupes.Exists(d => string.Equals(d, r.ID, StringComparison.OrdinalIgnoreCase)))
+                    dupes.Add(r.ID);
+                byId[r.ID] = r;
+            }
+            return (byId.Values.ToList(), dupes.ToArray());
         }
     }
 }

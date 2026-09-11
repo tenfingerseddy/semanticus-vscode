@@ -1,6 +1,19 @@
 // Framework-free lifecycle rules for the M Code workspace. The webview and the Node tests import this same
 // module so revision conflicts, stale async completions, and request cancellation are exercised behaviorally.
 
+/** Keep a table pick only when it still exists in the open model; otherwise take the first table or none. */
+export function reconcileTableSelection(selected, tableNames) {
+  const names = Array.isArray(tableNames) ? tableNames : [];
+  if (selected && names.includes(selected)) return selected;
+  return names[0] ?? '';
+}
+
+/** Policy and M fetches must not run against a table the open model does not have. */
+export function policyFetchAllowed(selected, tableNames) {
+  const names = Array.isArray(tableNames) ? tableNames : [];
+  return !!selected && names.includes(selected);
+}
+
 /** A context identifies the exact editor document revision an async M operation was started against. */
 export function mContextToken(table, query, revision) {
   return JSON.stringify([table ?? '', query ?? '', revision]);

@@ -267,7 +267,8 @@ function contentViews(content) {
   const views = [buffer.toString('latin1')];
   if (buffer.length >= 4) {
     views.push(buffer.toString('utf16le'));
-    views.push(buffer.subarray(1).toString('utf16le'));
+    // Node 26 aborts when utf16le-decoding a Buffer whose byteOffset is odd. Copy first; keep the scan.
+    views.push(Buffer.from(buffer.subarray(1)).toString('utf16le'));
   }
   return views;
 }

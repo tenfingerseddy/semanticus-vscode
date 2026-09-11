@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <link rel="icon" href="data:,">
   <meta charset="UTF-8" />
+  <link rel="icon" href="data:," />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Semanticus Studio — screenshot harness</title>
   <!-- The real webview gets its CSS vars from the VS Code theme; here the studio.css :root fallbacks
@@ -15,6 +17,11 @@
   <script>
   (function () {
     const cfg = window.__UISHOT__ || {};
+
+    // ?view=connections → set the SAME initial-view flag the real host injects, so the bundle mounts ONLY the
+    // Connections hub full-page (the standalone panel). Must run before studio.js (this IIFE does).
+    const __view = new URLSearchParams(location.search).get('view');
+    if (__view) window.__semanticusInitialView = __view;
 
     // A small but representative model that exercises every cardinality + edge state:
     //  one-to-many (active), many-to-many, one-to-one, bidirectional, inactive, isolated.
@@ -160,13 +167,20 @@
       // Published-reports picker can demo the auto-default (pre-select the model's own workspace once workspaces list).
       liveEndpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20%5BTest%5D', liveDatabase: 'Contoso',
     };
-    const cat = (category, score, weight, applicable, violations) => ({ category, score, weight, applicable, violations, hasRules: true });
+    // ?dirty=1 → the open model has unsaved changes, so the Connections hub's Create-new-model guard shows its
+    // "replaces the open model, which has unsaved changes" consent state (the B1 review fix).
+    if (new URLSearchParams(location.search).get('dirty') === '1') SESSION.hasUnsavedChanges = true;
+    if (new URLSearchParams(location.search).get('live') === '1' || new URLSearchParams(location.search).get('deploy') === 'publish') {
+      SESSION.liveBound = true;
+      SESSION.liveDatabase = SESSION.liveDatabase || 'Contoso';
+    }
+    const cat = (category, score, weight, applicable, violations, waived) => ({ category, score, weight, applicable, violations, waived: waived || 0, hasRules: true });
     const find = (ruleId, ruleTitle, category, severity, fix, objectRef, objectName, message) =>
       ({ ruleId, ruleTitle, category, severity, fix, objectRef, objectName, message });
     const SCORECARD = cfg.scorecard || {
       overall: 82, rawOverall: 82, grade: 'B', gatedBy: [],
       categories: [
-        cat('Naming & Clarity', 91, 0.2, 40, 4),
+        cat('Naming & Clarity', 91, 0.2, 40, 4, 1),
         cat('Descriptions & Grounding', 64, 0.25, 30, 11),
         cat('Synonyms', 73, 0.15, 22, 6),
         cat('Data Types & Formatting', 95, 0.15, 28, 2),
@@ -209,7 +223,7 @@
         { ruleId: 'NO_DESC', ruleName: 'Provide descriptions', category: 'Metadata', severity: 1, objectRef: 'table:Promotion', objectName: 'Promotion', message: 'Object has no description.', canAutoFix: false },
         { ruleId: 'SUMMARIZE', ruleName: 'Set SummarizeBy=None on key columns', category: 'Formatting', severity: 2, objectRef: 'column:Date/DateKey', objectName: 'Date[DateKey]', message: 'Key column should not be summarized.', canAutoFix: true },
         { ruleId: 'NAMING', ruleName: 'Measure naming convention', category: 'Naming', severity: 1, objectRef: 'measure:Sales/m1', objectName: 'Sales[m1]', message: 'Measure name is not descriptive.', canAutoFix: false },
-        { ruleId: 'PERF_UNUSED_COLUMNS', ruleName: 'Remove unused columns', category: 'Performance', severity: 1, objectRef: 'column:Account/MA P&L Level 3', objectName: 'Account[MA P&L Level 3]', message: 'Column is not referenced by any measure or relationship.', canAutoFix: false, waived: true, waiverReason: 'Kept intentionally for ad-hoc P&L drill-down.' },
+        { ruleId: 'UNNECESSARY_COLUMNS', ruleName: 'Remove unnecessary columns', category: 'Maintenance', severity: 1, objectRef: 'column:Account/MA P&L Level 3', objectName: 'Account[MA P&L Level 3]', message: 'Column is not referenced by any measure or relationship.', canAutoFix: false, waived: true, waiverReason: 'Kept intentionally for ad-hoc P&L drill-down.' },
         // A violation from a USER-AUTHORED (model-embedded) rule — renders with the "(custom rule)" suffix.
         { ruleId: 'ORG_HIDE_KEYS', ruleName: 'Hide key columns', category: 'Model Layout', severity: 2, objectRef: 'column:Store/StoreKey', objectName: 'Store[StoreKey]', message: 'Store[StoreKey] looks like a key column and is visible.', canAutoFix: true, custom: true },
       ],
@@ -295,6 +309,7 @@
       col('FullName', 'Customer', 'String', 'None', { isCalculated: true, expression: "[FirstName] & \" \" & [LastName]" }),
       col('Year', 'Date', 'Int64', 'None', { hasDescription: true, description: 'Calendar year.' }),
       col('DateKey', 'Date', 'Int64', 'Sum', { isKey: true }),                       // visible key + aggregating (smell)
+      col('Name', 'UAT Detail', 'String', 'None'),                                  // calculation group: OLS must not be offered
     ];
 
     // A realistic change plan (Optimize tab): items across several categories with mixed status/risk, so the
@@ -324,6 +339,7 @@
     // ?pq=menu|profile (M transforms) also needs a live conn: the transform bar + profiling render on
     // the loaded sample, so pq mode forces connected on.
     const pqMode = new URLSearchParams(location.search).get('pq');
+    const daxMode = new URLSearchParams(location.search).get('dax');
     const connected = new URLSearchParams(location.search).get('conn') === '1' || !!pqMode;
     // A sample result set with varied types (text, numbers, dates) so column sort + the row filter are reviewable.
     // Coherent with the SALES doc columns above (the M Code tab selects 'Sales', and the sample's per-column M
@@ -381,6 +397,11 @@
       ],
       rowCount: 8, truncated: false, elapsedMs: 12,
     };
+    if (daxMode === 'cap') {
+      PIVOT.truncated = true;
+      PIVOT.rowCount = 50000;
+      PIVOT.query = 'EVALUATE ROW("Revenue", 900000000)';
+    }
 
     // Documentation snapshot (getDocModel) + narrative outline — composes the other fixtures so the Docs tab renders.
     const DOCMODEL = cfg.docModel || {
@@ -391,6 +412,8 @@
         hierarchies: t.name === 'Product' ? [{ name: 'Category', description: 'Merchandising hierarchy', isHidden: false, levels: [{ name: 'Category', ordinal: 0, column: 'Category' }, { name: 'Subcategory', ordinal: 1, column: 'Subcategory' }, { name: 'Product', ordinal: 2, column: 'ProductName' }] }] : [],
         partitions: directLake
           ? [{ name: t.name, mode: 'DirectLake', sourceType: 'Entity', source: 'Entity: dbo.' + t.name, entityName: t.name, schemaName: 'dbo', dataSource: 'Contoso Lakehouse', refreshedTime: '2026-06-26T03:12:00Z' }]
+          : pqMode === 'empty'
+          ? [{ name: t.name, mode: 'Import', sourceType: 'Query', source: '', dataSource: '', refreshedTime: null }]
           // Sales carries a realistic multi-step let-chain so the interactive Applied-Steps outline + column
           // transforms have something to render; other tables keep a single-step source.
           : [{ name: t.name, mode: 'Import', sourceType: 'M', source: t.name === 'Sales'
@@ -405,7 +428,7 @@
       roles: [{ name: 'Regional Manager', description: 'Sees only their region.', modelPermission: 'Read', tableFilters: [{ table: 'Sales', filterExpression: "[Region] = USERPRINCIPALNAME()" }], members: ['emea-mgr@contoso.com'] }],
       kpis: [{ measureRef: 'measure:Sales/Margin %', measure: 'Margin %', targetExpression: '0.35', statusExpression: 'SWITCH(TRUE(), [Margin %] >= 0.35, 1, [Margin %] >= 0.30, 0, -1)', statusGraphic: 'Three Circles Colored', trendExpression: '', trendGraphic: '' }],
       dataSources: [{ name: 'DW', type: 'Structured' }],
-      expressions: [{ name: 'ServerName', kind: 'M', expression: '"contoso-sql.database.windows.net"', description: 'Parameterised server' }]
+      expressions: pqMode === 'empty' ? [] : [{ name: 'ServerName', kind: 'M', expression: '"contoso-sql.database.windows.net"', description: 'Parameterised server' }]
         .concat(pqMode === 'incremental' ? [
           { name: 'RangeStart', kind: 'M', expression: '#datetime(2020, 1, 1, 0, 0, 0)', description: 'Needs conversion to a parameter query' },
           { name: 'RangeEnd', kind: 'M', expression: '#datetime(2021, 1, 1, 0, 0, 0)', description: 'Needs conversion to a parameter query' },
@@ -416,6 +439,7 @@
       prepForAi: { hasLinguisticSchema: true, aiInstructions: 'Prefer Net Revenue for financial questions. Qualify by region.', aiInstructionsLength: 64, aiSchemaExcludedFields: 6, sourceReadable: true, qnaEnabled: true, verifiedAnswersPresent: true, verifiedAnswerCount: 4 },
       storage: VPAQ,
       storageAvailable: connected,
+      perspectives: [{ ref: 'perspective:Sales handover', name: 'Sales handover', description: 'Handover view for the sales team.', members: ['table:Sales', 'table:Customer', 'measure:Sales/Margin'] }],
     };
     const DOCOUTLINE = cfg.docOutline || { items: [{ ref: 'model', name: 'Contoso', kind: 'model', sections: ['overview', 'glossary'] }]
       .concat(GRAPH.tables.map(function (t) { return { ref: t.ref, name: t.name, kind: 'table', sections: t.name === 'Sales' ? ['businessContext'] : [] }; }))
@@ -533,8 +557,10 @@
       EQ('column:Date/Year', 'Column', 'Year', 'Date', J({ name: 'Year', dataType: 'int64', summarizeBy: 'none' })),
     ]) });
     const GATE = cfg.gate || {
-      pass: false, grade: 'B', bpaViolations: 5, bpaBlocking: 2, changes: 6,
-      blockers: ['2 blocking BPA violation(s)'], note: 'Gate blocked: 2 blocking BPA violation(s)',
+      pass: false, grade: 'B', bpaViolations: 25, bpaBlocking: 1, olderWarnings: 20, changes: 1,
+      blockers: ['1 warning to fix before this change can ship. Start with: Provide format string for measures (UAT Canary). Fix each one, or record a waiver saying why you accept it.'],
+      checkLine: 'Checks on this change: 1 warning to fix before this change can ship. Start with: Provide format string for measures (UAT Canary). Fix each one, or record a waiver saying why you accept it. The model also has 20 older warnings this change did not cause. See them on AI Readiness.',
+      note: 'Gate blocked: 1 warning to fix before this change can ship.',
       // The ADVISORY interview leg (never blocks): one question regressed to confidently-wrong so the
       // red informational line renders in the screenshot.
       interview: {
@@ -734,7 +760,7 @@
         // rev 104 — the COLLISION: an apply_plan run wrote a per-item 'overridden' record AND its 'batch' summary at the
         // same revision. On that shared timeline row the red OVERRIDDEN badge must win over the neutral batch badge.
         vrec(4, 104, 'agent', 'apply_plan-item', 'column:Sales/CustomerKey', 'overridden', 'Un-hid a foreign key against the safe-fix recommendation.', {
-          overrideReason: 'CustomerKey is surfaced deliberately in the Sales Ops drill-through page — accepted the finding.',
+          overrideReason: 'CustomerKey is surfaced deliberately in the Sales Ops drill-through page. Accepted the finding.',
           evidence: JSON.stringify({ ruleId: 'FK-HIDDEN', recommended: 'hidden', applied: 'visible', accountable: 'you' }) }),
         // The batch summary carries the REAL apply_plan digest (counts, grade/BPA deltas, capped item digest).
         vrec(5, 104, 'agent', 'apply_plan', undefined, 'batch', 'Applied a 6-item change plan (2 renames · 2 formatting · 2 descriptions).', {
@@ -756,8 +782,9 @@
               { Index: 1, VerifyState: 'unverified', rows: 1, truncated: false, mismatches: 0, warmMedianMs: null, Note: 'grand-total-only match — downgraded, not accepted', mismatchSamples: [ { Context: "Date[Year]=CY 2007", ValueA: '1,024.50', ValueB: '1,019.00' }, { Context: "Date[Year]=CY 2008", ValueA: '2,210.00', ValueB: '2,180.75' } ] } ] }) }),
         // A deploy outcome (REAL digest: the gate result + target) — a live deploy mutates the SERVER, not the open
         // session's model, so it too is stamped revision 0: audit-trail-only, never badges a timeline row.
-        vrec(7, 0, 'system', 'deploy_live', undefined, 'deployed', 'Deployed the model to Contoso [Test] via XMLA — 6 change(s); gate RED (overridden).', {
-          evidence: JSON.stringify({ endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Test', database: 'Contoso [Test]', TotalChanges: 6, gatePass: false, blockers: ['21 blocking BPA error(s)'] }) }),
+        vrec(7, 0, 'system', 'deploy_live', undefined, 'deployed', 'Deployed the model to Contoso [Test] via XMLA. 6 change(s). Gate was red and a reason was recorded.', {
+          overrideReason: 'Hotfix for the month-end report. The 20 older warnings are already waived on AI Readiness.',
+          evidence: JSON.stringify({ endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Test', database: 'Contoso [Test]', TotalChanges: 6, gatePass: false, olderWarnings: 20, blockers: ['1 warning on UAT Canary'] }) }),
         // compare_baseline IMPACT — the value-capture loop's verdict record (real digest: grid, moved/missing counts,
         // per-measure diff digest). Rev 0 (a compare mutates nothing).
         vrec(8, 0, 'agent', 'compare_baseline', 'measure:Sales/# Brands Sold', 'impact', 'IMPACT — 1 measure(s) moved, 0 missing, of 1 baselined.', {
@@ -839,63 +866,62 @@
     })).join('\n');
 
     // ---- Workflows tab (library rail + run mode) -----------------------------------------------------------------
-    // The library at SHIP scale: the real 21 STOCK seeds (names/titles/descriptions/triggers from
-    // Semanticus.Engine/workflows/*.md) grouped by journey phase in the rail, PLUS a learned USER workflow
-    // (source:'user') and a PARSE-ERROR file (first-class citizen — shown, not hidden). Gated = has an enforced
-    // gate → starting it is Pro; every stock seed carries a hard gate.
+    // THE SHIPPED LIBRARY, in rail order, PLUS three rows that are STATES rather than catalog entries: a learned
+    // USER workflow, a v2 loop/call file, and a PARSE-ERROR file (a first-class citizen, shown and never hidden).
+    // Gated = the workflow has an enforced gate, so starting it is Pro.
+    // [T171] These 15 stock rows ARE the 15 seeds that ship from Semanticus.Engine/workflows/, carrying their real
+    // titles, descriptions, versions, step counts and triggers, so a Workflows screenshot shows the rail a customer
+    // will actually see. Nothing parked in workflows-parked/ and nothing deleted belongs here. The fixture this
+    // replaced listed 24 stock rows, only 12 of which shipped, and it drifted unnoticed for months because no test
+    // read it: test/workflow-scenarios.test.mjs now reads this literal against that directory and fails the moment
+    // the two part company. The group comments mirror STOCK_GROUP in webview/src/workflows.tsx, which is what
+    // actually decides the rail sections.
     const wfInfo = (o) => Object.assign({ name: '', title: '', description: '', version: 1, source: 'stock', stepCount: 0, gated: false, triggers: [], error: null, enabled: true, active: true, activeReason: null }, o);
     const WORKFLOWS = cfg.workflows2 || [
-      // Design
-      wfInfo({ name: 'dimensional-design', title: "Run Kimball's four-step design as an enforced session", description: 'Select the process, DECLARE THE GRAIN as a binding contract, identify conformed dimensions and true-to-grain facts, and capture the expected numbers — the star-schema design decisions made deliberately and up front, before a single table is built.', stepCount: 5, gated: true, triggers: ['create_table', 'create_measure', 'build_model_from_spec'] }),
       // Build
-      wfInfo({ name: 'add-fact-table', title: 'Add a fact table and prove its load', description: 'Bring in a fact table at a declared grain, type every column, wire single-direction relationships, hide the plumbing — then PROVE the load against a control total from the source system before you trust a single number.', stepCount: 5, gated: true, triggers: ['create_import_table', 'create_directlake_table'] }),
-      wfInfo({ name: 'add-dimension', title: 'Add a dimension the right way', description: 'Create a conformed dimension, handle role-playing by DUPLICATION (not USERELATIONSHIP), denormalize snowflake chains, shape it for humans and AI — then prove it introduced no new best-practice violations.', stepCount: 4, gated: true, triggers: ['create_relationship', 'create_hierarchy'] }),
-      wfInfo({ name: 'import-table', title: 'Import and harden a source table', description: 'Bring in an import table, type every column, tame datetime cardinality, hide the plumbing, and lay the incremental-refresh groundwork.', stepCount: 5, gated: true, triggers: ['create_import_table', 'set_column_data_type', 'set_incremental_refresh_policy'] }),
-      wfInfo({ name: 'calendar-setup', title: 'Set up a calendar and prove its time intelligence', description: 'Stand up calendar-based time intelligence (CL 1701+) from a template, then PROVE a calendar-aware YTD against a known-good figure before you trust it — modern time intelligence, verified, not eyeballed.', stepCount: 4, gated: true, triggers: ['define_calendar_from_template', 'define_calendar', 'list_calendars'] }),
-      wfInfo({ name: 'time-intelligence-suite', title: 'Build a time-intelligence suite and prove one value', description: 'Choose the approach deliberately — a calculation group that replaces the N×M measure explosion, a generated measure suite, or calendar-aware overloads — build it, then PROVE one representative YTD or PY figure against a known-good number before you trust the whole suite.', stepCount: 4, gated: true, triggers: ['create_calculation_group', 'generate_time_intelligence'] }),
-      wfInfo({ name: 'field-parameters-setup', title: 'Add field parameters for reporting flexibility', description: 'Let report users switch measures or dimensions on a visual without model bloat — build the field parameter, name and describe it, handle the Copilot/Data-Agent complexity honestly (the disconnected SELECTEDVALUE table trips them up), confirm the intentional disconnection, then gate on the report-side visual test that only a human can do.', stepCount: 4, gated: true, triggers: ['create_field_parameter'] }),
-      wfInfo({ name: 'composite-model-setup', title: 'Set up a composite model with the right storage modes', description: 'Choose storage mode per table with intent — Import by default, DirectQuery only for a real freshness or volume constraint, and Dual (never plain Import) for dimensions that join DirectQuery facts from the same source — then PROVE a cross-mode figure before you trust the joins.', stepCount: 4, gated: true, triggers: ['create_directlake_table', 'set_property'] }),
-      wfInfo({ name: 'new-measure', title: 'Author a verified measure', description: 'Create a measure with declared intent, verified against a known-good number.', stepCount: 3, gated: true, triggers: ['create_measure', 'update_measure'] }),
-      wfInfo({ name: 'verified-measure', title: 'Author a hard measure and prove it against an independent oracle', description: 'Pin the edge policy, author one candidate, prove it against an independent raw-row oracle on a discriminating grid, then optionally optimize and re-prove.', stepCount: 5, gated: true, triggers: ['create_measure', 'update_measure'] }),
+      wfInfo({ name: "add-relationship", title: "Relate two tables and prove the join did not fan out", description: "Relate two tables on their keys at the right cardinality and direction, review the graph for ambiguity or an unintended inactive path, then PROVE a known measure still equals its control total after relating. The relationship equivalent of import-table's control-total proof.", stepCount: 5, gated: true, triggers: ["create_relationship", "set_relationship_cardinality", "set_relationship_crossfilter"] }),
+      wfInfo({ name: "import-table", title: "Import a table and prove it loaded correctly", description: "Bring in an import table, type every column, tame datetime cardinality, hide the plumbing, lay the incremental-refresh groundwork, then PROVE the load against a control total from the source before you trust a single number.", stepCount: 6, gated: true, triggers: ["create_import_table", "set_column_data_type", "set_incremental_refresh_policy"] }),
+      wfInfo({ name: "calendar-setup", title: "Set up a calendar and prove its time intelligence", description: "Stand up calendar-based time intelligence (CL 1701+) from a template, then PROVE a calendar-aware YTD against a known-good figure before you trust it: modern time intelligence, verified, not eyeballed.", stepCount: 4, gated: true, triggers: ["define_calendar_from_template", "define_calendar", "list_calendars"] }),
+      wfInfo({ name: "time-intelligence-variants", title: "Expand one base measure into verified time-intelligence variants", description: "Take ONE base measure and author its period-over-period variants (PY, YoY %, YTD, QTD, MAT) as a consistent, well-named set (calendar-aware where calendars exist), then verify a representative PY and a representative YTD against known-good numbers before you trust the set. The single-measure counterpart to refactor-to-calculation-group, which collapses the SAME variants across MANY base measures into one calculation group.", stepCount: 5, gated: true, triggers: ["generate_time_intelligence", "create_measure"] }),
+      wfInfo({ name: "new-measure", title: "Author a verified measure", description: "Create a measure with declared intent, verified against a known-good number.", stepCount: 3, gated: true, triggers: ["create_measure", "update_measure"] }),
+      wfInfo({ name: "refactor-to-calculation-group", title: "Refactor repeated time-intelligence measures into one calculation group", description: "Collapse a family of copy-pasted time-intel measures (PY, YTD, MAT, %growth…) into a single calculation group, and prove, item by item, that not one number changed. A structural refactor most people are scared to do by hand.", stepCount: 5, gated: true, triggers: ["create_calculation_group", "create_calculation_item"] }),
       // Data
-      wfInfo({ name: 'incremental-refresh-setup', title: 'Set up incremental refresh and prove the window loads', description: 'Add the RangeStart/RangeEnd plumbing that MUST fold, apply a rolling-window policy on a large fact table, verify the partitions it produced, then PROVE the loaded window against a source control total before you trust it.', stepCount: 4, gated: true, triggers: ['set_incremental_refresh_policy'] }),
+      wfInfo({ name: "incremental-refresh-setup", title: "Set up incremental refresh and prove the window loads", description: "Add the RangeStart/RangeEnd plumbing that MUST fold, apply a rolling-window policy on a large fact table, verify the partitions it produced, then PROVE the loaded window against a source control total before you trust it.", stepCount: 5, gated: true, triggers: ["set_incremental_refresh_policy"] }),
       // Quality
-      wfInfo({ name: 'check-blast-radius', title: 'Check blast radius', description: 'Assess a risky model change, preserve representative values when live evidence is available, replay the affected safety checks, record the decision, and produce one sealed evidence certificate.', stepCount: 5, gated: true, triggers: ['impact_assessment', 'capture_baseline', 'delete_object', 'rename_object'] }),
-      wfInfo({ name: 'governed-rename', title: 'Safe rename', description: 'Assess a rename, stage it for review, preserve representative values, review external bindings, apply FormulaFixup, replay the safety net, and produce one sealed evidence certificate.', version: 2, stepCount: 6, gated: true, triggers: ['impact_assessment', 'add_plan_item', 'apply_plan', 'rename_object'] }),
-      wfInfo({ name: 'model-hygiene-pass', title: 'Sweep the model for hygiene and AI-readiness', description: 'A single enforced pass over the whole model — scan for gaps, fix types/hiding/summarization/formatting/descriptions, remove genuinely unused objects only after checking report usage and dependents, then prove the pass regressed nothing.', stepCount: 5, gated: true, triggers: ['apply_safe_fixes', 'make_model_ai_ready'] }),
-      wfInfo({ name: 'cleanup-unused', title: 'Remove genuinely unused objects — carefully', description: 'Unused is a claim to verify, never a licence to delete — inventory the candidates conservatively, run impact_of and report-usage on EVERY one, hide rather than delete when consumers may exist, waive keep-decisions so the score stays honest, then prove the cleanup regressed nothing.', stepCount: 5, gated: true, triggers: ['unused_objects', 'delete_object'] }),
-      wfInfo({ name: 'verify-measure', title: 'Verify a measure against a known-good number', description: 'The journey\'s "verify against known numbers" as its own small job — take a measure and a figure the business already trusts, PROVE the measure returns it at that filter context, sweep the contexts it must respect, then record the verification on the measure so the proof travels with it.', stepCount: 4, gated: true, triggers: ['probe_measure', 'verify_dax_equivalence', 'pivot_measure'] }),
-      wfInfo({ name: 'optimize-dax', title: 'Optimize a measure and prove it equivalent', description: 'Benchmark, profile, rewrite, then prove the rewrite equivalent before you keep it — a hard equivalence gate stands between a faster measure and a wrong one.', stepCount: 4, gated: true, triggers: ['benchmark_dax', 'profile_dax', 'update_measure'] }),
-      wfInfo({ name: 'performance-tune', title: 'Tune model performance against measured bottlenecks', description: 'Measure first with VPAX, cut cardinality — the #1 lever — remove genuinely unused objects, then rewrite the hot DAX with a hard equivalence proof so a faster measure is never a wrong one, and benchmark the win.', stepCount: 5, gated: true, triggers: ['vpaq_scan', 'profile_dax', 'benchmark_dax'] }),
-      wfInfo({ name: 'make-ai-ready', title: 'Make the model AI-ready', description: 'Descriptions, synonyms, Q&A, and Prep-for-AI config in the order Microsoft\'s AI-readiness workflow prescribes, gated on a readiness rescan.', stepCount: 5, gated: true, triggers: ['make_model_ai_ready', 'ai_readiness_scan', 'set_description'] }),
-      wfInfo({ name: 'document-model', title: 'Document the model and prove the grade improves', description: "Inventory what's undescribed from the readiness findings, describe everything visible in business terms, keep the narrative docs current with the model, then prove the description and naming categories are non-regressive — documentation that doubles as the LLM's grounding.", stepCount: 4, gated: true, triggers: ['set_doc_section', 'get_doc_model'] }),
+      wfInfo({ name: "check-blast-radius", title: "Check blast radius", description: "Assess a risky model change, preserve representative values when live evidence is available, replay the affected safety checks, record the decision, and produce one sealed evidence certificate.", stepCount: 5, gated: true, triggers: ["impact_assessment", "capture_baseline", "delete_object", "rename_object"] }),
+      wfInfo({ name: "governed-rename", title: "Safe rename", description: "Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.", version: 2, stepCount: 6, gated: true, triggers: ["rename_object", "add_plan_item"] }),
+      wfInfo({ name: "model-hygiene-pass", title: "Sweep the model for hygiene and AI-readiness", description: "A single enforced pass over the whole model: scan for gaps, fix types/hiding/summarization/formatting/descriptions, remove genuinely unused objects only after checking report usage and dependents, then prove the pass regressed nothing.", stepCount: 5, gated: true, triggers: ["apply_safe_fixes", "make_model_ai_ready"] }),
+      wfInfo({ name: "verified-measure", title: "Author a hard DAX measure, reconciled against the requirement at every grain", description: "Requirement-anchored verified authoring: pin conventions only from the requirement's own words, lock expected values from raw rows before authoring, reconcile one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicate disagreements cell-by-cell, and never let a speed pick or an invented convention overwrite a correct answer.", version: 7, stepCount: 7, gated: true, triggers: ["create_measure", "update_measure"] }),
+      wfInfo({ name: "optimize-dax", title: "Rewrite a measure and prove it unchanged, for speed or clarity", description: "Rewrite an existing measure (to make it faster, or just cleaner and more readable), then prove the rewrite returns the IDENTICAL result before you keep it. A hard equivalence gate stands between a rewrite and a silent behaviour change; the benchmark steps apply when the goal is speed and are skipped for a clarity-only cleanup.", stepCount: 5, gated: true, triggers: ["benchmark_dax", "profile_dax", "update_measure"] }),
+      wfInfo({ name: "make-ai-ready", title: "Make the model AI-ready", description: "Descriptions, synonyms, Q&A, and Prep-for-AI config in the order Microsoft's AI-readiness workflow prescribes, gated on a readiness rescan.", stepCount: 5, gated: true, triggers: ["make_model_ai_ready", "ai_readiness_scan", "set_description"] }),
       // Security
-      wfInfo({ name: 'secure-with-rls', title: 'Secure the model with row-level security', description: 'Design least-privilege RLS by filtering dimensions and letting propagation reach facts, review the propagation limits that silently break security, then PROVE the filter bites against a figure the role should see — with an honest note on offline impersonation.', stepCount: 4, gated: true, triggers: ['create_role', 'set_table_permission'] }),
+      wfInfo({ name: "secure-with-rls", title: "Secure the model with row-level security and attack-test it", description: "Design least-privilege RLS by filtering dimensions and letting propagation reach facts, review the propagation limits that silently break security, PROVE the filter bites against a figure the role should see, then ADVERSARIALLY attack-test it (prove out-of-scope rows do not leak) before the role is allowed to stand. With an honest note on offline impersonation.", stepCount: 6, gated: true, triggers: ["create_role", "set_table_permission", "set_role_permission"] }),
       // Ship
-      wfInfo({ name: 'pre-deploy-validation', title: 'Validate before you deploy', description: 'A distinct pre-deploy testing stage — diff review, BPA clean, readiness grade, RLS role tests, and an environment check — before anything reaches production.', stepCount: 5, gated: true, triggers: ['model_diff', 'bpa_scan', 'deploy_stage'] }),
-      wfInfo({ name: 'deploy-to-production', title: 'Promote a model to production safely', description: 'Review the change like a pull request, gate on a clean BPA and a non-regressed readiness grade, dry-run against the target ALWAYS, then promote through separate stages — the live ops stay consent-gated and the run never bypasses them.', stepCount: 5, gated: true, triggers: ['deploy_stage', 'deploy_live', 'preview_deploy'] }),
-      wfInfo({ name: 'adopt-source-control', title: 'Put the model under source control', description: 'Get the model into version control the officially-recommended way — text-based TMDL on disk, a repo target chosen deliberately (local git, Azure Repos, GitHub, or Fabric Git), a review-the-diff-before-you-commit working loop — and gate on a clean, pushed first commit before the phase-8 deploy pipeline can build on it.', stepCount: 5, gated: true, triggers: ['git_status', 'fabric_git_connect', 'cicd_generate'] }),
-      // Custom (user + learned + error) — everything not in the journey map falls here, labelled by origin
+      wfInfo({ name: "deploy-to-production", title: "Promote a model to production safely", description: "Review the change like a pull request, gate on a clean BPA and a non-regressed readiness grade, dry-run against the target ALWAYS, then promote through separate stages; the live ops stay consent-gated and the run never bypasses them.", stepCount: 5, gated: true, triggers: ["deploy_stage", "deploy_live", "preview_deploy"] }),
+      // Custom (user + learned + error), everything not in the journey map, labelled by origin
       wfInfo({ name: 'month-end-close', title: 'Month-end close checklist', description: 'Team playbook: refresh, reconcile against source, and sign off the finance model.', version: 3, source: 'user', stepCount: 6, gated: true, triggers: ['refresh_partition'] }),
+      wfInfo({ name: 'loop-handoff', title: 'Loop and hand-off', description: 'A v2 file with forEach, call, and provenance for the rich-loss Boxes state.', version: 1, source: 'user', stepCount: 2, gated: true, triggers: [] }),
       wfInfo({ name: 'broken-workflow', title: 'broken-workflow', description: '', version: 1, source: 'user', stepCount: 0, gated: false, triggers: [], error: "Step 2 gate block: YAML parse error at line 4 — mapping values are not allowed here (did you quote the question text?)." }),
     ];
-    // ?wf=avail → the §9a/§10.6 menu-layer states in one frame: dimensional-design manually OFF (it auto-selects,
-    // so the header shows the off pill + blocked Start + the switch), and add-fact-table enabled but RULE-deactivated
-    // (the listed-but-dimmed "off today's menu" card with its plain activeReason).
+
+    // ?wf=avail → the §9a/§10.6 menu-layer states in one frame: refactor-to-calculation-group manually OFF (the
+    // off pill + blocked Start + the switch), and import-table enabled but RULE-deactivated (the listed-but-dimmed
+    // "off today's menu" card with its plain activeReason). [T171] Both were parked/deleted names until the fixture
+    // was trued up; they must stay shipped names, or these states render against a workflow that is not there.
     if (new URLSearchParams(location.search).get('wf') === 'avail') {
-      var wOff = WORKFLOWS.find(function (w) { return w.name === 'dimensional-design'; });
+      var wOff = WORKFLOWS.find(function (w) { return w.name === 'refactor-to-calculation-group'; });
       if (wOff) { wOff.enabled = false; wOff.active = false; wOff.activeReason = 'turned off for this project'; }
-      var wHid = WORKFLOWS.find(function (w) { return w.name === 'add-fact-table'; });
+      var wHid = WORKFLOWS.find(function (w) { return w.name === 'import-table'; });
       if (wHid) { wHid.active = false; wHid.activeReason = 'hidden by a project rule while this model is connected to production'; }
     }
 
-    // ?wf=activate / ?wf=activatefree → the §10.6 "Hide when" (dynamic activation) control on the AUTO-SELECTED
-    // workflow (dimensional-design), in the HIDDEN state: a set='off' ("hide when C") rule currently matches, so the
+    // ?wf=activate / ?wf=activatefree → the §10.6 "Hide when" (dynamic activation) control on a stock workflow
+    // (verified-measure), in the HIDDEN state: a set='off' ("hide when C") rule currently matches, so the
     // header control shows the plain current-state line + the Clear affordance + the editor. 'activate' is PRO (Apply
     // live); 'activatefree' is FREE (Apply disabled-with-reason · Pro, Clear still free). Applied before POLICY is
     // built so the policy entry inherits the active/activeReason. Other workflows keep no rule ("on the menu").
     if (new URLSearchParams(location.search).get('wf') === 'activate' || new URLSearchParams(location.search).get('wf') === 'activatefree') {
-      var wAct = WORKFLOWS.find(function (w) { return w.name === 'dimensional-design'; });
+      var wAct = WORKFLOWS.find(function (w) { return w.name === 'verified-measure'; });
       if (wAct) { wAct.active = false; wAct.activeReason = 'hidden outside the month-end close window'; }
     }
 
@@ -926,15 +952,15 @@
       var nmCond = POLICY.workflows.find(function (w) { return w.name === 'new-measure'; });
       if (nmCond) nmCond.requiredForOps = ['create_measure', 'update_measure'];
     }
-    // ?wf=activatelint → dimensional-design (auto-selected) is REQUIRED by a binding AND carries a hide rule that the
+    // ?wf=activatelint → verified-measure is REQUIRED by a binding AND carries a hide rule that the
     // requirement overrides: it stays ON the menu (forced), but a rule EXISTS — the contradiction lint proves it — so
     // the "Hide when" control offers Clear even though the rule isn't in effect (Codex #2/#4: Clear must not strand a
     // non-matching / overridden rule). Also exercises the inline activation-lint rendering. Pro tier (editor enabled).
     if (wfParam === 'activatelint') {
-      POLICY.bindings = [{ op: 'create_measure', require: ['dimensional-design'], mode: 'hard', userDisablable: true }];
-      var ddEntry = POLICY.workflows.find(function (w) { return w.name === 'dimensional-design'; });
+      POLICY.bindings = [{ op: 'create_measure', require: ['verified-measure'], mode: 'hard', userDisablable: true }];
+      var ddEntry = POLICY.workflows.find(function (w) { return w.name === 'verified-measure'; });
       if (ddEntry) { ddEntry.requiredForOps = ['create_measure']; ddEntry.activeReason = 'required when creating a measure'; }
-      POLICY.lints = [{ severity: 'warn', message: "'dimensional-design' is required when creating a measure but a rule hides it — the requirement wins; the rule is overridden." }];
+      POLICY.lints = [{ severity: 'warn', message: "'verified-measure' is required when creating a measure but a rule hides it: the requirement wins; the rule is overridden." }];
     }
 
     // getWorkflow(name) — the full definition (verbatim instructions + gates). Content borrowed from the stock
@@ -974,8 +1000,8 @@
       ],
     };
     WORKFLOW_DEFS['governed-rename'] = {
-      name: 'governed-rename', title: 'Safe rename', description: 'Assess a rename, stage it for review, preserve representative values, review external bindings, apply FormulaFixup, replay the safety net, and produce one sealed evidence certificate.',
-      version: 2, strictness: 'hard', triggers: ['impact_assessment', 'add_plan_item', 'apply_plan', 'rename_object'], source: 'stock', filePath: 'workflows/governed-rename.md', error: null,
+      name: 'governed-rename', title: 'Safe rename', description: 'Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.',
+      version: 2, strictness: 'hard', triggers: ['rename_object', 'add_plan_item'], source: 'stock', filePath: 'workflows/governed-rename.md', error: null,
       steps: [
         { id: 'step-1', number: 1, title: 'Assess the rename scope', ops: ['impact_assessment'], instructions: 'Name the exact object and replacement name. Supply local PBIR report paths or explicitly record model-only scope.', gate: { strictness: null, inputs: [gi('target', 'The exact object ref being renamed.', 'objectRef', 'required'), gi('newName', 'The exact replacement name.', 'text', 'required'), gi('reportPaths', 'Local PBIR report paths, or decline with why this is model-only.', 'text')], verify: [{ kind: 'impact_assessment', intent: 'rename', when: null, probe: null, scope: null }] } },
         { id: 'step-2', number: 2, title: 'Stage the rename for review', ops: ['add_plan_item'], instructions: 'Create one proposed Change Plan rename item. Do not approve or apply it yet.', gate: { strictness: null, inputs: [gi('planItemId', 'The proposed Change Plan item id.', 'text', 'required')], verify: [{ kind: 'plan_item_staged', when: null, probe: null, scope: null }] } },
@@ -987,12 +1013,81 @@
     };
     // A DISTILLED (learned) workflow — carries derived_from provenance (Learning Loop L3). The Knowledge tab's
     // Learned-workflows section filters the library to defs that carry provenance, so this is the one that shows.
+    WORKFLOW_DEFS['loop-handoff'] = {
+      name: 'loop-handoff', title: 'Loop and hand-off', description: 'A v2 file with forEach, call, and provenance for the rich-loss Boxes state.',
+      version: 1, schemaVersion: 2, strictness: 'hard', triggers: [], source: 'user', filePath: '.semanticus/workflows/loop-handoff.md', error: null,
+      provenance: { derived_from: '', note: 'kept' },
+      steps: [
+        {
+          id: 'review', number: 1, title: 'Review each table', instructions: 'Walk the list once per table.', ops: ['list_tables'],
+          hasExplicitId: true, when: 'inputs.go.answered',
+          forEach: { inInput: 'tables', as: 'table', maxIterations: 40 },
+          call: { workflow: 'hygiene-pass', with: { target: '[[loop.table]]' }, returns: ['grade'] },
+          gate: { strictness: null, inputs: [gi('go', 'Continue?', 'text')], verify: [] },
+        },
+        {
+          id: 'step-2', number: 2, title: 'Finish', instructions: 'Record the outcome.', ops: [],
+          hasExplicitId: false, gate: null,
+        },
+      ],
+    };
     WORKFLOW_DEFS['month-end-close'] = {
       name: 'month-end-close', title: 'Month-end close checklist', description: 'Team playbook distilled from prior month-end closes.',
       version: 3, strictness: 'warn', triggers: ['refresh_partition'], source: 'user', filePath: '.semanticus/workflows/month-end-close.md', error: null,
       provenance: { derived_from: '[wfr-31, wfr-37]', distilled_at: '2026-07-01' },
       steps: [],
     };
+
+    // Exact-source fixtures deliberately keep encoding and formatting outside the parsed definition.
+    const documentMode = (wfParam || '').startsWith('document');
+    const upgradeMode = (wfParam || '').startsWith('document-upgrade');
+    if (documentMode) {
+      const stock = wfParam === 'document-stock' || wfParam === 'document-upgrade-stock';
+      const invalid = wfParam === 'document-invalid';
+      const name = 'loop-handoff';
+      const crlf = String.fromCharCode(13, 10);
+      const source = String.fromCharCode(0xfeff) + (upgradeMode ? [
+        '---', 'name: loop-handoff', 'title: Loop and hand-off', 'version: 1',
+        '# Keep the source comment', '---', '', '<!-- Keep this comment and spacing -->',
+        '## Step 1: Review each table', 'Walk the list once per table.  ', '```yaml step',
+        'ops: [list_tables]', '```', '', '## Step 2: Finish', 'Record the outcome.', '',
+      ] : [
+        '---', 'schemaVersion: 2', 'name: loop-handoff', 'title: Loop and hand-off', 'version: 1',
+        '# Keep the source comment', '---', '', '<!-- Keep this comment and spacing -->',
+        '## Step 1: Review each table', 'Walk the list once per table.  ', '```yaml step',
+        'id: review', 'forEach:', '  in: [Sales, Product]', '  as: table', '  maxIterations: 40',
+        '```', '', '## Step 2: Finish', 'Record the outcome.', '```yaml step', 'id: finish', '```', '',
+      ]).join(crlf);
+      let revision = 0;
+      const fixture = window.__workflowDocument = {
+        source, calls: [], createRace: false, refuseNext: false, deferred: false, pending: null,
+        upgradeDeferred: false, upgradePending: null, upgradeParseError: null, upgradeWrites: 0,
+        proposal(text) {
+          return text.replace('---' + crlf, '---' + crlf + 'schemaVersion: 2' + crlf)
+            .replace('## Step 1: Review each table' + crlf, '## Step 1: Review each table' + crlf + '```yaml step' + crlf + 'id: step-1' + crlf + '```' + crlf)
+            .replace('## Step 2: Finish' + crlf, '## Step 2: Finish' + crlf + '```yaml step' + crlf + 'id: step-2' + crlf + '```' + crlf);
+        },
+        notify() { window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowLibraryDidChange', payload: structuredClone(WORKFLOWS) } })); },
+        set(text, library = 'user', parses = true, notify = true) {
+          const schemaVersion = upgradeMode && !text.includes('schemaVersion: 2') ? 1 : 2;
+          this.document = { name, library, path: (library === 'stock' ? '/engine/workflows/' : '/project/.semanticus/workflows/') + name + '.md',
+            exactText: text, byteHash: 'sha256:' + String(++revision).padStart(64, '0'),
+            metadata: { schemaVersion, title: 'Loop and hand-off', version: 1, stepIds: upgradeMode ? ['step-1', 'step-2'] : ['review', 'finish'], explicitIds: schemaVersion === 2,
+              parses, parseError: parses ? null : 'Invalid schemaVersion in saved file.' } };
+          WORKFLOW_DEFS[name] = { ...WORKFLOW_DEFS[name], schemaVersion, source: library, error: this.document.metadata.parseError,
+            provenance: upgradeMode ? null : WORKFLOW_DEFS[name].provenance,
+            steps: [
+              { id: upgradeMode ? 'step-1' : 'review', number: 1, title: 'Review each table', instructions: text.includes('Review every table carefully.') ? 'Review every table carefully.' : 'Walk the list once per table.', ops: upgradeMode ? ['list_tables'] : [], hasExplicitId: schemaVersion === 2,
+                forEach: upgradeMode ? null : { inLiteral: ['Sales', 'Product'], as: 'table', maxIterations: 40 }, gate: null },
+              { id: upgradeMode ? 'step-2' : 'finish', number: 2, title: 'Finish', instructions: 'Record the outcome.', ops: [], hasExplicitId: schemaVersion === 2, gate: null },
+            ] };
+          const info = WORKFLOWS.find((item) => item.name === name);
+          if (info) { info.source = library; info.error = this.document.metadata.parseError; }
+          if (notify) this.notify();
+        },
+      };
+      fixture.set(invalid ? source.replace('schemaVersion: 2', 'schemaVersion: broken') : source, stock ? 'stock' : 'user', !invalid, false);
+    }
 
     // getWorkflowRun / startWorkflow — a mid-flight run of new-measure: step 1 PASSED (with one declined input +
     // dax_probe evidence), step 2 CURRENT (with gate questions + a verify checklist), step 3 pending.
@@ -1021,6 +1116,55 @@
         verifyKinds: ['dax_probe', 'bpa_clean'], effectiveStrictness: 'hard',
       },
     };
+    const LOOP_RUN = {
+      runId: 'wfr-loop', workflow: 'review-tables', title: 'Review table descriptions', workflowVersion: 1,
+      status: 'active', stepIndex: 2, totalSteps: 4,
+      steps: ['Sales', 'Returns', 'Customers', 'Products'].map((value, index) => ({
+        stepId: 'review#' + index, title: 'Review table',
+        status: ['passed', 'skipped', 'in_progress', 'pending'][index],
+        note: index === 1 ? 'Returns is maintained by the finance team.' : null,
+        answers: index === 0 ? { description: { value: 'Sales order lines, one row per product and order.', answered: true } } : {},
+        verifyResults: [],
+      })),
+      currentStep: {
+        stepId: 'review#2', title: 'Review table', instructions: 'Review the description for **Customers**. Explain what one row represents and where the data comes from.',
+        ops: ['set_description'], questions: [gi('description', 'What should someone know about the Customers table?', 'text', 'required')],
+        verifyKinds: [], effectiveStrictness: 'hard',
+      },
+    };
+    LOOP_RUN.frames = LOOP_RUN.steps.map((step, index) => ({
+      kind: 'iteration', stepId: 'review', iterationIndex: index, loopVariable: 'table',
+      loopValue: ['Sales', 'Returns', 'Customers', 'Products'][index],
+      state: index === 0 ? 'passed' : index === 1 ? 'failed' : 'in_progress', steps: [step],
+    }));
+    const CALL_RUN = {
+      runId: 'wfr-calls', workflow: 'review-model', title: 'Review model content', workflowVersion: 1,
+      status: 'active', stepIndex: 3, totalSteps: 7,
+      steps: [
+        ['model-call', 'Review model content', 'passed'],
+        ['first-table', 'Review table', 'passed'],
+        ['capture-context', 'Capture table context', 'passed'],
+        ['review-column', 'Review column description', 'in_progress'],
+        ['second-table', 'Review table', 'pending'],
+        ['next-context', 'Capture table context', 'pending'],
+        ['finish', 'Summarise the review', 'pending'],
+      ].map(([stepId, title, status]) => ({ stepId, title, status, answers: {}, verifyResults: [] })),
+      currentStep: {
+        stepId: 'review-column', title: 'Review column description',
+        instructions: 'Review the description for **Customer name** in **Sales**. The calling workflow supplied a draft you can edit.',
+        ops: [], questions: [gi('description', 'How should this column be described?', 'text', 'required')],
+        providedAnswers: { description: { value: 'The customer name recorded on the sales order.', answered: true } },
+        verifyKinds: [], effectiveStrictness: 'hard',
+      },
+    };
+    CALL_RUN.frames = [
+      { kind: 'call', stepId: 'review', workflow: 'review-model', depth: 1, state: 'in_progress', passed: ['modelName'], returned: [], steps: [] },
+      { kind: 'iteration', stepId: 'each-table', parentFrameIndex: 0, iterationIndex: 0, loopVariable: 'table', loopValue: 'Sales', state: 'in_progress', steps: [CALL_RUN.steps[1]] },
+      { kind: 'iteration', stepId: 'each-table', parentFrameIndex: 0, iterationIndex: 1, loopVariable: 'table', loopValue: 'Products', state: 'in_progress', steps: [CALL_RUN.steps[4]] },
+      { kind: 'call', stepId: 'review', parentFrameIndex: 1, workflow: 'review-table', depth: 2, state: 'in_progress', passed: ['tableName', 'description'], returned: [], steps: [CALL_RUN.steps[2]] },
+      { kind: 'iteration', stepId: 'each-column', parentFrameIndex: 3, iterationIndex: 0, loopVariable: 'column', loopValue: 'Customer name', state: 'in_progress', steps: [CALL_RUN.steps[3]] },
+      { kind: 'call', stepId: 'review', parentFrameIndex: 2, workflow: 'review-table', depth: 2, state: 'in_progress', passed: [], returned: [], steps: [CALL_RUN.steps[5]] },
+    ];
     const TERMINAL_RUN = {
       runId: 'wfr-1', workflow: 'new-measure', title: 'Author a verified measure', workflowVersion: 1, status: 'completed',
       abortReason: null, startedUtc: '2026-07-12T09:30:00Z', finishedUtc: '2026-07-12T09:34:18Z', modelName: 'Contoso Retail', modelFingerprint: 'fp-contoso',
@@ -1064,14 +1208,45 @@
       },
     };
 
+    // [T215] Mirrors get_op_catalog after the ratified taxonomy: every op carries its question and
+    // shelf, and the ARRAY ORDER is the engine's transmitted order — question page order, shelf page
+    // order, then name — because the picker groups in received order and never re-sorts (the order is
+    // ratified data, owned by OpTaxonomy on the engine). A sample of the 306 real ops, at least one
+    // per question, names verbatim — OpTaxonomyTests holds the real engine to the same strings.
     const OP_CATALOG = cfg.opCatalog || [
-      { name: 'export_workflow_evidence', description: 'Export one terminal workflow run as sealed HTML and JSON evidence.' },
-      { name: 'create_measure', description: 'Create a measure on a table with a DAX expression.' },
-      { name: 'set_measure_format', description: 'Set the format string of a measure.' },
-      { name: 'set_description', description: 'Set the description of any model object.' },
-      { name: 'validate_dax', description: 'Validate a DAX expression against the model.' },
-      { name: 'lint_dax', description: 'Lint a DAX expression against the best-practice ruleset.' },
-      { name: 'get_grounding', description: 'Get naming, format and sibling context for authoring.' },
+      { name: 'connect_local', description: 'Connect to a model open on this computer.', question: 'Open a model and connect', shelf: 'Connections and targets' },
+      { name: 'open_model', description: 'Open a semantic model from a file or folder.', question: 'Open a model and connect', shelf: 'Connections and targets' },
+      { name: 'list_measures', description: 'List every measure in the model.', question: 'See what is in the model', shelf: 'Measures, DAX and queries' },
+      { name: 'run_dax', description: 'Run a DAX query and see the answer.', question: 'See what is in the model', shelf: 'Measures, DAX and queries' },
+      { name: 'preview_table', description: 'Peek at the data in a table.', question: 'See what is in the model', shelf: 'Tables, columns and hierarchies' },
+      { name: 'get_model_summary', description: 'Get the short summary of the model.', question: 'See what is in the model', shelf: 'The model as a whole' },
+      { name: 'create_measure', description: 'Create a measure on a table with a DAX expression.', question: 'Change the model', shelf: 'Measures, DAX and queries' },
+      { name: 'validate_dax', description: 'Validate a DAX expression against the model.', question: 'Change the model', shelf: 'Measures, DAX and queries' },
+      { name: 'set_partition_m', description: 'Change how a table loads its data.', question: 'Change the model', shelf: 'Where the data comes from' },
+      { name: 'undo_change', description: 'Undo the last change.', question: 'Change the model', shelf: 'The model as a whole' },
+      { name: 'create_table', description: 'Create a table in the model.', question: 'Change the model', shelf: 'Tables, columns and hierarchies' },
+      { name: 'set_description', description: 'Set the description of any model object.', question: 'Change the model', shelf: 'How the model looks and reads' },
+      { name: 'set_measure_format', description: 'Set the format string of a measure.', question: 'Change the model', shelf: 'How the model looks and reads' },
+      { name: 'save_spec', description: 'Write the model plan page to disk.', question: 'Change the model', shelf: 'The model spec' },
+      { name: 'generate_date_table', description: 'Add a date table to the model.', question: 'Change the model', shelf: 'Dates and time' },
+      { name: 'create_relationship', description: 'Link two tables with a relationship.', question: 'Change the model', shelf: 'Relationships and the diagram' },
+      { name: 'apply_safe_fixes', description: 'Fix all the safe findings at once.', question: 'Make it better', shelf: 'Findings and fixes' },
+      { name: 'bpa_scan', description: 'Scan the model for bad practices.', question: 'Make it better', shelf: 'Findings and fixes' },
+      { name: 'lint_dax', description: 'Lint a DAX expression against the best-practice ruleset.', question: 'Make it better', shelf: 'Findings and fixes' },
+      { name: 'capture_baseline', description: 'Save a baseline to compare after a change.', question: 'Prove it is right', shelf: 'Tests, numbers and evidence' },
+      { name: 'run_tests', description: 'Run the saved tests and record the result.', question: 'Prove it is right', shelf: 'Tests, numbers and evidence' },
+      { name: 'git_commit', description: 'Commit the working copy to version control.', question: 'Track versions and compare', shelf: 'Versions and history' },
+      { name: 'model_diff', description: 'See what changed between two versions.', question: 'Track versions and compare', shelf: 'Versions and history' },
+      { name: 'deploy_live', description: 'Push the model live.', question: 'Ship it out', shelf: 'Publishing and deployment' },
+      { name: 'create_role', description: 'Create a viewer role.', question: 'Ship it out', shelf: 'Who can see what' },
+      { name: 'get_doc_section', description: 'Read one section of the model write-up.', question: 'Ship it out', shelf: 'The model write-up' },
+      { name: 'ai_readiness_scan', description: 'Score how ready the model is for AI.', question: 'Teach the AI about this model', shelf: 'Teach the AI' },
+      { name: 'get_grounding', description: 'Get naming, format and sibling context for authoring.', question: 'Teach the AI about this model', shelf: 'Teach the AI' },
+      { name: 'set_ai_instructions', description: 'Write the notes the AI reads first.', question: 'Teach the AI about this model', shelf: 'Teach the AI' },
+      { name: 'export_workflow_evidence', description: 'Export one terminal workflow run as sealed HTML and JSON evidence.', question: 'Set the rules of the work', shelf: 'Workflows and rules' },
+      { name: 'start_workflow', description: 'Start a run of a workflow and step through it.', question: 'Set the rules of the work', shelf: 'Workflows and rules' },
+      { name: 'daxlib_search', description: 'Search the DAX package library.', question: 'Look things up', shelf: 'Reference lists and instruction sheets' },
+      { name: 'list_format_templates', description: 'List the format templates.', question: 'Look things up', shelf: 'Reference lists and instruction sheets' },
     ];
 
     // ---- Knowledge tab (Learning Loop store — insights + learned workflows + recall) ----------------------------
@@ -1245,10 +1420,18 @@
       { id: 'cn1', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Finance', database: 'Finance', modelName: 'Finance', authMode: 'interactive', label: 'prod', tenantId: 'contoso.com', lastAccount: 'megan@contoso.com', useCount: 12, lastUsedUtc: ago(120) },
       { id: 'cn2', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20UAT', database: 'Contoso', modelName: 'Contoso Sales', authMode: 'interactive', label: 'uat', tenantId: 'contoso.com', lastAccount: 'megan@contoso.com', useCount: 5, lastUsedUtc: ago(300) },
       { id: 'cn3', kind: 'localDesktop', endpoint: 'localhost:51000', database: 'Contoso', modelName: 'Contoso local test', authMode: 'interactive', label: 'local', useCount: 20, lastUsedUtc: ago(15) },
+      { id: 'cn10', kind: 'file', endpoint: 'C:\\Models\\Contoso\\B Edit.SemanticModel', modelName: 'B Edit', label: 'local', useCount: 3, lastUsedUtc: ago(8) },
       // Unlabelled xmla, signed out → the UI shows "Production safeguards" + "account unknown" + a Sign in and open verb.
       { id: 'cn4', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Sandbox', database: 'Sandbox Model', modelName: 'Sandbox Model', authMode: 'interactive', label: null, useCount: 2, lastUsedUtc: ago(2000) },
-      // Service-principal xmla → NO account picker (no "Open as…" / "Sign in and open"): a non-interactive identity the UI must not promise to switch.
+      // Service-principal xmla → NO account picker: a non-interactive identity the UI must not promise to switch.
       { id: 'cn5', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/CI', database: 'CI Model', modelName: 'CI pipeline model', authMode: 'serviceprincipal', label: 'prod', tenantId: 'contoso.com', useCount: 8, lastUsedUtc: ago(60) },
+      // Four more so the reference capture has NINE remembered models (the list must FILL without a scrollbar at 1130x790).
+      { id: 'cn6', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Marketing', database: 'Marketing', modelName: 'Marketing Analytics', authMode: 'interactive', label: 'dev', tenantId: 'contoso.com', lastAccount: 'megan@contoso.com', useCount: 3, lastUsedUtc: ago(200) },
+      { id: 'cn7', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/HR', database: 'HR', modelName: 'People metrics', authMode: 'interactive', label: 'uat', tenantId: 'contoso.com', useCount: 1, lastUsedUtc: ago(900) },
+      // A local running model with a bare GUID database and NO friendly name -> the hub must show "Local running model" +
+      // the port, never the GUID as the display name (P5).
+      { id: 'cn8', kind: 'localDesktop', endpoint: 'localhost:52100', database: '493c64f4-b0f5-4a1e-9c2d-77a1e6b0f3aa', authMode: 'interactive', label: 'local', useCount: 4, lastUsedUtc: ago(5) },
+      { id: 'cn9', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Ops', database: 'Ops', modelName: 'Operations', authMode: 'interactive', label: 'prod', tenantId: 'fabrikam.com', useCount: 6, lastUsedUtc: ago(400) },
     ];
     // The silent probe: cn1's tenant-wide sign-in now points at Bob (a sibling switched), while cn1's own last-used hint
     // still says Kane → the drawer shows "as bob@contoso.com (was megan@contoso.com)". SP/local rows keep no record.
@@ -1258,6 +1441,15 @@
       // cn4 has NO live sign-in record → the next-open account is UNKNOWN; its last-used account rides along ONLY as
       // provenance, so the drawer reads "last opened as alice@contoso.com", never predicting it (HIGH 3).
       { id: 'cn4', previousAccount: 'alice@contoso.com', tenantId: 'contoso.com' },
+    ];
+    // The Phase 2 multi-account profile store (list_account_profiles) — the saved Microsoft identities on this device,
+    // credential-free. Honest fixture: two accounts on the Contoso tenant (one the default), a SECOND tenant (ETS), and a
+    // SIGNED-OUT profile whose saved record is gone. `isDefault` is who an unqualified open of that tenant uses.
+    const ACCOUNT_PROFILES = cfg.accountProfiles || [
+      { id: 'pf1', username: 'megan@contoso.com', tenantId: 'contoso.com', family: 'interactive', isDefault: true, signedIn: true, lastSignInUtc: ago(120), lastUseUtc: ago(60) },
+      { id: 'pf2', username: 'admin@contoso.com', tenantId: 'contoso.com', family: 'interactive', isDefault: false, signedIn: true, lastSignInUtc: ago(600), lastUseUtc: ago(400) },
+      { id: 'pf3', username: 'avery@fabrikam.com', tenantId: 'fabrikam.com', family: 'interactive', isDefault: true, signedIn: true, lastSignInUtc: ago(1500), lastUseUtc: ago(1440) },
+      { id: 'pf4', username: 'sandbox@contoso.com', tenantId: 'contoso.com', family: 'interactive', isDefault: false, signedIn: false, lastSignInUtc: ago(4000), lastUseUtc: ago(3000) },
     ];
     const CONNECTION_CONTEXT = cfg.connectionContext || {
       editing: { available: true, modelName: 'Contoso Retail', source: 'C:\\Models\\Contoso\\Contoso.SemanticModel\\definition', kind: 'file', workingFolder: 'C:\\Models\\Contoso\\Contoso.SemanticModel', sourceConnectionId: 'cn3', live: false, sourceControlled: true, repositoryRoot: 'C:\\Models\\Contoso' },
@@ -1333,13 +1525,72 @@
       return { name: t.name, title: t.title, whenToUse: t.whenToUse, version: t.version, source: t.source, slotCount: t.slots.length, slots: t.slots.map(function (s) { return s.name; }), error: t.error };
     });
 
+    const WORKFLOW_LAYOUTS = window.__workflowLayouts = {};
+    window.__changeCanvasDefinition = function (title) {
+      var name = Object.keys(WORKFLOW_LAYOUTS)[0];
+      var def = RESPONSES.getWorkflow([name]);
+      WORKFLOW_DEFS[name] = { ...def, steps: def.steps.map((step, i) => i ? step : { ...step, title: title }) };
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowLibraryDidChange', payload: WORKFLOWS.slice() } }));
+    };
+    window.__workflowLayoutWrites = [];
     const RESPONSES = {
+      getWorkflowLayout: function (params) {
+        var name = params[0];
+        return WORKFLOW_LAYOUTS[name] || { name: name, revision: '0', positions: {} };
+      },
+      saveWorkflowLayout: function (params) {
+        var name = params[0], positions = params[1], expected = params[2];
+        if (window.__workflowLayoutError) return { __uishotError: window.__workflowLayoutError };
+        var current = RESPONSES.getWorkflowLayout([name]);
+        if (expected !== current.revision) return { __uishotError: 'Workflow or layout changed. Reload the layout before saving again.' };
+        var next = { name: name, revision: String(Number(current.revision) + 1), positions: positions };
+        WORKFLOW_LAYOUTS[name] = next;
+        window.__workflowLayoutWrites.push(next);
+        setTimeout(function () {
+          window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowLayoutDidChange', payload: next } }));
+          if (window.__workflowForeignBeforeReply) {
+            var foreign = { name: name, revision: String(Number(next.revision) + 1), positions: window.__workflowForeignBeforeReply };
+            window.__workflowForeignBeforeReply = null;
+            WORKFLOW_LAYOUTS[name] = foreign;
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowLayoutDidChange', payload: foreign } }));
+          }
+        }, 0);
+        return next;
+      },
       sessionInfo: SESSION,
       connectionContext: CONNECTION_CONTEXT,
       getAgentPolicy: AGENT_POLICY,
       listPendingApprovals: PENDING_APPROVALS,
       listConnections: CONNECTIONS,
       probeConnectionAccounts: ACCOUNT_PROBES,
+      listAccountProfiles: ACCOUNT_PROFILES,
+      // The advanced-auth preflight (service identity / command-line). Presence + names only, never a value. The
+      // service-principal fixture leaves the SECRET unset so the review shows the present (fill) vs not-set (hollow)
+      // states and the "Not ready" verdict; the azcli fixture reports a detected az login session.
+      probeAuthPrerequisites: function (params) {
+        var mode = String((params && params[0]) || '').toLowerCase();
+        var tenant = params && params[1];
+        if (mode === 'serviceprincipal' || mode === 'sp') {
+          return { mode: 'serviceprincipal', keyVaultSupported: false, ready: false, requirements: [
+            { label: 'Client ID', envNames: ['AZURE_CLIENT_ID', 'FABRIC_CLIENT', 'POWERBI_CLIENT_ID'], present: true },
+            { label: 'Client secret', envNames: ['AZURE_CLIENT_SECRET', 'FABRIC_SECRET', 'POWERBI_CLIENT_SECRET'], present: false },
+            { label: 'Tenant', envNames: ['AZURE_TENANT_ID', 'FABRIC_TENANT', 'POWERBI_TENANT_ID'], present: !!tenant || true },
+          ] };
+        }
+        if (mode === 'azcli' || mode === '') {
+          return { mode: 'azcli', keyVaultSupported: false, ready: true, requirements: [], cliAccount: 'megan@contoso.com', cliTenant: 'contoso.com' };
+        }
+        return { mode: mode, keyVaultSupported: false, ready: true, requirements: [] };
+      },
+      // Make-default in the mock: mark the chosen profile the tenant default, clearing the old one on that tenant/family.
+      setDefaultAccountProfile: function (params) {
+        var id = params && params[0];
+        var picked = ACCOUNT_PROFILES.find(function (p) { return p.id === id; });
+        if (picked) ACCOUNT_PROFILES.forEach(function (p) {
+          if (p.tenantId === picked.tenantId && p.family === picked.family) p.isDefault = (p.id === id);
+        });
+        return ACCOUNT_PROFILES;
+      },
       // The device-local connection timeline the drawer's History panel renders (newest-first, credential-free), with a
       // per-connection filter. Includes a role change and a failed switch (ok:false) so the states are all visible.
       listConnectionHistory: function (params) {
@@ -1459,6 +1710,65 @@
         }
         return WORKFLOWS.slice();
       },
+      getWorkflowDocument: function (params) {
+        const fixture = window.__workflowDocument;
+        fixture.calls.push({ method: 'getWorkflowDocument', params });
+        return structuredClone(fixture.document);
+      },
+      upgradeWorkflow: function (params) {
+        const f = window.__workflowDocument;
+        f.calls.push({ method: 'upgradeWorkflow', params });
+        const [name, dryRun = true, hash, path] = params;
+        let reason = null;
+        if (path !== f.document.path) reason = 'The workflow path changed. Reopen the file before upgrading.';
+        else if (hash !== f.document.byteHash) reason = 'The workflow changed on disk. Preview again before upgrading.';
+        const noop = f.document.metadata.schemaVersion === 2;
+        const proposedText = reason || noop ? f.document.exactText : f.proposal(f.document.exactText);
+        const oldLines = f.document.exactText.split(String.fromCharCode(13, 10));
+        const newLines = proposedText.split(String.fromCharCode(13, 10));
+        const diffLines = ['--- saved', '+++ proposed', '@@ -1,' + oldLines.length + ' +1,' + newLines.length + ' @@'];
+        let nextLine = 0;
+        for (const oldLine of oldLines) {
+          while (nextLine < newLines.length && newLines[nextLine] !== oldLine) diffLines.push('+' + newLines[nextLine++]);
+          diffLines.push(' ' + oldLine); nextLine++;
+        }
+        while (nextLine < newLines.length) diffLines.push('+' + newLines[nextLine++]);
+        const diff = reason || noop ? '' : diffLines.join(String.fromCharCode(10));
+        const canApply = !reason && !noop && !f.upgradeParseError && f.document.library === 'user';
+        reason = reason || f.upgradeParseError || (noop ? 'This workflow already uses format v2. No changes needed.'
+          : f.document.library === 'stock' ? 'Create a project copy, then preview its upgrade before applying.' : 'Add format v2 and stable step IDs. Existing source is preserved.');
+        const changed = !dryRun && canApply;
+        if (changed) { f.upgradeWrites++; f.set(proposedText); }
+        const result = { name, dryRun, changed, canApply: dryRun && canApply, reason, document: structuredClone(f.document), proposedText, diff, parseError: f.upgradeParseError, addedLines: noop ? 0 : 7 };
+        if (dryRun) f.lastUpgradePreview = result;
+        if (dryRun && f.upgradeDeferred) { f.upgradePending = result; return '__uishotNever'; }
+        return result;
+      },
+      editWorkflowDocument: function (params) {
+        const fixture = window.__workflowDocument;
+        fixture.calls.push({ method: 'editWorkflowDocument', params });
+        const [name, hash, text, expectPath] = params;
+        let reason = null;
+        if (expectPath !== fixture.document.path) reason = 'The workflow file changed. Reopen the file before editing.';
+        else if (hash !== fixture.document.byteHash) reason = 'The workflow changed on disk. Read it again before editing.';
+        else if (text.includes('schemaVersion: broken')) reason = 'Invalid schemaVersion in submitted text.';
+        else if (fixture.refuseNext) { reason = 'File is temporarily unavailable. Your edit was refused.'; fixture.refuseNext = false; }
+        const changed = !reason && text !== fixture.document.exactText;
+        if (changed) fixture.set(text);
+        const result = { name, changed, reason, byteHash: fixture.document.byteHash, document: structuredClone(fixture.document) };
+        if (fixture.deferred) { fixture.pending = result; return '__uishotNever'; }
+        return result;
+      },
+      saveWorkflow: function (params) {
+        const fixture = window.__workflowDocument;
+        if (!fixture) return {};
+        fixture.calls.push({ method: 'saveWorkflow', params });
+        if (params[3] !== true) throw new Error('Project copy omitted createOnly');
+        if (fixture.createRace) { fixture.set(fixture.source + 'Existing project copy', 'user', true, false); fixture.createRace = false; }
+        if (fixture.document.library === 'user') return { __uishotError: 'A project workflow already exists. It was not overwritten.' };
+        fixture.set(params[1]);
+        return { name: params[0] };
+      },
       getWorkflow: function (params) {
         var n = params && params[0];
         if (WORKFLOW_DEFS[n]) return WORKFLOW_DEFS[n];
@@ -1469,7 +1779,7 @@
         return WORKFLOW_DEFS['new-measure'];
       },
       startWorkflow: new URLSearchParams(location.search).get('wf') === 'runoff' ? RUN_OFF : RUN,
-      getWorkflowRun: new URLSearchParams(location.search).get('wf') === 'runoff' ? RUN_OFF : RUN,
+      getWorkflowRun: new URLSearchParams(location.search).get('wf') === 'calls' ? CALL_RUN : new URLSearchParams(location.search).get('wf') === 'loop' ? LOOP_RUN : new URLSearchParams(location.search).get('wf') === 'runoff' ? RUN_OFF : RUN,
       exportWorkflowEvidence: {
         json: '{"contentHash":"3c9db0e861ef5a947be4f88a1c78cf68245332fb24a5a719dc726f77308ad1fd","id":"wfr-1","kind":"workflow-run","modelName":"Contoso Retail","title":"Author a verified measure evidence","verdict":"Overridden"}',
         contentHash: '3c9db0e861ef5a947be4f88a1c78cf68245332fb24a5a719dc726f77308ad1fd',
@@ -1689,6 +1999,16 @@
       compareModels: function (p) { return (p && p[2]) ? MODELDIFF_EQ : MODELDIFF; },
       applyDiff: cfg.applyDiff || { applied: false, count: 6, appliedRefs: [], failedRefs: ['measure:Sales/Avg Order Value'], target: 'C:/models/PROD/Sales.bim', note: '6 of 7 selected change(s) would apply into Sales.bim · 1 would fail (missing parent table).' },
       deployGate: GATE,
+      deployLive: function (p) {
+        var commit = !!(p && p[5]);
+        return {
+          committed: commit, endpoint: SESSION.liveEndpoint, database: SESSION.liveDatabase || 'Contoso',
+          totalChanges: 1, added: 0,
+          changes: ['Measure Sales / UAT Canary: expression changed'],
+          liveOnly: [], unmatched: [], conflicts: [],
+          confirmToken: 'uishot-publish-token',
+        };
+      },
       listRestorePoints: RESTORE_POINTS,
       rollbackPush: function (p) { return p && p[1]
         ? Object.assign({}, ROLLBACK_PREVIEW, { applied: true, note: 'Rolled Contoso Sales back: restored 3 objects, removed 2.' })
@@ -1794,9 +2114,9 @@
           note: valid ? 'All 1 rule(s) compile. This was a preview only.' : 'Fix the rules with errors, then validate again. Nothing was saved.',
         };
       },
-      loadBpaRules: cfg.loadBpaRules || { revision: 43, source: 'inline', loaded: 1, standardRules: 26, modelRules: 1, activeRules: 27, note: '1 rule(s) loaded (merged); 27 rules active for scans.' },
+      loadBpaRules: cfg.loadBpaRules || { revision: 43, source: 'inline', loaded: 1, standardRules: 74, modelRules: 1, activeRules: 75, note: '1 rule(s) loaded (merged); 75 rules active for scans.' },
       loadReadinessRules: cfg.loadReadinessRules || { revision: 43, source: 'inline', loaded: 1, builtinRules: 74, modelRules: 1, activeRules: 75, note: '1 rule(s) loaded (merged).' },
-      resetBpaRules: { revision: 44, source: 'reset', loaded: 0, modelRules: 0, activeRules: 26, note: 'Custom rules cleared.' },
+      resetBpaRules: { revision: 44, source: 'reset', loaded: 0, modelRules: 0, activeRules: 74, note: 'Custom rules cleared.' },
       resetReadinessRules: { revision: 44, source: 'reset', loaded: 0, modelRules: 0, activeRules: 74, note: 'Custom readiness rules cleared.' },
       vertiPaqScan: VPAQ,
       listMeasures: MEASURES,
@@ -1814,7 +2134,9 @@
       // Backbone-B object browser dataset (get_model_objects): tables + the SAME measures/columns fixtures, plus a
       // couple of hierarchies so the browser's Hierarchies filter + group-by-folder have something to render.
       getModelObjects: cfg.modelObjects || {
-        tables: GRAPH.tables.map(function (t) { return { ref: t.ref, name: t.name, isHidden: t.isHidden, isCalculationGroup: false }; }),
+        tables: GRAPH.tables.map(function (t) { return { ref: t.ref, name: t.name, isHidden: t.isHidden, isCalculationGroup: t.name === 'UAT Detail' }; }).concat([
+          { ref: 'table:UAT Detail', name: 'UAT Detail', isHidden: false, isCalculationGroup: true },
+        ]),
         measures: MEASURES,
         columns: COLUMNS,
         hierarchies: [
@@ -1899,7 +2221,7 @@
           columns: PREVIEW.columns.map(function (c) { return { name: t + '[' + c.name.replace(/\]/g, ']]') + ']', type: c.type }; }),
         });
       },
-      runDax: pqMode === 'profile' ? PQ_PROFILE : PIVOT,
+      runDax: daxMode === 'hang' ? '__uishotNever' : (pqMode === 'profile' ? PQ_PROFILE : PIVOT),
       getPlan: function () {
         if (FR_EMPTY) return EMPTY_REPLACE_PLAN;
         return REPLACE_NOTE ? Object.assign({}, PLAN, { note: REPLACE_NOTE }) : PLAN;
@@ -2162,6 +2484,8 @@
         };
       };
       RESPONSES.saveTest = function (params) { return (params && params[0]) || {}; };
+      RESPONSES.tryTest = function () { return { verdict: 'NotVerifiable', message: "Can't try this now: no live model to ask." }; };
+      RESPONSES.deleteTest = function () { return true; };
       var histHealth = function (grade, cov, roots) {
         return { overall: 0, grade: grade, gatedBy: [], coveragePct: cov, checked: 23, passed: 0, failed: 0, suspect: 0, notVerifiable: 0, missing: 0, rootFailures: roots, categories: [] };
       };
@@ -2219,6 +2543,8 @@
           }
           if (msg && msg.type === 'openLocalModel') return;
           if (!msg || msg.type !== 'rpc') return;
+          if (documentMode && msg.method === 'editWorkflowDocument') window.__workflowDocument.pendingId = msg.id;
+          if (upgradeMode && msg.method === 'upgradeWorkflow') window.__workflowDocument.upgradePendingId = msg.id;
           const has = Object.prototype.hasOwnProperty.call(RESPONSES, msg.method);
           const raw = has ? RESPONSES[msg.method] : {};
           // A response may be a FUNCTION of the call params (e.g. getWorkflow/checkWorkflow vary by name).
@@ -2300,6 +2626,16 @@
       return Array.prototype.find.call(document.querySelectorAll('[data-workflow] button'), function (b) { return (b.textContent || '').indexOf(title) > -1; });
     };
 
+    if (documentMode) setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () {
+        wfPoll(function () { return document.querySelector('[data-workflow="loop-handoff"] button'); }, function () {
+          wfPoll(function () { return wfBtn('Edit workflow', true); }, function () {
+            wfPoll(function () { return wfBtn(wfMode === 'document-stock' || wfMode === 'document-upgrade-stock' ? 'View saved file' : 'Edit file', true); });
+          });
+        });
+      });
+    }, 500);
+
     // ?wf=library / ?wf=avail → the browsing rows (avail pre-sets one OFF + one hidden-now on the WORKFLOWS mock).
     if (wfMode === 'library' || wfMode === 'avail') setTimeout(function () { wfPoll(function () { return wfSection('library'); }); }, 500);
 
@@ -2314,8 +2650,8 @@
     // ?wf=runbanner → enforcement is OFF model-wide (mock above) YET a hard-frozen run is live on Runs: proves the
     // model-wide enforcement-off notice speaks only about NEW runs and no longer contradicts the run's own frozen
     // "Enforcement on · blocking" chip (HIGH 2).
-    if (wfMode === 'run' || wfMode === 'evidence' || wfMode === 'runoff' || wfMode === 'runbanner') setTimeout(function () {
-      var payload = wfMode === 'evidence' ? TERMINAL_RUN : wfMode === 'runoff' ? RUN_OFF : RUN;
+    if (wfMode === 'run' || wfMode === 'evidence' || wfMode === 'runoff' || wfMode === 'runbanner' || wfMode === 'loop' || wfMode === 'calls') setTimeout(function () {
+      var payload = wfMode === 'calls' ? CALL_RUN : wfMode === 'loop' ? LOOP_RUN : wfMode === 'evidence' ? TERMINAL_RUN : wfMode === 'runoff' ? RUN_OFF : RUN;
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowDidChange', payload: payload } }));
       wfPoll(function () { return wfSection('runs'); }, function () {
         if (wfMode === 'evidence') setTimeout(function () { var b = wfBtn('Evidence report', true); if (b) b.click(); }, 400);
@@ -2334,8 +2670,8 @@
     if (wfMode === 'governance') setTimeout(function () { wfPoll(function () { return wfSection('governance'); }); }, 500);
 
     // ?wf=bind / bindfree / bindcond → expand the "Required for" rules on the new-measure row; ?wf=activate /
-    // activatefree / activatelint → the "Hide when" rules on the dimensional-design row. POLICY is pre-built above.
-    var govRules = { bind: 'new-measure', bindfree: 'new-measure', bindcond: 'new-measure', activate: 'dimensional-design', activatefree: 'dimensional-design', activatelint: 'dimensional-design' };
+    // activatefree / activatelint → the "Hide when" rules on the verified-measure row. POLICY is pre-built above.
+    var govRules = { bind: 'new-measure', bindfree: 'new-measure', bindcond: 'new-measure', activate: 'verified-measure', activatefree: 'verified-measure', activatelint: 'verified-measure' };
     if (govRules[wfMode]) setTimeout(function () {
       wfPoll(function () { return wfSection('governance'); }, function () {
         // Poll until the target row's Rules button exists (the governance table renders after the nav click),
@@ -2364,9 +2700,66 @@
         }, 300);
       });
     }, 500);
+    // [T215] ?wf=oppicker → new draft, focus step 1, open the "+ action" op picker (the taxonomy
+    // tree, collapsed by default). Pair with shot.mjs's UISHOT_WF_OPFILTER to review the searched,
+    // fully-expanded grouping (real key events; synthetic input events proved flaky here).
+    if (wfMode === 'oppicker') setTimeout(function () {
+      wfPoll(function () { return wfSection('author'); }, function () {
+        setTimeout(function () {
+          var nw = wfBtn('+ New playbook', true); if (nw) nw.click();
+          setTimeout(function () {
+            var step = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return (b.textContent || '').trim().indexOf('1 · ') === 0; });
+            if (step) step.click();
+            setTimeout(function () {
+              var act = wfBtn('+ action', true); if (act) act.click();
+              // Expand two questions so the review shot shows SHELF ORDER within a question — the
+              // page's order, not alphabetical (PR #311 comment 3693594789).
+              setTimeout(function () {
+                ['See what is in the model', 'Change the model'].forEach(function (q) {
+                  var b = wfBtn(q, false); if (b) b.click();
+                });
+              }, 300);
+            }, 300);
+          }, 400);
+        }, 300);
+      });
+    }, 500);
     if (wfMode === 'design') setTimeout(function () {
       wfPoll(function () { return wfSection('library'); }, function () {
         setTimeout(function () { var l = wfRowLink('Author a verified measure'); if (l) { l.click(); setTimeout(function () { var e = wfBtn('Edit workflow', true); if (e) e.click(); }, 350); } }, 300);
+      });
+    }, 500);
+    if (wfMode === 'boxes') setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () {
+        setTimeout(function () {
+          var l = wfRowLink('Author a verified measure');
+          if (l) {
+            l.click();
+            var et = 0, eiv = setInterval(function () {
+              var e = wfBtn('Edit workflow', true);
+              if (e) {
+                e.click(); clearInterval(eiv);
+                var bt = 0, biv = setInterval(function () {
+                  var b = document.querySelector('[data-wf-view-btn="boxes"]');
+                  if (b) { b.click(); clearInterval(biv); }
+                  if (++bt > 240) clearInterval(biv);
+                }, 25);
+              }
+              if (++et > 240) clearInterval(eiv);
+            }, 25);
+          }
+        }, 300);
+      });
+    }, 500);
+    if (wfMode === 'richloss') setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () {
+        setTimeout(function () {
+          var l = wfRowLink('Loop and hand-off');
+          if (l) {
+            l.click();
+            setTimeout(function () { var e = wfBtn('Edit workflow', true); if (e) e.click(); }, 350);
+          }
+        }, 300);
       });
     }, 500);
 
@@ -2453,11 +2846,14 @@
   // read-only preview; Promote loads stages and previews; Advanced can show delivery tools or Data Agent.
   (function () {
     var mode = new URLSearchParams(location.search).get('deploy');
-    if (!['rollback', 'promote', 'advanced', 'dataagent'].includes(mode)) return;
+    if (!['rollback', 'promote', 'advanced', 'dataagent', 'publish'].includes(mode)) return;
     var step = 0, tries = 0;
     var iv = setInterval(function () {
       var buttons = [].slice.call(document.querySelectorAll('button'));
-      if (step === 0) {
+      if (mode === 'publish') {
+        var pub = document.querySelector('[data-testid="publish-button"]');
+        if (pub && !pub.disabled) { pub.click(); clearInterval(iv); }
+      } else if (step === 0) {
         var label = mode === 'rollback' ? 'Roll back' : mode === 'promote' ? 'Promote' : 'Advanced';
         var primary = buttons.find(function (b) { return (b.textContent || '').trim() === label; });
         if (primary) { primary.click(); step = 1; if (mode === 'advanced') clearInterval(iv); }

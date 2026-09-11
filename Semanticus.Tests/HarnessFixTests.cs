@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ModelContextProtocol;
@@ -47,13 +48,16 @@ namespace Semanticus.Tests
                 // attributable to the test rule, not an absolute zero.
                 var mine = (await engine.BpaScanAsync()).Violations.Count(v => v.RuleId == "TEST-GATE-BLOCK");
                 Assert.True(mine > 0);
-                var before = await engine.DeployGateAsync(null);
+                var before = await engine.DeployGateAsync(null, "human");
                 Assert.True(before.BpaBlocking >= mine);
-                Assert.Contains(before.Blockers, b => b.Contains("blocking BPA error"));
+                // The violation blocker is present. Asserted on the stable spine of the copy rather than the old
+                // "blocking BPA error" wording, which was the legibility defect itself: it named no rule, no object
+                // and no action, and called severity-2 warnings errors. See DeployGateBlockerCopyTests.
+                Assert.Contains(before.Blockers, b => b.Contains("to fix before this model can ship"));
 
                 await engine.WaiveFindingAsync("bpa", "TEST-GATE-BLOCK", "*", "house standard, accepted", "human");
 
-                var after = await engine.DeployGateAsync(null);
+                var after = await engine.DeployGateAsync(null, "human");
                 Assert.Equal(before.BpaBlocking - mine, after.BpaBlocking);   // waived ⇒ no longer blockers…
                 Assert.True(after.BpaWaivedBlocking >= mine);                 // …but surfaced, never hidden
                 Assert.Contains("waived", after.Note);                        // the gate SAYS what it excluded
@@ -93,6 +97,62 @@ namespace Semanticus.Tests
             Assert.True(res.IsError);
             Assert.DoesNotContain("eyJhbGciOi", TextOf(res));
             Assert.Contains("Bearer ***", TextOf(res));
+        }
+
+        // ---- (2b) the refusal templates must not contradict the schema they came from -------------------------------
+        // D-206 / D-207 (UX-03). Captured on the wire 2026-09-11: optimize_measure called without verifyGroupBy
+        // answered "This action needs 'verifyGroupBy'. Check the description and pass that argument, or omit it to
+        // use the default." The binder only says "required parameter" for an argument the schema marks required, so
+        // the second half of that sentence told the caller to do the one thing the schema forbids.
+        [Fact]
+        public async Task Required_argument_refusal_does_not_tell_the_caller_to_omit_that_argument()
+        {
+            var res = await McpErrorBoundary.InvokeAsync("optimize_measure", () => throw new ArgumentException(
+                "The arguments dictionary is missing a value for the required parameter 'verifyGroupBy'. (Parameter 'arguments')"));
+            Assert.True(res.IsError);
+            var text = TextOf(res);
+            Assert.Contains("verifyGroupBy", text);
+            Assert.DoesNotContain("omit", text, StringComparison.OrdinalIgnoreCase);   // the self-contradiction
+            Assert.DoesNotContain("(Parameter '", text, StringComparison.Ordinal);
+        }
+
+        // D-235 (JOURNEY-09). The four wire captures below are the real messages: a JSON boolean for a string
+        // argument, a JSON object for a string argument, and a JSON string for a list-of-text argument.
+        [Theory]
+        [InlineData("The JSON value could not be converted to System.String. Path: $ | LineNumber: 0 | BytePositionInLine: 4.", "text")]
+        [InlineData("The JSON value could not be converted to System.String. Path: $ | LineNumber: 0 | BytePositionInLine: 1.", "text")]
+        [InlineData("The JSON value could not be converted to System.String[]. Path: $ | LineNumber: 0 | BytePositionInLine: 3.", "a list of text")]
+        public async Task Wrong_argument_type_refusal_is_plain_words_not_a_dotnet_message(string real, string wanted)
+        {
+            var res = await McpErrorBoundary.InvokeAsync("submit_workflow_step", () => throw new System.Text.Json.JsonException(real));
+            Assert.True(res.IsError);
+            var text = TextOf(res);
+            Assert.Contains(wanted, text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("System.String", text, StringComparison.Ordinal);          // no .NET type names
+            Assert.DoesNotContain("JSON value could not be converted", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("BytePositionInLine", text, StringComparison.Ordinal);     // no JSON-parser coordinates
+            Assert.DoesNotContain("Path: $", text, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Wire_argument_shapes_are_rejected_before_the_engine_is_called()
+        {
+            using var boolean = JsonDocument.Parse("true");
+            var callGate = await Assert.ThrowsAsync<ArgumentException>(() =>
+                McpTools.SubmitWorkflowStepWire(null, callGate: boolean.RootElement));
+            Assert.Contains("callGate must be text", callGate.Message);
+            Assert.DoesNotContain("System.", callGate.Message, StringComparison.Ordinal);
+
+            var values = await Assert.ThrowsAsync<ArgumentException>(() =>
+                McpTools.InstantiateWorkflowTemplateWire(null, "template", "name", boolean.RootElement));
+            Assert.Contains("valuesJson must be a JSON object", values.Message);
+            Assert.DoesNotContain("System.", values.Message, StringComparison.Ordinal);
+
+            using var scalar = JsonDocument.Parse("\"not a list\"");
+            var groupBy = await Assert.ThrowsAsync<ArgumentException>(() =>
+                McpTools.OptimizeMeasureWire(null, "measure:Sales/M", Array.Empty<string>(), scalar.RootElement));
+            Assert.Contains("verifyGroupBy must be a list of text", groupBy.Message);
+            Assert.DoesNotContain("System.", groupBy.Message, StringComparison.Ordinal);
         }
 
         [Fact]

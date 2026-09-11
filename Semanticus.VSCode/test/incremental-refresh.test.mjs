@@ -16,6 +16,8 @@ assert.match(view, /setIncrementalRefreshPolicy[\s\S]*form\.mode, pollingExpress
 assert.match(transform, /incrementalRefreshFilter[\s\S]*Source = \$\{m\.trim\(\)\}/, 'a bare source must be wrapped explicitly');
 assert.match(transform, /appendStep\(source, 'Filtered for incremental refresh'/, 'range wiring must use the non-clobbering appendStep kernel');
 assert.match(transform, />= RangeStart and \$\{c\} < RangeEnd/, 'the generated filter must be half-open');
+// D-027: comments before `=` must not become the step name (a let-line comment used to be quoted into the filter).
+assert.match(transform, /skipCommentOrSpace/, 'letShape must skip comments when reading a step name');
 
 // Resource-keyed busy map: unrelated resources may run together, while each action is guarded by its resource
 // key and only the running control swaps to progressive copy. Errors stay adjacent to the failed control.
@@ -41,8 +43,8 @@ assert.match(saveBlock, /if \(busyRef\.current\[busyKey\][\s\S]*\) return;/, 'sa
 assert.match(saveBlock, /if \(!beginBusy\(busyKey, 'save-policy'\)\) return;/, 'save must atomically claim its resource');
 assert.match(removeBlock, /if \(!beginBusy\(busyKey, 'remove-policy'\)\) return;/, 'remove must atomically claim its resource');
 assert.match(saveBlock, /const t = selected;/, 'save must capture the table at dispatch');
-assert.match(saveBlock, /if \(selectedRef\.current === t\) \{ setPolicy\(p\); setEnabled/, "save's policy continuation applies only to the still-selected table");
-assert.match(removeBlock, /if \(selectedRef\.current === t\) \{ setEnabled\(false\); setPolicy\(null\); setForm\(DEFAULT_FORM\); \}/, "remove's state reset applies only to the still-selected table");
+assert.match(saveBlock, /if \(selectedRef\.current === t\) \{\s+setPolicy\(p\); setEnabled/, "save's policy continuation applies only to the still-selected table");
+assert.match(removeBlock, /if \(selectedRef\.current === t\) \{\s+policyDraftDirtyRef\.current = false;\s+setEnabled\(false\); setPolicy\(null\); setForm\(DEFAULT_FORM\);\s+\}/, "remove's state reset applies only to the still-selected table");
 
 // Profile fault isolation (defect: ONE query over ≤12 columns — one bad column nuked the whole strip, and the
 // error was swallowed). Now: IFERROR-guarded chunked probing with a solo-probe bisection, per-column "n/a" +
@@ -84,8 +86,8 @@ assert.ok(!/gen\.\w+\(mText, \[?col\.name/.test(pq), 'no generator may receive t
 assert.match(view, /mName: sourceMName\(c\)/, 'the doc columns compute mName through the shared resolver');
 assert.match(pq, /export function sourceMName\(/, 'the source-name rule is a single exported resolver');
 assert.match(pq, /This column is calculated in the model; M transforms do not apply\./, 'the stand-down note explains the calculated case specifically');
-assert.match(view, /!c\.isCalculated && \/date\|time\/i/, 'the refresh date-column select filters out calculated columns (the engine rejects them for the same reason)');
-assert.match(view, /c\.table === selected && !c\.isCalculated\)/, 'the fallback column list for the date select filters out calculated columns too');
+assert.match(view, /!!sourceMName\(c\) && \/date\|time\/i/, 'the refresh date-column select only offers columns loaded from the source');
+assert.match(view, /tableColumns\.filter\(\(c\) => !!sourceMName\(c\)\)/, 'the fallback column list also requires a source-loaded column');
 // MAJOR 1: the "Add range filter" prerequisite action resolves the SourceColumn via the SAME resolver and
 // REFUSES (honest toast) when it's unknown — it must never fall back to the model name (the exact M the engine
 // Save path rejects). The old unsafe `sourceColumn || form.dateColumn` fallback is gone.
@@ -117,7 +119,7 @@ assert.match(wire, /sourceColumn\?: string \| null/, 'the wire ColumnRow must ex
 
 // Selection token is synchronous: every selection path funnels through a setter that updates the ref in the
 // SAME tick (a passive effect leaves a pre-render window where a continuation still sees the old table).
-assert.match(view, /const setSelected = useCallback\(\(t: string\) => \{ selectedRef\.current = t; setSelectedState\(t\); \}/, 'selection updates the token ref synchronously');
+assert.match(view, /const setSelected = useCallback\(\(t: string\) => \{\s+if \(selectedRef\.current !== t\) policyDraftDirtyRef\.current = false;\s+selectedRef\.current = t; setSelectedState\(t\);\s+\}/, 'selection updates the token ref synchronously');
 assert.ok(!view.includes('useEffect(() => { selectedRef.current = selected; }'), 'the passive ref-sync effect must be gone');
 
 // --- extract-and-execute (the bridge-timeouts pattern): run the REAL builders, not just pattern-match them ---
@@ -196,5 +198,11 @@ assert.equal(profileScalar({ columns: [{ name: 'mx0' }], rows: [[0]] }, 'mx0'), 
 // The uishot mock must stay faithful to ADOMD (qualified names) so a normalization regression is VISIBLE.
 const harness = read('tools/uishot/harness.html');
 assert.match(harness, /t \+ '\[' \+ c\.name\.replace\(\/\\\]\/g, '\]\]'\) \+ '\]'/, 'the previewTable mock must return QUALIFIED names like real ADOMD');
+
+// D-066: the date-column picker must only offer columns that can actually be saved (loaded from the source).
+assert.match(view, /sourceMName\(c\)/, 'the date-column picker must use the shared source-name rule');
+assert.match(view, /eligibleDateColumns/, 'the picker must name the eligible set so an empty set is explained');
+assert.match(view, /loaded from the source/, 'an empty eligible set must say why, not offer a choice the save will reject');
+assert.match(view, /refreshWindowFitsArchive/, 'the form must refuse a refresh window wider than the archive window before Save');
 
 console.log('incremental refresh auto-wire + keyed-busy + profile fault-isolation UI contract tests passed');

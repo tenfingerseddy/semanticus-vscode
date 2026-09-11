@@ -403,7 +403,7 @@ const HELP: Record<string, TabHelp> = {
         h: 'Build a plan',
         bullets: [
           '"Analyse model" proposes a plan (deterministic fixes + an AI-content queue), or arrive via "Review as a plan →" from AI Readiness / BPA.',
-          'The AI Assistant can build and edit the same plan; it syncs here live.',
+          'The AI Assistant can build and edit the same plan. Changes appear here in the VS Code view, and the AI Assistant sees them on its next call.',
         ],
       },
       {
@@ -439,7 +439,7 @@ const HELP: Record<string, TabHelp> = {
       {
         h: 'Diffing',
         bullets: [
-          'Open Deploy → Push changes, pick Source and Target (⇄ swaps), then "Review".',
+          'Open Deploy → Choose what to publish, pick Source and Target (⇄ swaps), then "Review".',
           'Rows group by object type with Create/Update/Delete badges; click through to property-level or side-by-side code diffs.',
           'Most objects are name-matched, so a rename reads as delete + create. Relationships are matched structurally by endpoints.',
         ],
@@ -461,14 +461,14 @@ const HELP: Record<string, TabHelp> = {
 
   deploy: {
     title: 'Deploy',
-    lead: 'One release decision surface: Push changes, Roll back, Promote, or open Advanced delivery and Data Agent tools. Every live write is previewed before its separate confirmation.',
+    lead: 'One release decision surface: Publish, Roll back, Promote, or open Advanced delivery and Data Agent tools. Every live write is previewed before its separate confirmation.',
     sections: [
       {
-        h: 'Push changes',
+        h: 'Publish',
         bullets: [
-          'The state line names the editing model, target, working-copy change count, drift state and latest restore point. Unknowns stay explicit.',
-          'Review changes compares the working copy to the current target by default. Any two supported model sources can still be selected.',
-          'Validate selection rehearses the merge. The live write is a separate confirmation over the same engine operation.',
+          'Press Publish. One card names the changes, the destination and the account. Nothing is written until you press the button on that card.',
+          'Ctrl+S saves what is in front of you. It never publishes.',
+          'Choose what to publish is the selective route, under the card, for people who want to push some changes and not others.',
         ],
       },
       {
@@ -487,8 +487,8 @@ const HELP: Record<string, TabHelp> = {
         ],
       },
       {
-        h: 'Deploying the open model to XMLA',
-        body: 'The direct metadata deploy lives on the Model view toolbar: the cloud icon "Save to Live Model… (deploy metadata)". A preview change list, then commit; a red gate offers an audited override. Deploy is metadata-only: it never refreshes data.',
+        h: 'Publishing the open model to a live workspace',
+        body: 'The Publish chip in the status bar, the cloud icon on the Model tree, the palette entry, and the Publish button on Ship > Deploy all open the same confirm card. Publishing changes the model design, not its data. No data refresh.',
       },
     ],
     seeAlso: [
@@ -547,7 +547,7 @@ const HELP: Record<string, TabHelp> = {
         h: 'The narrative layer',
         bullets: [
           'Pick the model, a table or a measure and write Markdown sections (overview, business context, glossary, …), stored WITH the model, separate from object Descriptions.',
-          '"Ask AI" copies a ready documentation prompt; the AI Assistant\'s additions appear live with an attribution chip.',
+          '"Ask AI" copies a ready documentation prompt. The VS Code view shows the AI Assistant\'s additions with an attribution chip, and the AI Assistant sees saved changes on its next call.',
           'Unsaved drafts auto-save when you switch objects; typing is never silently discarded.',
         ],
       },
@@ -711,8 +711,8 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'Score & fix AI readiness', a: 'AI Readiness: one-click safe fixes, ready AI prompts for the rest.', tab: 'readiness' },
       { q: 'Best-practice violations', a: 'BPA: fix singly, fix-all (Pro), or route into a Change Plan.', tab: 'bpa' },
       { q: 'Review a batch of changes before applying', a: 'Change Plan: approve per item, apply as one undoable step.', tab: 'optimize' },
-      { q: 'Deploy the open model to a live workspace', a: 'Model view toolbar → the cloud icon "Save to Live Model… (deploy metadata)": preview first; a red gate needs an audited override. Pipelines/Git/CI-CD live in the Deploy tab.', tab: 'deploy' },
-      { q: 'Diff two models / merge changes', a: 'Deploy → Push changes can review any two supported model sources.', tab: 'deploy' },
+      { q: 'Publish the open model to a live workspace', a: 'Press the Publish chip in the status bar, or Ship > Deploy > Publish. One card names the changes, then you confirm. Ctrl+S never publishes.', tab: 'deploy' },
+      { q: 'Diff two models / merge changes', a: 'Deploy → Choose what to publish can review any two supported model sources.', tab: 'deploy' },
       { q: 'Copy objects from another model', a: 'The Reference Model view (side bar): "Set Reference Model…", then right-click → "Copy into Open Model" (or Ctrl+C there, Ctrl+V in the Model tree).' },
       { q: 'Generate documentation', a: 'Docs: compose, brand, print to PDF, plus the authored narrative layer.', tab: 'docs' },
       { q: 'Ship a Fabric Data Agent', a: 'Deploy → Advanced → Data Agent: scope from this model, teach it, publish.', tab: 'dataagent' },

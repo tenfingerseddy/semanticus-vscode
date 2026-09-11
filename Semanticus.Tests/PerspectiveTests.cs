@@ -71,6 +71,8 @@ namespace Semanticus.Tests
             var members = (await GetAsync(engine, pRef)).Members;
             Assert.Contains(tableRef, members);                            // the table is shown…
             Assert.Contains(members, m => m.StartsWith("measure:" + tbl + "/") || m.StartsWith("column:" + tbl + "/"));   // …and its children cascaded in
+            // The header counter must count cascaded members, not just the ticked table row.
+            Assert.True(members.Length > 1, "including a table must add its fields to membership, not only the table itself");
         }
 
         [Fact]

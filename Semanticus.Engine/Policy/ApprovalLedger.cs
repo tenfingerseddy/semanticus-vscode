@@ -160,7 +160,7 @@ namespace Semanticus.Engine
         private static void RequireHuman(string origin)
         {
             if (!string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Only a human can approve or deny an agent action — that asymmetry is the entire point of an approval.");
+                throw new InvalidOperationException("Only a human can approve or deny an agent action: that asymmetry is the entire point of an approval.");
         }
 
         // A grant we may act on: BOTH timestamps parse, the grant isn't from the future, now is inside the window, and

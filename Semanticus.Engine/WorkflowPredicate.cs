@@ -18,8 +18,9 @@ namespace Semanticus.Engine
     //   expr        := orExpr
     //   orExpr      := andExpr ('||' andExpr)*
     //   andExpr     := comparison ('&&' comparison)*
-    //   comparison  := factRef OP literal
+    //   comparison  := factRef OP literal | boolFactRef
     //   factRef     := IDENT ('.' IDENT)+           e.g. model.tableCount, date.monthEndOffset
+    //   boolFactRef := a Bool factRef standing alone, shorthand for factRef == true
     //   OP          := '==' | '!=' | '<' | '<=' | '>' | '>=' | '~'   ('~' = glob match)
     //   literal     := quoted-string | number | true | false
     //
@@ -107,12 +108,53 @@ namespace Semanticus.Engine
         public GitFacts Git { get; set; }
         public SessionFacts Session { get; set; }
         public DateFacts Date { get; set; }
+        public IReadOnlyDictionary<string, AnswerValue> Inputs { get; set; }
+        public int? LoopIndex { get; set; }
+        public IReadOnlyDictionary<string, string> LoopValues { get; set; }
     }
 
     public static class WorkflowPredicate
     {
+        // The ref charset carries '-' because a gate INPUT name may contain one (`inputs.<name>` is matched
+        // as [A-Za-z0-9_-]+, and the verify-level WhenExpr has always allowed it). Without it the bare form
+        // `inputs.approval-state.answered` lexed while the compared form
+        // `inputs.approval-state.value == 'yes'` did not, which is one grammar disagreeing with itself about
+        // names the format permits. A negative literal is unaffected: the ref stops at the operator, so
+        // `date.monthEndOffset >= -3` still reads -3 as the literal (asserted by a test, not assumed).
         private static readonly Regex Comparison =
-            new Regex(@"^\s*(?<ref>[A-Za-z_][A-Za-z0-9_.]*)\s*(?<op>==|!=|<=|>=|<|>|~)\s*(?<lit>.+?)\s*$", RegexOptions.Compiled);
+            new Regex(@"^\s*(?<ref>[A-Za-z_][A-Za-z0-9_.\-]*)\s*(?<op>==|!=|<=|>=|<|>|~)\s*(?<lit>.+?)\s*$", RegexOptions.Compiled);
+
+        /// <summary>A fact term standing alone, with no operator: the `when: inputs.X.answered` shorthand
+        /// (§1.5). Requires at least one dot, so a bare word is still a shape error rather than an
+        /// "unreadable fact" — the two mistakes need two different messages.</summary>
+        private static readonly Regex BareFact =
+            new Regex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_-]+)+$", RegexOptions.Compiled);
+
+        /// <summary>The roots that only mean something INSIDE a workflow run, at a step: they read the run's
+        /// answers and the current loop pass. An activation rule is evaluated to decide whether a workflow
+        /// is offered at all, long before any run exists, so a rule using one of these can never match and
+        /// nothing would explain why. Callers that evaluate outside a step use
+        /// <see cref="StepScopeFacts"/> to refuse them at the write path, which keeps this class the ONE
+        /// evaluator instead of splitting the grammar per caller.</summary>
+        public static readonly IReadOnlyList<string> StepScopeRoots = new[] { "inputs", "loop" };
+
+        /// <summary>Every fact term a parsed expr references, in order. Lets lint resolve `inputs.<name>`
+        /// against the inputs a file actually collects, which classification alone cannot do: those terms
+        /// are matched by shape, so a misspelled name is still a perfectly readable fact.</summary>
+        public static IReadOnlyList<string> FactTerms(PredicateExpr expr)
+        {
+            var terms = new List<string>();
+            if (expr == null) return terms;
+            foreach (var group in expr.OrGroups)
+                foreach (var c in group)
+                    if (!string.IsNullOrEmpty(c.Left)) terms.Add(c.Left);
+            return terms;
+        }
+
+        /// <summary>The step-scope terms in a condition, empty when there are none. A caller evaluating
+        /// outside a run refuses a condition for which this is non-empty.</summary>
+        public static IReadOnlyList<string> StepScopeFacts(PredicateExpr expr) =>
+            FactTerms(expr).Where(t => StepScopeRoots.Contains(t.Split('.')[0], StringComparer.Ordinal)).ToList();
 
         // The grade ladder (A+ highest → F lowest). `readinessGrade < 'B'` means "ranks below B" = worse than B,
         // so the rank must run best→worst; an unknown grade ranks 0 (comparisons against it are false).
@@ -122,19 +164,40 @@ namespace Semanticus.Engine
             ["C+"] = 5, ["C"] = 4, ["C-"] = 3, ["D"] = 2, ["F"] = 1,
         };
 
+        // Format v2 (docs/workflow-canvas-spec.md §1.5) adds two fact ROOTS whose field set is not fixed,
+        // because the names come from the file: `inputs.<name>.<answered|declined|value>` and `loop.<as>`
+        // (plus the one fixed `loop.index`). They are matched by shape rather than listed, so a step
+        // condition and a verify-level `when:` keep sharing this ONE evaluator instead of growing a dialect.
+        private static readonly Regex InputFact = new Regex(@"^inputs\.([A-Za-z0-9_-]+)\.(answered|declined|value)$", RegexOptions.Compiled);
+        private static readonly Regex LoopFact = new Regex(@"^loop\.([A-Za-z_][A-Za-z0-9_]*)$", RegexOptions.Compiled);
+
         /// <summary>Classify a fact term. Unknown covers both a misspelled term and a deferred one
         /// (target.* / workflow.active.* — wired in 10-T4); either way the comparison never fires + lint warns.</summary>
-        public static PredicateFactType Classify(string term) => term switch
+        public static PredicateFactType Classify(string term)
         {
-            "model.tableCount" or "model.measureCount" or "model.compatLevel"
-                or "date.dayOfMonth" or "date.monthEndOffset" => PredicateFactType.Number,
-            "model.hasRls" or "model.hasCalcGroups" or "git.dirty" or "session.planLoaded" => PredicateFactType.Bool,
-            "model.readinessGrade" => PredicateFactType.Grade,
-            "connection.kind" or "connection.database" or "connection.workspace" or "git.branch"
-                or "model.storageMode" or "model.fingerprint" or "session.verifiedMode" or "session.tier"
-                or "date.iso" => PredicateFactType.Str,
-            _ => PredicateFactType.Unknown,
-        };
+            switch (term)
+            {
+                case "model.tableCount": case "model.measureCount": case "model.compatLevel":
+                case "date.dayOfMonth": case "date.monthEndOffset":
+                    return PredicateFactType.Number;
+                case "model.hasRls": case "model.hasCalcGroups": case "git.dirty": case "session.planLoaded":
+                    return PredicateFactType.Bool;
+                case "model.readinessGrade":
+                    return PredicateFactType.Grade;
+                case "connection.kind": case "connection.database": case "connection.workspace": case "git.branch":
+                case "model.storageMode": case "model.fingerprint": case "session.verifiedMode": case "session.tier":
+                case "date.iso":
+                    return PredicateFactType.Str;
+                case "loop.index":
+                    return PredicateFactType.Number;   // 0-based iteration index; only inside a forEach
+            }
+            var m = InputFact.Match(term ?? "");
+            if (m.Success) return m.Groups[2].Value == "value" ? PredicateFactType.Str : PredicateFactType.Bool;
+            // `loop.<as>` is the bound loop value. Outside a loop it resolves to nothing, so every comparison
+            // against it is false — the existing deferred-fact behaviour, not a new one.
+            if (LoopFact.IsMatch(term ?? "")) return PredicateFactType.Str;
+            return PredicateFactType.Unknown;
+        }
 
         /// <summary>Parse a `when:` string. Returns the parsed expr and (out) the FIRST problem found, if any:
         /// a STRUCTURAL failure (can't tokenise / bad operator) returns a null expr; a SEMANTIC issue (an unknown
@@ -154,25 +217,40 @@ namespace Semanticus.Engine
                 {
                     var text = andPart.Trim();
                     var m = Comparison.Match(text);
-                    if (!m.Success)
+                    string left, op, rawLit;
+                    if (m.Success)
                     {
-                        error = $"could not read the condition '{text}' — the shape is 'fact op value', e.g. date.monthEndOffset >= -3.";
+                        left = m.Groups["ref"].Value;
+                        op = m.Groups["op"].Value;
+                        rawLit = m.Groups["lit"].Value.Trim();
+                    }
+                    else if (BareFact.IsMatch(text) && Classify(text) != PredicateFactType.Number
+                             && Classify(text) != PredicateFactType.Str && Classify(text) != PredicateFactType.Grade)
+                    {
+                        // A bare BOOL fact is shorthand for `fact == true`. Format v2 §1.5 asserts the
+                        // verify-level `when: inputs.X.answered` is a subset of this grammar; it was NOT,
+                        // because Comparison demands an operator, so a bare term did not lex at all. This is
+                        // what makes the claim true. An UNKNOWN term takes the same path deliberately, so a
+                        // misspelling reports as an unreadable fact (lint warns, condition inert) rather than
+                        // as an unreadable condition SHAPE, which would say the wrong thing to the author.
+                        left = text; op = "=="; rawLit = "true";
+                    }
+                    else
+                    {
+                        error = $"could not read the condition '{text}': the shape is 'fact op value', e.g. date.monthEndOffset >= -3.";
                         return null;   // structural: unusable
                     }
-                    var left = m.Groups["ref"].Value;
-                    var op = m.Groups["op"].Value;
-                    var rawLit = m.Groups["lit"].Value.Trim();
 
                     if (!left.Contains('.') || left.StartsWith(".") || left.EndsWith(".") || left.Contains(".."))
                     {
-                        error = $"'{left}' is not a fact — a fact reads root.field, e.g. connection.workspace or model.tableCount.";
+                        error = $"'{left}' is not a fact: a fact reads root.field, e.g. connection.workspace or model.tableCount.";
                         return null;
                     }
 
                     var (lit, litKind) = ReadLiteral(rawLit);   // litKind: 'q'=quoted string, 'n'=number, 'b'=bool, '?'=malformed
                     if (litKind == '?')
                     {
-                        error = $"the value in '{text}' is not readable — use a number, true/false, or a 'quoted string'.";
+                        error = $"the value in '{text}' is not readable: use a number, true/false, or a 'quoted string'.";
                         return null;
                     }
 
@@ -219,6 +297,20 @@ namespace Semanticus.Engine
         }
 
         // ---- internals -------------------------------------------------------------------------
+
+        /// <summary>The evaluated value used in an audit note. Unknown facts and facts absent from the current
+        /// frame are named as unknown rather than being confused with false or an empty answer.</summary>
+        public static string DescribeFact(PredicateComparison c, PredicateFacts facts)
+        {
+            facts ??= new PredicateFacts();
+            return c.Type switch
+            {
+                PredicateFactType.Number => ResolveNumber(c.Left, facts)?.ToString(CultureInfo.InvariantCulture) ?? "unknown",
+                PredicateFactType.Bool => ResolveBool(c.Left, facts)?.ToString().ToLowerInvariant() ?? "unknown",
+                PredicateFactType.Str or PredicateFactType.Grade => ResolveString(c.Left, facts) ?? "unknown",
+                _ => "unknown",
+            };
+        }
 
         private static bool EvaluateOne(PredicateComparison c, PredicateFacts f)
         {
@@ -291,32 +383,54 @@ namespace Semanticus.Engine
             "model.compatLevel" => f.Model?.CompatLevel,
             "date.dayOfMonth" => f.Date?.DayOfMonth,
             "date.monthEndOffset" => f.Date?.MonthEndOffset,
+            "loop.index" => f.LoopIndex,
             _ => null,
         };
 
-        private static bool? ResolveBool(string term, PredicateFacts f) => term switch
+        private static bool? ResolveBool(string term, PredicateFacts f)
         {
-            "model.hasRls" => f.Model?.HasRls,
-            "model.hasCalcGroups" => f.Model?.HasCalcGroups,
-            "git.dirty" => f.Git?.Dirty,
-            "session.planLoaded" => f.Session?.PlanLoaded,
-            _ => null,
-        };
+            var match = InputFact.Match(term ?? "");
+            if (match.Success && match.Groups[2].Value != "value")
+            {
+                if (f.Inputs == null || !f.Inputs.TryGetValue(match.Groups[1].Value, out var answer) || answer == null)
+                    return false;
+                return match.Groups[2].Value == "answered" ? answer.Answered : answer.Declined;
+            }
+            return term switch
+            {
+                "model.hasRls" => f.Model?.HasRls,
+                "model.hasCalcGroups" => f.Model?.HasCalcGroups,
+                "git.dirty" => f.Git?.Dirty,
+                "session.planLoaded" => f.Session?.PlanLoaded,
+                _ => null,
+            };
+        }
 
-        private static string ResolveString(string term, PredicateFacts f) => term switch
+        private static string ResolveString(string term, PredicateFacts f)
         {
-            "model.readinessGrade" => f.Model?.ReadinessGrade,
-            "model.storageMode" => f.Model?.StorageMode,
-            "model.fingerprint" => f.Model?.Fingerprint,
-            "connection.kind" => f.Connection?.Kind,
-            "connection.database" => f.Connection?.Database,
-            "connection.workspace" => f.Connection?.Workspace,
-            "git.branch" => f.Git?.Branch,
-            "session.verifiedMode" => f.Session?.VerifiedMode,
-            "session.tier" => f.Session?.Tier,
-            "date.iso" => f.Date?.Iso,
-            _ => null,
-        };
+            var input = InputFact.Match(term ?? "");
+            if (input.Success && input.Groups[2].Value == "value")
+                return f.Inputs != null && f.Inputs.TryGetValue(input.Groups[1].Value, out var answer)
+                    && answer?.Answered == true ? answer.Value : null;
+            var loop = LoopFact.Match(term ?? "");
+            if (loop.Success && term != "loop.index")
+                return f.LoopValues != null && f.LoopValues.TryGetValue(loop.Groups[1].Value, out var value)
+                    ? value : null;
+            return term switch
+            {
+                "model.readinessGrade" => f.Model?.ReadinessGrade,
+                "model.storageMode" => f.Model?.StorageMode,
+                "model.fingerprint" => f.Model?.Fingerprint,
+                "connection.kind" => f.Connection?.Kind,
+                "connection.database" => f.Connection?.Database,
+                "connection.workspace" => f.Connection?.Workspace,
+                "git.branch" => f.Git?.Branch,
+                "session.verifiedMode" => f.Session?.VerifiedMode,
+                "session.tier" => f.Session?.Tier,
+                "date.iso" => f.Date?.Iso,
+                _ => null,
+            };
+        }
 
         /// <summary>The first typing problem for a comparison, or null. Kept SOFT (the comparison still parses +
         /// evaluates false) so a broken rule is inert, not a whole-file brick.</summary>
@@ -325,18 +439,18 @@ namespace Semanticus.Engine
             switch (type)
             {
                 case PredicateFactType.Unknown:
-                    return $"'{left}' is not a fact this version can read (facts are model.* / connection.* / git.* / session.* / date.*) — the condition '{text}' will never match.";
+                    return $"'{left}' is not a fact this version can read (facts are model.* / connection.* / git.* / session.* / date.* / inputs.<name>.answered|declined|value / loop.*): the condition '{text}' will never match.";
                 case PredicateFactType.Number:
                     if (op == "~") return $"'{left}' is a number, so '~' (pattern match) does not apply in '{text}'.";
                     if (litKind != 'n') return $"'{left}' is a number, so compare it to a number (e.g. {left} >= 28), not '{text}'.";
                     return null;
                 case PredicateFactType.Bool:
                     if (op != "==" && op != "!=") return $"'{left}' is true/false, so use == or != in '{text}'.";
-                    if (litKind != 'b') return $"'{left}' is true/false — write {left} == true (or false), not '{text}'.";
+                    if (litKind != 'b') return $"'{left}' is true/false: write {left} == true (or false), not '{text}'.";
                     return null;
                 case PredicateFactType.Grade:
-                    if (op == "~") return $"a grade compares by rank, so '~' does not apply in '{text}' — use < 'B' (worse than B) or == 'A'.";
-                    if (litKind != 'q' && litKind != 'b') return $"compare model.readinessGrade to a grade letter, e.g. model.readinessGrade < 'B' — not '{text}'.";
+                    if (op == "~") return $"a grade compares by rank, so '~' does not apply in '{text}': use < 'B' (worse than B) or == 'A'.";
+                    if (litKind != 'q' && litKind != 'b') return $"compare model.readinessGrade to a grade letter, e.g. model.readinessGrade < 'B', not '{text}'.";
                     return null;
                 default:
                     return null;

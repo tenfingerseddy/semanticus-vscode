@@ -12,6 +12,7 @@ namespace Semanticus.Engine
     public static class TestKinds
     {
         public const string MeasureReconcile = "measureReconcile";   // params = a ReconcileRequest (minus measureRef)
+        public const string MeasureValue = "measureValue";           // params = a MeasureValueRequest (expected total)
         public const string RowLevelAssertion = "rowLevelAssertion"; // E8 (impersonation) — stored now, evaluated then
     }
 

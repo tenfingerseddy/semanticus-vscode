@@ -28,7 +28,7 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             if (string.IsNullOrWhiteSpace(measureRef))
-                return new ExplainDossier { Status = "error", Error = "measureRef is required — the measure whose number you want explained (e.g. 'measure:Sales/Total Sales', or just its name). Run list_measures to see them." };
+                return new ExplainDossier { Status = "error", Error = "measureRef is required: the measure whose number you want explained (e.g. 'measure:Sales/Total Sales', or just its name). Run list_measures to see them." };
 
             context ??= new ExplainFilterContext();
             var memberFilters = (context.Filters ?? Array.Empty<ExplainFilter>()).Where(f => f != null && !string.IsNullOrWhiteSpace(f.Column)).ToArray();
@@ -238,14 +238,14 @@ namespace Semanticus.Engine
             if (t.Contains(":"))
             {
                 if (ObjectRefs.Resolve(m, t) is Measure byRef) return byRef;
-                throw new InvalidOperationException($"{measureRef} was not found or is not a measure — explain_value explains a measure's number. Run list_measures to find the right ref.");
+                throw new InvalidOperationException($"{measureRef} was not found or is not a measure: explain_value explains a measure's number. Run list_measures to find the right ref.");
             }
             var name = t.StartsWith("[") && t.EndsWith("]") ? t.Substring(1, t.Length - 2) : t;
             var hits = m.Tables.SelectMany(tb => tb.Measures).Where(me => string.Equals(me.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
             if (hits.Length == 1) return hits[0];
             if (hits.Length > 1)
-                throw new InvalidOperationException($"'{name}' exists on more than one table ({string.Join(", ", hits.Select(h => ObjectRefs.For(h)))}) — pass the full ref.");
-            throw new InvalidOperationException($"No measure named '{name}' — run list_measures to see the model's measures.");
+                throw new InvalidOperationException($"'{name}' exists on more than one table ({string.Join(", ", hits.Select(h => ObjectRefs.For(h)))}): pass the full ref.");
+            throw new InvalidOperationException($"No measure named '{name}': run list_measures to see the model's measures.");
         }
 
         private static string SourceOf(Table t)

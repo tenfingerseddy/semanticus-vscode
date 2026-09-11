@@ -8,6 +8,7 @@ import { linter, type Diagnostic as CmDiagnostic } from '@codemirror/lint';
 import { tags as t } from '@lezer/highlight';
 import { rpc, onDidChange, copyText } from './bridge';
 import { daxLanguage, daxCompletionSource, EMPTY_MODEL, type DaxModel, type DaxScope } from './dax';
+import { validityCanReveal, validityLabel } from './daxValidity';
 
 // Live model symbols for completion (tables/measures/columns). Metadata reads — work on a file model too, no
 // live query engine needed. Refreshes on model change.
@@ -217,7 +218,8 @@ export function DaxField({ value, onChange, scope, table, minHeight = 92, placeh
       <DaxEditor value={value} onChange={onChange} model={model} minHeight={minHeight} placeholder={placeholder}
         lineNumbers={false} lint scope={scope} scopeTable={table} onDiagnostics={setDiags} />
       <div className="flex items-center gap-2">
-        <ValidityPill checked={diags !== null} empty={!value.trim()} errors={errors} warns={warns} />
+        <ValidityPill checked={diags !== null} empty={!value.trim()} errors={errors} warns={warns}
+          messages={(diags ?? []).map((d) => d.message)} />
         <button onClick={() => void ask()} title="Copy a grounded prompt for the AI Assistant"
           className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
           {copied ? 'Copied ✓' : 'Ask AI'}
@@ -229,15 +231,36 @@ export function DaxField({ value, onChange, scope, table, minHeight = 92, placeh
 
 // The per-field validity pill fed by the DAX linter: muted while first-checking / empty, green when clean,
 // amber for reference warnings, red for a parse error (which blocks a single-edit save upstream).
-function ValidityPill({ checked, empty, errors, warns }: { checked: boolean; empty: boolean; errors: number; warns: number }) {
-  let text: string, color: string;
-  if (empty) { text = 'empty'; color = 'var(--sem-muted)'; }
-  else if (!checked) { text = 'checking…'; color = 'var(--sem-muted)'; }
-  else if (errors > 0) { text = `${errors} error${errors === 1 ? '' : 's'}`; color = 'var(--sem-bad)'; }
-  else if (warns > 0) { text = `${warns} warning${warns === 1 ? '' : 's'}`; color = 'var(--sem-warn)'; }
-  else { text = '✓ valid'; color = 'var(--sem-good)'; }
-  return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded-md tnum" title="Offline DAX check (brackets + table/column/measure references)"
+// A count with issues is a button so a click or keyboard can read the reason, not only a hover.
+function ValidityPill({ checked, empty, errors, warns, messages }: {
+  checked: boolean; empty: boolean; errors: number; warns: number; messages?: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const text = validityLabel(empty, checked, errors, warns);
+  let color: string;
+  if (empty || !checked) color = 'var(--sem-muted)';
+  else if (errors > 0) color = 'var(--sem-bad)';
+  else if (warns > 0) color = 'var(--sem-warn)';
+  else color = 'var(--sem-good)';
+  const canReveal = validityCanReveal(empty, checked, errors, warns) && (messages?.length ?? 0) > 0;
+  const chip = (
+    <span className="text-[10px] px-1.5 py-0.5 rounded-md tnum"
       style={{ color, background: 'color-mix(in srgb,' + color + ' 12%, transparent)' }}>{text}</span>
+  );
+  return (
+    <div className="flex flex-col gap-0.5">
+      {canReveal ? (
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+          aria-label={text + '. Show details'}
+          className="text-left bg-transparent border-0 p-0 cursor-pointer">
+          {chip}
+        </button>
+      ) : chip}
+      {open && canReveal && (
+        <ul className="m-0 pl-4 text-[10px]" style={{ color: 'var(--sem-muted)' }}>
+          {messages!.map((m, i) => <li key={i}>{m}</li>)}
+        </ul>
+      )}
+    </div>
   );
 }

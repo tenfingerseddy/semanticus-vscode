@@ -5,6 +5,10 @@ import {
   type WorkflowDef, type WorkflowInfo, type WorkflowStep, type GateInput, type VerifySpec,
 } from './workflows';
 import { uiLabel } from './copy';
+import { boxesView, isLossy, lossyReasons } from './workflowboxes.mjs';
+import { onDefinitionArrived } from './workflowload.mjs';
+import { WorkflowCanvas } from './workflowcanvas';
+import { WorkflowDocumentEditor } from './workflowdocument.tsx';
 
 // ===================================================================================================
 // Design mode — the workflow DESIGNER (docs/workflow-designer-plan.md §3/§4). The designer edits a
@@ -14,7 +18,16 @@ import { uiLabel } from './copy';
 // parser refuses. Instruction text is preserved byte-for-byte; only the gate fence is generated.
 // ===================================================================================================
 
-interface OpInfo { name: string; description?: string | null }
+interface OpInfo { name: string; description?: string | null; question?: string | null; shelf?: string | null }
+
+// [T215] The catalog ARRIVES in the ratified tree's order (question, then shelf, then name —
+// OpTaxonomy on the engine is the one home of both the mapping and the order), so the picker
+// renders groups in received order and never re-derives or re-sorts them. PR #311 comment
+// 3693594789 caught the previous version alphabetizing before grouping, which let whichever shelf
+// owned the first alphabetical op open a question instead of the page's first shelf.
+// An op the taxonomy has not filed yet (a brand-new tool) still has to be reachable in the picker;
+// the engine sorts unfiled ops last, so this group lands at the bottom, visibly.
+const UNFILED = 'Not yet filed';
 
 const EVIDENCE_OP = 'export_workflow_evidence';
 const actionPresentation = (op: OpInfo) => op.name === EVIDENCE_OP
@@ -58,6 +71,8 @@ const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 // ---- def ⇄ draft ----------------------------------------------------------------------------------
 
+// #region emitter-core , the real draft/emitter path. Type-only annotations and no JSX inside this
+// region, so a test can extract it verbatim and execute the SHIPPED functions rather than a restatement.
 export function defToDraft(def: WorkflowDef): Draft {
   return {
     name: def.name,
@@ -82,6 +97,20 @@ export function emptyDraft(): Draft {
 }
 function emptyStep(): DraftStep {
   return { title: 'New step', instructions: '', ops: [], strictness: '', inputs: [], verify: [] };
+}
+function draftAsDef(d: Draft): WorkflowDef {
+  return {
+    name: d.name, title: d.title, description: d.description, version: d.version,
+    strictness: d.strictness, triggers: d.triggers, source: 'user',
+    steps: d.steps.map((s, i) => ({
+      id: `step-${i + 1}`, number: i + 1, title: s.title, instructions: s.instructions, ops: s.ops,
+      gate: {
+        strictness: s.strictness || null,
+        inputs: s.inputs,
+        verify: s.verify.map((v) => ({ kind: v.kind, when: v.when || undefined, probe: v.probe || undefined, scope: v.scope || undefined, intent: v.intent || undefined })),
+      },
+    })),
+  };
 }
 
 // Deterministic markdown emission (spec §4): stable key order, one gate fence per step (ops first),
@@ -132,6 +161,8 @@ export function emitMarkdown(d: Draft): string {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }
 
+// #endregion emitter-core
+
 // Client-side guards for the two structural mistakes the ENGINE parse would mis-read rather than refuse:
 // a step-heading line inside an instruction body silently becomes a new step, and a stray gate fence
 // opens a second gate. Refuse locally with a pointed message instead of saving something that shifts shape.
@@ -171,18 +202,53 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Outline focus: -1 = the Workflow settings pane, 0..n-1 = a step. Clamped when steps are added/removed.
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [liveDef, setLiveDef] = useState<WorkflowDef | null>(def);
+  const [view, setView] = useState<'outline' | 'boxes'>('outline');
+  const [showDocument, setShowDocument] = useState(false);
+  const [confirmDocument, setConfirmDocument] = useState(false);
 
-  // Re-seed the draft when the selected workflow changes underneath us (only when not mid-edit).
+  // A saved definition arrived. `onDefinitionArrived` owns the one rule: Boxes always follows the file,
+  // and a dirty Outline draft is the author's unsaved work, so a refresh never re-seeds over it.
   useEffect(() => {
-    if (creating) return;
-    if (!dirty) { setDraft(def ? defToDraft(def) : null); setEditing(false); setSaveErr(null); }
+    const next = onDefinitionArrived({ creating, dirty }, def);
+    setLiveDef(next.liveDef);
+    if (!next.reseedDraft) return;
+    setDraft(def ? defToDraft(def) : null); setEditing(false); setSaveErr(null);
   }, [def, creating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const delNamed = async (name: string) => {
+    try { await rpc('deleteWorkflow', name, 'human'); onDeleted(); }
+    catch (e) { setSaveErr(String((e as Error).message ?? e)); }
+  };
+  const customiseStock = async (name: string) => {
+    setSaving(true); setSaveErr(null);
+    try {
+      const document = await rpc<{ exactText: string }>('getWorkflowDocument', name);
+      await rpc('saveWorkflow', name, document.exactText, 'human', true);
+      onSaved(name);
+    } catch (e) { setSaveErr(String((e as Error).message ?? e)); }
+    finally { setSaving(false); }
+  };
+
+  if (showDocument && !creating && info) return <div className="flex flex-col gap-3">
+    <div><Button onClick={() => setShowDocument(false)}>Back to design</Button></div>
+    <WorkflowDocumentEditor key={info.name} name={info.name} onSaved={onSaved} onDeleted={onDeleted} />
+  </div>;
 
   if (!creating && def?.error) {
     return (
       <Panel>
         <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This file doesn't parse, so it can't be edited structurally</div>
-        <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>Fix the file in <span className="tnum">.semanticus/workflows</span> (the parse error is shown in Run view), or delete it and rebuild it here.</div>
+        <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>{def.error}</div>
+        {saveErr && <div className="mt-2"><Banner color="var(--sem-bad)">{saveErr}</Banner></div>}
+        {info && <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <Button primary onClick={() => setShowDocument(true)}>Edit file</Button>
+          {info.source === 'user' && (
+            confirmDelete
+              ? <Button onClick={() => void delNamed(info.name)} title="Really delete. Deleting your copy of a stock workflow reverts to the built-in one"><span style={{ color: 'var(--sem-bad)' }}>Confirm delete</span></Button>
+              : <Button onClick={() => setConfirmDelete(true)}>Delete…</Button>
+          )}
+        </div>}
       </Panel>
     );
   }
@@ -199,23 +265,31 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
     const steps = draft.steps.slice(); [steps[i], steps[j]] = [steps[j], steps[i]]; set({ steps });
   };
 
+  const boxesSource = creating && draft ? draftAsDef(draft) : liveDef;
+  const lossy = !creating && isLossy(liveDef);
+  const showBoxes = view === 'boxes' || lossy;
+  const liveLoss = lossyReasons(liveDef);
+
   const problems = structuralProblems(draft);
   const save = async () => {
     setAttempted(true);
+    if (lossy) { setSaveErr('This file has fields Outline cannot keep, so it was not rewritten.'); return; }
     if (problems.length) { setSaveErr(problems.join(' ')); return; }
     setSaving(true); setSaveErr(null);
     try {
       await rpc('saveWorkflow', draft.name, emitMarkdown(draft), 'human');
+      try {
+        const check = await rpc<{ findings?: { severity: string; message: string }[] }>('checkWorkflow', draft.name);
+        const warns = (check.findings ?? []).filter((f) => f.severity === 'warn').map((f) => f.message);
+        if (warns.length) setSaveErr(warns.join(' '));
+      } catch { /* save already landed */ }
       setDirty(false); setSavedTick(true); setTimeout(() => setSavedTick(false), 2500);
       onSaved(draft.name);
     } catch (e) {
       setSaveErr(String((e as Error).message ?? e));   // the engine's parse refusal, verbatim — it IS the fix hint
     } finally { setSaving(false); }
   };
-  const del = async () => {
-    try { await rpc('deleteWorkflow', draft.name, 'human'); onDeleted(); }
-    catch (e) { setSaveErr(String((e as Error).message ?? e)); }
-  };
+  const del = () => delNamed(draft.name);
 
   const inputNames = draft.steps.flatMap((s) => s.inputs.map((i) => i.name)).filter(Boolean);
   const idx = Math.min(activeIdx, draft.steps.length - 1);   // clamp against removals
@@ -265,24 +339,45 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
           </div>
         )}
         <div className="flex-1" />
+        {!creating && info && <Button onClick={() => dirty ? setConfirmDocument(true) : setShowDocument(true)}>
+          {info.source === 'stock' ? 'View saved file' : 'Edit file'}
+        </Button>}
+        {!lossy && (
+          <div className="inline-flex rounded-md overflow-hidden shrink-0" style={{ border: '1px solid var(--sem-border)' }}>
+            <button type="button" data-wf-view-btn="outline" onClick={() => setView('outline')}
+              className="text-[11px] px-2.5 py-1 font-semibold"
+              style={view === 'outline' && !showBoxes ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { color: 'var(--sem-muted)' }}>Outline</button>
+            <button type="button" data-wf-view-btn="boxes" onClick={() => setView('boxes')}
+              className="text-[11px] px-2.5 py-1 font-semibold"
+              style={showBoxes ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { color: 'var(--sem-muted)' }}>Canvas</button>
+          </div>
+        )}
+        {lossy && <Pill>Canvas</Pill>}
         {readOnlyStock && !editing ? (
-          <Button primary onClick={() => { setEditing(true); setDirty(true); }}
-            title="Stock workflows are read-only. Customising saves YOUR copy to .semanticus/workflows, which replaces the built-in one until you delete your copy">
-            Customise…
+          <Button primary disabled={saving} onClick={() => lossy ? void customiseStock(info!.name) : (setEditing(true), setDirty(true))}
+            title="Stock playbooks are read-only. Customise saves your project copy, which replaces the built-in one until you delete your copy">
+            {saving ? 'Creating…' : 'Customise…'}
           </Button>
         ) : (
           <>
-            <Button onClick={() => setShowRaw(!showRaw)} title="The markdown this designer writes: the file is the artifact">{showRaw ? 'Hide file' : 'View file'}</Button>
+            {!lossy && <Button onClick={() => setShowRaw(!showRaw)} title="The Markdown this designer generates">{showRaw ? 'Hide preview' : 'Preview generated file'}</Button>}
             {!creating && info?.source === 'user' && (
               confirmDelete
                 ? <Button onClick={del} title="Really delete. Deleting your copy of a stock workflow reverts to the built-in one"><span style={{ color: 'var(--sem-bad)' }}>Confirm delete</span></Button>
                 : <Button onClick={() => setConfirmDelete(true)}>Delete…</Button>
             )}
-            <Button primary disabled={saving || !dirty} onClick={save}
-              title="The file is checked again before saving. A file that fails the check is never saved">{saving ? 'Saving…' : savedTick ? 'Saved ✓' : 'Save'}</Button>
+            {!lossy && <Button primary disabled={saving || !dirty} onClick={save}
+              title="The file is checked again before saving. A file that fails the check is never saved">{saving ? 'Saving…' : savedTick ? 'Saved ✓' : 'Save'}</Button>}
           </>
         )}
       </div>
+      {confirmDocument && <div className="mt-2"><Banner color="var(--sem-warn)">
+        <div>Outline has unsaved changes. Discard them before opening the saved file.</div>
+        <div className="flex gap-2 mt-2">
+          <Button onClick={() => { setDraft(liveDef ? defToDraft(liveDef) : draft); setDirty(false); setConfirmDocument(false); setShowDocument(true); }}>Discard Outline changes</Button>
+          <Button onClick={() => setConfirmDocument(false)}>Keep editing Outline</Button>
+        </div>
+      </Banner></div>}
       {readOnlyStock && !editing && (
         <div className="text-[11.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
           This is a stock playbook shipped with the engine. You can read everything below; Customise creates your project's editable copy.
@@ -302,47 +397,38 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
     </Panel>
   );
 
-  if (layout === 'outline') {
+  const outlineBody = (() => {
     const active = draft.steps[idx];
     return (
-      <div className="flex flex-col gap-3">
-        {actionBar}
-        {showRaw && rawView}
-        <div className="grid gap-3" style={{ gridTemplateColumns: '210px minmax(0, 1fr)' }}>
-          <div className="rounded-xl border p-2 self-start" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-            <div className="text-[10px] uppercase tracking-wide font-semibold px-2 pt-1 pb-2" style={{ color: 'var(--sem-muted)' }}>Outline</div>
-            <div className="flex flex-col gap-0.5 text-[12px]">
-              <button onClick={() => setActiveIdx(-1)} className="text-left px-2 py-1.5 rounded-md"
-                style={idx < 0 ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>◇ Workflow settings</button>
-              {draft.steps.map((s, i) => (
-                <button key={i} onClick={() => setActiveIdx(i)} className="text-left px-2 py-1.5 rounded-md truncate"
-                  style={i === idx ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>{i + 1} · {s.title.trim() || 'Untitled'}</button>
-              ))}
-              {isEditable() && (
-                <button onClick={addStepAndFocus} className="text-left px-2 py-1.5 rounded-md font-semibold" style={{ color: 'var(--sem-accent)' }}>+ Add step</button>
-              )}
-            </div>
-          </div>
-          <div className="min-w-0">
-            {idx < 0 || !active ? frontmatter : (
-              <StepCard step={active} index={idx} count={draft.steps.length} editable={isEditable()} inputNames={inputNames}
-                onChange={(patch) => setStep(idx, patch)}
-                onMove={(dir) => { moveStep(idx, dir); setActiveIdx(Math.max(0, Math.min(draft.steps.length - 1, idx + dir))); }}
-                onRemove={() => { removeStep(idx); setActiveIdx(Math.max(-1, idx - 1)); }} />
+      <div className="grid gap-3" style={{ gridTemplateColumns: '210px minmax(0, 1fr)' }}>
+        <div className="rounded-xl border p-2 self-start" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+          <div className="text-[10px] uppercase tracking-wide font-semibold px-2 pt-1 pb-2" style={{ color: 'var(--sem-muted)' }}>Outline</div>
+          <div className="flex flex-col gap-0.5 text-[12px]">
+            <button onClick={() => setActiveIdx(-1)} className="text-left px-2 py-1.5 rounded-md"
+              style={idx < 0 ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>◇ Workflow settings</button>
+            {draft.steps.map((s, i) => (
+              <button key={i} onClick={() => setActiveIdx(i)} className="text-left px-2 py-1.5 rounded-md truncate"
+                style={i === idx ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', fontWeight: 600 } : { color: 'var(--sem-muted)' }}>{i + 1} · {s.title.trim() || 'Untitled'}</button>
+            ))}
+            {isEditable() && (
+              <button onClick={addStepAndFocus} className="text-left px-2 py-1.5 rounded-md font-semibold" style={{ color: 'var(--sem-accent)' }}>+ Add step</button>
             )}
           </div>
         </div>
+        <div className="min-w-0">
+          {idx < 0 || !active ? frontmatter : (
+            <StepCard step={active} index={idx} count={draft.steps.length} editable={isEditable()} inputNames={inputNames}
+              onChange={(patch) => setStep(idx, patch)}
+              onMove={(dir) => { moveStep(idx, dir); setActiveIdx(Math.max(0, Math.min(draft.steps.length - 1, idx + dir))); }}
+              onRemove={() => { removeStep(idx); setActiveIdx(Math.max(-1, idx - 1)); }} />
+          )}
+        </div>
       </div>
     );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      {actionBar}
-      {showRaw && rawView}
+  })();
+  const stackBody = (
+    <>
       {frontmatter}
-
-      {/* the chain */}
       <div className="relative flex flex-col gap-2">
         <RailLine />
         {draft.steps.map((s, i) => (
@@ -357,10 +443,100 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
           </div>
         ))}
       </div>
+    </>
+  );
+
+  return (
+    <div className="flex flex-col gap-3 min-w-0" data-wf-view={showBoxes ? 'boxes' : 'outline'}>
+      {actionBar}
+      {showRaw && !lossy && rawView}
+      {showBoxes
+        ? <BoxesPane def={boxesSource} workflowName={creating ? undefined : liveDef?.name} lossy={!!lossy} extraReasons={liveLoss} />
+        : layout === 'outline' ? outlineBody : stackBody}
     </div>
   );
 
   function isEditable() { return creating || editing || info?.source === 'user'; }
+}
+
+function BoxesPane({ def, workflowName, lossy, extraReasons }: { def: WorkflowDef | null; workflowName?: string; lossy: boolean; extraReasons?: string[] }) {
+  const model = useMemo(() => boxesView(def), [def]);
+  const [selected, setSelected] = useState(0);
+  const selectedIndex = Math.min(selected, Math.max(0, model.steps.length - 1));
+  useEffect(() => { setSelected(0); }, [def?.name, def?.source]);
+  const reasons = extraReasons && extraReasons.length ? extraReasons : lossyReasons(def);
+  return (
+    <div className="sem-wf-boxes min-w-0" data-wf-view="boxes">
+      {lossy && (
+        <div className="mb-3"><Banner color="var(--sem-warn)">
+          This file has fields Outline cannot keep. The Canvas preserves them for reading.
+          To change this workflow, edit its file or ask your AI Assistant.
+        </Banner></div>
+      )}
+      <div className="text-[11.5px] mb-3 leading-relaxed" style={{ color: 'var(--sem-muted)' }}>
+        Not a run. Arrows follow file order.{' '}
+        {workflowName ? 'Layout is shared with your AI Assistant in this project.' : 'Draft layout stays in this panel.'}
+      </div>
+      {reasons.length > 0 && (
+        <div className="text-[11px] mb-3 min-w-0" style={{ color: 'var(--sem-muted)' }}>
+          Kept out of Outline: {reasons.join(' · ')}
+        </div>
+      )}
+      {model.steps.length === 0 && (
+        <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No steps in this file.</div>
+      )}
+      {model.steps.length > 0 && <>
+        <WorkflowCanvas workflowName={workflowName} steps={model.steps} storageKey={`workflow-canvas:${def?.source}:${def?.name}`}
+          selected={selectedIndex} onSelect={setSelected} />
+        <div className="flex items-center gap-2 mb-2 text-[12px]">
+          <label htmlFor="workflow-canvas-step" style={{ color: 'var(--sem-muted)' }}>Step details</label>
+          <select id="workflow-canvas-step" value={selectedIndex} onChange={(event) => setSelected(Number(event.target.value))}
+            className="min-w-0 flex-1 rounded-md px-2 py-1" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+            {model.steps.map((step, index) => <option key={index} value={index}>{step.number} · {step.title || 'Untitled'}</option>)}
+          </select>
+          <Button disabled={selectedIndex === 0} onClick={() => setSelected(selectedIndex - 1)}>Previous</Button>
+          <Button disabled={selectedIndex === model.steps.length - 1} onClick={() => setSelected(selectedIndex + 1)}>Next</Button>
+        </div>
+      </>}
+      <div className="flex flex-col min-w-0">
+        {model.steps.slice(selectedIndex, selectedIndex + 1).map((s, i) => (
+          <div key={`${s.idKind}-${s.number}-${i}`} className="min-w-0">
+            <div className="rounded-xl border p-3 min-w-0" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+              <div className="flex items-start gap-2 flex-wrap min-w-0">
+                <NumberNode n={s.number} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold break-words">{s.title || 'Untitled'}</div>
+                  <div className="text-[10.5px] tnum mt-0.5" style={{ color: 'var(--sem-muted)' }}>{s.idKind === 'explicit' ? `explicit ${s.idLabel}` : s.idLabel}</div>
+                </div>
+              </div>
+              {s.ops.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1 min-w-0">{s.ops.map((op) => <OpChip key={op} op={op} />)}</div>
+              )}
+              {s.when && <div className="mt-2 text-[11.5px] break-words">when: {s.when}</div>}
+              {s.forEach && (
+                <div className="mt-2 text-[11.5px] break-words">
+                  forEach in: {s.forEach.in || '(none)'} · as: {s.forEach.as || '(none)'} · maxIterations: {s.forEach.maxIterations}
+                </div>
+              )}
+              {s.call && (
+                <div className="mt-2 text-[11.5px] break-words min-w-0">
+                  <div>call: {s.call.workflow || '(none)'}</div>
+                  <div>with: {Object.keys(s.call.with).length ? Object.entries(s.call.with).map(([k, v]) => `${k}=${v}`).join(', ') : '(none)'}</div>
+                  <div>returns: {s.call.returns.length ? s.call.returns.join(', ') : '(none)'}</div>
+                </div>
+              )}
+              {s.instructions ? (
+                <div className="mt-2 text-[12px] whitespace-pre-wrap break-words min-w-0" style={{ color: 'var(--sem-fg)' }}>
+                  <div className="text-[10px] uppercase tracking-wide font-semibold mb-1" style={{ color: 'var(--sem-muted)' }}>Step instructions</div>
+                  {s.instructions}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ---- one step card ---------------------------------------------------------------------------------
@@ -513,35 +689,74 @@ function OpPicker({ exclude, onPick, onClose }: { exclude: string[]; onPick: (op
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [onClose]);
-  const hits = useMemo(() => {
+  const [openQ, setOpenQ] = useState<Record<string, boolean>>({});
+  const [openShelf, setOpenShelf] = useState<Record<string, boolean>>({});
+  const searching = filter.trim().length > 0;
+  // [T215] question > shelf > ops, grouped in the CATALOG's order, which is the ratified page's
+  // order (see the note on UNFILED). Map insertion order preserves it at every level; no sorting
+  // here, ever. No cap either: the tree replaced the old .slice(0, 8), which showed 8 of 306 on an
+  // empty filter and misrepresented the surface.
+  const grouped = useMemo(() => {
     const ex = new Set(exclude);
     const f = filter.trim().toLowerCase();
-    return (catalog ?? []).filter((o) => {
+    const hits = (catalog ?? []).filter((o) => {
       const p = actionPresentation(o);
       return !ex.has(o.name) && (!f || o.name.includes(f) || p.label.toLowerCase().includes(f) || p.description.toLowerCase().includes(f));
-    }).sort((a, b) => Number(b.name === EVIDENCE_OP) - Number(a.name === EVIDENCE_OP)).slice(0, 8);
+    });
+    const byQ = new Map<string, Map<string, OpInfo[]>>();
+    for (const o of hits) {
+      const q = o.question ?? UNFILED, s = o.shelf ?? UNFILED;
+      if (!byQ.has(q)) byQ.set(q, new Map());
+      const shelves = byQ.get(q)!;
+      if (!shelves.has(s)) shelves.set(s, []);
+      shelves.get(s)!.push(o);
+    }
+    return { first: hits[0], total: hits.length, questions: [...byQ.entries()] };
   }, [catalog, exclude, filter]);
   return (
     <div ref={boxRef} className="relative">
-      <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search ops…" spellCheck={false}
-        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter' && hits[0]) onPick(hits[0].name); }}
+      <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search all ops…" spellCheck={false}
+        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter' && searching && grouped.first) onPick(grouped.first.name); }}
         className="tnum text-[11px] px-2 py-1 rounded-md outline-none w-44"
         style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid color-mix(in srgb, var(--sem-accent) 45%, transparent)' }} />
-      <div className="absolute z-30 mt-1 w-[360px] rounded-lg border overflow-hidden shadow-lg"
+      <div className="absolute z-30 mt-1 w-[380px] max-h-[340px] overflow-y-auto rounded-lg border shadow-lg"
         style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
         {catalog == null ? (
           <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Loading the op catalog…</div>
-        ) : hits.length === 0 ? (
+        ) : grouped.total === 0 ? (
           <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No matching ops.</div>
-        ) : hits.map((o) => {
-          const p = actionPresentation(o);
-          return <button key={o.name} onClick={() => onPick(o.name)}
-            className="w-full text-left px-3 py-1.5 hover:opacity-80"
-            style={{ background: 'transparent' }}>
-            <div className="text-[11.5px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.label}</div>
-            {p.label !== o.name && <div className="tnum text-[9.5px]" style={{ color: 'var(--sem-muted)' }}>{o.name}</div>}
-            {p.description && <div className="text-[10.5px] truncate" style={{ color: 'var(--sem-muted)' }}>{p.description}</div>}
-          </button>
+        ) : grouped.questions.map(([q, shelves]) => {
+          const qOpen = searching || !!openQ[q];
+          const qCount = [...shelves.values()].reduce((n, l) => n + l.length, 0);
+          return <div key={q}>
+            <button onClick={() => setOpenQ((m) => ({ ...m, [q]: !m[q] }))} disabled={searching}
+              className="w-full text-left px-3 py-1.5 flex items-baseline gap-2 hover:opacity-80"
+              style={{ background: 'transparent', borderTop: '1px solid var(--sem-border)' }}>
+              {!searching && <span className="text-[9px]" style={{ color: 'var(--sem-muted)' }}>{qOpen ? '▾' : '▸'}</span>}
+              <span className="text-[11.5px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{q}</span>
+              <span className="tnum text-[9.5px] ml-auto" style={{ color: 'var(--sem-muted)' }}>{qCount}</span>
+            </button>
+            {qOpen && [...shelves.entries()].map(([s, ops]) => {
+              const sKey = q + ' > ' + s, sOpen = searching || !!openShelf[sKey];
+              return <div key={sKey}>
+                <button onClick={() => setOpenShelf((m) => ({ ...m, [sKey]: !m[sKey] }))} disabled={searching}
+                  className="w-full text-left pl-6 pr-3 py-1 flex items-baseline gap-2 hover:opacity-80" style={{ background: 'transparent' }}>
+                  {!searching && <span className="text-[9px]" style={{ color: 'var(--sem-muted)' }}>{sOpen ? '▾' : '▸'}</span>}
+                  <span className="text-[11px]" style={{ color: 'var(--sem-fg)' }}>{s}</span>
+                  <span className="tnum text-[9.5px] ml-auto" style={{ color: 'var(--sem-muted)' }}>{ops.length}</span>
+                </button>
+                {sOpen && ops.map((o) => {
+                  const p = actionPresentation(o);
+                  return <button key={o.name} onClick={() => onPick(o.name)}
+                    className="w-full text-left pl-9 pr-3 py-1 hover:opacity-80" style={{ background: 'transparent' }}>
+                    <div className="text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.label}</div>
+                    {p.label !== o.name && <div className="tnum text-[9.5px]" style={{ color: 'var(--sem-muted)' }}>{o.name}</div>}
+                    {p.description && <div className="text-[10.5px] truncate" style={{ color: 'var(--sem-muted)' }}>{p.description}</div>}
+                  </button>;
+                })}
+              </div>;
+            })}
+          </div>;
         })}
       </div>
     </div>

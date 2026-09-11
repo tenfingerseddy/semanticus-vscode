@@ -80,12 +80,13 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Mode_off_lets_invalid_dax_through_as_before()
+        public async Task Mode_off_still_refuses_invalid_syntax()
         {
             using var e = await OpenAsync(pro: true);   // Verified Mode OFF by default
             var r = await FirstMeasureRefAsync(e);
-            var res = await e.SetDaxAsync(r, "SUM(", "agent");   // no verification when off — today's behavior
-            Assert.NotNull(res);
+            var before = await e.GetDaxAsync(r);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => e.SetDaxAsync(r, "SUM(", "agent"));
+            Assert.Equal(before, await e.GetDaxAsync(r));
         }
     }
 }

@@ -250,6 +250,70 @@ namespace Semanticus.Tests
             Assert.Null(ConnectionRegistry.Find(oldest.Id));
         }
 
+        // ---- D-173: opening 40 incidental local files must never evict a remembered published model. An unlabelled
+        // remote record with no working folder was pushed out of the tail once `file` rows filled the head. ----
+        [Fact]
+        public void Retention_does_not_evict_a_published_model_behind_local_file_history()
+        {
+            var published = Remember("powerbi://x/published");
+            for (var i = 0; i < ConnectionRegistry.MaxRecords; i++)
+                ConnectionRegistry.Remember("file", Path.Combine(_root, $"model{i}.bim"), null, $"model{i}");
+
+            Assert.NotNull(ConnectionRegistry.Find(published.Id));
+        }
+
+        // ---- D-176/D-178/D-226: after a restart the durable working folder reopens as a plain file. The session is
+        // NOT live-bound (LiveOrigin is write-authority for the open_live/open_local editing paths only, pinned by
+        // ConnectionContextTests.Live_origin_write_authority_is_compiled_only_into_the_editing_open_paths), but its
+        // publish destination must still resolve from the registry so the UI can enable Publish. ----
+        [Fact]
+        public async Task Reopening_a_working_copy_resolves_its_publish_destination_without_a_live_binding()
+        {
+            var source = Remember("powerbi://x/published", db: "Sales");
+            var folder = Path.Combine(_root, "wc");
+            ConnectionRegistry.SetWorkingCopy(source.Id, folder, source.Id);   // working folder + publish destination
+
+            Directory.CreateDirectory(folder);
+            var bim = Path.Combine(folder, "Sales.bim");
+            File.Copy(TestModels.FindBim(), bim);
+
+            using var engine = new LocalEngine(new SessionManager());
+            await engine.OpenAsync(bim);
+
+            var info = await engine.SessionInfoAsync();
+            Assert.False(info.LiveBound);   // a working copy is edited locally, not bound to a live XMLA origin
+
+            var context = await engine.ConnectionContextAsync();
+            Assert.True(context.Publishing.Available);
+            Assert.Equal("powerbi://x/published", context.Publishing.Endpoint);
+        }
+
+        [Fact]
+        public async Task DeployLive_uses_the_remembered_publish_destination_after_reopen()
+        {
+            var source = Remember("powerbi://x/published", db: "Sales", authMode: "serviceprincipal");
+            var folder = Path.Combine(_root, "publish-reopen");
+            ConnectionRegistry.SetWorkingCopy(source.Id, folder, source.Id);
+            Directory.CreateDirectory(folder);
+            var bim = Path.Combine(folder, "Sales.bim");
+            File.Copy(TestModels.FindBim(), bim);
+
+            using var engine = new LocalEngine(new SessionManager());
+            await engine.OpenAsync(bim);
+            engine.DeployLiveSyncHook = (_, endpoint, database, commit, _) => new DeployReport
+            {
+                Committed = commit,
+                Endpoint = endpoint,
+                Database = database,
+                TotalChanges = 0
+            };
+
+            var report = await engine.DeployLiveAsync(null, null, null, null, null, commit: false, origin: "human");
+
+            Assert.Equal("powerbi://x/published", report.Endpoint);
+            Assert.Equal("Sales", report.Database);
+        }
+
         // ---- No secrets on disk, ever. authMode is a mode NAME. ----
         [Fact]
         public void The_registry_file_holds_no_secret()
@@ -308,6 +372,39 @@ namespace Semanticus.Tests
             Assert.NotNull(ConnectionRegistry.Find(labelled.Id));          // still there
 
             Assert.True(ConnectionRegistry.Forget(labelled.Id, "human"));  // the human can
+        }
+
+        [Fact]
+        public void A_local_file_is_remembered_as_its_own_kind()
+        {
+            var path = Path.Combine(_root, "Sales.bim");
+            var r = ConnectionRegistry.Remember("file", path, null, "Sales");
+            Assert.Equal("file", r.Kind);
+            Assert.Equal(path, r.Endpoint);
+            Assert.Equal("Sales", r.ModelName);
+            Assert.Contains(ConnectionRegistry.List(), x => x.Id == r.Id && x.Kind == "file");
+        }
+
+        [Fact]
+        public async Task Opening_a_local_file_lists_it_in_recent()
+        {
+            using var engine = new LocalEngine(new SessionManager());
+            var bim = TestModels.FindBim();
+            await engine.OpenAsync(bim);
+            var listed = await engine.ListConnectionsAsync();
+            Assert.Contains(listed, r => r.Kind == "file"
+                && string.Equals(r.Endpoint, Path.GetFullPath(bim), StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("file", listed.First(r => string.Equals(r.Endpoint, Path.GetFullPath(bim), StringComparison.OrdinalIgnoreCase)).Kind);
+        }
+
+        [Fact]
+        public async Task A_missing_local_file_is_not_remembered()
+        {
+            using var engine = new LocalEngine(new SessionManager());
+            var missing = Path.Combine(_root, "no-such-model.bim");
+            await Assert.ThrowsAnyAsync<Exception>(() => engine.OpenAsync(missing));
+            Assert.DoesNotContain(await engine.ListConnectionsAsync(), r => r.Kind == "file"
+                && r.Endpoint != null && r.Endpoint.IndexOf("no-such-model", StringComparison.OrdinalIgnoreCase) >= 0);
         }
     }
 }

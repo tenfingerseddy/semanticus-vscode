@@ -33,6 +33,18 @@ namespace Semanticus.Engine
         public bool CacheCleared { get; set; }            // the timing pass cleared the SE cache before its runs
         public InterviewEvidence[] Interview { get; set; } = Array.Empty<InterviewEvidence>();
         public string InterviewNote { get; set; }
+        public TestRunScope Scope { get; set; }
+    }
+
+    /// <summary>What this run covered. A partial scope never mints a letter grade and is never recorded.</summary>
+    public sealed class TestRunScope
+    {
+        public string Mode { get; set; }                 // everything | selected | section
+        public string[] Only { get; set; }
+        public string[] Sections { get; set; }
+        public int SelectedCount { get; set; }
+        public int SuiteCount { get; set; }
+        public bool Partial => !string.IsNullOrEmpty(Mode) && !string.Equals(Mode, "everything", StringComparison.Ordinal);
     }
 
     /// <summary>Evidence-only interview snapshot. It is rendered/exported but never enters health analysis.</summary>
@@ -156,7 +168,7 @@ namespace Semanticus.Engine
                 : $"{hidden} saved mapping(s) belong to another model or predate model scoping and were hidden.");
         }
 
-        public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human")
+        public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human", string[] only = null, string[] sections = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var s = _sessions.Current;
@@ -167,13 +179,42 @@ namespace Semanticus.Engine
             var defs = loaded.Defs;
             var badDefs = loaded.Unreadable;
             var identities = loaded.Identities;
+            var suiteCount = defs.Count;
+            var onlyIds = (only ?? Array.Empty<string>()).Where(id => !string.IsNullOrWhiteSpace(id)).ToArray();
+            var sectionNames = (sections ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            var selected = onlyIds.Length > 0;
+            var sectioned = !selected && sectionNames.Length > 0;
+            var scope = new TestRunScope
+            {
+                Mode = selected ? "selected" : sectioned ? "section" : "everything",
+                Only = selected ? onlyIds : null,
+                Sections = sectioned ? sectionNames : null,
+                SelectedCount = selected ? onlyIds.Length : sectioned ? 0 : suiteCount,
+                SuiteCount = suiteCount,
+            };
+            if (selected)
+            {
+                var want = new HashSet<string>(onlyIds, StringComparer.Ordinal);
+                defs = defs.Where(d => want.Contains(d.Id)).ToList();
+                scope.SelectedCount = defs.Count;
+            }
+            bool HasSection(string name) => sectionNames.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
+            var runMeasures = !sectioned || HasSection("measures");
+            var runRelationships = selected ? false : !sectioned || HasSection("relationships");
+            var runSecurity = selected ? false : !sectioned || HasSection("security");
+            var runInterview = selected ? false : !sectioned || HasSection("interview");
 
+            var measureDefs = runMeasures ? defs : new List<TestDefinition>();
             // ONE model read builds every pure input (relationship endpoints + role filters + OLS visibility + def bindings).
             var (relInputs, tableInputs, secInputs, olsSummaries, reconPlans, unmappedMeasures, modelName) = await s.ReadAsync(m =>
             {
-                var plans = BindReconcileDefs(m, defs, identities);
-                return (BuildRelationshipInputs(m), TableRowCountReconciliation.Discover(m).ToList(), BuildSecurityInputs(m), BuildOlsSummaries(m), plans,
-                    BuildUnmappedMeasureOutcomes(m, plans),
+                var plans = BindReconcileDefs(m, measureDefs, identities);
+                var unmapped = runMeasures && !selected ? BuildUnmappedMeasureOutcomes(m, plans, measureDefs) : new List<ReconcileOutcome>();
+                return (runRelationships ? BuildRelationshipInputs(m) : new List<RelationshipCheckInput>(),
+                    runRelationships ? TableRowCountReconciliation.Discover(m).ToList() : new List<TableRowCountInput>(),
+                    runSecurity ? BuildSecurityInputs(m) : new List<RoleFilterInput>(),
+                    runSecurity ? BuildOlsSummaries(m) : new List<RoleOls>(),
+                    plans, unmapped,
                     string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
             });
             var identityRefsChanged = identities.Dirty;
@@ -209,13 +250,21 @@ namespace Semanticus.Engine
             var secReport = SecurityStaticChecks.Evaluate(secInputs);
             secReport.Ols = olsSummaries;   // informational visibility read: no verdicts, never moves the grade
 
-            var outcomes = new List<ReconcileOutcome>(unmappedMeasures);
-            foreach (var plan in reconPlans)
-                outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin));
+            var outcomes = new List<ReconcileOutcome>(runMeasures ? unmappedMeasures : Enumerable.Empty<ReconcileOutcome>());
+            if (runMeasures)
+            {
+                foreach (var plan in reconPlans)
+                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin));
+                foreach (var d in measureDefs.Where(d => d.Enabled && string.Equals(d.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)))
+                    outcomes.Add(await RunMeasureValueDefAsync(d, identities, live != null, origin));
+            }
             // An enabled definition whose kind has no evaluator yet must NOT vanish from the run (the suite
             // rots visibly, never silently): it surfaces as NotVerifiable with the reason. Covers the
             // stored-now-evaluated-later rowLevelAssertion kind and any kind from a newer engine's store.
-            foreach (var d in defs.Where(d => d.Enabled && !string.Equals(d.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)))
+            if (runMeasures)
+            foreach (var d in measureDefs.Where(d => d.Enabled
+                && !string.Equals(d.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(d.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)))
                 outcomes.Add(new ReconcileOutcome
                 {
                     DefId = d.Id,
@@ -259,11 +308,19 @@ namespace Semanticus.Engine
             // score calculation; the chip verdicts carry their own signal without pretending they are tests.
             await ExecuteVariantPassAsync(live, reconPlans, outcomes);
 
-            var interviewReplay = await ReplayInterviewEvidenceForTestsAsync(origin);
+            var interviewReplay = runInterview
+                ? await ReplayInterviewEvidenceForTestsAsync(origin)
+                : new InterviewEvidenceReplay();
 
             // T71: interview is behavioral evidence, not a fifth verdict family. Keeping it outside this call is
             // the mechanical guard that unasked/unverified questions cannot move grade or coverage (I1).
             var health = TestHealthAnalyzer.Analyze(relReport, secReport, outcomes, timingVerdicts);
+            if (scope.Partial)
+            {
+                health.Grade = "Partial";
+                health.Overall = 0;
+                health.GatedBy = Array.Empty<string>();
+            }
             var run = new TestSuiteRunResult
             {
                 RunId = Guid.NewGuid().ToString("N"),
@@ -280,20 +337,24 @@ namespace Semanticus.Engine
                 Relationships = relReport,
                 Security = secReport,
                 Reconciles = outcomes.ToArray(),
-                DefinitionCount = defs.Count,
+                DefinitionCount = selected || sectioned ? defs.Count : suiteCount,
+                Scope = scope,
                 Note = JoinNotes(
                     badDefs > 0 ? $"{badDefs} unreadable line(s) in the saved suite were skipped." : null,
                     loaded.Note,
                     gateNote,
-                    live == null && gateNote == null ? "Offline: relationship probes and reconciliations are not verifiable. Connect (connect_xmla or connect_local) for the full run." : null),
+                    live == null && gateNote == null ? "Offline: relationship probes and reconciliations are not verifiable. Connect a live model in Connections for the full run." : null,
+                    scope.Partial ? $"Partial run: {scope.SelectedCount} of {scope.SuiteCount} saved tests. No grade for a partial run." : null),
             };
 
             if (persist)
             {
-                if (_entitlement == null || !_entitlement.IsPro)
+                if (scope.Partial)
+                    run.Note = JoinNotes(run.Note, "Only a full run can be recorded.");
+                else if (_entitlement == null || !_entitlement.IsPro)
                     run.Note = JoinNotes(run.Note, "Run history is Pro. This run was evaluated in full but not stored (everything above is free).");
                 else if (dir == null)
-                    run.Note = JoinNotes(run.Note, "This session has no on-disk home (.semanticus), so the run could not be stored.");
+                    run.Note = JoinNotes(run.Note, "This session has no saved project folder, so the run could not be stored.");
                 else
                     run.Persisted = TestSuiteStore.AppendRun(dir, TestSuiteStore.Serialize(new TestRunRecord
                     {
@@ -321,6 +382,8 @@ namespace Semanticus.Engine
             if (_entitlement == null || !_entitlement.IsPro)
                 return Task.FromResult(new TestReportResult
                 {
+                    Markdown = TestReportRenderer.Render(run),
+                    Html = TestReportRenderer.RenderHtml(run),
                     Note = "The signable test report is Pro. Running the suite and reviewing all evidence stays free.",
                 });
             var artifact = Semanticus.Engine.Evidence.EvidenceArtifact.Seal(TestReportRenderer.BuildEvidence(run));
@@ -341,6 +404,30 @@ namespace Semanticus.Engine
             return new TestSuiteInfo { Definitions = loaded.Defs.ToArray(), UnreadableLines = loaded.Unreadable, Note = loaded.Note };
         }
 
+        /// <summary>Run one unsaved definition once. Writes nothing. Trying is free; saving is Pro.</summary>
+        public async Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin = "human")
+        {
+            var s = _sessions.Current ?? throw new InvalidOperationException("No open model. Use open_model or connect first.");
+            if (def == null || string.IsNullOrWhiteSpace(def.Kind))
+                throw new ArgumentException("A try needs a test kind and a title.");
+            var identities = TestObjectIdentityStore.Load(TestsDirFor(s));
+            var live = _live != null;
+            if (string.Equals(def.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase))
+            {
+                var plans = await s.ReadAsync(m => BindReconcileDefs(m, new List<TestDefinition> { def }, identities));
+                return await RunReconcileDefAsync(plans[0], live, origin);
+            }
+            if (string.Equals(def.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase))
+                return await RunMeasureValueDefAsync(def, identities, live, origin);
+            return new ReconcileOutcome
+            {
+                Title = def.Title,
+                TargetRef = def.TargetRef,
+                Verdict = Verdict.NotVerifiable,
+                Message = $"Can't try kind '{def.Kind}' yet.",
+            };
+        }
+
         /// <summary>Upsert a saved definition. The PERSISTED suite is the Pro side of the ratified line (the
         /// ambient suite runs free forever). Ground truth is AI-drafted, HUMAN-ACCEPTED — callers surface the
         /// SQL to the user before saving (the MCP description says so; the UI makes acceptance explicit).</summary>
@@ -357,15 +444,27 @@ namespace Semanticus.Engine
             // Refuse an unknown kind AT SAVE (sol review): a typo'd kind would store fine and then never run,
             // which reads as coverage that does not exist. Known-but-not-yet-runnable kinds ARE saveable (the
             // run surfaces them NotVerifiable with the reason), so a suite can be authored ahead of its evaluator.
-            var knownKinds = new[] { TestKinds.MeasureReconcile, TestKinds.RowLevelAssertion };
+            var knownKinds = new[] { TestKinds.MeasureReconcile, TestKinds.MeasureValue, TestKinds.RowLevelAssertion };
             if (!knownKinds.Any(k => string.Equals(k, def.Kind, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException(
-                    $"Unknown test kind '{def.Kind}'. Use '{TestKinds.MeasureReconcile}' (SQL vs DAX reconciliation; paramsJson carries the ReconcileRequest) or '{TestKinds.RowLevelAssertion}' (stored now, runs when view-as-role ships).");
+                    $"Unknown test kind '{def.Kind}'. Use '{TestKinds.MeasureValue}' (expected total), '{TestKinds.MeasureReconcile}' (SQL vs DAX reconciliation), or '{TestKinds.RowLevelAssertion}' (stored now, runs when view-as-role ships).");
             def.Kind = knownKinds.First(k => string.Equals(k, def.Kind, StringComparison.OrdinalIgnoreCase));   // canonical casing
-            if (string.Equals(def.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(def.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase))
             {
-                var request = string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<ReconcileRequest>(def.ParamsJson);
-                var candidateRef = !string.IsNullOrWhiteSpace(def.TargetRef) ? def.TargetRef : request?.MeasureRef;
+                var value = string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<MeasureValueRequest>(def.ParamsJson);
+                if (value == null || string.IsNullOrWhiteSpace(value.ExpectedValue))
+                    throw new ArgumentException("An expected-total test needs the number you trust.");
+            }
+            if (string.Equals(def.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(def.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase))
+            {
+                var reconcile = string.Equals(def.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                    ? (string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<ReconcileRequest>(def.ParamsJson))
+                    : null;
+                var valueReq = string.Equals(def.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)
+                    ? (string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<MeasureValueRequest>(def.ParamsJson))
+                    : null;
+                var candidateRef = !string.IsNullOrWhiteSpace(def.TargetRef) ? def.TargetRef : (reconcile?.MeasureRef ?? valueReq?.MeasureRef);
                 var binding = await s.ReadAsync(m =>
                 {
                     var measure = ObjectRefs.Resolve(m, candidateRef) as Measure;
@@ -420,7 +519,7 @@ namespace Semanticus.Engine
             var s = _sessions.Current;
             if (s == null) return Task.FromResult(new TestHistoryInfo { Note = "No open model." });
             if (_entitlement == null || !_entitlement.IsPro)
-                return Task.FromResult(new TestHistoryInfo { Note = "Run history and drift trends are Pro. run_tests itself is free and shows every verdict live." });
+                return Task.FromResult(new TestHistoryInfo { Note = "Run history and drift trends are Pro. Running the suite is free and shows every verdict live." });
             var fp = VitalsFingerprintFor(s);
             var runs = TestSuiteStore.ReadRunLines(TestsDirFor(s))
                 .Select(TestSuiteStore.Deserialize<TestRunRecord>)
@@ -540,7 +639,7 @@ namespace Semanticus.Engine
                 var tokenKey = string.Join("\u001f", connection?.AuthMode ?? "azcli", connection?.TenantId ?? "");
                 if (!sqlTokens.TryGetValue(tokenKey, out token))
                 {
-                    token = await EntraToken.AcquireSqlAsync(connection?.AuthMode, null, CancellationToken.None, connection?.TenantId).ConfigureAwait(false);
+                    token = await AcquireSqlTokenAsync(connection?.AuthMode, connection?.TenantId, origin, CancellationToken.None).ConfigureAwait(false);
                     sqlTokens[tokenKey] = token;
                 }
             }
@@ -648,14 +747,16 @@ namespace Semanticus.Engine
         /// SQL. Omitting unmapped measures made a relationship-only run read A / 100% while measure coverage
         /// was actually zero. They remain grade-neutral NotVerifiable rows until a saved definition replaces
         /// the placeholder, preserving I1 while making I2's denominator describe the whole model.</summary>
-        private static List<ReconcileOutcome> BuildUnmappedMeasureOutcomes(Model m, List<ReconcilePlan> plans)
+        private static List<ReconcileOutcome> BuildUnmappedMeasureOutcomes(Model m, List<ReconcilePlan> plans, List<TestDefinition> defs = null)
         {
             var mappedTags = plans.Select(p => p.Def.TargetTag)
+                .Concat((defs ?? Enumerable.Empty<TestDefinition>()).Select(d => d.TargetTag))
                 .Where(tag => !string.IsNullOrWhiteSpace(tag))
                 .ToHashSet(StringComparer.Ordinal);
             // TargetRef is display-only once a stable tag exists. Using a stale ref from a missing tagged
             // target would hide a newly-created same-name impostor from coverage, defeating the tag binding.
             var mappedRefs = plans.Where(p => string.IsNullOrWhiteSpace(p.Def.TargetTag)).Select(p => p.Def.TargetRef)
+                .Concat((defs ?? Enumerable.Empty<TestDefinition>()).Where(d => string.IsNullOrWhiteSpace(d.TargetTag)).Select(d => d.TargetRef))
                 .Where(target => !string.IsNullOrWhiteSpace(target))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var outcomes = new List<ReconcileOutcome>();
@@ -664,13 +765,16 @@ namespace Semanticus.Engine
                 var targetRef = ObjectRefs.For(measure);
                 if ((!string.IsNullOrWhiteSpace(measure.LineageTag) && mappedTags.Contains(measure.LineageTag))
                     || mappedRefs.Contains(targetRef)) continue;
+                var empty = string.IsNullOrWhiteSpace(measure.Expression);
                 outcomes.Add(new ReconcileOutcome
                 {
                     DefId = "unmapped:" + targetRef,
                     Title = measure.Name,
                     TargetRef = targetRef,
-                    Verdict = Verdict.NotVerifiable,
-                    Message = "No human-accepted source SQL mapping exists for this measure.",
+                    Verdict = empty ? Verdict.Fail : Verdict.NotVerifiable,
+                    Message = empty
+                        ? "This measure has no formula."
+                        : "No human-accepted source SQL mapping exists for this measure.",
                 });
             }
             return outcomes;
@@ -790,7 +894,7 @@ namespace Semanticus.Engine
                 return o;
             }
             if (plan.BindError != null) { o.Verdict = Verdict.NotVerifiable; o.Message = plan.BindError; return o; }
-            if (!live) { o.Verdict = Verdict.NotVerifiable; o.Message = "reconciliation needs a live connection. Connect (connect_xmla or connect_local) and re-run"; return o; }
+            if (!live) { o.Verdict = Verdict.NotVerifiable; o.Message = "reconciliation needs a live connection. Connect a live model in Connections and re-run"; return o; }
 
             var r = await ReconcileMeasureAsync(plan.Request, origin);
             o.Dax = r.DaxQuery;
@@ -818,6 +922,116 @@ namespace Semanticus.Engine
                     break;
             }
             return o;
+        }
+
+        private async Task<ReconcileOutcome> RunMeasureValueDefAsync(TestDefinition def, TestObjectIdentityIndex identities, bool live, string origin)
+        {
+            var request = string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<MeasureValueRequest>(def.ParamsJson);
+            var o = new ReconcileOutcome
+            {
+                DefId = def.Id,
+                Title = def.Title,
+                TargetRef = def.TargetRef,
+                CreatedBy = def.CreatedBy,
+                CreatedWhen = def.CreatedWhen,
+                BudgetMs = def.BudgetMs,
+                ToleranceNote = string.IsNullOrWhiteSpace(request?.Provenance) ? null : "Where this number came from: " + request.Provenance,
+            };
+            if (request == null || string.IsNullOrWhiteSpace(request.ExpectedValue))
+            {
+                o.Verdict = Verdict.NotVerifiable;
+                o.Message = "This expected-total test has no number to trust.";
+                return o;
+            }
+            var bound = await _sessions.Current.ReadAsync(m =>
+            {
+                Measure measure = null;
+                if (!string.IsNullOrEmpty(def.TargetTag))
+                    measure = m.Tables.SelectMany(t => t.Measures).FirstOrDefault(x => x.LineageTag == def.TargetTag);
+                else if (!string.IsNullOrEmpty(def.TargetIdentity))
+                {
+                    var snap = identities.Resolve(def.TargetIdentity, TestObjectIdentityStore.Capture(m));
+                    if (snap != null) measure = ObjectRefs.Resolve(m, snap.Ref) as Measure;
+                }
+                else
+                    measure = ObjectRefs.Resolve(m, def.TargetRef ?? request.MeasureRef) as Measure;
+                if (measure == null) return (Missing: true, Name: (string)null, Empty: false, Ref: def.TargetRef);
+                return (Missing: false, Name: measure.Name, Empty: string.IsNullOrWhiteSpace(measure.Expression), Ref: ObjectRefs.For(measure));
+            });
+            o.TargetRef = bound.Ref ?? o.TargetRef;
+            if (bound.Missing)
+            {
+                o.Missing = true; o.Verdict = Verdict.NotVerifiable;
+                o.Message = "the measure this test was bound to no longer exists (or was recreated with a new identity). Re-bind or delete the test";
+                return o;
+            }
+            if (bound.Empty)
+            {
+                o.Verdict = Verdict.Fail;
+                o.Message = "This measure has no formula.";
+                return o;
+            }
+            var filter = !string.IsNullOrWhiteSpace(request.FilterDax) ? request.FilterDax.Trim()
+                : !string.IsNullOrWhiteSpace(request.FilterColumn) && !string.IsNullOrWhiteSpace(request.FilterValue)
+                    ? request.FilterColumn + " = \"" + request.FilterValue.Replace("\"", "\"\"") + "\""
+                    : null;
+            var dax = string.IsNullOrEmpty(filter)
+                ? "EVALUATE ROW(\"v\", [" + bound.Name.Replace("]", "]]") + "])"
+                : "EVALUATE ROW(\"v\", CALCULATE([" + bound.Name.Replace("]", "]]") + "], " + filter + "))";
+            o.Dax = dax;
+            if (!live)
+            {
+                o.Verdict = Verdict.NotVerifiable;
+                o.Message = "Not run: no live connection, so the measure could not be asked.";
+                return o;
+            }
+            ResultSet rs;
+            try { rs = await RunDaxAsync(dax, 8, origin); }
+            catch (Exception ex)
+            {
+                o.Verdict = Verdict.NotVerifiable;
+                o.Message = "Could not ask the measure: " + ex.Message;
+                return o;
+            }
+            if (rs == null || rs.Error != null)
+            {
+                o.Verdict = Verdict.NotVerifiable;
+                o.Message = rs?.Error ?? "Could not ask the measure.";
+                return o;
+            }
+            object actual = null;
+            if (rs.Rows != null && rs.Rows.Length > 0 && rs.Rows[0] != null && rs.Rows[0].Length > 0) actual = rs.Rows[0][0];
+            var abs = request.ToleranceAbsolute ?? InterviewScoring.OracleAbsTol;
+            var rel = request.ToleranceRelative ?? InterviewScoring.OracleRelTol;
+            var match = MeasureValueMatches(actual, request.ExpectedValue, abs, rel);
+            o.Verdict = match ? Verdict.Pass : Verdict.Fail;
+            o.Message = match
+                ? "The measure matched the number you trust."
+                : "The measure did not match the number you trust.";
+            o.Rows = new[] { new CompareRow { Context = "Grand total", GrandTotal = true, Dax = ToDecimal(actual), Verdict = o.Verdict, Explanation = o.Message } };
+            o.RowsTotal = 1;
+            o.Matches = match ? 1 : 0;
+            o.Mismatches = match ? 0 : 1;
+            return o;
+        }
+
+        private static bool MeasureValueMatches(object actual, string expected, double absTol, double relTol)
+        {
+            if (InterviewScoring.IsBlankSentinel(expected)) return actual == null;
+            if (actual == null) return false;
+            if (double.TryParse(expected, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var want)
+                && (actual is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal))
+            {
+                var got = Convert.ToDouble(actual);
+                return Math.Abs(got - want) <= Math.Max(absTol, relTol * Math.Abs(want));
+            }
+            return InterviewScoring.OracleMatches(actual, expected);
+        }
+
+        private static decimal? ToDecimal(object actual)
+        {
+            if (actual == null) return null;
+            try { return Convert.ToDecimal(actual); } catch { return null; }
         }
 
         private static string JoinNotes(params string[] notes)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using TOM = Microsoft.AnalysisServices.Tabular;
 using AS = Microsoft.AnalysisServices;
 
@@ -42,13 +43,14 @@ namespace Semanticus.Engine
     ///   not own is never read, counted, or touched.
     /// - DELETES follow TWO precise rules, never one loose one:
     ///     • ABSENCE NEVER DELETES. A live object merely missing from the session is REPORTED (LiveOnly) and LEFT
-    ///       UNTOUCHED. In a whole-model deploy, absence is not evidence the user meant to drop it from production, so
-    ///       the whole-model `deploy_live` path passes NO delete refs and keeps this guarantee byte-for-byte.
-    ///     • AN EXPLICITLY-NAMED REF IS REMOVED. A selective push (apply_diff to a workspace target) may pass
-    ///       <c>explicitDeleteRefs</c> — the object refs a user ticked as Delete. Those, and ONLY those, are removed
-    ///       from the live model, inside the SAME SaveChanges as the adds/updates (a failure writes nothing). A named
-    ///       ref that no longer resolves live is a reported NO-OP (someone else already removed it), never a throw.
-    ///       Deleting a table with live dependents is rejected atomically by SaveChanges — the error surfaces verbatim.
+    ///       UNTOUCHED unless the caller named it. In a whole-model deploy, absence is not evidence the user meant to
+    ///       drop it from production, so `deploy_live` with no delete refs keeps this guarantee byte-for-byte.
+    ///     • AN EXPLICITLY-NAMED REF IS REMOVED. A selective push (apply_diff to a workspace target) or an opt-in tick
+    ///       on Save to Live may pass <c>explicitDeleteRefs</c> — the object refs a user ticked as Delete. Those, and
+    ///       ONLY those, are removed from the live model, inside the SAME SaveChanges as the adds/updates (a failure
+    ///       writes nothing). A named ref that no longer resolves live is a reported NO-OP (someone else already
+    ///       removed it), never a throw. Deleting a table with live dependents is rejected atomically by SaveChanges
+    ///       — the error surfaces verbatim.
     /// - Renames are collision-safe: a rename whose target name is already taken by a different live object is
     ///   skipped and reported (Conflicts), never thrown. (Known follow-up: a rename whose DAX dependents live ONLY
     ///   on the server isn't FormulaFixup-corrected here — SaveChanges rejects it atomically and the error surfaces.)
@@ -58,20 +60,90 @@ namespace Semanticus.Engine
     public static class LiveDeploy
     {
         /// <summary>A local Analysis Services instance (Power BI Desktop) vs a cloud XMLA endpoint. Cloud endpoints
-        /// always carry a scheme (powerbi:// asazure:// link:// https://); a local instance is a bare loopback
-        /// host:port. Drives auth: local deploys with integrated Windows auth (no token), cloud needs a bearer token.
-        /// Security note: a cloud endpoint is NEVER misread as local (so a token is never skipped for a real write),
-        /// because any "://" classifies as remote.</summary>
+        /// always carry a scheme whose HOST is remote (powerbi:// asazure:// link:// https://api.powerbi.com). A local
+        /// instance is a loopback host, with or without a scheme, port, quotes, or IPv6 form. Drives auth: local
+        /// deploys with integrated Windows auth (no token), cloud needs a bearer token.
+        /// Classification is host-exact: the host is taken from the PARSED endpoint, then matched against `localhost`
+        /// (with or without a trailing dot), the SSAS `.` shorthand, and any spelling <see cref="IPAddress.TryParse"/>
+        /// accepts that is loopback, including the IPv4-mapped IPv6 form. The forms actually supported are the ones
+        /// pinned case by case in `Semanticus.Tests/LocalEndpointTests.cs`; do not read this as every loopback form
+        /// there is. Two are deliberately NOT covered and stay remote: a name that only reaches loopback through DNS
+        /// or the hosts file (nothing here resolves a name), and any address spelling `IPAddress.TryParse` rejects.
+        /// Adjacent and spoof hosts stay remote, so a token is never skipped for a real write.</summary>
         public static bool IsLocalEndpoint(string endpoint)
         {
             if (string.IsNullOrWhiteSpace(endpoint)) return false;
-            var e = endpoint.Trim();
-            if (e.Contains("://")) return false;   // any scheme = a remote/cloud endpoint
-            // Bare IPv6 loopback (with/without brackets) — handled before Split(':') since '::1'.Split(':')[0] is "".
-            var lower = e.ToLowerInvariant();
-            if (lower == "::1" || lower == "[::1]" || lower.StartsWith("[::1]:")) return true;
-            var host = e.Split(':')[0].Trim().ToLowerInvariant();
-            return host == "localhost" || host == "127.0.0.1" || host == ".";
+            var coords = ConnectionInput.Parse(endpoint, null);
+            if (!coords.Safe) return false;
+            var raw = ConnectionInput.Unquote(endpoint.Trim());
+            var scheme = raw.IndexOf("://", StringComparison.Ordinal);
+            var equals = raw.IndexOf('=');
+            // SafeEndpoint is deliberately lossy at ';'. Preserve a URI's authority here so user-info cannot
+            // turn a remote host into a local-looking display coordinate. Connection strings still use Parse.
+            var classified = scheme >= 0 && (equals < 0 || equals > scheme) ? raw : coords.Endpoint;
+            return IsLoopbackHost(ExtractHost(classified));
+        }
+
+        private static string ExtractHost(string endpoint)
+        {
+            var e = ConnectionInput.Unquote((endpoint ?? "").Trim());
+            if (e.Length == 0) return "";
+            var scheme = e.IndexOf("://", StringComparison.Ordinal);
+            if (scheme >= 0)
+            {
+                if (!Uri.TryCreate(e, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
+                    return "";
+                var authority = e.Substring(scheme + 3);
+                var cut = authority.IndexOfAny(new[] { '/', '?', '#' });
+                if (cut >= 0) authority = authority.Substring(0, cut);
+                return HostFromHostPort(authority);
+            }
+            return HostFromHostPort(e);
+        }
+
+        private static string HostFromHostPort(string hp)
+        {
+            hp = ConnectionInput.Unquote((hp ?? "").Trim());
+            if (hp.Length == 0) return "";
+            if (hp[0] == '[')
+            {
+                var close = hp.IndexOf(']');
+                if (close <= 1) return "";
+                var suffix = hp.Substring(close + 1);
+                if (suffix.Length == 0) return hp.Substring(1, close - 1);
+                if (suffix[0] != ':' || !IsAsciiDecimal(suffix.Substring(1))) return "";
+                return hp.Substring(1, close - 1);
+            }
+            if (IPAddress.TryParse(hp, out _)) return hp;
+            var colon = hp.LastIndexOf(':');
+            if (colon > 0)
+            {
+                var port = hp.Substring(colon + 1);
+                if (IsAsciiDecimal(port)) return hp.Substring(0, colon);
+            }
+            return hp;
+        }
+
+        private static bool IsAsciiDecimal(string value) =>
+            value.Length > 0 && value.All(c => c >= '0' && c <= '9');
+
+        private static bool IsLoopbackHost(string host)
+        {
+            if (string.IsNullOrWhiteSpace(host)) return false;
+            host = host.Trim().ToLowerInvariant();
+            if (host.Length >= 2 && host[0] == '[' && host[host.Length - 1] == ']')
+                host = host.Substring(1, host.Length - 2);
+            if (host == ".") return true;   // SSAS local-instance shorthand; TrimEnd('.') would empty it
+            host = host.TrimEnd('.');        // DNS absolute form: localhost. and 127.0.0.1.
+            if (host == "localhost") return true;
+            if (!IPAddress.TryParse(host, out var ip)) return false;
+            if (IPAddress.IsLoopback(ip)) return true;
+            if (ip.IsIPv4MappedToIPv6)
+            {
+                try { return IPAddress.IsLoopback(ip.MapToIPv4()); }
+                catch { return false; }
+            }
+            return false;
         }
 
         /// <param name="explicitDeleteTargets">IDENTITY-carrying delete targets (see <see cref="LiveDeleteTarget"/>) to
@@ -79,7 +151,7 @@ namespace Semanticus.Engine
         /// deletes. Each carries the lineage identity captured at diff time so the removal resolves the RIGHT object on
         /// the live state loaded HERE (a third state neither drift snapshot saw), never a same-named impostor.
         /// Null/empty ⇒ byte-for-byte the historic no-delete behaviour (the whole-model deploy passes nothing).</param>
-        public static DeployReport SyncSessionToLive(string sessionBimPath, string endpoint, string database, string token, DateTimeOffset expiresOn, bool commit, IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets = null, bool identityStrict = false)
+        public static DeployReport SyncSessionToLive(string sessionBimPath, string endpoint, string database, string token, DateTimeOffset expiresOn, bool commit, IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets = null, bool identityStrict = false, bool captureRestorePoint = false, IReadOnlyCollection<string> explicitDeleteRefs = null)
         {
             var src = TOM.JsonSerializer.DeserializeDatabase(File.ReadAllText(sessionBimPath), null, AS.CompatibilityMode.PowerBI).Model;
 
@@ -92,16 +164,44 @@ namespace Semanticus.Engine
             server.Connect("Data Source=" + endpoint);
             var liveDb = server.Databases.FindByName(database) ?? throw new InvalidOperationException($"Database '{database}' not found on the endpoint.");
 
+            // Whole-model Save to Live had no restore point (D-003). Capture the live metadata HERE, after
+            // connect and before SyncAndApply mutates it, so production pays one connection. The selective
+            // push already wrote its own restore point and leaves captureRestorePoint false.
+            RestorePointRecord restorePoint = null;
+            var tickedDeletes = explicitDeleteRefs != null && explicitDeleteRefs.Count > 0
+                && (explicitDeleteTargets == null || explicitDeleteTargets.Count == 0);
+            if (captureRestorePoint && commit)
+            {
+                try
+                {
+                    restorePoint = RestorePointStore.Write(endpoint, database,
+                        TOM.JsonSerializer.SerializeDatabase(liveDb), "deploy_live",
+                        tickedDeletes ? explicitDeleteRefs.Count + " delete(s)" : "before the live write",
+                        Array.Empty<string>(),
+                        tickedDeletes ? explicitDeleteRefs.ToArray() : Array.Empty<string>());
+                }
+                catch (Exception ex)
+                {
+                    // A ticked delete cannot be undone without a restore point, so a failed snapshot is a wall.
+                    // A whole-model save with no deletes is a warning, not a wall (D-003).
+                    if (tickedDeletes)
+                        return new DeployReport { Endpoint = endpoint, Database = database,
+                            Error = LiveMatchCopy.DeleteRefusedNoRestore(FabricRest.Scrub(ex.Message)) };
+                }
+            }
+
             // The SERVER-FREE orchestration lives in SyncAndApply (offline-testable). We pass the live model's real
             // SaveChanges + calc-recalc as callbacks — a test passes in-memory recorders instead.
-            return SyncAndApply(src, liveDb.Model, commit, endpoint, database, explicitDeleteTargets,
+            var rep = SyncAndApply(src, liveDb.Model, commit, endpoint, database, explicitDeleteTargets,
                 saveChanges: () => liveDb.Model.SaveChanges(),
                 recalcCalcTables: names =>
                 {
                     foreach (var name in names) liveDb.Model.Tables.Find(name)?.RequestRefresh(TOM.RefreshType.Calculate);
                     liveDb.Model.SaveChanges();
                 },
-                identityStrict: identityStrict);
+                identityStrict: identityStrict, explicitDeleteRefs: explicitDeleteRefs);
+            if (rep != null && restorePoint != null) rep.RestorePointId = restorePoint.Id;
+            return rep;
         }
 
         /// <summary>The server-free orchestration of a session→live push (offline-testable — the SaveChanges + calc-
@@ -116,13 +216,16 @@ namespace Semanticus.Engine
         /// deliberately NOT overridable. An Absent delete is benign (someone already removed it; the intent is
         /// satisfied) and never aborts.</summary>
         internal static DeployReport SyncAndApply(TOM.Model src, TOM.Model live, bool commit, string endpoint, string database,
-            IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets, Action saveChanges, Action<IReadOnlyCollection<string>> recalcCalcTables, bool identityStrict = false)
+            IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets, Action saveChanges, Action<IReadOnlyCollection<string>> recalcCalcTables, bool identityStrict = false, IReadOnlyCollection<string> explicitDeleteRefs = null)
         {
             // BLOCKER 1: the live objects THIS deploy wrote (created / updated in place). SyncModels fills it; the explicit-
             // delete channel refuses a delete that lands on one (an endpoint-rename relationship the same push updated) —
-            // deleting it would undo the sync. Only the selective-push path carries deletes, so only it needs the set.
+            // deleting it would undo the sync. A ticked whole-model delete uses the same set.
             var changedLive = new HashSet<TOM.MetadataObject>();
             var rep = SyncModels(src, live, commit, endpoint, database, identityStrict, changedLive);
+            var deletes = explicitDeleteTargets;
+            if ((deletes == null || deletes.Count == 0) && explicitDeleteRefs != null && explicitDeleteRefs.Count > 0)
+                deletes = ResolveTickedLiveOnly(live, rep.LiveOnly, explicitDeleteRefs);
 
             // BLOCKER 1 (replacement coupling): the refs the deploy ACTUALLY synced, plus the relationship refs PRESENT in
             // the pushed model. A relationship Delete that is the old half of an endpoint re-point (it carries the paired
@@ -137,10 +240,10 @@ namespace Semanticus.Engine
                 src.Relationships.Cast<TOM.Relationship>().Select(r => "relationship:" + RelSig(r)), StringComparer.Ordinal);
 
             // DETECTION PASS (never mutates): any Refused ⇒ abort before SaveChanges — nothing is committed.
-            if (explicitDeleteTargets != null && explicitDeleteTargets.Count > 0)
+            if (deletes != null && deletes.Count > 0)
             {
                 var probe = new DeployReport();
-                RemoveExplicit(live, explicitDeleteTargets, apply: false, probe, changedLive, syncedRefs, pushedRelRefs, matchedRelRefs);
+                RemoveExplicit(live, deletes, apply: false, probe, changedLive, syncedRefs, pushedRelRefs, matchedRelRefs);
                 if (probe.DeletesRefused.Length > 0)
                 {
                     rep.DeletesRefused = probe.DeletesRefused;
@@ -164,12 +267,12 @@ namespace Semanticus.Engine
             }
 
             // Clean: apply the deletes for real, inside the SAME change set as the adds/updates (one SaveChanges).
-            RemoveExplicit(live, explicitDeleteTargets, commit, rep, changedLive, syncedRefs, pushedRelRefs, matchedRelRefs);
+            RemoveExplicit(live, deletes, commit, rep, changedLive, syncedRefs, pushedRelRefs, matchedRelRefs);
             if (commit && rep.TotalChanges > 0)
             {
                 // The single atomic boundary — a SaveChanges failure writes nothing and is surfaced via Error.
                 try { saveChanges(); rep.Committed = true; }
-                catch (Exception ex) { rep.Error = "SaveChanges failed — nothing was committed: " + ex.Message; }
+                catch (Exception ex) { rep.Error = "SaveChanges failed. Nothing was committed: " + ex.Message; }
             }
             // NEW calculated tables are created EMPTY by the metadata save above; a Calculate pass populates their
             // engine-derived columns/rows. Recalc the ones we added in a SECOND commit — a recalc failure leaves them
@@ -179,10 +282,92 @@ namespace Semanticus.Engine
                 try { recalcCalcTables(rep.CalcTablesAdded); }
                 catch (Exception ex)
                 {
-                    rep.Error = $"Metadata committed, but the Calculate recalc of new table(s) [{string.Join(", ", rep.CalcTablesAdded)}] failed — they exist but stay empty until refreshed: {ex.Message}";
+                    rep.Error = $"Metadata committed, but the Calculate recalc of new table(s) [{string.Join(", ", rep.CalcTablesAdded)}] failed. They exist but stay empty until refreshed: {ex.Message}";
                 }
             }
             return rep;
+        }
+
+        /// <summary>Build identity-carrying delete targets for the LiveOnly refs the caller ticked. Identity comes
+        /// from the live objects SyncModels just classified, in this same in-memory tree. A ticked ref that is not
+        /// live-only this run is skipped (already gone, or now matched), never deleted by name guess.</summary>
+        internal static List<LiveDeleteTarget> ResolveTickedLiveOnly(TOM.Model live, IReadOnlyCollection<string> liveOnly, IReadOnlyCollection<string> ticked)
+        {
+            var found = new List<LiveDeleteTarget>();
+            if (live == null || ticked == null || ticked.Count == 0) return found;
+            var allowed = new HashSet<string>(liveOnly ?? Array.Empty<string>(), StringComparer.Ordinal);
+            foreach (var r in ticked)
+            {
+                if (string.IsNullOrEmpty(r) || !allowed.Contains(r)) continue;
+                var t = TargetFromLiveOnlyRef(live, r);
+                if (t != null) found.Add(t);
+            }
+            return found;
+        }
+
+        private static string EmptyToNull(string s) => string.IsNullOrEmpty(s) ? null : s;
+
+        private static LiveDeleteTarget TargetFromLiveOnlyRef(TOM.Model live, string raw)
+        {
+            if (string.IsNullOrEmpty(raw) || live == null) return null;
+            var display = raw;
+            if (raw.IndexOf(" (live-only", StringComparison.Ordinal) >= 0) return null;
+            var colon = AlmRef.IndexOfUnescaped(raw, ':', 0);
+            if (colon < 0) return null;
+            var kind = raw.Substring(0, colon).Trim().ToLowerInvariant();
+            var rest = raw.Substring(colon + 1);
+            if (kind == "namedexpression") kind = "expression";
+
+            if (kind == "relationship")
+            {
+                foreach (var rel in live.Relationships.Cast<TOM.Relationship>())
+                    if (string.Equals("relationship:" + RelDisplay(rel), display, StringComparison.Ordinal))
+                        return new LiveDeleteTarget { Kind = "relationship", Ref = display, Name = RelSig(rel) };
+                return null;
+            }
+            if (kind == "table")
+            {
+                var t = live.Tables.Find(AlmRef.Unesc(rest));
+                if (t == null) return null;
+                return new LiveDeleteTarget { Kind = "table", Ref = display, Tag = EmptyToNull(t.LineageTag), Name = t.Name };
+            }
+            if (kind == "expression")
+            {
+                var e = live.Expressions.Find(AlmRef.Unesc(rest));
+                if (e == null) return null;
+                return new LiveDeleteTarget { Kind = "expression", Ref = display, Tag = EmptyToNull(LineageOf(e)), Name = e.Name };
+            }
+            if (kind == "role" || kind == "perspective" || kind == "culture" || kind == "datasource")
+            {
+                var name = AlmRef.Unesc(rest);
+                TOM.NamedMetadataObject o = kind == "role" ? live.Roles.Find(name)
+                    : kind == "perspective" ? live.Perspectives.Find(name)
+                    : kind == "culture" ? live.Cultures.Find(name)
+                    : live.DataSources.Find(name);
+                if (o == null) return null;
+                return new LiveDeleteTarget { Kind = kind, Ref = display, Name = o.Name };
+            }
+
+            var slash = AlmRef.IndexOfUnescaped(rest, '/', 0);
+            if (slash < 0) return null;
+            var tableName = AlmRef.Unesc(rest.Substring(0, slash));
+            var childName = AlmRef.Unesc(rest.Substring(slash + 1));
+            var table = live.Tables.Find(tableName);
+            if (table == null) return null;
+            TOM.NamedMetadataObject child = kind == "measure" ? table.Measures.Find(childName)
+                : kind == "column" ? table.Columns.Find(childName)
+                : kind == "hierarchy" ? table.Hierarchies.Find(childName)
+                : kind == "partition" ? table.Partitions.Find(childName)
+                : kind == "calculationitem" ? table.CalculationGroup?.CalculationItems.Find(childName)
+                : null;
+            if (child == null) return null;
+            return new LiveDeleteTarget
+            {
+                Kind = kind, Ref = display,
+                Tag = EmptyToNull(LineageOf(child)),
+                TableTag = EmptyToNull(table.LineageTag),
+                Name = child.Name, Table = table.Name
+            };
         }
 
         private enum RemoveOutcome { Deleted, Absent, Refused, RefusedMatched, RefusedReplacementUnmet }
@@ -467,9 +652,9 @@ namespace Semanticus.Engine
             // register created objects of every kind here as defence-in-depth; the guard is a no-op for them.
             void Mark(TOM.MetadataObject o) { if (o != null) changedLive?.Add(o); }
             // Retagged/replaced-under-us reason (strict only): a same-named live object carries a DIFFERENT lineage tag.
-            string RetagConflict(string objRef) => objRef + " (a same-named live object carries a DIFFERENT lineage tag — republished/retagged under you; NOT synced to avoid mutating the wrong object. Re-diff against the current model.)";
+            string RetagConflict(string objRef) => objRef + " (a same-named live object carries a DIFFERENT lineage tag: republished/retagged under you; NOT synced to avoid mutating the wrong object. Re-diff against the current model.)";
             var rep = new DeployReport { Endpoint = endpoint, Database = database, Committed = false };
-            var changes = new List<string>();
+            var changes = new ChangeLog();
             var unmatched = new List<string>();
             var liveOnly = new List<string>();
             // Live-only CHILDREN (of matched tables) are collected as (table, kind, childName) and their ref STRINGS are
@@ -797,7 +982,7 @@ namespace Semanticus.Engine
                     if (sc is TOM.CalculatedColumn scc)
                     {
                         if (lc is TOM.CalculatedColumn lcc) SetExpr(scc.Expression, () => lcc.Expression, v => lcc.Expression = v, apply, ref expr, "expression " + id, changes);
-                        else unmatched.Add($"expression-type-mismatch {id} (session CalculatedColumn, live {lc.GetType().Name} — DAX not deployed)");
+                        else unmatched.Add($"expression-type-mismatch {id} (session CalculatedColumn, live {lc.GetType().Name}: DAX not deployed)");
                     }
                     var columnRef = AlmRef.Child("column", st.Name, sc.Name);
                     var sourceColumnState = ModelCompare.LiveColumnState(sc);
@@ -887,17 +1072,17 @@ namespace Semanticus.Engine
                 foreach (var sp in st.Partitions)
                 {
                     var lp = lt.Partitions.Find(sp.Name);
-                    if (lp == null) { unmatched.Add(AlmRef.Child("partition", lt.Name, sp.Name) + " (new partition — not deployable here; add via TMDL/XMLA)"); continue; }
+                    if (lp == null) { unmatched.Add(AlmRef.Child("partition", lt.Name, sp.Name) + " (new partition: not deployable here; add via TMDL/XMLA)"); continue; }
                     matchedParts.Add(lp);
                     var pid = AlmRef.Child("partition", lt.Name, lp.Name);
                     var (sKind, sScript) = PartitionScript(sp);
                     var (lKind, lScript) = PartitionScript(lp);
-                    if (sKind != lKind) { unmatched.Add($"source-type-mismatch {pid} (session {sKind ?? "none"}, live {lKind ?? "none"} — expression not deployed)"); continue; }
+                    if (sKind != lKind) { unmatched.Add($"source-type-mismatch {pid} (session {sKind ?? "none"}, live {lKind ?? "none"}: expression not deployed)"); continue; }
                     if (sKind == "entity")
                     {
                         // Direct Lake: rebinding a partition to another lakehouse entity is structural — report it.
                         if (!string.Equals(sScript, lScript, StringComparison.Ordinal))
-                            unmatched.Add($"entity-rebinding {pid} ({lScript} -> {sScript} — not deployable here; change via TMDL/XMLA)");
+                            unmatched.Add($"entity-rebinding {pid} ({lScript} -> {sScript}: not deployable here; change via TMDL/XMLA)");
                         continue;
                     }
                     if (sScript == null && lScript == null) continue;   // no comparable script on this source kind
@@ -927,7 +1112,7 @@ namespace Semanticus.Engine
                         // receiving one is a table-KIND transition (structural) — report it (SOURCE-keyed ref, so the
                         // selective push reconciles it against the diff's refs), never silently drop it.
                         foreach (var sci in srcItems)
-                            unmatched.Add(AlmRef.Child("calculationitem", st.Name, sci.Name) + " (live table has no calculation group — add via TMDL/XMLA)");
+                            unmatched.Add(AlmRef.Child("calculationitem", st.Name, sci.Name) + " (live table has no calculation group: add via TMDL/XMLA)");
                     }
                     else
                     {
@@ -969,14 +1154,14 @@ namespace Semanticus.Engine
                             if (lci.Ordinal != sci.Ordinal)
                             {
                                 var clash = OrdinalClash(sci.Ordinal);
-                                if (clash != null) { unmatched.Add(ciRef + $" (ordinal {sci.Ordinal} would duplicate live-only calculation item '{clash}' — ordinal not applied; deploy via TMDL/XMLA)"); held = true; }
+                                if (clash != null) { unmatched.Add(ciRef + $" (ordinal {sci.Ordinal} would duplicate live-only calculation item '{clash}': ordinal not applied; deploy via TMDL/XMLA)"); held = true; }
                                 else { if (apply) reorders.Add((lci, sci.Ordinal)); calc++; changes.Add("ordinal " + ciId); }
                             }
                             // RESIDUAL guard: the diff compared the WHOLE serialized item; this sync carries an
                             // enumerated surface (COMPLETE in AMO 19.114 — CalculationItem has no annotations/extended
                             // properties, reflected 2026-07-10). If a future AMO grows the object, the residual surfaces
                             // here and the ref is WITHHELD (named) instead of claiming an apply that dropped metadata.
-                            if (!CalcItemResidualEqual(sci, lci)) { unmatched.Add(ciRef + " (carries authored metadata this live push cannot sync — deploy via TMDL/XMLA)"); held = true; }
+                            if (!CalcItemResidualEqual(sci, lci)) { unmatched.Add(ciRef + " (carries authored metadata this live push cannot sync: deploy via TMDL/XMLA)"); held = true; }
                             if (held) heldRefs.Add(ciRef);
                             else if (changes.Count > ciChanges) syncedRefs.Add(ciRef);
                         }
@@ -994,7 +1179,7 @@ namespace Semanticus.Engine
                         {
                             var ciRef = AlmRef.Child("calculationitem", st.Name, sci.Name);
                             var clash = OrdinalClash(sci.Ordinal);
-                            if (clash != null) { unmatched.Add(ciRef + $" (ordinal {sci.Ordinal} would duplicate live-only calculation item '{clash}' — not created; deploy via TMDL/XMLA)"); heldRefs.Add(ciRef); continue; }
+                            if (clash != null) { unmatched.Add(ciRef + $" (ordinal {sci.Ordinal} would duplicate live-only calculation item '{clash}': not created; deploy via TMDL/XMLA)"); heldRefs.Add(ciRef); continue; }
                             // NEW calc item → FULL Clone (name/expression/ordinal/description/format string — and any
                             // member a future AMO adds — carried BY CONSTRUCTION, so a hand-built constructor can never
                             // silently drop authored metadata again). The clone is detached; calc items carry no
@@ -1023,7 +1208,7 @@ namespace Semanticus.Engine
                 // the policy silently stayed behind — the ref must not claim an apply that dropped part of the item.
                 if (!RefreshPolicyEqual(st.RefreshPolicy, lt.RefreshPolicy))
                 {
-                    unmatched.Add(AlmRef.Top("table", st.Name) + " (refresh policy changed locally — not carried by a live metadata push; deploy it via TMDL/XMLA)");
+                    unmatched.Add(AlmRef.Top("table", st.Name) + " (refresh policy changed locally: not carried by a live metadata push; deploy it via TMDL/XMLA)");
                     heldRefs.Add(AlmRef.Top("table", st.Name));
                 }
 
@@ -1244,7 +1429,7 @@ namespace Semanticus.Engine
                     continue;
                 }
                 matchedExprs.Add(le);
-                if (se.Kind != le.Kind) { unmatched.Add("kind-mismatch " + AlmRef.Top("expression", se.Name) + $" (session {se.Kind}, live {le.Kind} — not deployed)"); continue; }
+                if (se.Kind != le.Kind) { unmatched.Add("kind-mismatch " + AlmRef.Top("expression", se.Name) + $" (session {se.Kind}, live {le.Kind}: not deployed)"); continue; }
                 var nid = AlmRef.Top("expression", le.Name);   // LIVE-name id (rename-safe), like a measure's id
                 int eChanges = changes.Count;
                 // A tag-matched expression can be RENAMED (source name != live name) — route it through the same
@@ -1268,7 +1453,7 @@ namespace Semanticus.Engine
                 var existing = r.findSibling(r.newName);
                 if (existing != null && !ReferenceEquals(existing, r.obj))
                 {
-                    conflicts.Add($"{r.id}: target name '{r.newName}' already exists on live — rename skipped");
+                    conflicts.Add($"{r.id}: target name '{r.newName}' already exists on live. Rename skipped");
                     continue;
                 }
                 ren++; changes.Add($"rename {r.id} ({r.oldName} -> {r.newName})");
@@ -1304,6 +1489,7 @@ namespace Semanticus.Engine
             rep.TotalChanges = desc + ren + vis + cat + fmt + fold + expr + sum + cult + part + nexpr + added + calc + metadata
                 + sortBy + hier + rel + ann;
             rep.Changes = changes.Take(80).ToArray();
+            rep.ChangeFingerprint = ReviewFence.Fingerprint(changes.Basis);
             rep.Unmatched = unmatched.ToArray();
             rep.LiveOnly = liveOnly.ToArray();
             rep.Conflicts = conflicts.ToArray();
@@ -1435,23 +1621,36 @@ namespace Semanticus.Engine
                 renames.Add((obj, obj.Name, srcName, findSibling, id));
         }
 
+        private sealed class ChangeLog : List<string>
+        {
+            public readonly List<string> Basis = new List<string>();
+        }
+
+        private static void NoteDelta(List<string> log, string label, string before, string after)
+        {
+            log.Add(label);
+            if (log is ChangeLog cl) cl.Basis.Add(label + "\n" + (before ?? "") + "\n" + (after ?? ""));
+        }
+
         // For description / format / folder / data-category, "" and null are the same (don't churn).
         private static void SetStr(string srcVal, Func<string> get, Action<string> set, bool apply, ref int counter, string label, List<string> log)
         {
             var s = string.IsNullOrEmpty(srcVal) ? null : srcVal;
             var cur = string.IsNullOrEmpty(get()) ? null : get();
-            if (!string.Equals(s, cur, StringComparison.Ordinal)) { if (apply) set(s); counter++; log.Add(label); }
+            if (!string.Equals(s, cur, StringComparison.Ordinal)) { if (apply) set(s); counter++; NoteDelta(log, label, cur, s); }
         }
 
         // For DAX expressions, push the value verbatim (do NOT coerce "" to null — let SaveChanges validate).
         private static void SetExpr(string srcVal, Func<string> get, Action<string> set, bool apply, ref int counter, string label, List<string> log)
         {
-            if (!string.Equals(srcVal, get(), StringComparison.Ordinal)) { if (apply) set(srcVal); counter++; log.Add(label); }
+            var cur = get();
+            if (!string.Equals(srcVal, cur, StringComparison.Ordinal)) { if (apply) set(srcVal); counter++; NoteDelta(log, label, cur, srcVal); }
         }
 
         private static void SetBool(bool srcVal, Func<bool> get, Action<bool> set, bool apply, ref int counter, string label, List<string> log)
         {
-            if (get() != srcVal) { if (apply) set(srcVal); counter++; log.Add(label); }
+            var cur = get();
+            if (cur != srcVal) { if (apply) set(srcVal); counter++; NoteDelta(log, label, cur ? "1" : "0", srcVal ? "1" : "0"); }
         }
 
         // A calc item's dynamic format string lives in FormatStringDefinition.Expression (null when none). Mirror SetStr's
@@ -1463,7 +1662,7 @@ namespace Semanticus.Engine
             var cur = string.IsNullOrEmpty(live.FormatStringDefinition?.Expression) ? null : live.FormatStringDefinition.Expression;
             if (string.Equals(s, cur, StringComparison.Ordinal)) return;
             if (apply) live.FormatStringDefinition = s == null ? null : new TOM.FormatStringDefinition { Expression = s };
-            counter++; log.Add(label);
+            counter++; NoteDelta(log, label, cur, s);
         }
 
         private static bool CalcItemResidualEqual(TOM.CalculationItem a, TOM.CalculationItem b)

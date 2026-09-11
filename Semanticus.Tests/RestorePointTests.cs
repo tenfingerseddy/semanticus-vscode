@@ -629,5 +629,93 @@ namespace Semanticus.Tests
             Assert.False(r.Applied);
             Assert.Contains("missing from disk", r.Error);
         }
+
+        // ---- D-003: Save to Live / deploy_live wrote no restore point, so Roll back had nothing to list.
+        // Both doors call DeployLiveAsync (palette Save to Live and the agent deploy tool), so one write covers both.
+        private static async Task<(LocalEngine engine, RecordedLiveTarget target, string path)> OpenLivePublishAsync()
+        {
+            var target = RecordedLiveTarget.FiveTable();
+            var path = target.WriteBim(target.Live);
+            var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            await engine.OpenAsync(path);
+            target.Attach(engine);
+            await engine.SetObjectPropertyAsync("measure:Sales/Total Sales", "Expression", "1 + 1", "human");
+            return (engine, target, path);
+        }
+
+        [Fact]
+        public async Task Deploy_live_commit_writes_a_restore_point_the_rollback_list_can_see()
+        {
+            var (engine, target, path) = await OpenLivePublishAsync();
+            using (engine)
+            {
+                try
+                {
+                    var before = (await engine.ListRestorePointsAsync(RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName))
+                        .Select(p => p.Id).ToHashSet();
+
+                    var preview = await engine.DeployLiveAsync(
+                        RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName,
+                        "azcli", null, null, commit: false, origin: "human");
+                    Assert.False(preview.Committed);
+                    Assert.True(string.IsNullOrEmpty(preview.RestorePointId));
+                    var afterPreview = (await engine.ListRestorePointsAsync(RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName))
+                        .Select(p => p.Id).ToHashSet();
+                    Assert.True(before.SetEquals(afterPreview));
+                    Assert.Equal(0, target.SaveChangesCount);
+
+                    var rep = await engine.DeployLiveAsync(
+                        RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName,
+                        "azcli", null, null, commit: true, origin: "human",
+                        overrideReason: "recorded live double", confirmToken: preview.ConfirmToken);
+                    Assert.True(rep.Committed, rep.Error);
+                    Assert.False(string.IsNullOrEmpty(rep.RestorePointId));
+                    Assert.DoesNotContain(rep.RestorePointId, before);
+
+                    var listed = await engine.ListRestorePointsAsync(RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName);
+                    var rp = Assert.Single(listed, p => p.Id == rep.RestorePointId);
+                    Assert.Equal("deploy_live", rp.Op);
+                    Assert.Equal("SUM ( Sales[Amount] )", MeasureExprIn(rp.BimPath, "Total Sales"));
+                    Assert.Equal("1 + 1", target.Live.Model.Tables["Sales"].Measures["Total Sales"].Expression);
+                }
+                finally { File.Delete(path); }
+            }
+        }
+
+        [Fact]
+        public async Task Deploy_live_writes_the_restore_point_before_the_live_write()
+        {
+            var (engine, target, path) = await OpenLivePublishAsync();
+            using (engine)
+            {
+                try
+                {
+                    string idDuringWrite = null;
+                    var before = RestorePointStore.List(RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName)
+                        .Select(p => p.Id).ToHashSet();
+                    var inner = engine.DeployLiveSyncHook;
+                    engine.DeployLiveSyncHook = (bim, endpoint, database, commit, dels) =>
+                    {
+                        // Ids have second precision and a random suffix, so list order cannot identify this write.
+                        idDuringWrite = RestorePointStore.List(endpoint, database)
+                            .SingleOrDefault(p => !before.Contains(p.Id))?.Id;
+                        return inner(bim, endpoint, database, commit, dels);
+                    };
+
+                    var preview = await engine.DeployLiveAsync(
+                        RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName,
+                        "azcli", null, null, commit: false, origin: "human");
+                    var rep = await engine.DeployLiveAsync(
+                        RecordedLiveTarget.Endpoint, RecordedLiveTarget.DatabaseName,
+                        "azcli", null, null, commit: true, origin: "human",
+                        overrideReason: "recorded live double", confirmToken: preview.ConfirmToken);
+                    Assert.True(rep.Committed, rep.Error);
+                    Assert.False(string.IsNullOrEmpty(idDuringWrite));
+                    Assert.DoesNotContain(idDuringWrite, before);
+                    Assert.Equal(rep.RestorePointId, idDuringWrite);
+                }
+                finally { File.Delete(path); }
+            }
+        }
     }
 }

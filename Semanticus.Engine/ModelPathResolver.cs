@@ -70,19 +70,17 @@ namespace Semanticus.Engine
         }
 
         /// <summary>True when <paramref name="path"/> is a Power BI PBIP's inner <c>definition</c> TMDL root — a TMDL
-        /// root directory literally named "definition" whose parent (the <c>.SemanticModel</c> folder) holds the
-        /// required <c>definition.pbism</c>. The inverse of <see cref="Resolve"/>: it lets a SAVE recognise a
+        /// root directory literally named "definition". The inverse of <see cref="Resolve"/>: it lets a SAVE recognise a
         /// PBIP-origin model so it can keep the <c>definition/</c> tree TMDL-only (never a folder-JSON clobber) and
-        /// place engine sidecars in the <c>.SemanticModel</c> parent rather than polluting the publishable tree.
-        /// Structural (no dependency on the optional <c>.platform</c>), so it holds for any well-formed TMDL PBIP.</summary>
+        /// place engine sidecars in the parent rather than polluting the publishable tree. A frozen export often has
+        /// no <c>definition.pbism</c>; requiring that file would write sidecars inside <c>definition/</c>.</summary>
         public static bool IsPbipDefinitionFolder(string path)
         {
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return false;
             var di = new DirectoryInfo(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             return string.Equals(di.Name, "definition", StringComparison.OrdinalIgnoreCase)
                 && IsTmdlRoot(di.FullName)
-                && di.Parent != null
-                && File.Exists(Path.Combine(di.Parent.FullName, "definition.pbism"));
+                && di.Parent != null;
         }
 
         /// <summary>Mirrors TE2's <c>IsRootTmdlDirectory</c> (which is private in the vendored handler): a directory is

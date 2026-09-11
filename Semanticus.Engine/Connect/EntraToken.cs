@@ -14,7 +14,7 @@ namespace Semanticus.Engine
     /// Modes: azcli (uses `az login`, headless-friendly), interactive (browser), devicecode
     /// (prints a URL+code to stderr), token (caller-supplied raw token).
     /// </summary>
-    public static class EntraToken
+    public static partial class EntraToken
     {
         private static readonly string[] Scopes = { "https://analysis.windows.net/powerbi/api/.default" };
         // A Fabric SQL endpoint (Warehouse / Lakehouse SQL analytics endpoint, *.datawarehouse.fabric.microsoft.com)
@@ -48,15 +48,26 @@ namespace Semanticus.Engine
             return string.IsNullOrWhiteSpace(v) ? PowerBIDesktopPublicClientId : v.Trim();
         }
 
-        /// <summary>Bearer token string only (for the ADOMD connection-string Password= path).</summary>
-        public static async Task<string> AcquireAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null)
-            => (await AcquireFullAsync(mode, rawToken, ct, tenantId).ConfigureAwait(false)).Token;
+        /// <summary>ONE canonical form for an MSAL home-account id, shared by the profile store, the live-auth cache
+        /// keys and every identity comparison. MSAL embeds a tenant GUID in this value and does not guarantee its
+        /// casing is stable, so comparing raw would falsely REJECT the same principal after a casing change. Returns
+        /// null (never "") for a missing id, so "identity unknown" stays distinguishable from an identity.</summary>
+        internal static string CanonicalHomeAccountId(string homeAccountId)
+        {
+            var v = (homeAccountId ?? "").Trim().ToLowerInvariant();
+            return v.Length == 0 ? null : v;
+        }
+
+        /// <summary>Bearer token string only (for the ADOMD connection-string Password= path). disableInteractive (agent
+        /// origin) forbids a prompt: a stale cache throws AuthenticationRequiredException instead of popping a browser.</summary>
+        public static async Task<string> AcquireAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null, bool disableInteractive = false)
+            => (await AcquireFullAsync(mode, rawToken, ct, tenantId, disableInteractive).ConfigureAwait(false)).Token;
 
         /// <summary>Token + expiry. AMO/TOM needs both (Server.AccessToken) — its managed auth rejects the
         /// connection-string Password= form that ADOMD accepts. One-shot: builds a fresh credential each call,
         /// so do NOT use this on a hot path for interactive auth — prefer <see cref="BuildCredential"/> + reuse
         /// (see <c>Session</c>'s live-auth cache), which is what stops the browser re-prompting.</summary>
-        public static async Task<AccessToken> AcquireFullAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null)
+        public static async Task<AccessToken> AcquireFullAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null, bool disableInteractive = false)
         {
             mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
 
@@ -71,7 +82,7 @@ namespace Semanticus.Engine
                 return new AccessToken(rawToken, exp);
             }
 
-            return await GetTokenAsync(BuildCredential(mode, tenantId), ct).ConfigureAwait(false);
+            return await GetTokenAsync(BuildCredential(mode, tenantId, disableInteractive: disableInteractive), ct).ConfigureAwait(false);
         }
 
         // Read the 'exp' (expiry, Unix seconds) claim from a JWT access token WITHOUT validating its signature —
@@ -103,7 +114,7 @@ namespace Semanticus.Engine
         /// <paramref name="skipSavedRecord"/> (the "use a different account" path) builds the interactive/device-code
         /// credential WITHOUT pinning the saved AuthenticationRecord, so MSAL can't silently reuse the cached
         /// identity and instead shows the account picker — see <see cref="BuildCredentialAsync"/>.</summary>
-        public static TokenCredential BuildCredential(string mode, string tenantId, bool skipSavedRecord = false)
+        public static TokenCredential BuildCredential(string mode, string tenantId, bool skipSavedRecord = false, bool disableInteractive = false)
         {
             // Optional Entra tenant override — lets us target a tenant the current `az login` isn't the
             // home of (e.g. the model lives in tenant B while az is signed into tenant A). null = default.
@@ -111,23 +122,37 @@ namespace Semanticus.Engine
             // The SYNC reuse path loads the saved record from disk HERE and hands it to BuildCredentialWith; the async
             // open path (BuildCredentialAsync) instead reads ONCE up front and passes THAT snapshot in, so the credential
             // it pins and the account it reports can't drift apart (round-10 HIGH). skipSavedRecord ("use a different
-            // account") pins nothing, so MSAL falls into interactive auth and shows the account picker.
-            var family = InteractiveFamily(mode);
-            var rec = (skipSavedRecord || family == null || !PersistenceSupported) ? null : LoadRecord(RecordPath(family, tenantId));
-            return BuildCredentialWith(mode, tenantId, rec);
+            // account") pins nothing, so MSAL falls into interactive auth and shows the account picker. disableInteractive
+            // (agent origin) sets DisableAutomaticAuthentication so this credential can never prompt — it throws instead.
+            // Same once-loaded pin as BuildCredentialAsync, including the tenant-omitted fallback, so the sync
+            // reuse path and the open path cannot disagree on which saved account is in play.
+            var rec = LoadPinnedRecord(mode, tenantId, forceReauth: skipSavedRecord, out _);
+            return BuildCredentialWith(mode, tenantId, rec, disableInteractive);
         }
 
         // Build the Azure.Identity credential from an ALREADY-LOADED saved record (null = pin nothing → picker / no
         // silent reuse). Kept separate from the disk read so the async open path can read the record exactly once and
         // thread that single snapshot through both the credential it pins AND the account it reports. `mode` and
         // `tenant` must be normalised (lower-case mode, trimmed tenant) by the caller.
-        private static TokenCredential BuildCredentialWith(string mode, string tenant, AuthenticationRecord savedRecord)
+        // disableInteractive (agent origin): set DisableAutomaticAuthentication so GetToken can NEVER pop a browser /
+        // device-code prompt on the user's machine — it throws AuthenticationRequiredException instead when the cache is
+        // stale. Belt-and-braces behind the engine's pre-refusal: an agent must never trigger an interactive sign-in.
+        // loginHint (item 12): pre-fills the Microsoft browser picker with an account (used when re-signing a named,
+        // signed-out profile so the prompt targets THAT identity instead of an unrestricted picker).
+        // Test seam (T193): fires on EVERY credential construction ATTEMPT, before the switch picks one, so the
+        // serviceprincipal path (which throws inside ClientSecret on a machine with no env vars) and the 'token' throw
+        // are both recorded rather than vanishing. This method is the single chokepoint every builder ends in, which is
+        // why one hook covers them all. Null in production, same idiom as DeviceCodePromptForTests / SavedAccountForTests.
+        internal static Action<string> CredentialBuiltForTests;
+
+        private static TokenCredential BuildCredentialWith(string mode, string tenant, AuthenticationRecord savedRecord, bool disableInteractive = false, string loginHint = null)
         {
+            CredentialBuiltForTests?.Invoke(mode);
             return mode switch
             {
                 "serviceprincipal" or "sp" => ClientSecret(tenant),
-                "interactive" or "entra" or "entramfa" or "mfa" => new InteractiveBrowserCredential(InteractiveOptions(tenant, savedRecord)),
-                "devicecode" => new DeviceCodeCredential(DeviceCodeOptions(tenant, savedRecord)),
+                "interactive" or "entra" or "entramfa" or "mfa" => new InteractiveBrowserCredential(InteractiveOptions(tenant, savedRecord, disableInteractive, loginHint)),
+                "devicecode" => new DeviceCodeCredential(DeviceCodeOptions(tenant, savedRecord, disableInteractive)),
                 "token" => throw new InvalidOperationException("BuildCredential does not handle 'token' mode (the caller supplies the token)."),
                 _ => new AzureCliCredential(new AzureCliCredentialOptions { TenantId = tenant }),
             };
@@ -146,17 +171,31 @@ namespace Semanticus.Engine
 
         // ---- Persistent interactive token cache (survives engine restarts) -------------------------------------
         // "Save my XMLA sign-in." Azure.Identity keeps the access+refresh token in an on-disk MSAL cache when given
-        // TokenCachePersistenceOptions (encrypted at rest — DPAPI on Windows). We ALSO persist the AuthenticationRecord
-        // (account identity — username/home-account-id/tenant/authority, NOT a token) so a later run knows WHICH
+        // TokenCachePersistenceOptions (DPAPI on Windows; libsecret/Keychain elsewhere, with an unencrypted file
+        // fallback so a missing OS secret store cannot throw and break auth). We ALSO persist the AuthenticationRecord
+        // (account identity: username/home-account-id/tenant/authority, NOT a token) so a later run knows WHICH
         // cached account to use and acquires silently, with no browser pop, until the refresh token ages out (~90d).
-        // Gated to Windows: on Linux/macOS the cache needs libsecret/Keychain and would throw, so we skip persistence
-        // there and fall back to the in-memory (re-prompt-per-restart) behaviour rather than breaking auth.
-        private const string TokenCacheName = "semanticus-xmla";
-        private static bool PersistenceSupported => OperatingSystem.IsWindows();
+        // This is on every OS. Gating it to Windows left Linux with no saved account and no cache, so Connections
+        // reported the signed-in user as unknown and every later open popped the Microsoft picker (D-013 / D-015).
+        private const string ProductionTokenCacheName = "semanticus-xmla";
+        private static bool PersistenceSupported => true;
 
+        // Test seam ONLY: the name of the encrypted MSAL token cache. PersistDirOverride isolates the record JSON but
+        // NOT this cache, which lives in the platform credential store under a NAME, not under a directory. Without this
+        // seam a test that builds a real credential attaches the PRODUCTION cache and can read (or, on a successful
+        // interactive acquisition, write) the very tokens a real sign-in persists. Any test that isolates the auth store
+        // must set BOTH. Null in production.
+        internal static string TokenCacheNameOverride { get; set; }
+        private static string TokenCacheName =>
+            string.IsNullOrWhiteSpace(TokenCacheNameOverride) ? ProductionTokenCacheName : TokenCacheNameOverride;
+
+        // Test seam ONLY: point the record + profile store at a scratch dir so tests never touch the user's real auth
+        // dir. Null in production (the encrypted-cache LocalAppData path). Same discipline as ConnectionRegistry.RootOverride.
+        // NOTE: this covers the record JSON only. The encrypted token cache is named, not pathed — see TokenCacheNameOverride.
+        internal static string PersistDirOverride { get; set; }
         private static string PersistDir()
         {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Semanticus", "auth");
+            var dir = PersistDirOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Semanticus", "auth");
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -191,10 +230,14 @@ namespace Semanticus.Engine
                 }
                 using var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(recordJson));
                 var rec = AuthenticationRecord.Deserialize(ms);
-                // Apply the USABLE bar (non-blank Username) BEFORE anyone pins this for silent acquisition: Deserialize is
-                // lenient and can return a blank record for a non-record blob, and a blank identity must never reach Azure
-                // Identity as a pinned account (round-10 HIGH point 5).
-                return rec == null || string.IsNullOrWhiteSpace(rec.Username) ? null : rec;
+                // The USABLE bar, applied BEFORE anyone pins this for silent acquisition: Deserialize is lenient and can
+                // return a blank record for a non-record blob, and a blank identity must never reach Azure Identity as a
+                // pinned account (round-10 HIGH point 5). A HOME-ACCOUNT ID is required too (T163 round 5): this file is
+                // only ever a NAMED interactive / device-code record, and without the stable id the account drops into the
+                // shared "identity unknown" bucket and bypasses the wrong-identity comparison entirely. Unusable means a
+                // human simply re-captures the sign-in, and an agent refuses — both correct.
+                return rec == null || string.IsNullOrWhiteSpace(rec.Username) || string.IsNullOrWhiteSpace(rec.HomeAccountId)
+                    ? null : rec;
             }
             catch { /* corrupt / version-mismatched record — ignore and re-authenticate */ }
             return null;
@@ -204,11 +247,13 @@ namespace Semanticus.Engine
         // USABLE saved record actually loads. Decided on the DESERIALIZED record — NOT File.Exists — because a
         // reservation-only envelope (a claim minted before any record committed; the file exists but RecordJson=null)
         // carries no account: File.Exists mistook it for a saved sign-in, so the next open SKIPPED AuthenticateAsync and
-        // never captured/committed the identity. "Usable" = a non-blank Username (MSAL's Deserialize is lenient and hands
-        // back an empty record for a non-record envelope, so a null check alone isn't enough) — the SAME bar ReadSavedAccount
-        // uses, so this captures exactly when there is no account to silently reuse.
+        // never captured/committed the identity. "Usable" = a non-blank Username AND a non-blank HomeAccountId (MSAL's
+        // Deserialize is lenient and hands back an empty record for a non-record envelope, so a null check alone isn't
+        // enough; and without the stable id the account cannot be identity-compared at all) — the SAME bar LoadRecord and
+        // the profile store apply, so this captures exactly when there is no usable account to silently reuse.
         internal static bool ShouldCaptureRecord(AuthenticationRecord loaded, bool forceReauth)
-            => forceReauth || loaded == null || string.IsNullOrWhiteSpace(loaded.Username);
+            => forceReauth || loaded == null || string.IsNullOrWhiteSpace(loaded.Username)
+               || string.IsNullOrWhiteSpace(loaded.HomeAccountId);
 
         // Path overload: loads the record once and defers to the pure form above. The PRODUCTION open path
         // (BuildCredentialAsync) never uses this — it reads the record ONCE and passes it in, so the pin decision and
@@ -388,6 +433,35 @@ namespace Semanticus.Engine
             catch { return false; /* best-effort: a failed claim just means we prompt again next restart */ }
         }
 
+        // A SILENT live-swap winner has no record to write, but it must still move the slot's DURABLE ordering forward so an
+        // older pending commit — possibly in ANOTHER PROCESS (the extension and MCP engines share this file) — is refused by
+        // the cross-process CAS (round-3 sol HIGH). The in-process barrier orders commits within ONE engine only; across
+        // processes the durable Seq is the sole authority. This mints a fresh claim (strictly newer than any committed or
+        // issued one) and CAS-advances Seq WITHOUT changing RecordJson: the existing default account STANDS, but any claim
+        // <= this one can no longer win. `slot` is the AuthRecordSlot form "family|tenant". Best-effort by construction.
+        internal static void AdvanceSlotSeqBySlot(string slot)
+        {
+            if (!PersistenceSupported || string.IsNullOrWhiteSpace(slot)) return;
+            var bar = slot.IndexOf('|');
+            if (bar < 0) return;
+            var family = slot.Substring(0, bar);
+            var tenant = slot.Substring(bar + 1);
+            try
+            {
+                var path = RecordPath(family, (tenant ?? "").Trim().ToLowerInvariant());
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                using (AcquireRecordLock(path))
+                {
+                    var env = ReadEnvelopeState(path);
+                    var claim = Math.Max(env.IssuedSeq, env.Seq) + 1;   // strictly newer than any committed / issued claim
+                    env.Seq = claim;                                     // advance the committed sequence...
+                    env.IssuedSeq = claim;                               // ...and the reservation high-water
+                    WriteEnvelopeAtomic(path, env);                      // RecordJson unchanged — only the ordering marker moves forward
+                }
+            }
+            catch { /* best-effort: a silent winner that can't advance just leaves the durable order as-is */ }
+        }
+
         // Cross-process lock over ONE record file, keyed by its path — the same primitive ConnectionRegistry uses. Held
         // only for the microseconds of a temp-write + rename, so contention is rare; a timeout degrades to "prompt again".
         private static IDisposable AcquireRecordLock(string path)
@@ -401,36 +475,75 @@ namespace Semanticus.Engine
             throw new IOException("Could not acquire the auth-record lock.");
         }
 
-        // The credential options keep the shared encrypted token cache attached (so a freshly chosen account still
-        // persists) and pin the AuthenticationRecord the CALLER already loaded — a null `rec` (the "use a different
-        // account" path, or no saved record) pins nothing, so MSAL falls into interactive auth and shows the account
-        // picker instead of silently re-using a cached identity. These no longer read disk themselves: the caller reads
-        // the record ONCE and passes it here, so the pinned identity can't diverge from the reported one (round-10 HIGH).
-        private static InteractiveBrowserCredentialOptions InteractiveOptions(string tenant, AuthenticationRecord rec)
+        // Named MSAL cache plus, off Windows, permission to fall back to an unencrypted file when libsecret/Keychain
+        // is missing. Without that fallback Azure.Identity throws on a machine with no secret store, which is why this
+        // used to be Windows-only and Linux never remembered a sign-in.
+        private static TokenCachePersistenceOptions CachePersistenceOptions() => new()
+        {
+            Name = TokenCacheName,
+            UnsafeAllowUnencryptedStorage = !OperatingSystem.IsWindows(),
+        };
+
+        // The credential options keep the shared token cache attached (so a freshly chosen account still persists)
+        // and pin the AuthenticationRecord the CALLER already loaded. A null `rec` (the "use a different account" path,
+        // or no saved record) pins nothing, so MSAL falls into interactive auth and shows the account picker instead of
+        // silently re-using a cached identity. These no longer read disk themselves: the caller reads the record ONCE
+        // and passes it here, so the pinned identity can't diverge from the reported one (round-10 HIGH).
+        private static InteractiveBrowserCredentialOptions InteractiveOptions(string tenant, AuthenticationRecord rec, bool disableInteractive = false, string loginHint = null)
         {
             var o = new InteractiveBrowserCredentialOptions { TenantId = tenant, ClientId = AuthClientId() };
+            if (!string.IsNullOrWhiteSpace(loginHint)) o.LoginHint = loginHint.Trim();   // pre-fill the picker with the named account (item 12)
+            if (disableInteractive) o.DisableAutomaticAuthentication = true;   // agent: GetToken throws instead of popping a browser
             if (PersistenceSupported)
             {
-                o.TokenCachePersistenceOptions = new TokenCachePersistenceOptions { Name = TokenCacheName };
-                if (rec != null) o.AuthenticationRecord = rec;     // → GetToken acquires silently from the encrypted cache
+                o.TokenCachePersistenceOptions = CachePersistenceOptions();
+                if (rec != null) o.AuthenticationRecord = rec;     // GetToken acquires silently from the persisted cache
             }
             return o;
         }
-        private static DeviceCodeCredentialOptions DeviceCodeOptions(string tenant, AuthenticationRecord rec)
+        // Test seam: stands in for the device-code PROMPT itself. A non-interactive credential must never reach this
+        // callback — Azure.Identity invokes it only when it is actually about to ask a human for something — so a test
+        // can prove "no prompt was possible" positively, instead of only asserting that some flag was computed.
+        // Null in production (the real stderr prompt below).
+        internal static Func<DeviceCodeInfo, CancellationToken, Task> DeviceCodePromptForTests;
+
+        private static DeviceCodeCredentialOptions DeviceCodeOptions(string tenant, AuthenticationRecord rec, bool disableInteractive = false)
         {
             var o = new DeviceCodeCredentialOptions
             {
                 TenantId = tenant,
                 ClientId = AuthClientId(),
-                DeviceCodeCallback = (info, _) => { Console.Error.WriteLine("[auth] " + info.Message); return Task.CompletedTask; },
+                DeviceCodeCallback = DeviceCodePromptForTests
+                    ?? ((info, _) => { Console.Error.WriteLine("[auth] " + info.Message); return Task.CompletedTask; }),
             };
+            if (disableInteractive) o.DisableAutomaticAuthentication = true;   // agent: GetToken throws instead of printing a device code
             if (PersistenceSupported)
             {
-                o.TokenCachePersistenceOptions = new TokenCachePersistenceOptions { Name = TokenCacheName };
+                o.TokenCachePersistenceOptions = CachePersistenceOptions();
                 if (rec != null) o.AuthenticationRecord = rec;
             }
             return o;
         }
+
+        /// <summary>Build a credential pinned to an ALREADY-RESOLVED saved record — the identity an open actually
+        /// authenticated as, NOT the tenant default <see cref="BuildCredential"/> would reload. Used to seed the other
+        /// driver's live-credential slot at open time, so a per-open account choice survives a renewal by whichever
+        /// driver did not open the model. `mode` must be normalised lower-case; "token" has no credential.</summary>
+        internal static TokenCredential BuildCredentialFromRecord(string mode, string tenantId, AuthenticationRecord record, bool disableInteractive)
+        {
+            mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
+            if (mode == "token") return null;
+            return BuildCredentialWith(mode, string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim(), record, disableInteractive);
+        }
+
+        // Test seams: the EXACT option objects the credential builders produce, so a test can assert that a HUMAN
+        // build stays prompt-capable without actually running an interactive acquisition (which would open a browser
+        // or block on a real device-code flow on whatever machine runs the suite). The agent side is proven the other
+        // way — end to end, by a real acquisition that refuses.
+        internal static InteractiveBrowserCredentialOptions InteractiveOptionsForTests(string tenant, bool disableInteractive)
+            => InteractiveOptions(tenant, null, disableInteractive);
+        internal static DeviceCodeCredentialOptions DeviceCodeOptionsForTests(string tenant, bool disableInteractive)
+            => DeviceCodeOptions(tenant, null, disableInteractive);
 
         /// <summary>A credential ready to acquire a token, plus the freshly authenticated MSAL record that must NOT be
         /// persisted until the open it authorizes SUCCEEDS. Deferring the write is what stops a FAILED open from silently
@@ -462,10 +575,16 @@ namespace Semanticus.Engine
             /// drift from the pinned one via a second disk read racing a cross-process commit. Null for azcli / sp / token
             /// (no MSAL record) and on non-persistence platforms.</summary>
             internal AuthenticationRecord ResolvedRecord { get; set; }
+            /// <summary>The saved record this credential was built from, for seeding the OTHER driver's slot with the
+            /// same identity. Internal: never a token, only the account pointer.</summary>
+            internal AuthenticationRecord RecordForSlotSeed => ResolvedRecord;
             /// <summary>The account (UPN) this credential will connect as — the constructed/pinned identity, NOT a fresh
             /// disk read. The live-connection sites report THIS so the reported account matches the credential actually
             /// used. Null when there is no MSAL record (azcli / sp / token).</summary>
             public string Account => ResolvedRecord?.Username;
+            /// <summary>The STABLE identity (MSAL home account id) this credential was constructed with — what the
+            /// live-auth cache keys on. <see cref="Account"/> is the display form and must not be keyed on.</summary>
+            public string HomeAccountId => CanonicalHomeAccountId(ResolvedRecord?.HomeAccountId);
         }
 
         /// <summary>Like <see cref="BuildCredential"/>, but for the interactive / device-code families it also
@@ -478,7 +597,10 @@ namespace Semanticus.Engine
         /// runs the interactive sign-in (showing the account picker), and marks the newly chosen identity for commit —
         /// the cure for "stuck signed in as the wrong account" when the cache holds one slot per (client, tenant).
         /// No-op for serviceprincipal/azcli (those modes have no record to switch).</summary>
-        public static async Task<PreparedCredential> BuildCredentialAsync(string mode, string tenantId, CancellationToken ct, bool forceReauth = false)
+        /// <paramref name="disableInteractive"/> (agent origin) forbids ANY interactive prompt: the credential is built
+        /// with DisableAutomaticAuthentication, and the capture branch (a first sign-in) is refused rather than popping a
+        /// browser. An agent must already have a silently-usable saved account (the engine pre-refuses otherwise).
+        public static async Task<PreparedCredential> BuildCredentialAsync(string mode, string tenantId, CancellationToken ct, bool forceReauth = false, bool disableInteractive = false, string loginHint = null)
         {
             mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
             if (mode == "token") throw new InvalidOperationException("BuildCredentialAsync does not handle 'token' mode (the caller supplies the token).");
@@ -494,7 +616,7 @@ namespace Semanticus.Engine
             var loaded = LoadPinnedRecord(mode, tenant, forceReauth, out var path);
 
             // Build the credential FROM that one snapshot — the options wiring no longer re-reads disk.
-            var cred = BuildCredentialWith(mode, tenant, loaded);
+            var cred = BuildCredentialWith(mode, tenant, loaded, disableInteractive, loginHint);
             var prepared = new PreparedCredential { Credential = cred, ResolvedRecord = loaded };
             if (path == null) return prepared;   // azcli / sp / no-persistence: no record to capture or report
 
@@ -502,6 +624,10 @@ namespace Semanticus.Engine
             // no USABLE record loaded (a reservation-only envelope counts as none — round-9 HIGH 1); otherwise the cred
             // acquires silently from the cache and the pinned `loaded` record is the reported identity.
             if (!ShouldCaptureRecord(loaded, forceReauth)) return prepared;
+            // A non-interactive (agent) build must NEVER run the interactive capture (AuthenticateAsync pops a browser /
+            // device code). The engine pre-refuses an agent with no silently-usable account, so we should not reach here;
+            // returning the silent credential (whose GetToken then throws AuthenticationRequiredException) is the fail-safe.
+            if (disableInteractive) return prepared;
 
             // Prime + capture the record from THIS interactive acquisition and STAGE it (not write) — see
             // PreparedCredential — so a failed open leaves the old one, and the token the caller's GetToken uses next
@@ -514,12 +640,18 @@ namespace Semanticus.Engine
             // the saved account untouched, with no silent re-prompt.
             if (cred is InteractiveBrowserCredential ibc)
             {
-                prepared.PendingRecord = await ibc.AuthenticateAsync(new TokenRequestContext(Scopes), ct).ConfigureAwait(false);
+                // The chooser hang lives here: closing the tab does not cancel MSAL, so without a ceiling the page
+                // waited until the 10 minute webview guard (D-014). SignInWait names cancel vs timeout and logs an id.
+                prepared.PendingRecord = await SignInWait.RunAsync(
+                    inner => ibc.AuthenticateAsync(new TokenRequestContext(Scopes), inner),
+                    ct).ConfigureAwait(false);
                 prepared.PendingRecordPath = path; prepared.PendingClaimSeq = MintClaim(path); prepared.ResolvedRecord = prepared.PendingRecord;
             }
             else if (cred is DeviceCodeCredential dcc)
             {
-                prepared.PendingRecord = await dcc.AuthenticateAsync(new TokenRequestContext(Scopes), ct).ConfigureAwait(false);
+                prepared.PendingRecord = await SignInWait.RunAsync(
+                    inner => dcc.AuthenticateAsync(new TokenRequestContext(Scopes), inner),
+                    ct).ConfigureAwait(false);
                 prepared.PendingRecordPath = path; prepared.PendingClaimSeq = MintClaim(path); prepared.ResolvedRecord = prepared.PendingRecord;
             }
             return prepared;
@@ -551,7 +683,30 @@ namespace Semanticus.Engine
         {
             var family = InteractiveFamily(mode);
             path = (family != null && PersistenceSupported) ? RecordPath(family, tenant) : null;
-            return (path != null && !forceReauth) ? LoadRecord(path) : null;
+            if (path == null || forceReauth) return null;
+            var rec = LoadRecord(path);
+            if (rec != null) return rec;
+            // Tenant omitted (an endpoint-only remembered workspace): pin the family's signed-in default so the
+            // account a named-model open already saved is the one this open uses, instead of reporting unknown.
+            if (!string.IsNullOrWhiteSpace(tenant)) return null;
+            var fallback = FindDefaultFamilyPath(family);
+            if (fallback == null) return null;
+            path = fallback;
+            return LoadRecord(path);
+        }
+
+        // The default-slot file for this family's signed-in default profile, or any signed-in profile of the family.
+        // Null when nobody is signed in. Used only when the caller did not name a tenant.
+        private static string FindDefaultFamilyPath(string family)
+        {
+            AccountProfile pick = null;
+            foreach (var p in ListProfiles())
+            {
+                if (!string.Equals(p.Family, family, StringComparison.Ordinal) || !p.SignedIn) continue;
+                if (p.IsDefault) return RecordPath(family, p.TenantId);
+                pick ??= p;
+            }
+            return pick == null ? null : RecordPath(family, pick.TenantId);
         }
 
         // Test seam (round-10 HIGH): the EXACT record BuildCredentialAsync would pin + report for this (mode, tenant) —
@@ -577,8 +732,13 @@ namespace Semanticus.Engine
         /// lock — the live token still decides who connects.</summary>
         public sealed class SavedAccount
         {
+            /// <summary>UPN — a DISPLAY value only. Never compare identities on this: a UPN can be reassigned to a new
+            /// principal and renamed on the same one. Compare <see cref="HomeAccountId"/>.</summary>
             public string Username { get; set; }
             public string TenantId { get; set; }
+            /// <summary>MSAL's stable home account id for this saved sign-in. Null when it cannot be read (the
+            /// test seam, or a record without one), which must read as "identity unknown", never as a match.</summary>
+            public string HomeAccountId { get; set; }
         }
 
         /// <summary>Read the saved account for an interactive/device-code sign-in on THIS device, if one is persisted —
@@ -604,10 +764,12 @@ namespace Semanticus.Engine
                 return string.IsNullOrWhiteSpace(u) ? null : new SavedAccount { Username = u, TenantId = tenant };
             }
             if (!PersistenceSupported) return null;
-            var rec = LoadRecord(RecordPath(family, tenant));
+            // Same pin as BuildCredentialAsync (including the tenant-omitted fallback), so Connections, the chooser
+            // and the open path cannot disagree on who is signed in.
+            var rec = LoadPinnedRecord(mode, tenant, forceReauth: false, out _);
             return rec == null || string.IsNullOrWhiteSpace(rec.Username)
                 ? null
-                : new SavedAccount { Username = rec.Username, TenantId = rec.TenantId };
+                : new SavedAccount { Username = rec.Username, TenantId = rec.TenantId, HomeAccountId = CanonicalHomeAccountId(rec.HomeAccountId) };
         }
 
         /// <summary>The saved-account SLOT a sign-in of this (mode, tenant) writes — family+tenant, matching
@@ -632,8 +794,10 @@ namespace Semanticus.Engine
             => await cred.GetTokenAsync(new TokenRequestContext(scopes), ct).ConfigureAwait(false);
 
         /// <summary>Bearer token for a Fabric SQL endpoint (TDS) — the same auth modes as XMLA, but the
-        /// SQL/database scope. Used as <c>SqlConnection.AccessToken</c> for deterministic schema introspection.</summary>
-        public static async Task<string> AcquireSqlAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null)
+        /// SQL/database scope. Used as <c>SqlConnection.AccessToken</c> for deterministic schema introspection.
+        /// disableInteractive (agent origin) forbids a prompt: a stale cache throws AuthenticationRequiredException
+        /// instead of popping a browser.</summary>
+        public static async Task<string> AcquireSqlAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null, bool disableInteractive = false)
         {
             mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
             if (mode == "token")
@@ -641,21 +805,24 @@ namespace Semanticus.Engine
                 if (string.IsNullOrWhiteSpace(rawToken)) throw new InvalidOperationException("auth mode 'token' requires a raw access token scoped to the SQL/database resource.");
                 return rawToken;
             }
-            var tok = await GetTokenAsync(BuildCredential(mode, tenantId), SqlScopes, ct).ConfigureAwait(false);
+            // The SQL audience is a different scope, never a different prompt surface — an interactive/device-code mode
+            // here pops the SAME browser as XMLA, so the agent flag has to travel with it (T163).
+            var tok = await GetTokenAsync(BuildCredential(mode, tenantId, disableInteractive: disableInteractive), SqlScopes, ct).ConfigureAwait(false);
             return tok.Token;
         }
 
         /// <summary>Bearer token for the Fabric REST API (api.fabric.microsoft.com) — same auth modes as XMLA, the
         /// Fabric resource scope. Used as the <c>Authorization: Bearer</c> header for the ALM cloud lane (workspaces,
         /// deployment pipelines, items, git). Static (not session-cached) to avoid handing a Fabric call a token
-        /// minted for the XMLA/SQL audience.</summary>
+        /// minted for the XMLA/SQL audience. disableInteractive (agent origin) forbids a prompt: a stale cache throws
+        /// AuthenticationRequiredException instead of popping a browser.</summary>
         // Test-only seam: the offline deploy-feature tests set this to return a canned bearer so the LocalEngine deploy
         // ops (which always pass rawToken=null) run end-to-end against FabricRest.TestClientFactory with no live tenant
         // and no Azure.Identity. Null in production → the real credential path below runs. Internal + null-by-default,
         // so it can never weaken a production auth path (same risk profile as DaxLibRest.ClientFactoryForTests).
         internal static Func<string> FabricTokenForTests;
 
-        public static async Task<string> AcquireFabricAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null)
+        public static async Task<string> AcquireFabricAsync(string mode, string rawToken, CancellationToken ct, string tenantId = null, bool disableInteractive = false)
         {
             if (FabricTokenForTests != null) return FabricTokenForTests();
             mode = string.IsNullOrWhiteSpace(mode) ? "azcli" : mode.Trim().ToLowerInvariant();
@@ -664,21 +831,54 @@ namespace Semanticus.Engine
                 if (string.IsNullOrWhiteSpace(rawToken)) throw new InvalidOperationException("auth mode 'token' requires a raw access token scoped to the Fabric API resource (https://api.fabric.microsoft.com).");
                 return rawToken;
             }
-            var tok = await GetTokenAsync(BuildCredential(mode, tenantId), FabricScopes, ct).ConfigureAwait(false);
+            // Same credential, different audience — so the same browser can pop. The agent flag travels with it (T163).
+            var tok = await GetTokenAsync(BuildCredential(mode, tenantId, disableInteractive: disableInteractive), FabricScopes, ct).ConfigureAwait(false);
             return tok.Token;
         }
 
         // Service-principal (client-secret) auth — the reliable principal for Power BI / Fabric XMLA, which
         // routinely walls delegated *user* tokens ("MWC token NotAuthorized" / "failed for all authenticators")
         // even for the model owner. Reads standard AZURE_* env vars, falling back to FABRIC_*/POWERBI_* names.
+        // The three name lists are ONE source of truth shared with ProbePrerequisites' read-only presence probe
+        // (below), so the real credential build and the "can this even work" preview can never disagree on what
+        // counts as an accepted name.
+        private static readonly string[] SpClientIdEnvNames = { "AZURE_CLIENT_ID", "FABRIC_CLIENT", "POWERBI_CLIENT_ID" };
+        private static readonly string[] SpSecretEnvNames = { "AZURE_CLIENT_SECRET", "FABRIC_SECRET", "POWERBI_CLIENT_SECRET" };
+        private static readonly string[] SpTenantEnvNames = { "AZURE_TENANT_ID", "FABRIC_TENANT", "POWERBI_TENANT_ID" };
+
         private static TokenCredential ClientSecret(string tenantId)
         {
-            var clientId = Env("AZURE_CLIENT_ID", "FABRIC_CLIENT", "POWERBI_CLIENT_ID");
-            var secret = Env("AZURE_CLIENT_SECRET", "FABRIC_SECRET", "POWERBI_CLIENT_SECRET");
-            var tenant = string.IsNullOrWhiteSpace(tenantId) ? Env("AZURE_TENANT_ID", "FABRIC_TENANT", "POWERBI_TENANT_ID") : tenantId;
+            var clientId = Env(SpClientIdEnvNames);
+            var secret = Env(SpSecretEnvNames);
+            var tenant = string.IsNullOrWhiteSpace(tenantId) ? Env(SpTenantEnvNames) : tenantId;
             if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(tenant))
-                throw new InvalidOperationException("serviceprincipal auth needs a client id + secret + tenant. Set AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID (or FABRIC_CLIENT/FABRIC_SECRET/FABRIC_TENANT).");
+                throw new InvalidOperationException("serviceprincipal auth needs a client id + secret + tenant. Set AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID (or FABRIC_CLIENT/FABRIC_SECRET/FABRIC_TENANT, or POWERBI_CLIENT_ID/POWERBI_CLIENT_SECRET/POWERBI_TENANT_ID).");
             return new ClientSecretCredential(tenant, clientId, secret);
+        }
+
+        /// <summary>Read-only PRESENCE probe for 'serviceprincipal' auth's three prerequisites (client id / secret /
+        /// tenant) — NEVER a secret VALUE, only whether an accepted env-var NAME is set. Shares the exact name lists
+        /// <see cref="ClientSecret"/> reads (above), so this preview and the real credential build can never disagree
+        /// on what counts as "present". A supplied <paramref name="tenantId"/> (e.g. the connection target's
+        /// remembered tenant) satisfies the Tenant requirement even with no env var set, mirroring ClientSecret's own
+        /// tenantId-overrides-env precedence. `mode` is stamped through as given (already normalised by the caller).</summary>
+        internal static AuthPrerequisites ProbePrerequisites(string mode, string tenantId)
+        {
+            var hasClientId = Env(SpClientIdEnvNames) != null;
+            var hasSecret = Env(SpSecretEnvNames) != null;
+            var hasTenant = !string.IsNullOrWhiteSpace(tenantId) || Env(SpTenantEnvNames) != null;
+            return new AuthPrerequisites
+            {
+                Mode = mode,
+                Ready = hasClientId && hasSecret && hasTenant,
+                KeyVaultSupported = false,
+                Requirements = new[]
+                {
+                    new AuthPrereqRequirement { Label = "Client ID", EnvNames = (string[])SpClientIdEnvNames.Clone(), Present = hasClientId },
+                    new AuthPrereqRequirement { Label = "Client secret", EnvNames = (string[])SpSecretEnvNames.Clone(), Present = hasSecret },
+                    new AuthPrereqRequirement { Label = "Tenant", EnvNames = (string[])SpTenantEnvNames.Clone(), Present = hasTenant },
+                },
+            };
         }
 
         private static string Env(params string[] names)

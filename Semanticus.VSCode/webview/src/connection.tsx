@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { rpc, onReconnect, onDidChange, onConnectionChange } from './bridge';
 import type { ConnectionStatus } from './wire';
 
@@ -51,6 +51,7 @@ export interface SessionInfo {
   modelName?: string;
   source?: string;             // the edited model's origin: a local folder/file path, or an XMLA endpoint when live-bound
   hasUnsavedChanges?: boolean;
+  diskDiverged?: boolean;
   tables?: number;
   measures?: number;
   liveBound?: boolean;         // opened FROM a live model (deploy can push edits back to it)
@@ -63,6 +64,11 @@ export interface SessionInfo {
   currentTenant?: string;      // the tenant that account/connection belongs to, when known
 }
 
+// A connect attempt's outcome. `message` carries the ENGINE's own words on failure (e.g. the service-principal
+// "Set AZURE_CLIENT_ID..." help, or an XMLA sign-in error) so a caller shows the actionable reason, never a generic
+// "connection did not complete" that hides it. On success message is usually absent.
+export interface ConnectResult { ok: boolean; message?: string }
+
 interface ConnCtx {
   conn: ConnectionStatus | null;     // the attached live QUERY engine (drives the tabs)
   session: SessionInfo | null;       // the OPEN model identity (what the tree shows)
@@ -70,8 +76,8 @@ interface ConnCtx {
   busy: boolean;
   err: string | null;
   instances: LocalInstance[];
-  connectLocal: (dataSource?: string | null) => Promise<boolean>;   // attach a local instance to the current session
-  connectXmla: (endpoint: string, database: string, authMode: string, tenantId?: string | null) => Promise<boolean>;
+  connectLocal: (dataSource?: string | null) => Promise<ConnectResult>;   // attach a local instance to the current session
+  connectXmla: (endpoint: string, database: string, authMode: string, tenantId?: string | null) => Promise<ConnectResult>;
   disconnect: () => Promise<void>;
   refresh: () => Promise<void>;
   connectionsOpen: boolean;
@@ -111,18 +117,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     } catch { /* leave prior state; the connect UI stays available */ }
   }
 
-  async function connectLocal(dataSource: string | null = null): Promise<boolean> {
+  async function connectLocal(dataSource: string | null = null): Promise<ConnectResult> {
     setBusy(true); setErr(null);
     try {
       const c = await rpc<ConnectionStatus>('connectLocal', dataSource, null);
       setConn(c);
       if (!c.connected && c.message) setErr(c.message);
       else await refresh();
-      return !!c.connected;
-    } catch (e) { setErr(String((e as Error).message ?? e)); return false; }
+      return { ok: !!c.connected, message: c.message ?? undefined };
+    } catch (e) { const m = String((e as Error).message ?? e); setErr(m); return { ok: false, message: m }; }
     finally { setBusy(false); }
   }
-  async function connectXmla(endpoint: string, database: string, authMode: string, tenantId: string | null = null): Promise<boolean> {
+  async function connectXmla(endpoint: string, database: string, authMode: string, tenantId: string | null = null): Promise<ConnectResult> {
     setBusy(true); setErr(null);
     try {
       // Thread the tenant like the primary open — a remembered cross-tenant model must query its OWN tenant, not the
@@ -131,8 +137,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       setConn(c);
       if (!c.connected && c.message) setErr(c.message);
       else await refresh();
-      return !!c.connected;
-    } catch (e) { setErr(String((e as Error).message ?? e)); return false; }
+      return { ok: !!c.connected, message: c.message ?? undefined };
+    } catch (e) { const m = String((e as Error).message ?? e); setErr(m); return { ok: false, message: m }; }
     finally { setBusy(false); }
   }
   async function disconnect() {
@@ -165,9 +171,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stable identities: the hub's focus/Escape effect depends on onClose (=closeConnections), so a fresh arrow each
+  // render would retrigger it (capturing/restoring focus on every ConnectionProvider re-render). useCallback pins them.
+  const openConnections = useCallback(() => setConnectionsOpen(true), []);
+  const closeConnections = useCallback(() => setConnectionsOpen(false), []);
+
   return (
     <Ctx.Provider value={{ conn, session, context, busy, err, instances, connectLocal, connectXmla, disconnect, refresh,
-      connectionsOpen, openConnections: () => setConnectionsOpen(true), closeConnections: () => setConnectionsOpen(false) }}>
+      connectionsOpen, openConnections, closeConnections }}>
       {children}
     </Ctx.Provider>
   );
@@ -195,7 +206,7 @@ export function ConnectBar({ hint }: { hint?: string }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-        {hint ?? 'This tab runs live queries.'} {session?.modelName ? ` ${session.modelName} is open for editing, but no running model is selected for tests and queries.` : ' No model is open.'}
+        {hint ?? 'This tab runs live queries.'} {session?.modelName ? ` ${session.modelName} is open for editing${session?.source ? ` (${session.source})` : ''}, but no running model is selected for tests and queries.` : ' No model is open.'}
         {' '}Local files remain editable without a connection, but they cannot execute queries by themselves.
       </div>
       <div><button onClick={openConnections} disabled={busy}

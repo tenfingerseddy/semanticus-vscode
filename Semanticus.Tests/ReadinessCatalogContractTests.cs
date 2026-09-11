@@ -25,18 +25,96 @@ namespace Semanticus.Tests
             var counts = root.GetProperty("counts");
             var covered = root.GetProperty("covered").EnumerateArray().ToArray();
 
-            Assert.Equal(199, counts.GetProperty("rawRequirements").GetInt32());
-            Assert.Equal(194, counts.GetProperty("distinct").GetInt32());
-            Assert.Equal(192, counts.GetProperty("confirmed").GetInt32());
-            Assert.Equal(62, counts.GetProperty("covered").GetInt32());
-            Assert.Equal(50, counts.GetProperty("partial").GetInt32());
-            Assert.Equal(87, counts.GetProperty("missing").GetInt32());
+            // The published counts are DERIVED from this file's own arrays (recomputed in completion batch 7; the
+            // 2026-07-14 ledger of 199/62/50/87 no longer matched them). Recompute here rather than restate the
+            // numbers, so a row added without reconciling its status can never leave a stale count behind.
+            //
+            // TWO POPULATIONS, and the correction is that they are no longer equated. The earlier block published
+            // rawRequirements = distinct = confirmed = 207 and the plan called those "207 tracked requirements",
+            // but 207 is the COVERAGE-RECONCILIATION row count (covered + partial + missing); the confirmed source
+            // requirements are the `requirements` ledger, which holds 192. So the ledger count is now derived from
+            // the ledger, the reconciliation count from the reconciliation arrays, and the two are cross-checked
+            // through the ledger-match split instead of being asserted equal.
+            static string Norm(string s) => string.Join(" ", (s ?? "").ToLowerInvariant()
+                .Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+
+            var requirements = root.GetProperty("requirements");
+            var ledgerByClass = requirements.EnumerateObject()
+                .ToDictionary(cls => cls.Name, cls => cls.Value.EnumerateArray().ToArray(), StringComparer.Ordinal);
+            var ledgerRows = ledgerByClass.Values.SelectMany(rows => rows).ToArray();
+            var ledgerTitles = ledgerRows.Select(row => Norm(row.GetProperty("title").GetString()))
+                .ToHashSet(StringComparer.Ordinal);
+
+            // Source-requirement ledger: the count, its per-class breakdown, and its OWN provenance. A title
+            // collision inside the ledger would silently shrink the distinct set, so assert it does not happen.
+            Assert.Equal(192, counts.GetProperty("sourceRequirements").GetInt32());
+            Assert.Equal(counts.GetProperty("sourceRequirements").GetInt32(), ledgerRows.Length);
+            Assert.Equal(counts.GetProperty("sourceRequirements").GetInt32(), ledgerTitles.Count);
+            var byClass = counts.GetProperty("sourceRequirementsByClass");
+            Assert.Equal(ledgerByClass.Count, byClass.EnumerateObject().Count());
+            foreach (var cls in byClass.EnumerateObject())
+                Assert.Equal(ledgerByClass[cls.Name].Length, cls.Value.GetInt32());
+            Assert.Equal(counts.GetProperty("sourceRequirements").GetInt32(),
+                byClass.EnumerateObject().Sum(cls => cls.Value.GetInt32()));
+
+            // Provenance is only what the ledger actually carries , every entry's own sourceUrl. Nothing is
+            // claimed for the reconciliation rows, which have none.
+            var sourceUrls = ledgerRows.Select(row => (row.GetProperty("sourceUrl").GetString() ?? "").Trim()).ToArray();
+            Assert.Equal(counts.GetProperty("sourceRequirementsWithSourceUrl").GetInt32(),
+                sourceUrls.Count(url => url.Length > 0));
+            Assert.Equal(counts.GetProperty("sourceRequirements").GetInt32(),
+                counts.GetProperty("sourceRequirementsWithSourceUrl").GetInt32());
+            Assert.Equal(counts.GetProperty("sourceDocuments").GetInt32(),
+                sourceUrls.Where(url => url.Length > 0).Distinct(StringComparer.Ordinal).Count());
+            Assert.All(sourceUrls, url => Assert.StartsWith("https://learn.microsoft.com/", url, StringComparison.Ordinal));
+
+            // Coverage reconciliation: a separate population, counted from the reconciliation arrays alone.
+            var rejectedForCounts = root.GetProperty("rejected").EnumerateArray()
+                .Select(row => row.GetProperty("title").GetString()!).ToHashSet(StringComparer.Ordinal);
+            var coveredForCounts = covered.Select(row => row.GetProperty("title").GetString()!).ToHashSet(StringComparer.Ordinal);
+            var trackedGaps = root.GetProperty("gaps").EnumerateArray()
+                .Where(row => !coveredForCounts.Contains(row.GetProperty("title").GetString()!)
+                    && !rejectedForCounts.Contains(row.GetProperty("title").GetString()!))
+                .ToArray();
+            Assert.Equal(207, counts.GetProperty("reconciliationRows").GetInt32());
+            Assert.Equal(67, counts.GetProperty("covered").GetInt32());
+            Assert.Equal(48, counts.GetProperty("partial").GetInt32());
+            Assert.Equal(92, counts.GetProperty("missing").GetInt32());
             Assert.Equal(138, counts.GetProperty("residualNonGoals").GetInt32());
             Assert.Equal(counts.GetProperty("covered").GetInt32(), covered.Length);
-            Assert.Equal(counts.GetProperty("rawRequirements").GetInt32(),
+            Assert.Equal(counts.GetProperty("partial").GetInt32(),
+                trackedGaps.Count(row => row.GetProperty("status").GetString() == "partial"));
+            Assert.Equal(counts.GetProperty("missing").GetInt32(),
+                trackedGaps.Count(row => row.GetProperty("status").GetString() == "missing"));
+            Assert.Equal(counts.GetProperty("reconciliationRows").GetInt32(),
                 counts.GetProperty("covered").GetInt32()
                 + counts.GetProperty("partial").GetInt32()
                 + counts.GetProperty("missing").GetInt32());
+
+            // The reconciliation is NOT the ledger, and the published split says exactly how they differ: every
+            // reconciliation row either carries a ledger entry or does not, and every ledger entry either has a
+            // reconciliation row or is held in `rejected`. Both identities must close, which is what stops the
+            // two counts from being quietly equated again.
+            var rowTitles = coveredForCounts.Concat(trackedGaps.Select(row => row.GetProperty("title").GetString()!))
+                .Select(Norm).ToHashSet(StringComparer.Ordinal);
+            Assert.Equal(counts.GetProperty("reconciliationRows").GetInt32(), rowTitles.Count);
+            Assert.Equal(counts.GetProperty("reconciliationRowsWithLedgerEntry").GetInt32(),
+                rowTitles.Count(ledgerTitles.Contains));
+            Assert.Equal(counts.GetProperty("reconciliationRowsWithoutLedgerEntry").GetInt32(),
+                rowTitles.Count(title => !ledgerTitles.Contains(title)));
+            Assert.Equal(counts.GetProperty("reconciliationRows").GetInt32(),
+                counts.GetProperty("reconciliationRowsWithLedgerEntry").GetInt32()
+                + counts.GetProperty("reconciliationRowsWithoutLedgerEntry").GetInt32());
+            Assert.Equal(counts.GetProperty("ledgerEntriesRejected").GetInt32(),
+                ledgerTitles.Count(title => !rowTitles.Contains(title)));
+            Assert.Equal(counts.GetProperty("sourceRequirements").GetInt32(),
+                counts.GetProperty("reconciliationRowsWithLedgerEntry").GetInt32()
+                + counts.GetProperty("ledgerEntriesRejected").GetInt32());
+
+            // The retired keys must stay retired: re-adding one is how the conflation would come back.
+            foreach (var retired in new[] { "rawRequirements", "distinct", "confirmed" })
+                Assert.False(counts.TryGetProperty(retired, out _),
+                    $"counts.{retired} equated reconciliation rows with confirmed source requirements; it must not return.");
 
             var builtIns = ReadinessRuleSet.Default()
                 .Concat(ReadinessRuleSet.LiveRules(new ReadinessLiveStats()))
@@ -151,6 +229,23 @@ namespace Semanticus.Tests
             }
             Assert.Equal(batch6["High-cardinality columns and inefficient DAX flagged as model problems"],
                 byTitle["High-cardinality columns and inefficient DAX flagged as model problems"]);
+
+            // Completion batch 7: five rows folded in from the Microsoft semantic-model-authoring provenance backlog
+            // and the design spec's own unimplemented DAX ceiling. Each maps 1:1 to a shipped built-in rule.
+            var batch7 = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["AI data schema must include the dependents of every included measure"] = "AISCHEMA-DEP-MISSING",
+                ["Linguistic schema entities must still bind to objects that exist"] = "SYN-ENTITY-ORPHAN",
+                ["A single DAX expression must stay under the documented 5,000-character Copilot limit"] = "LIMIT-DAX-LENGTH",
+                ["Describe the hierarchies Copilot and Q&A drill on"] = "DESC-HIERARCHY",
+                ["The column that identifies a dimension row should carry the table name"] = "DIM-PRIMARY-NAME",
+            };
+            foreach (var expected in batch7)
+            {
+                Assert.Equal(expected.Value, byTitle[expected.Key]);
+                Assert.Equal(expected.Value, gapRulesByTitle[expected.Key]);
+                Assert.Contains(expected.Value, builtIns);
+            }
         }
 
         [Fact]

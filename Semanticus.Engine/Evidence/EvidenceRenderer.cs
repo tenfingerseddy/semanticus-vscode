@@ -293,7 +293,7 @@ namespace Semanticus.Engine.Evidence
 
             if (!string.IsNullOrWhiteSpace(doc.ContentHash))
             {
-                sb.Append("<p class=\"ev-hash\">Tamper-evident record. Content signature <code>")
+                sb.Append("<p class=\"ev-hash\" id=\"ev-integrity\">This page is a reading copy of the signed JSON record. Content signature <code>")
                   .Append(H(ShortHash(doc.ContentHash))).Append("</code></p>\n");
                 sb.Append("<p class=\"ev-hash-full\"><code>").Append(H(doc.ContentHash)).Append("</code></p>\n");
                 if (!string.IsNullOrWhiteSpace(doc.PrevHash))

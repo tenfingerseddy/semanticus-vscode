@@ -225,6 +225,58 @@ namespace Semanticus.Tests
             Assert.Equal("Update", dc.Action);   // authored int64 -> string is a real, breaking change
         }
 
+        // D-121: a merge that changes a column type used by a relationship must fail that item, not silently apply it.
+        [Fact]
+        public void Apply_refuses_incompatible_column_type_when_a_relationship_depends_on_it()
+        {
+            var left = new TOM.Model();
+            var ls = Table(left, "Sales", "t-s");
+            ls.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", LineageTag = "c-sk", DataType = TOM.DataType.String });
+            var lc = Table(left, "Customer", "t-c");
+            lc.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", LineageTag = "c-ck", DataType = TOM.DataType.Int64 });
+
+            var right = new TOM.Model();
+            var rs = Table(right, "Sales", "t-s");
+            rs.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", LineageTag = "c-sk", DataType = TOM.DataType.Int64 });
+            var rc = Table(right, "Customer", "t-c");
+            rc.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", LineageTag = "c-ck", DataType = TOM.DataType.Int64 });
+            right.Relationships.Add(new TOM.SingleColumnRelationship
+            {
+                Name = "Sales_Customer",
+                FromColumn = rs.Columns["CustomerKey"],
+                ToColumn = rc.Columns["CustomerKey"],
+                FromCardinality = TOM.RelationshipEndCardinality.Many,
+                ToCardinality = TOM.RelationshipEndCardinality.One,
+            });
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var col = diff.Items.Single(i => i.ObjectType == "Column" && i.Table == "Sales" && i.Name == "CustomerKey");
+            Assert.Equal("Update", col.Action);
+
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { col.Ref });
+            Assert.Contains(outcome.Failed, f => f.Ref == col.Ref);
+            Assert.DoesNotContain(col.Ref, outcome.Applied);
+            Assert.Equal(TOM.DataType.Int64, right.Tables.Find("Sales").Columns.Find("CustomerKey").DataType);
+        }
+
+        [Fact]
+        public void Apply_still_applies_a_column_type_change_with_no_dependents()
+        {
+            var left = new TOM.Model();
+            var lt = Table(left, "T", "t-t");
+            lt.Columns.Add(new TOM.DataColumn { Name = "Note", LineageTag = "c-n", DataType = TOM.DataType.String });
+            var right = new TOM.Model();
+            var rt = Table(right, "T", "t-t");
+            rt.Columns.Add(new TOM.DataColumn { Name = "Note", LineageTag = "c-n", DataType = TOM.DataType.Int64 });
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var col = diff.Items.Single(i => i.ObjectType == "Column" && i.Name == "Note");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { col.Ref });
+            Assert.Contains(col.Ref, outcome.Applied);
+            Assert.Empty(outcome.Failed);
+            Assert.Equal(TOM.DataType.String, right.Tables.Find("T").Columns.Find("Note").DataType);
+        }
+
         // ---- B2: relationships whose endpoint names contain '[' ']' '->' must not collide on one sig (wrong-rel delete). ----
         [Fact]
         public void B2_relationship_sig_is_injective_for_bracket_arrow_names()

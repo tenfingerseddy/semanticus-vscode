@@ -174,3 +174,87 @@ export function isRunNotFound(outcome) {
 export function stepGateSkipped(effectiveStrictness) {
   return effectiveStrictness === 'off';
 }
+
+/** Rebuild execution nesting from the engine's explicit parent indexes and direct step membership.
+ * Authored ids may repeat in different calls. A frame index identifies an instance; its parent keeps
+ * sibling loops apart. Read results from the flat plan so live updates always win over frame copies. */
+export function runSections(run) {
+  const frames = run.frames ?? [];
+  const items = frames.map((frame, frameIndex) => ({ frame, frameIndex, rows: [], sections: [], children: [] }));
+  const owners = new Map();
+  for (const item of items) {
+    for (const step of item.frame.steps) owners.set(step.stepId, item);
+  }
+  const root = [];
+  const parentOf = (index) => {
+    const parent = frames[index].parentFrameIndex;
+    return Number.isInteger(parent) && parent >= 0 && parent < frames.length && parent !== index ? parent : null;
+  };
+  for (const item of items) {
+    let parent = parentOf(item.frameIndex);
+    const seen = new Set([item.frameIndex]);
+    for (let ancestor = parent; ancestor != null; ancestor = parentOf(ancestor)) {
+      if (seen.has(ancestor)) { parent = null; break; }
+      seen.add(ancestor);
+    }
+    (parent == null ? root : items[parent].children).push({ kind: 'frame', item });
+  }
+  for (const [index, result] of run.steps.entries()) {
+    const row = { result, n: index + 1 };
+    (owners.get(result.stepId)?.children ?? root).push({ kind: 'step', key: result.stepId, row });
+  }
+  const group = (children) => {
+    for (const child of children) {
+      if (child.kind !== 'frame') continue;
+      child.item.sections = group(child.item.children);
+      child.item.rows = child.item.sections.flatMap((section) => section.kind === 'step' ? [section.row] : section.items.flatMap((item) => item.rows));
+    }
+    const position = (child) => child.kind === 'step' ? child.row.n : child.item.rows[0]?.n ?? Infinity;
+    children.sort((a, b) => position(a) - position(b));
+    const sections = [];
+    for (const child of children) {
+      if (child.kind === 'step') { sections.push(child); continue; }
+      const { item } = child;
+      const previous = sections.at(-1);
+      if (item.frame.kind === 'iteration' && previous?.kind === 'frames'
+        && previous.frameKind === 'iteration' && previous.stepId === item.frame.stepId) {
+        previous.items.push(item);
+      } else {
+        sections.push({ kind: 'frames', key: `frame-${item.frameIndex}`, stepId: item.frame.stepId, frameKind: item.frame.kind, items: [item] });
+      }
+    }
+    return sections;
+  };
+  return group(root);
+}
+
+/** Pending iteration frames are also called in_progress by the engine; use their actual rows. */
+export function frameProgress(item, currentStepId) {
+  if (item.frame?.kind === 'call' && item.frame.state === 'failed') return 'failed';
+  const states = item.rows.map(({ result }) => result.status);
+  if (states.length === 0) return item.frame?.state === 'passed' ? 'passed' : item.frame?.state === 'failed' ? 'failed' : 'pending';
+  if (states.includes('failed')) return 'failed';
+  if (frameIsCurrent(item, currentStepId)) return 'in_progress';
+  if (states.includes('pending') || states.includes('in_progress')) return 'pending';
+  if (states.includes('skipped')) return 'skipped';
+  if (states.every((state) => state === 'not_applicable')) return 'not_applicable';
+  if (states.every((state) => state === 'done' || state === 'not_applicable')) return 'done';
+  return 'passed';
+}
+
+/** A failed step can remain current for retry; membership must not overwrite its result. */
+export function frameIsCurrent(item, currentStepId) {
+  return currentStepId != null && item.rows.some(({ result }) => result.stepId === currentStepId);
+}
+
+/** Passed inputs prefill the form, but a refresh must never replace a person's unsaved answer. */
+export function providedAnswerDraft(provided, previous = { vals: {}, declined: {}, reasons: {} }, edited = new Set()) {
+  const draft = { vals: { ...previous.vals }, declined: { ...previous.declined }, reasons: { ...previous.reasons } };
+  for (const [name, answer] of Object.entries(provided ?? {})) {
+    if (edited.has(name)) continue;
+    draft.vals[name] = answer.value ?? '';
+    draft.declined[name] = answer.declined === true;
+    draft.reasons[name] = answer.declineReason ?? '';
+  }
+  return draft;
+}

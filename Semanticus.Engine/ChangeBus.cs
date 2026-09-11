@@ -69,6 +69,8 @@ namespace Semanticus.Engine
         /// door). Carries the refreshed list so the UI updates without a refetch. Separate from the run
         /// channel — a library edit is not a run transition.</summary>
         public event Action<WorkflowInfo[]> WorkflowLibraryChanged;
+        public event Action<WorkflowLayout> WorkflowLayoutChanged;
+        public void PublishWorkflowLayout(WorkflowLayout layout) => WorkflowLayoutChanged?.Invoke(layout);
 
         public void PublishWorkflowLibrary(WorkflowInfo[] v) => WorkflowLibraryChanged?.Invoke(v);
 

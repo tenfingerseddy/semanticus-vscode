@@ -7,11 +7,12 @@ import { useConnection, ConnectBar } from './connection';
 import { QueryStalenessChip } from './contextbar';
 import type { ResultSet } from './wire';
 import { useClaudeReflection, ClaudeRanBanner, type ActivityEvent } from './activity';
+import { isSignInError, SIGN_IN_AGAIN } from './authcopy';
 
 // `target` is a table handed in from elsewhere (a Model-tree "Preview data" right-click) — its nonce changes on
 // every navigation so re-selecting the same table re-fires the preview.
 export function DataPreviewView({ target }: { target?: { table: string; nonce: number } | null }) {
-  const { conn } = useConnection();
+  const { conn, session, connectXmla, busy: connBusy } = useConnection();
   const [tables, setTables] = useState<GraphTable[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [topN, setTopN] = useState(200);
@@ -115,7 +116,19 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
         <ConnectBar hint="Row preview runs a live top-N query (the table list is available offline)." />
         {/* The preview runs against the published model — flag when unsaved edits mean the rows omit your staged work. */}
         <QueryStalenessChip />
-        {err && <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div>}
+        {err && (
+          <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>
+            <div>{err}</div>
+            {isSignInError(err) && session?.liveEndpoint && (
+              <button type="button" data-testid="signin-again" disabled={connBusy} className="mt-2 text-[12px] px-2 py-1 rounded-md"
+                style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: connBusy ? 'default' : 'pointer' }}
+                onClick={() => {
+                  void connectXmla(session.liveEndpoint!, session.liveDatabase ?? '', 'interactive', session.currentTenant ?? null)
+                    .then((r) => { if (r.ok && selected) void preview(selected); else if (r.message) setErr(r.message); });
+                }}>{SIGN_IN_AGAIN}</button>
+            )}
+          </div>
+        )}
         {claudeEvent && <ClaudeRanBanner event={claudeEvent} onClear={() => setClaudeEvent(null)} />}
         {res ? (
           <>

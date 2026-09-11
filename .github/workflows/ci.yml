@@ -1,18 +1,381 @@
 name: CI
 
+# A full run buys two build-and-smoke legs plus five packaging legs, and four cheap ubuntu jobs (`decide`,
+# `battery-ok`, `packaging-ok`, `gate`) that exist to decide and report rather than to build, plus one cheap
+# ubuntu job (`ci-gate-battery`) that is the executable proof of `decide` and `gate`. It costs real
+# money, and the two macOS packaging legs bill at ten times the Linux rate. Four mechanisms keep that money
+# from being spent by accident, and ALL of them live inside this file on purpose:
+#   1. paths-ignore is gone and `decide` classifies instead (next comment block);
+#   2. the five-leg packaging matrix runs only at release time or on demand (see WHEN PACKAGING RUNS, on the
+#      `package` output inside `decide`);
+#   3. a push to `main` does not re-run the battery the merged pull request just passed (see MAIN-PUSH DEDUP,
+#      on the `battery` output inside `decide`);
+#   4. a superseded pull-request run is cancelled by the `concurrency` block below.
+#
+# WHY paths-ignore IS GONE. It used to sit on the `on:` triggers, and it worked: a documents-only pull
+# request bought no run at all. But "no run" also means "no check run ever appears", and a required status
+# check that never appears never resolves — the pull request sits on "Expected — waiting for status to be
+# reported" and can NEVER be merged. Required checks plus paths-ignore is a deadlock. Since `main` is meant
+# to become a protected branch requiring a green check, the skip had to move from the trigger (where it
+# suppresses the check) to the JOBS (where the check still reports, and reports honestly).
+#
+# HOW IT WORKS NOW. `decide` is one cheap ubuntu job that classifies the changed files and reads the draft
+# flag. Every expensive job is gated on its outputs, so a skipped battery never allocates a runner — the
+# `if:` is on the matrix jobs themselves, not merely on a cheap job in front of them. `gate` then runs
+# ALWAYS, depends on everything, and is the ONE context branch protection should require. It reports:
+#   - documents-only change  -> success  (battery correctly not run; the pull request stays mergeable)
+#   - draft pull request     -> FAILURE  (battery deliberately not run; mark it ready to buy the run)
+#   - code, ready            -> mirrors the real battery, pass or fail
+#
+# WHY A DRAFT FAILS RATHER THAN PASSES. Marking a pull request ready does not change its head commit, so a
+# draft-era green check would still be sitting on that commit. Rather than depend on GitHub preferring the
+# newer check run of the same name on the same commit, a draft simply never produces a green gate.
+#
+# THAT IS ONLY TRUE IN ONE DIRECTION UNLESS BOTH DRAFT EVENTS ARE LISTED, which is the correction below.
+# Neither `ready_for_review` nor `converted_to_draft` is in GitHub's default set (opened, synchronize,
+# reopened), and each one missing breaks the mechanism a different way:
+#   - without `ready_for_review`, marking a draft ready fires NOTHING, so the battery never runs and the
+#     gate keeps the red it last reported. Annoying, but it fails safe.
+#   - without `converted_to_draft`, taking a GREEN ready pull request back to draft fires nothing either, so
+#     the green gate from the ready era stays on that commit while the pull request is no longer being
+#     verified. That one fails OPEN, which is why it is the more important of the two.
+# So the honest claim is narrower than "safe by construction": it is safe by construction only because every
+# transition into or out of draft re-runs `decide`, and the gate is recomputed from the current draft flag.
 on:
   push:
-    branches: [main, ai-readiness-rules]
+    # release/** exists for the packaging matrix: a release branch buys the full battery AND the five
+    # packaging legs, so the gate is provable BEFORE a tag exists. v* tags are deliberately NOT here:
+    # publish.yml is the release path, fires on exactly those tags, and already packages and verifies all
+    # five targets itself, so a tag trigger here would buy the ten legs (four of them macOS) twice per
+    # release. Codex caught that duplication when this trigger briefly existed (PR #308).
+    branches: [main, ai-readiness-rules, 'release/**']
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
+
+# One run per ref. A new push to the same branch or pull request cancels the run it supersedes instead of
+# paying for both. `main` is excluded from cancellation by keying on the ref: a superseded main run is still
+# release evidence, so cancel-in-progress is scoped by group, and pushes to main arrive one at a time.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # The cheap decision job. No checkout, no toolchain, no dependencies: it asks the API which files changed
+  # and answers four questions (code? draft? buy the battery? buy packaging?). Measured sibling for scale:
+  # `coverage oracle` (checkout + a pwsh script) bills one ubuntu minute, and this does strictly less.
+  decide:
+    name: decide
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      draft: ${{ steps.classify.outputs.draft }}
+      # The two spend decisions, derived from `code`/`draft` plus the event and ref, and computed HERE so the
+      # expensive jobs and `gate` consume one value instead of each re-deriving it and drifting apart.
+      battery: ${{ steps.classify.outputs.battery }}
+      package: ${{ steps.classify.outputs.package }}
+    steps:
+      - id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # The draft flag is absent on push and workflow_dispatch, which read as not-draft.
+          draft=false
+          if [ "${PR_DRAFT:-}" = "true" ]; then draft=true; fi
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+
+          # FAIL SAFE TOWARD SPENDING. Every path that cannot enumerate the diff with confidence sets
+          # code=true and buys the battery. Wasting a run is recoverable; merging unverified code is not.
+          #
+          # RENAMES. Both API surfaces report a rename under its NEW name only, with the old one in
+          # `previous_filename`. Reading just `.filename` would classify `git mv Engine/Thing.cs docs/note.md`
+          # as documents-only, pass the gate green, and delete a source file no battery ever looked at. So the
+          # union of both names is classified, and a path that was code under EITHER name counts as code.
+          #
+          # TRUNCATION. Both APIs cap the file list (3000 for a pull request, 300 for a compare). A diff at the
+          # cap may be hiding code past the end of the list, so hitting the cap counts as code.
+          : > changed.txt
+          cap=0
+          case "$EVENT_NAME" in
+            pull_request)
+              cap=3000
+              gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+                --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt || : > changed.txt
+              ;;
+            push)
+              # An all-zero `before` is a branch being created: there is no base to compare against.
+              case "$PUSH_BEFORE" in
+                ""|0000000000000000000000000000000000000000)
+                  : > changed.txt
+                  ;;
+                *)
+                  cap=300
+                  gh api --paginate "repos/$REPO/compare/$PUSH_BEFORE...$PUSH_AFTER" \
+                    --jq '.files[] | .filename, (.previous_filename // empty)' > changed.txt || : > changed.txt
+                  ;;
+              esac
+              ;;
+          esac
+
+          # `code` stays empty until one classification path decides it. No path below exits early, because
+          # the `battery` and `package` outputs at the bottom must be written on EVERY path: an early exit
+          # here would leave them empty, and `gate` fails loudly on an output it does not recognise.
+          code=""
+          if [ ! -s changed.txt ]; then
+            echo "Could not enumerate a documents-only diff for event '$EVENT_NAME'. Running the battery."
+            code=true
+          fi
+
+          # Conservative on purpose: renames add a second line, so this can trip slightly below the real cap.
+          # It errs toward buying a run, which is the safe direction.
+          if [ -z "$code" ]; then
+            lines=$(wc -l < changed.txt)
+            if [ "$cap" -gt 0 ] && [ "$lines" -ge "$cap" ]; then
+              echo "The changed-file list hit the API cap ($lines >= $cap), so code may be hidden past the end."
+              code=true
+            fi
+          fi
+
+          # This list is the old paths-ignore list, re-expressed and then tightened twice. Keep it in step
+          # with that intent: prose only, never a whole directory. The JSON under docs/ is NOT documentation
+          # — it is build and gate input (mcp-surface-inventory.json is what the coverage oracle checks, and
+          # interview-fix-map.json, interview-hard-pack.json and ai-readiness-catalog.json are embedded or
+          # test resources named in the csprojs). A gate that can be skipped by editing its own input is not
+          # a gate, so anything not matched below counts as code — including everything under .github/.
+          #
+          # THE SAME RULE APPLIES TO MARKDOWN, AND SINCE [T202] IT APPLIES BY DEFAULT. There is no `*.md`
+          # arm any more: markdown falls through to `*)` and counts as code exactly like every other
+          # unrecognised path. Being Markdown is a file format, not a job, and the old arm made prose the
+          # default for a format this repository uses for gate input, so a new markdown reader was missed by
+          # omission until somebody thought to add its path (F-010). What is left prose is only what the arms
+          # below leave prose: LICENSE, .gitignore, and *.html under docs/.
+          #
+          # The prose allowlist is EMPTY, and that was measured rather than assumed
+          # (docs/notes/T202-ci-cost-classifier-design.md). Two suites take their input from `git ls-files`
+          # and so read ALL tracked markdown — the repo-wide control-byte sweep in
+          # Semanticus.VSCode/test/source-byte-hygiene.test.mjs, and the attribution marker and
+          # undeclared-copy scans in attribution-and-license.test.mjs — and both run only under `npm test`
+          # inside build-and-smoke, which is the job keyed on `battery`. So no markdown path can be shown to
+          # be unread, and a prose-only pull request was buying no control-byte sweep at all. Moving those
+          # sweeps to a job a prose change reaches is the only thing that could make an allowlist provable;
+          # it is a separate row and it is deliberately NOT done here.
+          #
+          # Cost of this default, measured on 200 first-parent commits of `main`: 188 already classified
+          # code, 12 prose. Six percent is the ceiling on the extra spend, and two of those twelve were the
+          # defect rather than the saving — the .claude/skills rename that SkillNamingTests now reads, and
+          # the nine-file docs/provenance/ addition under the one exempted-and-validated directory class.
+          #
+          # The named list below is now REDUNDANT rather than wrong, and it stays for that reason: it is the
+          # record of which markdown files were proved to be gate input and by which reader. Deleting it in
+          # the same change would throw that record away. Each entry was measured by finding its reader:
+          #   - THIRD-PARTY-NOTICES.md, README.md, RELEASE-CHECKLIST.md and Semanticus.Dax/LICENSE-NOTE.md are
+          #     read by the borrowed-code attribution gate, Semanticus.VSCode/test/attribution-and-license.test.mjs
+          #     (SELF_LICENCE_DOCS and the licence-note assertion), which runs under `npm test` inside
+          #     build-and-smoke. Classifying them as prose means deleting an attribution entry skips the only
+          #     job that would have noticed.
+          #   - CHANGELOG.md and RELEASE-CHECKLIST.md are read by Semanticus.VSCode/test/release-docs.test.mjs.
+          #   - TASKS.md is the canonical task register that tools/tasks-register-check.mjs reads. That check
+          #     has its OWN workflow keyed on the file, so it does still fire on a register-only change — but
+          #     `gate` is the one context branch protection requires, so a green `gate` on a duplicate task id
+          #     is still a lie, whatever an unrequired sibling check reports.
+          #   - docs/findings.md is the finding queue. tools/tasks-register-check.mjs reads it, and
+          #     Semanticus.VSCode/test/findings-register.test.mjs asserts the LIVE file under `npm test`, which
+          #     runs inside build-and-smoke. Without this entry, editing the register is a markdown-only change
+          #     that skips the only required check reading it, so a row could claim SCHEDULED against a task
+          #     that does not exist and `gate` would still be green. Before [T202] this file being under docs/
+          #     was not enough on its own, because the `*.md` arm was matched BEFORE the `docs/*` arm; the
+          #     explicit entry is what classified it, and it is what still names the reader.
+          #   - Semanticus.VSCode/README.md is packaged into the VSIX, so it is release content.
+          #   - Every .md under Semanticus.Engine/ is a stock workflow seed or template. The csproj ships them
+          #     beside the binary as `None ... CopyToOutputDirectory` (lines 72 and 80 there) and
+          #     Semanticus.Tests/WorkflowSeedLibraryTests.cs asserts their exact content and count. They are
+          #     source files that happen to be Markdown.
+          # The wildcards use shell `case` globbing, where `*` also matches `/`, so `Semanticus.Engine/*.md`
+          # covers workflows/, workflows-parked/ and workflow-templates/ at any depth. When in doubt add the
+          # path here: the only cost of being wrong in this direction is one run, and the cost of being wrong
+          # in the other direction is a green gate over an unverified change.
+          if [ -z "$code" ]; then
+          code=false
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              THIRD-PARTY-NOTICES.md|TASKS.md|CHANGELOG.md|README.md|RELEASE-CHECKLIST.md|docs/findings.md|Semanticus.Dax/LICENSE-NOTE.md|Semanticus.VSCode/README.md|Semanticus.Engine/*.md)
+                code=true; echo "code (gate input, not documentation): $path"
+                ;;
+              LICENSE|.gitignore)
+                ;;
+              docs/*)
+                case "$path" in
+                  *.html) ;;
+                  *) code=true; echo "code: $path" ;;
+                esac
+                ;;
+              *)
+                code=true; echo "code: $path"
+                ;;
+            esac
+          done < changed.txt
+          fi
+
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "false" ]; then
+            echo "Documents only. The battery is correctly not run."
+          fi
+
+          # MAIN-PUSH DEDUP (ratified by Kane 2026-08-01, with the packaging policy below, to cut CI spend).
+          # `battery` is the one condition build-and-smoke and battery-ok key on. It is `code && !draft` with
+          # exactly ONE subtraction: a push to `main`. Branch protection means every commit reaches `main`
+          # through a pull request whose merge ref just ran this same battery and went green, and the squash
+          # commit's tree is that already-tested tree, so re-running the heavy jobs on the push buys nothing.
+          # Honest limit: if the base moved after the last pull-request run, the squashed tree was never
+          # tested under it; the "require branches to be up to date" protection setting is what closes that,
+          # not this file. What still runs on every main push: decide, the finding queue (including the
+          # merge sweep — the thing that catches an unrowed comment AFTER a merge), the coverage oracle, and
+          # the tasks-register workflow. workflow_dispatch on main buys the full battery back on demand.
+          # Pushes to any other branch (ai-readiness-rules, release/**, tags) keep the battery: they did not
+          # just pass it as a pull request.
+          battery=false
+          if [ "$code" = "true" ] && [ "$draft" != "true" ]; then battery=true; fi
+          if [ "$EVENT_NAME" = "push" ] && [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+            if [ "$battery" = "true" ]; then
+              echo "Push to main: the battery this tree just passed as a pull request is not bought twice."
+            fi
+            battery=false
+          fi
+          echo "battery=$battery" >> "$GITHUB_OUTPUT"
+
+          # WHEN PACKAGING RUNS (the other half of the 2026-08-01 ruling). The five-platform vsix matrix and
+          # vsix-manifest stopped running per pull request: the two macOS legs bill at ten times the Linux
+          # rate and the artifacts are only consumed at release time. Packaging runs when the ref is a
+          # release/** branch, when the pull request carries the `release` label, or when someone runs the
+          # workflow by hand (workflow_dispatch). A v* release tag is deliberately NOT a route: it is
+          # publish.yml's trigger, and that workflow packages and verifies the five targets itself, so
+          # matching tags here would double the spend per release. The label is read LIVE over the API,
+          # not from the event payload, so labelling an open pull request and pressing re-run is enough — no
+          # empty push needed. If the label lookup fails the run proceeds WITHOUT packaging and says so; the
+          # packaging jobs then show as skipped on the pull request, which is visible, and workflow_dispatch
+          # is the recovery. `gate` cross-checks this output against the jobs that actually ran, so a `true`
+          # here with a skipped matrix, or a `false` with a run one, fails the gate rather than passing it.
+          package=false
+          if [ "$code" = "true" ] && [ "$draft" != "true" ]; then
+            case "${GITHUB_REF:-}" in
+              refs/heads/release/*) package=true ;;
+            esac
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then package=true; fi
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$package" = "false" ]; then
+              if labels=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '[.labels[].name] | join(",")'); then
+                case ",$labels," in
+                  *,release,*) package=true; echo "The 'release' label is on this pull request: packaging runs." ;;
+                esac
+              else
+                echo "Could not read this pull request's labels; packaging will not run on this pass."
+                echo "If it was wanted, re-run, or use workflow_dispatch."
+              fi
+            fi
+          fi
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+
+  # THE FINDING QUEUE, INSIDE THE REQUIRED CHECK. Its offline invariants already rode `npm test`, but the two
+  # load-bearing halves did not: the live Codex enumeration and the FIXED commit verification sat in the
+  # unrequired `tasks-register` workflow, so a merge could proceed while either was red. A control that can be
+  # red while a merge succeeds is the definition of theatre, and ending exactly that is why the queue exists.
+  #
+  # It runs on every non-draft ref, INCLUDING a documents-only one, and `gate` checks its result BEFORE the
+  # documents-only early return. Both are deliberate: the register is markdown, and a check that a prose change
+  # can skip is a check the prose change will eventually break.
+  #
+  # fetch-depth: 0 is load-bearing, not tidiness. findings-fixed-commits.mjs resolves each FIXED row's commit,
+  # and at the default depth of 1 every commit older than HEAD is absent; that tool refuses on a shallow clone
+  # rather than shrugging at a missing object, so it would fail here honestly and permanently.
+  #
+  # Cost: one cheap ubuntu job with a full-history checkout and no toolchain beyond node. Measured sibling:
+  # `coverage oracle` bills one ubuntu minute for a checkout plus a pwsh script.
+  finding-queue:
+    name: finding queue
+    needs: decide
+    if: needs.decide.outputs.draft != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Both registers, and prove the checks can still fail
+        if: github.event.repository.private == true
+        run: |
+          node Semanticus.VSCode/test/findings-register.test.mjs
+          node tools/tasks-register-check.mjs
+      # The history-dependent suite runs HERE and not under `npm test`, because build-and-smoke checks out at the
+      # default depth of 1 and these assertions resolve real commits. Measured, not predicted: run 30513399311
+      # went red on both legs with "the clone is SHALLOW", which was the tool reporting its environment honestly.
+      # An assertion belongs where its precondition holds.
+      - name: Prove the FIXED checks can still fail (needs real history)
+        if: github.event.repository.private == true
+        run: node tools/findings-fixed-commits.test.mjs
+      - name: Every FIXED finding names a commit and a test that exist
+        if: github.event.repository.private == true
+        run: node tools/findings-fixed-commits.mjs
+      # FINDINGS_SWEEP IS THE FEATURE, NOT AN OPTION. Without it this step enumerates only the pull requests the
+      # register already names, which is vacuous against the failure it exists to catch: an agent omits every row
+      # for a newly merged pull request, the register names nothing, and a check that only reads the register
+      # finds nothing missing. The required job then passes having looked at exactly what it was handed.
+      #
+      # That bug shipped in the first version of this job and is why `findings-register.test.mjs` now asserts
+      # THIS LINE: a feature enabled only by a variable nobody sets is indistinguishable from a feature that is
+      # not there, so the invocation itself is under test.
+      - name: Every live Codex finding has a row bound to its own comment, and sweep the recent merges
+        if: github.event.repository.private == true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FINDINGS_SWEEP: '1'
+        run: node tools/findings-codex-coverage.mjs
+
+      - name: Explain unavailable private checks in a public snapshot
+        if: github.event.repository.private != true
+        run: echo "Private finding registers and their history are excluded; those checks are not run in this repository."
+
+  # THE CI COST-GATE BATTERY, INSIDE THE REQUIRED CHECK. tools/ci-gate/gate-battery.mjs lifts the real
+  # `decide` and `gate` scripts out of this file and drives them under bash -e. Until this job existed
+  # (F-024 / [T209]) that battery ran only when a human remembered, so the classifier and the required
+  # verdict were a control enforced nowhere. Same shape as the finding queue: it runs on every non-draft
+  # ref, including a documents-only one, and `gate` checks its result BEFORE the documents-only early
+  # return, because a check a prose change can skip is a check a prose change will eventually break.
+  #
+  # The job invokes the battery by name and does not wrap it. A continue-on-error, a `|| true`, or a copy
+  # of the cases in this file would hide a child failure or drift from the scripts that actually run.
+  # Cheap: checkout + node, no toolchain. Measured sibling: finding-queue.
+  ci-gate-battery:
+    name: ci-gate-battery
+    needs: decide
+    if: needs.decide.outputs.draft != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Prove the cost classifier and the required gate verdict
+        run: node tools/ci-gate/gate-battery.mjs
+
   coverage-oracle:
     name: coverage oracle
+    needs: decide
+    if: needs.decide.outputs.code == 'true' && needs.decide.outputs.draft != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +385,10 @@ jobs:
 
   build-and-smoke:
     name: build + smokes (${{ matrix.os }})
+    needs: decide
+    # `battery` is `code && !draft` minus exactly one case: a push to `main`, whose tree just passed this
+    # battery as a pull request. The reasoning and its honest limit live on the `battery` output in `decide`.
+    if: needs.decide.outputs.battery == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -43,9 +410,20 @@ jobs:
           node-version: '20'
           cache: npm
           cache-dependency-path: Semanticus.VSCode/package-lock.json
+      # PIN THE LOCKFILE WRITER, not just the runtime. Semanticus.VSCode/test/lockfile-drift.test.mjs
+      # asserts each committed lockfile is byte-identical to what `npm install --package-lock-only`
+      # writes, and that output is a property of NPM's version, not of the dependency graph. `node-version`
+      # pins node and leaves npm to whatever the distribution bundles, so the same unchanged tree could
+      # fail here purely because the runner's npm formats differently from the npm that wrote the files.
+      # The committed lockfiles were written by npm 11.6.2; that test asserts this exact string is present
+      # here, so moving one without the other fails loudly instead of drifting.
+      - name: Pin npm to the version the committed lockfiles were written by
+        run: npm install --global npm@11.6.2
       - name: Install extension dependencies from the lockfile
         working-directory: Semanticus.VSCode
         run: npm ci --no-fund --no-audit
+      # studio.js and extension.js are generated, never committed. npm test runs
+      # build:webview (and tsc) first, so a fresh checkout still has the bundles.
       - name: Extension behavioral tests
         working-directory: Semanticus.VSCode
         run: npm test
@@ -53,6 +431,19 @@ jobs:
         run: dotnet build Semanticus.sln -c Release
       - name: 'Unit tests: dual-drive / interleaved-undo / FormulaFixup invariants (xUnit)'
         run: dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build
+      # Semanticus.Dax (the Phase-A first-party DAX front-end) is deliberately OUTSIDE Semanticus.sln — it must stay
+      # dependency-free for the MIT package, so it never joins the product build graph. Test it explicitly (its own
+      # build, hence no --no-build) or its suite would be orphaned from CI. Running on BOTH matrix legs is the
+      # cross-platform evidence the A1 exit gate asks for (row 6 also wants serialized-snapshot equality — not this).
+      # One project, both phases, both configurations: A1 lexer + A2 PR-1 parser share the one test project, so the
+      # parser battery rides these runs rather than adding a job. Debug and Release both run on every OS matrix
+      # leg because T182 step 1 overflow thresholds depend on configuration, not tree shape alone. The hosted
+      # four-leg run closes step 1; T182 stays open for steps 2-4. The corpus bar (A2 §12.4) is
+      # deliberately NOT here; its corpus is gitignored working data, so it is a local gate (tools/dax-corpus-bar/).
+      - name: 'Unit tests: Semanticus.Dax lexer + parser Debug (G-P goldens, spans, round-trip, conservation, capability neutrality, fuzz, cancellation)'
+        run: dotnet test Semanticus.Dax.Tests/Semanticus.Dax.Tests.csproj -c Debug
+      - name: 'Unit tests: Semanticus.Dax lexer + parser Release (G-P goldens, spans, round-trip, conservation, capability neutrality, fuzz, cancellation)'
+        run: dotnet test Semanticus.Dax.Tests/Semanticus.Dax.Tests.csproj -c Release
       # The smoke runners ARE the integration harness (complement the unit tests above). They degrade live-only checks (no XMLA / no local Power BI
       # Desktop on a runner) to logged skips, so the OFFLINE invariants are what CI asserts here.
       - name: 'Smoke: engine core / TMDL round-trip'
@@ -88,6 +479,14 @@ jobs:
 
   vsix:
     name: package + execute (${{ matrix.target }})
+    needs: decide
+    # The five packaging legs are the expensive half of this workflow, and the two macOS legs are the
+    # expensive half of THAT. Since the 2026-08-01 ruling they no longer run per pull request: `package` is
+    # true only on a release/** branch, a pull request carrying the `release` label, or workflow_dispatch
+    # (v* tags belong to publish.yml, which packages these five targets itself). The full condition and its
+    # reasoning live on the `package` output in `decide`, and `gate` refuses a run where this skip does not
+    # match that output.
+    if: needs.decide.outputs.package == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -122,6 +521,8 @@ jobs:
       - name: Install extension dependencies from the lockfile
         working-directory: Semanticus.VSCode
         run: npm ci --no-fund --no-audit
+      # scripts/package.mjs runs build:webview and compile before vsce, so the
+      # VSIX is packed from generated bundles that are no longer in git.
       - name: Package, extract, and execute the production VSIX engine
         working-directory: Semanticus.VSCode
         run: npm run package -- ${{ matrix.target }}
@@ -138,6 +539,7 @@ jobs:
 
   vsix-manifest:
     name: package extension (.vsix, unsigned)
+    # Skipped automatically when `vsix` is skipped, so it needs no `if:` of its own.
     needs: vsix
     runs-on: ubuntu-latest
     steps:
@@ -159,3 +561,217 @@ jobs:
             Semanticus.VSCode/dist/*.vsix
             Semanticus.VSCode/dist/*.evidence.json
           if-no-files-found: error
+
+  # Deliberately has NO `if:`, so it keeps the default `success()`. That makes it run only when every
+  # dependency succeeded — and for a matrix job, "succeeded" means every leg did. That is bedrock, documented
+  # Actions dependency behaviour, whereas the exact value of `needs.<matrix-job>.result` when one leg of a
+  # matrix fails is not documented anywhere. `gate` therefore asks THIS job whether the battery was wholly
+  # green, instead of interpreting a matrix result string it cannot prove the meaning of. One ubuntu minute,
+  # and only on runs that were buying the battery anyway: when the battery is skipped this is skipped, free.
+  #
+  # The packaging jobs are NOT in this needs list, on purpose: since packaging stopped running per pull
+  # request, listing `vsix` here would skip this sentinel — and with it the gate's proof that the battery
+  # was wholly green — on every ordinary code pull request. Packaging has its own sentinel below.
+  battery-ok:
+    name: battery-ok
+    needs: [coverage-oracle, build-and-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reached only when every battery job and every matrix leg succeeded
+        run: echo "The whole battery is green."
+
+  # The same sentinel construction, for the same reason, over the packaging half: `vsix` is a five-leg
+  # matrix, so `gate` asks this job (default `success()`: it runs only when every leg AND the manifest
+  # verification succeeded) rather than interpreting an undocumented matrix result string. When `decide`
+  # says packaging was not bought, this is skipped, and `gate` requires exactly that — skipped — never
+  # treating it as pass and never as missing.
+  packaging-ok:
+    name: packaging-ok
+    needs: [vsix, vsix-manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reached only when all five packaging legs and the manifest verification succeeded
+        run: echo "The packaging matrix is green."
+
+  # ===========================================================================================
+  # THE ONE REQUIRED CHECK. Branch protection on `main` should require exactly this context:
+  # `gate`. It always runs and always reports, on every event, whatever the other jobs did, so
+  # it can never leave a pull request waiting for a status that will never arrive.
+  #
+  # It is deliberately the ONLY required context, and the reason is the opposite of the obvious
+  # one. A job skipped by a job-level `if:` does not leave a required check pending — GitHub
+  # reports it as SUCCESS and it will not block a merge. So requiring the matrix jobs directly
+  # would not deadlock; it would do something worse and quieter. Every draft and every
+  # documents-only pull request skips them, so they would all report green having verified
+  # nothing, and the required-check setting would be pure theatre. `gate` exists because it is
+  # the one job that can tell "skipped because nothing needed checking" apart from "skipped, so
+  # nothing is known", and fail in the second case.
+  #
+  # Corollary for whoever configures branch protection: the danger is not forgetting to require a
+  # check, it is requiring the WRONG ones. Require `gate` and nothing else.
+  # ===========================================================================================
+  # THE FOUR CASES this gate must judge truthfully, enumerated so a change to any `if:` above can be walked
+  # through them (`battery` and `package` are `decide`'s outputs; every skip is checked, never assumed):
+  #   1. documents-only pull request  code=false                 -> finding-queue and ci-gate-battery must
+  #                                                                 PASS, then success: no battery job
+  #                                                                 could change its result.
+  #   2. code pull request, ready     code=true,  battery=true,  -> finding-queue, ci-gate-battery, coverage
+  #      (no release label)           package=false                 oracle, both build legs and battery-ok
+  #                                                                 must PASS; vsix, vsix-manifest and
+  #                                                                 packaging-ok must be exactly SKIPPED.
+  #   3. push to main                 battery=false, package=false
+  #        code changed               code=true                  -> finding-queue, ci-gate-battery and
+  #                                                                 coverage oracle must PASS; build-and-
+  #                                                                 smoke and battery-ok exactly SKIPPED
+  #                                                                 (the tree just passed them as a pull
+  #                                                                 request); packaging exactly SKIPPED.
+  #                                                                 battery=false with code=true is ONLY
+  #                                                                 legal here.
+  #        documents only             code=false                 -> as case 1 (the finding-queue merge sweep
+  #                                                                 and the ci-gate-battery still ran before
+  #                                                                 the early return).
+  #   4. release ref (release/**      code=true,  battery=true,  -> everything in case 2 must PASS, plus
+  #      branch, `release` label, or   package=true                 vsix, vsix-manifest and packaging-ok.
+  #      workflow_dispatch; v* tags                                 (A v* tag never reaches this gate:
+  #      are publish.yml's, not ours)                               publish.yml is the release path.)
+  # A draft is deliberately none of these: it fails before any of them are considered.
+  gate:
+    name: gate
+    needs: [decide, battery-ok, packaging-ok, coverage-oracle, build-and-smoke, vsix, vsix-manifest, finding-queue, ci-gate-battery]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every bought job to have passed, and every skipped job to have been skipped on purpose
+        env:
+          DECIDE_RESULT: ${{ needs.decide.result }}
+          CODE: ${{ needs.decide.outputs.code }}
+          DRAFT: ${{ needs.decide.outputs.draft }}
+          BATTERY: ${{ needs.decide.outputs.battery }}
+          PACKAGE: ${{ needs.decide.outputs.package }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          R_FINDINGS: ${{ needs.finding-queue.result }}
+          R_CIGATE: ${{ needs.ci-gate-battery.result }}
+          R_BATTERY: ${{ needs.battery-ok.result }}
+          R_PACKAGING: ${{ needs.packaging-ok.result }}
+          R_ORACLE: ${{ needs.coverage-oracle.result }}
+          R_BUILD: ${{ needs.build-and-smoke.result }}
+          R_VSIX: ${{ needs.vsix.result }}
+          R_MANIFEST: ${{ needs.vsix-manifest.result }}
+        run: |
+          set -uo pipefail
+
+          # Checked FIRST and on its own. If `decide` did not succeed then CODE is the empty string, which
+          # is not 'true', which would otherwise read as "documents only" and pass the gate green having
+          # tested nothing at all. The decision job failing must fail the gate.
+          if [ "$DECIDE_RESULT" != "success" ]; then
+            echo "The decide job did not succeed ($DECIDE_RESULT), so nothing here is known. Failing."
+            exit 1
+          fi
+
+          # VALIDATE EVERY OUTPUT BEFORE BELIEVING ANY. Testing a boolean with one comparison means every
+          # other value — empty, exported-but-blank, 'False', a typo, a future refactor that stops writing
+          # the output at all — lands in whichever branch is the default. The default branch here USED to be
+          # the documents-only one, which passes the gate green having verified nothing, so a malformed
+          # output was indistinguishable from a genuinely documents-only change. Nothing is now inferred
+          # from a value this job does not recognise: it fails loudly and says which output was wrong.
+          # (`set -u` covers the separate case of the variable not being exported at all.)
+          for pair in "code:$CODE" "draft:$DRAFT" "battery:$BATTERY" "package:$PACKAGE"; do
+            case "${pair#*:}" in
+              true|false)
+                ;;
+              *)
+                echo "The decide job's '${pair%%:*}' output is '${pair#*:}', which is neither 'true' nor 'false'."
+                echo "Nothing here is known, so this gate fails rather than defaulting. Fix the decide job."
+                exit 1
+                ;;
+            esac
+          done
+
+          if [ "$DRAFT" = "true" ]; then
+            echo "This pull request is a draft, so the battery was deliberately not run."
+            echo "Mark it ready for review to buy exactly one full run."
+            exit 1
+          fi
+
+          # THE FINDING QUEUE IS CHECKED BEFORE THE DOCUMENTS-ONLY EARLY RETURN, and that ordering is the whole
+          # point of moving it here. Its register is markdown; if it were checked after the early return, a
+          # prose-only change could omit a Codex finding, weaken a claim, or point FIXED at a commit that never
+          # existed, and this gate would report success having looked at nothing. The job runs on every
+          # non-draft ref, so on a documents-only run its correct result is `success`, never `skipped`.
+          if [ "$R_FINDINGS" != "success" ]; then
+            echo "NOT GREEN finding-queue ($R_FINDINGS)"
+            echo "A finding was left unrowed, unbound from its own review comment, or FIXED without a commit"
+            echo "and a test that exist. That is the control this queue exists to be, so it blocks the merge."
+            exit 1
+          fi
+          echo "ok        finding-queue"
+
+          # THE CI GATE BATTERY IS CHECKED BEFORE THE DOCUMENTS-ONLY EARLY RETURN for the same reason as
+          # the finding queue. It is the only executable proof of this file's classifier and verdict, and
+          # a skip here is how F-024 stayed open: a control that exists and is enforced nowhere.
+          if [ "$R_CIGATE" != "success" ]; then
+            echo "NOT GREEN ci-gate-battery ($R_CIGATE)"
+            echo "The cost classifier or the required gate verdict failed its own battery, so nothing here is known."
+            exit 1
+          fi
+          echo "ok        ci-gate-battery"
+
+          if [ "$CODE" = "false" ]; then
+            echo "Documents only: no job in the battery could have changed its result."
+            echo "Nothing to verify, so this gate passes and the pull request stays mergeable."
+            exit 0
+          fi
+
+          # A real code change. From here every job is judged against what `decide` said was bought.
+          # 'skipped' is acceptable ONLY where the matching output says the skip was chosen, and then it is
+          # REQUIRED: a job that ran when its output said not to is as much an inconsistency as the reverse,
+          # so both directions fail. Nothing in this block treats a skip as a pass.
+          status=0
+          require() { # require <name> <actual-result> <required-result>
+            if [ "$2" = "$3" ]; then
+              echo "ok        $1 ($2, required $3)"
+            else
+              echo "NOT GREEN $1 (is '$2', required '$3')"
+              status=1
+            fi
+          }
+
+          # The coverage oracle is bought on every non-draft code change, main pushes included.
+          require "coverage-oracle" "$R_ORACLE" "success"
+
+          if [ "$BATTERY" = "true" ]; then
+            # battery-ok is the load-bearing one: it could only have run if both build-and-smoke legs and
+            # the oracle succeeded. build-and-smoke is checked too so the log names which part went red.
+            require "battery-ok" "$R_BATTERY" "success"
+            require "build-and-smoke" "$R_BUILD" "success"
+          else
+            # battery=false with code=true has exactly one legal cause: the main-push dedup. Anywhere else
+            # it means `decide` mis-derived the spend decision, and nothing is known about this tree.
+            if [ "$EVENT_NAME" != "push" ] || [ "$REF" != "refs/heads/main" ]; then
+              echo "NOT GREEN decide (battery=false with code=true outside a push to main: event=$EVENT_NAME ref=$REF)"
+              status=1
+            else
+              echo "Push to main: this tree passed the full battery as a pull request; it is not bought twice."
+              require "build-and-smoke" "$R_BUILD" "skipped"
+              require "battery-ok" "$R_BATTERY" "skipped"
+            fi
+          fi
+
+          if [ "$PACKAGE" = "true" ]; then
+            require "packaging-ok" "$R_PACKAGING" "success"
+            require "vsix" "$R_VSIX" "success"
+            require "vsix-manifest" "$R_MANIFEST" "success"
+          else
+            echo "Packaging was not bought (not a release/** branch, no 'release' label, not workflow_dispatch)."
+            require "vsix" "$R_VSIX" "skipped"
+            require "vsix-manifest" "$R_MANIFEST" "skipped"
+            require "packaging-ok" "$R_PACKAGING" "skipped"
+          fi
+
+          if [ "$status" -ne 0 ]; then
+            echo "Not every bought job passed, or a skip does not match the decision that was made."
+            echo "This is the check that blocks the merge."
+            exit 1
+          fi
+          echo "Everything bought for this run passed, and every skip was chosen, not suffered."

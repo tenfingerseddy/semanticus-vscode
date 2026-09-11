@@ -1,0 +1,50 @@
+FILE Semanticus.Engine/workflows/governed-rename.md
+  error=<null>
+  source=stock file=governed-rename.md
+  name=governed-rename kind=<null> version=2 strictness=hard
+  title=Safe rename
+  description=Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.
+  whenToUse=When renaming an existing measure, column or table that may be referenced by formulas, reports, M text or external consumers. Use Check blast radius when you need the evidence and decision without an apply path.
+  triggers=[rename_object|add_plan_item]
+  tags=[]
+  step id=step-1 number=1 title=Assess the rename before staging it
+    ops=[impact_assessment]
+    instructions.len=485 instructions.hash=EA230FD2E39FECD3
+    gate strictness=<null>
+    input name=target type=objectRef required=required daxPurity=<null> question=The exact object ref to rename, for example measure:Sales/Total Sales or column:Sales/Amount.
+    input name=newName type=text required=required daxPurity=<null> question=The proposed new object name.
+    input name=reportPaths type=text required=answer-or-decline daxPurity=<null> question=Local PBIR report folder paths in this review scope, separated by semicolons; or decline with why the certificate must be model-only.
+    verify kind=impact_assessment when=<null> probe=<null> scope=<null> intent=rename pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-2 number=2 title=Stage the reference-aware preview
+    ops=[add_plan_item|get_plan]
+    instructions.len=395 instructions.hash=28FE7DF331940FE9
+    gate strictness=<null>
+    input name=planItemId type=planItem required=required daxPurity=<null> question=Which staged rename should this step use? Pick one, or stage it now.
+    verify kind=plan_item_staged when=<null> probe=planItemId scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-3 number=3 title=Preserve representative values when live evidence exists
+    ops=[capture_baseline]
+    instructions.len=391 instructions.hash=FF68E1726D12C6AD
+    gate strictness=<null>
+    input name=baselineCapture type=text required=answer-or-decline daxPurity=<null> question=The captureId returned by a representative capture_baseline run; or decline with why measured value evidence is unavailable.
+    verify kind=baseline_exists when=inputs.baselineCapture.answered probe=baselineCapture scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Account for bindings FormulaFixup cannot own
+    ops=[]
+    instructions.len=401 instructions.hash=DCD2CE2F543D8330
+    gate strictness=<null>
+    input name=externalBindingsReviewed type=text required=answer-or-decline daxPurity=<null> question=What M text, report fields, bookmarks, scripts or external consumers were reviewed, and who owns each required update?
+    input name=renameDecision type=text required=required daxPurity=<null> question=Proceed, revise or reject this rename based on the assessment, preview and external-binding review.
+  step id=step-5 number=5 title=Apply once, then replay the evidence
+    ops=[set_plan_item|apply_plan|compare_baseline|run_tests|run_interview]
+    instructions.len=704 instructions.hash=AC8B7101A24471CB
+    gate strictness=<null>
+    input name=liveSyncConfirmed type=text required=required daxPurity=<null> question=Confirm where the rename was deployed for the baseline comparison, or state that no baseline was captured.
+    input name=replayInterview type=text required=answer-or-decline daxPurity=<null> question=Answer yes when Step 1 scheduled Model Interview questions; otherwise decline and record that no current-model pack was scheduled.
+    verify kind=plan_item_applied when=<null> probe=planItemId scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+    verify kind=baseline_unchanged when=inputs.baselineCapture.answered probe=baselineCapture scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+    verify kind=tests_replay when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+    verify kind=interview_replay when=inputs.replayInterview.answered probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-6 number=6 title=Produce the rename certificate
+    ops=[export_workflow_evidence|save_evidence]
+    instructions.len=385 instructions.hash=131802E35D1AAA6F
+    gate strictness=<null>
+    input name=certificateDelivery type=text required=required daxPurity=<null> question=Where should the completed Safe rename certificate go: Save with model, local export, or both?

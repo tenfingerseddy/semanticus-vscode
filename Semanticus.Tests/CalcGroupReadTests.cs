@@ -27,6 +27,8 @@ namespace Semanticus.Tests
             using (engine)
             {
                 await engine.CreateModelAsync("CG", 1604);
+                await engine.CreateTableAsync("Date", "human");
+                await engine.CreateColumnAsync("table:Date", "Date", "DateTime", "Date", "human");
                 var gRef = await engine.CreateCalculationGroupAsync("Time Intelligence", "human");
                 await engine.SetCalcGroupPrecedenceAsync(gRef, 10, "human");
                 var ytd = await engine.CreateCalculationItemAsync(gRef, "YTD", "CALCULATE(SELECTEDMEASURE(), DATESYTD('Date'[Date]))", "human");
@@ -47,6 +49,52 @@ namespace Semanticus.Tests
 
                 Assert.Equal("PY", g.Items[1].Name);                      // ordinal order preserved
                 Assert.True(string.IsNullOrEmpty(g.Items[1].FormatStringExpression));   // inherits base format
+            }
+        }
+
+        [Fact]
+        public async Task Setting_a_calculation_item_ordinal_undoes_to_the_old_order()
+        {
+            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            using (engine)
+            {
+                await engine.CreateModelAsync("CG", 1604);
+                var gRef = await engine.CreateCalculationGroupAsync("Time Intelligence", "human");
+                var ytd = await engine.CreateCalculationItemAsync(gRef, "YTD", "SELECTEDMEASURE()", "human");
+                var py = await engine.CreateCalculationItemAsync(gRef, "PY", "SELECTEDMEASURE()", "human");
+
+                var before = await engine.ListCalculationGroupsAsync();
+                Assert.Equal(new[] { "YTD", "PY" }, before[0].Items.Select(i => i.Name).ToArray());
+
+                var ordinal = Assert.Single((await engine.GetObjectPropertiesAsync(py)), p => p.Name == "Ordinal");
+                Assert.False(ordinal.ReadOnly);
+
+                await engine.SetObjectPropertyAsync(py, "Ordinal", "0", "human");
+                var moved = await engine.ListCalculationGroupsAsync();
+                Assert.Equal(new[] { "PY", "YTD" }, moved[0].Items.Select(i => i.Name).ToArray());
+
+                await engine.UndoAsync("human");
+                var restored = await engine.ListCalculationGroupsAsync();
+                Assert.Equal(new[] { "YTD", "PY" }, restored[0].Items.Select(i => i.Name).ToArray());
+                Assert.Equal(ytd, restored[0].Items[0].Ref);
+            }
+        }
+
+        [Fact]
+        public async Task Undo_of_a_precedence_change_restores_the_listed_value()
+        {
+            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            using (engine)
+            {
+                await engine.CreateModelAsync("CG", 1604);
+                var gRef = await engine.CreateCalculationGroupAsync("Time Intelligence", "human");
+                Assert.Equal(0, (await engine.ListCalculationGroupsAsync())[0].Precedence);
+
+                await engine.SetCalcGroupPrecedenceAsync(gRef, 7, "human");
+                Assert.Equal(7, (await engine.ListCalculationGroupsAsync())[0].Precedence);
+
+                await engine.UndoAsync("human");
+                Assert.Equal(0, (await engine.ListCalculationGroupsAsync())[0].Precedence);
             }
         }
 

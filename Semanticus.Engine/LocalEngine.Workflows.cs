@@ -48,18 +48,22 @@ namespace Semanticus.Engine
         /// <summary>The project's `.semanticus` sidecar dir (beside the model; PBIP hop included), or the raw
         /// workspace fallback for a live/unsaved session — the shared root for both the workflows and the
         /// workflow-templates dirs. null when there is nowhere to persist (no model, no workspace).</summary>
-        private string SidecarDir()
+        private string SidecarDir() => SidecarDir(_sessions.CurrentContext);
+
+        private string SidecarDir(SessionContext context)
         {
-            var anchor = _sessions.Current?.SourcePath;
+            var anchor = context.Session?.SourcePath;
             // LayoutStore.DirFor already RETURNS the `.semanticus` sidecar dir (PBIP hop included) — only the
             // raw-workspace fallback needs the segment appended (the McpSmoke test-agent caught the doubling).
             return !ExperienceStore.IsEphemeralAnchor(anchor) ? LayoutStore.DirFor(anchor)
                  : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
         }
 
-        private (string userDir, string stockDir) WorkflowDirs()
+        private (string userDir, string stockDir) WorkflowDirs() => WorkflowDirs(_sessions.CurrentContext);
+
+        private (string userDir, string stockDir) WorkflowDirs(SessionContext context)
         {
-            var sidecar = SidecarDir();
+            var sidecar = SidecarDir(context);
             return (sidecar == null ? null : Path.Combine(sidecar, "workflows"),
                     Path.Combine(AppContext.BaseDirectory, "workflows"));
         }
@@ -140,7 +144,7 @@ namespace Semanticus.Engine
                         catch (Exception ex)
                         {
                             throw new InvalidOperationException(
-                                $"workflow-settings.json is unreadable and its contents could not be preserved to a '.corrupt-*' sibling ({ex.Message}) — refusing to overwrite it. Repair or move the file, then retry.");
+                                $"workflow-settings.json is unreadable and its contents could not be preserved to a '.corrupt-*' sibling ({ex.Message}): refusing to overwrite it. Repair or move the file, then retry.");
                         }
                         root = new System.Text.Json.Nodes.JsonObject();   // fresh truth; the old bytes are safe in the aside sibling
                     }
@@ -381,6 +385,18 @@ namespace Semanticus.Engine
                 r.RawWhen = e.TryGetProperty("when", out var wh) && wh.ValueKind == JsonValueKind.String ? wh.GetString() : null;
                 r.When = WorkflowPredicate.Parse(r.RawWhen, out var perr);
                 r.WhenError = perr;
+                // A STEP-scope root in a binding condition. It parses perfectly (`inputs.approval.answered`
+                // is a readable fact), it just has no value outside a run, so the rule never matches and a
+                // `hard` binding quietly enforces nothing. The same root is refused at the activation WRITE
+                // path; a binding condition has no write path at all, it is hand-edited, so the only place to
+                // catch it is here on the way in, and policy lint already reports a rule carrying WhenError.
+                // Treated exactly like a misspelled fact, which is what it effectively is in this scope.
+                if (r.WhenError == null && r.When != null)
+                {
+                    var stepScope = WorkflowPredicate.StepScopeFacts(r.When);
+                    if (stepScope.Count > 0)
+                        r.WhenError = $"'{string.Join("', '", stepScope)}' only means something while a workflow is running, and a binding rule is judged before any run starts, so this rule can never match and the requirement it carries would never apply.";
+                }
                 r.Require = e.TryGetProperty("require", out var rq) && rq.ValueKind == JsonValueKind.Array
                     ? rq.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString())
                        .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
@@ -476,7 +492,7 @@ namespace Semanticus.Engine
                 foreach (var e in arr.EnumerateArray())
                 {
                     var rule = new ActivationRule();
-                    if (e.ValueKind != JsonValueKind.Object) { rule.InvalidReason = "an activation entry is not an object — skipped."; list.Add(rule); continue; }
+                    if (e.ValueKind != JsonValueKind.Object) { rule.InvalidReason = "an activation entry is not an object. Skipped."; list.Add(rule); continue; }
                     rule.Workflow = e.TryGetProperty("workflow", out var w) && w.ValueKind == JsonValueKind.String ? w.GetString() : null;
                     rule.Tag = e.TryGetProperty("tag", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
                     rule.RawWhen = e.TryGetProperty("when", out var wh) && wh.ValueKind == JsonValueKind.String ? wh.GetString() : null;
@@ -484,11 +500,24 @@ namespace Semanticus.Engine
                     var set = e.TryGetProperty("set", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString()?.Trim().ToLowerInvariant() : null;
                     rule.When = WorkflowPredicate.Parse(rule.RawWhen, out var perr);
                     rule.WhenError = perr;
+                    // The SAME hole F-045 closed in the binding reader, left open in this one. A step-scope
+                    // root parses perfectly and has no value outside a run, so the rule never matches and the
+                    // workflow it was meant to switch off silently stays on. set_workflow_activation refuses
+                    // it on the way in, which is exactly why this reader matters: the settings file is
+                    // hand-edited, so the write path is not the only door and never was. Recorded as a
+                    // WhenError, which the activation lint below already surfaces and which already makes the
+                    // rule inert rather than half-working.
+                    if (rule.WhenError == null && rule.When != null)
+                    {
+                        var stepScope = WorkflowPredicate.StepScopeFacts(rule.When);
+                        if (stepScope.Count > 0)
+                            rule.WhenError = $"'{string.Join("', '", stepScope)}' only means something while a workflow is running, and an activation rule is judged before any run starts, so this rule can never match and the workflow it names would stay as it is.";
+                    }
 
                     var hasWf = !string.IsNullOrWhiteSpace(rule.Workflow);
                     var hasTag = !string.IsNullOrWhiteSpace(rule.Tag);
-                    if (hasWf == hasTag) rule.InvalidReason = "an activation rule needs exactly one of workflow: or tag: — skipped.";
-                    else if (set != "on" && set != "off") rule.InvalidReason = $"an activation rule's set must be 'on' or 'off' (got '{set ?? "missing"}') — skipped.";
+                    if (hasWf == hasTag) rule.InvalidReason = "an activation rule needs exactly one of workflow: or tag: (skipped).";
+                    else if (set != "on" && set != "off") rule.InvalidReason = $"an activation rule's set must be 'on' or 'off' (got '{set ?? "missing"}'). Skipped.";
                     else { rule.Valid = true; rule.On = set == "on"; }
                     list.Add(rule);
                 }
@@ -624,13 +653,25 @@ namespace Semanticus.Engine
 
             if (!manualEnabled) return (false, "turned off for this project");
 
+            // A rule reads "set X when C", so it is a GATE, not a one-way switch. An on-rule whose condition does
+            // NOT hold therefore has to hide the workflow: skipping it outright fell through to default-on, so the
+            // workflow stayed offered while the rule that was meant to gate it looked satisfied (D-236). An
+            // off-rule whose condition does not hold is the same gate read the other way, so it leaves the
+            // workflow's normal default-on state alone. Later rules still get their say: the gate only closes if
+            // no rule matches at all.
+            var gatedShut = false;
             foreach (var r in rules)
             {
                 if (!r.Valid || r.WhenError != null) continue;   // inert/broken rules never fire (E5/E6)
                 if (!RuleSelects(r, def)) continue;
-                if (r.When != null && !WorkflowPredicate.Evaluate(r.When, facts)) continue;
+                if (r.When != null && !WorkflowPredicate.Evaluate(r.When, facts))
+                {
+                    if (r.On) gatedShut = true;   // "shown when C" with C false ⇒ hidden
+                    continue;
+                }
                 return (r.On, string.IsNullOrWhiteSpace(r.Reason) ? DefaultActivationReason(r.On) : r.Reason);
             }
+            if (gatedShut) return (false, DefaultActivationReason(false));
             return (true, null);   // default-on, invisible
         }
 
@@ -639,17 +680,26 @@ namespace Semanticus.Engine
             on ? "shown by a project rule for this situation" : "hidden by a project rule for this situation";
 
         /// <summary>Resolve activation for a SINGLE def (used by start_workflow): gathers the pass's facts once
-        /// and returns whether it's active, the plain reason, and whether a binding force-activates it.</summary>
-        private async Task<(bool active, string reason, bool forceActive)> ResolveActivationForAsync(WorkflowDef def)
+        /// and returns whether it's active, the plain reason, and whether a binding force-activates it.
+        /// [T220 §5.2 row 4 / F-121] <paramref name="alsoForce"/> names the run's OTHER reachable owners, whose
+        /// own force-active state the caller also needs. They are answered from the SAME enforced-binding
+        /// snapshot, for two reasons: a callee's kill-switch answer must come from the identical question the
+        /// root's comes from (stop condition 4 forbids the two rules differing), and re-entering this method per
+        /// callee would gather the fact snapshot once per reachable name instead of the one pass §5.2 budgets.</summary>
+        private async Task<(bool active, string reason, bool forceActive, HashSet<string> forcedNames)> ResolveActivationForAsync(
+            WorkflowDef def, IEnumerable<WorkflowDef> alsoForce = null)
         {
             var rules = AllActivationRules();
             var arrayBindings = AllArrayBindings();
             var facts = await GatherFactsForAsync(rules.Where(r => r.Valid).Select(r => r.When)
                 .Concat(arrayBindings.SelectMany(ab => ab.Rules.Select(r => r.When))));
             var enforced = ComputeEnforcedBindings(facts, arrayBindings);
-            var forceActive = enforced.Any(b => b.Binding.Require.Contains(def.Name, StringComparer.Ordinal));
+            bool Forced(WorkflowDef d) => enforced.Any(b => b.Binding.Require.Contains(d.Name, StringComparer.Ordinal));
+            var forceActive = Forced(def);
+            var forcedNames = (alsoForce ?? Array.Empty<WorkflowDef>()).Where(Forced)
+                .Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
             var (active, reason) = ResolveActivation(def, facts, rules, SettingsEnabledFor(def.Name), enforced);
-            return (active, reason, forceActive);
+            return (active, reason, forceActive, forcedNames);
         }
 
         /// <summary>Build the resolved library infos (availability + activation) — the shared body behind
@@ -658,6 +708,7 @@ namespace Semanticus.Engine
         private async Task<WorkflowInfo[]> BuildLibraryInfosAsync()
         {
             var defs = LoadWorkflowDefs();
+            var templates = LoadTemplateDefs();
             var global = GlobalStrictness();
             var rules = AllActivationRules();
             var arrayBindings = AllArrayBindings();
@@ -669,8 +720,18 @@ namespace Semanticus.Engine
             {
                 var enabled = SettingsEnabledFor(d.Name);
                 var (active, reason) = ResolveActivation(d, facts, rules, enabled, enforced);
-                return WorkflowRunner.BuildInfo(d, SettingsStrictnessFor(d.Name), global, enabled, active, reason);
+                return WorkflowRunner.BuildInfo(d, SettingsStrictnessFor(d.Name), global, enabled, active, reason,
+                    ClosureIsGated(d, defs, templates, global));
             }).OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        /// <summary>Library and policy Gated flags follow the same call graph start uses, so a gateless parent
+        /// that hands off to a gated child is badged before the analyst clicks Start.</summary>
+        private bool ClosureIsGated(WorkflowDef d, IReadOnlyList<WorkflowDef> defs, IReadOnlyList<WorkflowDef> templates, string global)
+        {
+            if (d?.Error != null) return false;
+            var closure = WorkflowParser.ReachableClosure(d, defs, templates, out _);
+            return closure.Any(x => x.Error == null && x.HasEnforcedGate(SettingsStrictnessFor(x.Name), global));
         }
 
         /// <summary>§9c binding enforcement, called at the TOP of the bindable authoring ops (BEFORE any mutation,
@@ -703,7 +764,7 @@ namespace Semanticus.Engine
             // PRESENT-but-corrupt file MEANS; the workflow-enforcement-toggle precedence for gates is unchanged.
             if (WorkflowSettingsCorrupt())
                 throw new InvalidOperationException(
-                    $"{PlainOpPhrase(op)} may be gated by a workflow policy, but .semanticus/workflow-settings.json is present and can't be read (malformed JSON) — enforcement is failing closed. Repair or delete the file, or run set_workflow_enforcement (e.g. mode 'default') — any settings write preserves the unreadable file aside as workflow-settings.json.corrupt-* and writes a fresh valid one. get_workflow_policy shows the rules once it parses.");
+                    $"{PlainOpPhrase(op)} may be gated by a workflow policy, but .semanticus/workflow-settings.json is present and can't be read (malformed JSON): enforcement is failing closed. Repair or delete the file, or run set_workflow_enforcement (e.g. mode 'default'). Any settings write preserves the unreadable file aside as workflow-settings.json.corrupt-* and writes a fresh valid one. get_workflow_policy shows the rules once it parses.");
 
             // [D6] D6: object (flat) OR §9.11 array (conditional) form, resolved through the SHARED evaluator. The
             // flat path is byte-for-byte what SettingsBindingFor returned (no regression); an array binding
@@ -722,8 +783,21 @@ namespace Semanticus.Engine
                 EnsureContextCurrent(context, "Workflow policy");
                 foreach (var run in context.WorkflowRuns.ActiveRuns())
                 {
-                    if (!binding.Require.Contains(run.Def.Name, StringComparer.Ordinal)) continue;
-                    var step = run.CurrentStep;
+                    // An EXPANSION-ONLY current row is not a performing step. `run.CurrentStep` hands back the
+                    // AUTHORED loop body for that row, ops and all, but the row itself only fixes the list: it runs
+                    // no gate, shows no ops, and no iteration exists yet. Reading its ops here would hand the
+                    // step-scoped exemption to a bound op BEFORE any iteration is current: the same
+                    // start-and-freestyle hole (A) closes, reopened one row earlier by public loop start. The
+                    // classification is WorkflowRunner's own (the three setup shapes it already routes), never a
+                    // second interpretation here and never a raw index or iteration test.
+                    if (WorkflowRunner.IsExpansionOnlySubmission(run)) continue;
+                    var row = run.SubmittedRow;
+                    if (row == null) continue;
+                    // A callee's authoring step satisfies that callee's mandate. Merely reaching a required
+                    // workflow later, or starting a required caller, cannot authorize another owner's step.
+                    var owner = run.RequireCoherentRow(row);
+                    if (!binding.Require.Contains(owner.Name, StringComparer.Ordinal)) continue;
+                    var step = row.Step;
                     if (step?.Ops != null && step.Ops.Contains(op, StringComparer.Ordinal)) { atPerformingStep = true; break; }
                 }
             }
@@ -744,7 +818,7 @@ namespace Semanticus.Engine
             {
                 Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
                 Kind = "landed_outside_required_workflow", Ok = true, Target = op,
-                Label = $"{op} landed outside its required workflow (one of: {required}) — allowed (warn).",
+                Label = $"{op} landed outside its required workflow (one of: {required}). Allowed (warn).",
             });
         }
 
@@ -770,7 +844,7 @@ namespace Semanticus.Engine
                 {
                     Mode = null,
                     Enforced = true,
-                    Note = "workflow-settings.json is present but unreadable (malformed JSON) — enforcement is failing CLOSED (any 'off' override in it is ignored). Repair or delete the file, or run set_workflow_enforcement (e.g. mode 'default') — any settings write preserves the unreadable file aside as workflow-settings.json.corrupt-* and writes a fresh valid one.",
+                    Note = "workflow-settings.json is present but unreadable (malformed JSON): enforcement is failing CLOSED (any 'off' override in it is ignored). Repair or delete the file, or run set_workflow_enforcement (e.g. mode 'default'). Any settings write preserves the unreadable file aside as workflow-settings.json.corrupt-* and writes a fresh valid one.",
                 });
             var mode = GlobalStrictness();
             return Task.FromResult(new WorkflowEnforcement
@@ -778,10 +852,12 @@ namespace Semanticus.Engine
                 Mode = mode,
                 Enforced = mode != "off",
                 Note = mode == null
-                    ? "No global override — each workflow's own strictness applies (engine default: hard)."
+                    ? "No global override. Each playbook's own checks apply. Actions that must go through a playbook still do."
                     : mode == "off"
-                        ? "Enforcement is OFF model-wide: gates are skipped, runs record no verified evidence, and gated runs start without Pro. set_workflow_enforcement(mode:\"default\") restores enforcement."
-                        : $"Every gate runs at '{mode}' regardless of what the workflow declares.",
+                        ? "Playbook checks are skipped model-wide and runs record no verified evidence. Actions that must go through a playbook still do."
+                        : mode == "warn"
+                            ? "Playbook checks now warn instead of blocking. Actions that must go through a playbook still do."
+                            : "Playbook checks now block, even if a playbook asked for a warning. Actions that must go through a playbook still do.",
             });
         }
 
@@ -794,7 +870,7 @@ namespace Semanticus.Engine
             if (mode != null && mode != "hard" && mode != "warn" && mode != "off")
                 throw new ArgumentException("mode must be 'hard', 'warn', 'off', or 'default' (clear the override and let each workflow's own strictness apply).");
             var file = WorkflowSettingsFile()
-                ?? throw new InvalidOperationException("No workspace to hold workflow settings — open a model (or start the engine with a workspace) first.");
+                ?? throw new InvalidOperationException("No workspace to hold workflow settings. Open a model (or start the engine with a workspace) first.");
 
             // Merge, never clobber: the file also carries per-workflow overrides the designer writes. The shared
             // helper does the read-modify-write under a lock with an atomic write, preserving a corrupt file aside.
@@ -827,7 +903,7 @@ namespace Semanticus.Engine
             // teach the fix instead of trying to run blanks.
             foreach (var d in defs)
                 if (d.Error == null && string.Equals(d.Kind, "template", StringComparison.Ordinal))
-                    d.Error = "this file declares 'kind: template' but lives in the workflows dir — a template is a recipe with blanks, not runnable. Move it to .semanticus/workflow-templates/, or remove 'kind: template' to make it a workflow.";
+                    d.Error = "this file declares 'kind: template' but lives in the workflows dir: a template is a recipe with blanks, not runnable. Move it to .semanticus/workflow-templates/, or remove 'kind: template' to make it a workflow.";
             return defs;
         }
 
@@ -877,7 +953,14 @@ namespace Semanticus.Engine
             // A distilled workflow names where it came from — info, never docks Ok.
             if (def.Provenance != null && def.Provenance.Count > 0)
                 findings.Add(new CheckFinding { Severity = "info",
-                    Message = "Distilled workflow — provenance " + string.Join("; ", def.Provenance.Select(kv => $"{kv.Key}: {kv.Value}")) + "." });
+                    Message = "Distilled workflow: provenance " + string.Join("; ", def.Provenance.Select(kv => $"{kv.Key}: {kv.Value}")) + "." });
+
+            // Format v2 (docs/workflow-canvas-spec.md §3.4): the checks that need the whole LIBRARY rather
+            // than the file — does a hand-off resolve, is the chain acyclic and inside the depth limit, is a
+            // `when:` term one this version can read. Kept in WorkflowParser so the format's rules live in
+            // one place; a parse-level refusal never reaches here, having returned above as ParseError.
+            var library = LoadWorkflowDefs();
+            findings.AddRange(WorkflowParser.V2Findings(def, library, LoadTemplateDefs()));
 
             var catalog = (await GetOpCatalogAsync()).Select(o => o.Name).ToHashSet(StringComparer.Ordinal);
 
@@ -887,7 +970,11 @@ namespace Semanticus.Engine
 
             // Run-wide gate inputs: a later step's verify can reference an input a *previous* step collected.
             var allInputs = def.Steps.SelectMany(s => s.Gate?.Inputs ?? Array.Empty<GateInput>()).ToList();
-            var inputNames = allInputs.Select(i => i.Name).Where(n => !string.IsNullOrEmpty(n)).ToHashSet(StringComparer.Ordinal);
+            // Plus every name a `call:` brings back from a callee that could actually deliver it: same rule,
+            // same helper, one implementation (WorkflowParser.CallerInputNames). Names only, not GateInput
+            // rows: the declaration, and therefore the type, lives in the callee, so the objectRef and
+            // daxPurity views below deliberately still read this file's own declarations.
+            var inputNames = WorkflowParser.CallerInputNames(def, library);
             var hasObjectRef = allInputs.Any(i => string.Equals(i.Type, "objectRef", StringComparison.Ordinal));
 
             // SF7 — a running SAME-OR-PRIOR-STEP view of objectRef availability: expected_values resolves its target
@@ -897,6 +984,16 @@ namespace Semanticus.Engine
 
             foreach (var step in def.Steps)
             {
+                if (step.Call != null && (step.Call.Returns?.Length ?? 0) > 0)
+                {
+                    var callee = library.FirstOrDefault(d => string.Equals(d.Name, step.Call.Workflow, StringComparison.OrdinalIgnoreCase));
+                    if (callee != null && string.Equals(callee.Strictness, "off", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var title = string.IsNullOrWhiteSpace(callee.Title) ? callee.Name : callee.Title;
+                        findings.Add(new CheckFinding { Severity = "warn",
+                            Message = $"This hand-off expects values back, but {title} has its gate off, so nothing will come back." });
+                    }
+                }
                 hasObjectRefSoFar |= (step.Gate?.Inputs ?? Array.Empty<GateInput>())
                     .Any(i => string.Equals(i.Type, "objectRef", StringComparison.Ordinal));
 
@@ -917,7 +1014,7 @@ namespace Semanticus.Engine
                         || v.Kind == "baseline_exists" || v.Kind == "baseline_unchanged"
                         || v.Kind == "plan_item_staged" || v.Kind == "plan_item_applied";
                     if (needsProbe && string.IsNullOrEmpty(v.Probe))
-                        findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' has no probe: input naming the value to compare against — it would fail at run time." });
+                        findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' has no probe: input naming the value to compare against. It would fail at run time." });
 
                     if (!string.IsNullOrEmpty(v.Probe) && !inputNames.Contains(v.Probe))
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' probe references input '{v.Probe}', which no gate collects." });
@@ -933,15 +1030,15 @@ namespace Semanticus.Engine
                     if (needsTarget && !targetAvailable)
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify '{v.Kind}' needs a target, but no input of type objectRef names the object to act on"
                             + (v.Kind == "expected_values" && hasObjectRef ? " on this or any prior step (a later step's objectRef cannot be answered in time)" : "")
-                            + " — the check can't run and would fail a hard gate." });
+                            + ": the check can't run and would fail a hard gate." });
 
                     // equivalenceGrid is an optional convention: absent = grand-total-only (thin), not an error.
                     if (v.Kind == "dax_equivalence" && !inputNames.Contains("equivalenceGrid"))
-                        findings.Add(new CheckFinding { Severity = "info", Message = $"{step.Id} verify 'dax_equivalence' has no 'equivalenceGrid' input — equivalence would be grand-total only (thin). Add one for a per-context proof." });
+                        findings.Add(new CheckFinding { Severity = "info", Message = $"{step.Id} verify 'dax_equivalence' has no 'equivalenceGrid' input: equivalence would be grand-total only (thin). Add one for a per-context proof." });
 
                     // benchmarkTolerance is optional: absent = the 1.10 (10%-over-baseline) default applies.
                     if (v.Kind == "benchmark_delta" && !inputNames.Contains("benchmarkTolerance"))
-                        findings.Add(new CheckFinding { Severity = "info", Message = $"{step.Id} verify 'benchmark_delta' has no 'benchmarkTolerance' input — the default 1.10 (allow 10% over baseline) applies. Add one to tighten or loosen the regression band." });
+                        findings.Add(new CheckFinding { Severity = "info", Message = $"{step.Id} verify 'benchmark_delta' has no 'benchmarkTolerance' input: the default 1.10 (allow 10% over baseline) applies. Add one to tighten or loosen the regression band." });
 
                     if (v.Kind == "impact_assessment" && !inputNames.Contains("reportPaths"))
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} verify 'impact_assessment' needs a 'reportPaths' answer-or-decline input so report scope is explicit." });
@@ -964,22 +1061,35 @@ namespace Semanticus.Engine
         /// <summary>Write a user workflow file — PARSE-VALIDATE FIRST: a file the parser refuses is never
         /// written (the designer must not be able to author a broken library entry; the parse error comes
         /// back verbatim). Saving a stock name creates the user shadow (copy-to-customise).</summary>
-        public async Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin)
+        public async Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false)
         {
-            name = (name ?? "").Trim();
-            if (!KebabName.IsMatch(name))
-                throw new InvalidOperationException($"'{name}' is not a valid workflow name — kebab-case (e.g. 'my-workflow'); it becomes the filename.");
-            var def = WorkflowParser.Parse(markdown);
-            if (def.Error != null)
-                throw new InvalidOperationException($"The workflow does not parse — nothing was written. {def.Error} Fix the reported error, then re-run save_workflow (or check_workflow to re-validate a library entry).");
-            if (!string.Equals(def.Name, name, StringComparison.Ordinal))
-                throw new InvalidOperationException($"frontmatter name '{def.Name}' must equal the workflow name '{name}' (it is the file identity).");
-
-            var (userDir, _) = WorkflowDirs();
-            if (userDir == null)
-                throw new InvalidOperationException("No place to store user workflows — run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
-            Directory.CreateDirectory(userDir);
-            await Task.Run(() => File.WriteAllText(Path.Combine(userDir, name + ".md"), markdown));
+            name = ValidateWorkflowDocumentName(name);
+            var context = _sessions.CurrentContext;
+            var (userDir, _) = WorkflowDirs(context);
+            await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                GuardWorkflowDocumentContext(context, null);
+                lock (WorkflowDocumentLock)
+                {
+                    var def = ParseWorkflowDocument(markdown);
+                    if (def.Error != null)
+                        throw new InvalidOperationException($"The workflow does not parse. Nothing was written. {def.Error} Fix the reported error, then re-run save_workflow (or check_workflow to re-validate a library entry).");
+                    if (!string.Equals(def.Name, name, StringComparison.Ordinal))
+                        throw new InvalidOperationException($"frontmatter name '{def.Name}' must equal the workflow name '{name}' (it is the file identity).");
+                    if (userDir == null)
+                        throw new InvalidOperationException("No place to store user workflows. Run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
+                    var bytes = WorkflowDocumentUtf8.GetBytes(markdown);
+                    var file = Path.Combine(userDir, name + ".md");
+                    if (createOnly && File.Exists(file))
+                        throw new InvalidOperationException($"A project copy of '{name}' already exists. Nothing was written. Read get_workflow_document to edit that copy.");
+                    Directory.CreateDirectory(userDir);
+                    var temp = WriteWorkflowDocumentTemp(file, bytes);
+                    try { File.Move(temp, file, !createOnly); }
+                    finally { if (File.Exists(temp)) File.Delete(temp); }
+                }
+            }
+            finally { context.WorkflowGate.Release(); }
             return await PublishWorkflowLibraryAsync();
         }
 
@@ -987,14 +1097,25 @@ namespace Semanticus.Engine
         /// name without a user shadow is refused instructively (customised shadows revert to stock).</summary>
         public async Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin)
         {
-            var (userDir, stockDir) = WorkflowDirs();
-            var file = userDir == null ? null : Path.Combine(userDir, (name ?? "").Trim() + ".md");
-            if (file == null || !File.Exists(file))
-                throw new InvalidOperationException(
-                    File.Exists(Path.Combine(stockDir, (name ?? "").Trim() + ".md"))
-                        ? $"'{name}' is a stock workflow (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflows."
-                        : $"User workflow '{name}' not found — list_workflows shows the library, and only your own copies (under .semanticus/workflows) are deletable.");
-            await Task.Run(() => File.Delete(file));
+            name = ValidateWorkflowDocumentName(name);
+            var context = _sessions.CurrentContext;
+            var (userDir, stockDir) = WorkflowDirs(context);
+            await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                GuardWorkflowDocumentContext(context, null);
+                lock (WorkflowDocumentLock)
+                {
+                    var file = userDir == null ? null : Path.Combine(userDir, name + ".md");
+                    if (file == null || !File.Exists(file))
+                        throw new InvalidOperationException(
+                            File.Exists(Path.Combine(stockDir, name + ".md"))
+                                ? $"'{name}' is a stock workflow (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflows."
+                                : $"User workflow '{name}' not found: list_workflows shows the library, and only your own copies (under .semanticus/workflows) are deletable.");
+                    File.Delete(file);
+                }
+            }
+            finally { context.WorkflowGate.Release(); }
             return await PublishWorkflowLibraryAsync();
         }
 
@@ -1007,9 +1128,9 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required.");
             var def = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"Workflow '{name}' not found — list_workflows shows the library (stock + your .semanticus/workflows).");
+                ?? throw new InvalidOperationException($"Workflow '{name}' not found: list_workflows shows the library (stock + your .semanticus/workflows).");
             var file = WorkflowSettingsFile()
-                ?? throw new InvalidOperationException("No workspace to hold workflow settings — open a model (or start the engine with a workspace) first.");
+                ?? throw new InvalidOperationException("No workspace to hold workflow settings. Open a model (or start the engine with a workspace) first.");
 
             MutateWorkflowSettings(file, root =>
             {
@@ -1042,7 +1163,7 @@ namespace Semanticus.Engine
         /// not, and cannot, police the file itself).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowBindingAsync(string op, string[] requireNames, string mode, string origin)
         {
-            if (string.IsNullOrWhiteSpace(op)) throw new ArgumentException("op is required — the op to route, e.g. 'create_measure'.");
+            if (string.IsNullOrWhiteSpace(op)) throw new ArgumentException("op is required: the op to route, e.g. 'create_measure'.");
             op = op.Trim();
             mode = string.IsNullOrWhiteSpace(mode) ? "off" : mode.Trim().ToLowerInvariant();
             if (mode != "hard" && mode != "warn" && mode != "off")
@@ -1051,7 +1172,7 @@ namespace Semanticus.Engine
             var clearing = mode == "off" || require.Length == 0;
 
             var file = WorkflowSettingsFile()
-                ?? throw new InvalidOperationException("No workspace to hold workflow settings — open a model (or start the engine with a workspace) first.");
+                ?? throw new InvalidOperationException("No workspace to hold workflow settings. Open a model (or start the engine with a workspace) first.");
 
             // §9.10C: a committed mandate (userDisablable:false) can't be changed OR cleared from the agent door —
             // instructive refusal, checked before the Pro gate so the more-specific reason wins. Human/file edits
@@ -1064,13 +1185,13 @@ namespace Semanticus.Engine
             if (!clearing)
             {
                 // §9.8 Pro gate — writing a mandate (hard|warn) is the paid enforcement; reading/curating stays free.
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "set_workflow_binding (requiring an op to route through a workflow)",
+                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Requiring an operation to route through a workflow",
                     "Free alternative: curate the menu with set_workflow_enabled and follow a workflow manually (get_workflow).");
                 // Every required name must exist — a binding to a phantom workflow would be an unstartable trap.
                 var lib = LoadWorkflowDefs().Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
                 var unknown = require.Where(n => !lib.Contains(n)).ToArray();
                 if (unknown.Length > 0)
-                    throw new InvalidOperationException($"Unknown workflow(s): {string.Join(", ", unknown)}. list_workflows shows the library — a binding can only require workflows that exist.");
+                    throw new InvalidOperationException($"Unknown workflow(s): {string.Join(", ", unknown)}. list_workflows shows the library. A binding can only require workflows that exist.");
             }
 
             MutateWorkflowSettings(file, root =>
@@ -1108,30 +1229,37 @@ namespace Semanticus.Engine
         /// are hand-edited in v1 (this op takes a name).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowActivationAsync(string workflow, string when, string set, string origin)
         {
-            if (string.IsNullOrWhiteSpace(workflow)) throw new ArgumentException("workflow is required — the workflow to show or hide with a rule.");
+            if (string.IsNullOrWhiteSpace(workflow)) throw new ArgumentException("workflow is required: the workflow to show or hide with a rule.");
             workflow = workflow.Trim();
             when = string.IsNullOrWhiteSpace(when) ? null : when.Trim();
             set = string.IsNullOrWhiteSpace(set) ? null : set.Trim().ToLowerInvariant();
             var clearing = when == null && set == null;   // neither given ⇒ remove the rule (show it normally again)
 
             var file = WorkflowSettingsFile()
-                ?? throw new InvalidOperationException("No workspace to hold workflow settings — open a model (or start the engine with a workspace) first.");
+                ?? throw new InvalidOperationException("No workspace to hold workflow settings. Open a model (or start the engine with a workspace) first.");
 
             // A rule for a phantom workflow is a trap that only clutters the policy lints — refuse it up front.
             var lib = LoadWorkflowDefs().Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
             if (!lib.Contains(workflow))
-                throw new InvalidOperationException($"Workflow '{workflow}' not found — list_workflows shows the library. An activation rule can only target a workflow that exists.");
+                throw new InvalidOperationException($"Workflow '{workflow}' not found: list_workflows shows the library. An activation rule can only target a workflow that exists.");
 
             if (!clearing)
             {
                 if (set != "on" && set != "off")
                     throw new ArgumentException("set must be 'on' (show it when the condition holds) or 'off' (hide it), or clear the rule by passing neither a condition nor a set.");
                 // Parse-validate the condition BEFORE the write (teaching tone) — never persist a rule that can't run.
-                WorkflowPredicate.Parse(when, out var perr);
+                var parsedWhen = WorkflowPredicate.Parse(when, out var perr);
                 if (perr != null)
-                    throw new InvalidOperationException($"That condition can't be used — {perr} Conditions read like date.monthEndOffset >= -3, connection.workspace ~ '*prod*', or model.readinessGrade < 'B'.");
+                    throw new InvalidOperationException($"That condition can't be used: {perr} Conditions read like date.monthEndOffset >= -3, connection.workspace ~ '*prod*', or model.readinessGrade < 'B'.");
+                // Format v2 added inputs.* and loop.* so a STEP can have a condition. They read a run's
+                // answers and the current loop pass, and an activation rule is judged before any run exists,
+                // so a rule using one would silently never match. Refused here rather than in
+                // WorkflowPredicate, which stays the one evaluator for every caller.
+                var stepScope = WorkflowPredicate.StepScopeFacts(parsedWhen);
+                if (stepScope.Count > 0)
+                    throw new InvalidOperationException($"That condition can't be used here: '{string.Join("', '", stepScope)}' only means something while a workflow is running, and this rule decides whether the workflow is offered at all. Use a condition about the model, the connection, git, the session or the date. To make a STEP conditional, put 'when:' in that step's 'yaml step' block instead.");
                 // §10.7 Pro gate — writing an activation rule is the paid curation; reading it stays free.
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "set_workflow_activation (showing a workflow only when a condition holds)",
+                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Showing a workflow only when a condition holds",
                     "Free alternative: turn workflows on/off with set_workflow_enabled, or edit the activation list in .semanticus/workflow-settings.json.");
             }
 
@@ -1178,6 +1306,7 @@ namespace Semanticus.Engine
         {
             var global = GlobalStrictness();
             var defs = LoadWorkflowDefs();
+            var templates = LoadTemplateDefs();
             var rules = AllActivationRules();
             var arrayBindings = AllArrayBindings();
             var facts = await GatherFactsForAsync(rules.Where(r => r.Valid).Select(r => r.When)
@@ -1196,7 +1325,7 @@ namespace Semanticus.Engine
                         Enabled = enabled,
                         Active = active,
                         ActiveReason = reason,
-                        Gated = d.HasEnforcedGate(SettingsStrictnessFor(d.Name), global),
+                        Gated = ClosureIsGated(d, defs, templates, global),
                         WhenToUse = d.WhenToUse,
                         // invert the (effective) bindings: which ops name THIS workflow in their require set
                         RequiredForOps = enforced.Where(b => b.Binding.Require.Contains(d.Name, StringComparer.Ordinal))
@@ -1229,7 +1358,7 @@ namespace Semanticus.Engine
             // Loudest of all: a PRESENT-but-corrupt settings file means enforcement is failing CLOSED (bindable ops
             // refused, any 'off' override ignored). Surface it so the fix — repair or delete the file — is obvious.
             if (WorkflowSettingsCorrupt())
-                Warn("workflow-settings.json is present but can't be parsed (malformed JSON) — workflow enforcement is failing CLOSED: bindable authoring ops are refused and any 'off' override is ignored until you repair or delete the file.");
+                Warn("workflow-settings.json is present but can't be parsed (malformed JSON). Workflow enforcement is failing CLOSED: bindable authoring ops are refused and any 'off' override is ignored until you repair or delete the file.");
 
             // Per-rule structural lints.
             foreach (var r in rules)
@@ -1238,9 +1367,9 @@ namespace Semanticus.Engine
                 if (r.WhenError != null)                                   // (2) unreadable when:
                     Warn($"the condition on the activation rule for {SelectorLabel(r)} can't be used: {r.WhenError}");
                 if (r.Workflow != null && !names.Contains(r.Workflow))     // (1) unknown target workflow
-                    Warn($"an activation rule targets workflow '{r.Workflow}', which doesn't exist — list_workflows shows the library; the rule does nothing.");
+                    Warn($"an activation rule targets workflow '{r.Workflow}', which doesn't exist: list_workflows shows the library; the rule does nothing.");
                 if (r.Tag != null && !allTags.Contains(r.Tag))            // (1) unknown target tag
-                    Warn($"an activation rule targets tag '{r.Tag}', which no workflow carries — the rule does nothing.");
+                    Warn($"an activation rule targets tag '{r.Tag}', which no workflow carries: the rule does nothing.");
             }
 
             // Per selected-workflow contradictions.
@@ -1251,13 +1380,13 @@ namespace Semanticus.Engine
                 var selecting = rules.Where(r => r.Valid && r.WhenError == null && RuleSelects(r, d)).ToArray();
 
                 if (!enabled && requiredBy.Length > 0)                     // (5) the deadlock (loudest)
-                    Warn($"'{d.Name}' is turned off but required when {PlainOpPhrase(requiredBy[0])}; the requirement wins — turn '{d.Name}' back on or drop the requirement.");
+                    Warn($"'{d.Name}' is turned off but required when {PlainOpPhrase(requiredBy[0])}; the requirement wins. Turn '{d.Name}' back on or drop the requirement.");
                 if (!enabled && selecting.Any(r => r.On))                  // (3) dead rule (manual disable wins)
-                    Warn($"a rule shows '{d.Name}' in some situations, but it's turned off for this project — the rule has no effect (turn it back on to use the rule).");
+                    Warn($"a rule shows '{d.Name}' in some situations, but it's turned off for this project: the rule has no effect (turn it back on to use the rule).");
                 if (requiredBy.Length > 0 && selecting.Any(r => !r.On))    // (4) binding↔activation contradiction
-                    Warn($"'{d.Name}' is required when {PlainOpPhrase(requiredBy[0])} but a rule hides it — the requirement wins; the rule is overridden.");
+                    Warn($"'{d.Name}' is required when {PlainOpPhrase(requiredBy[0])} but a rule hides it: the requirement wins; the rule is overridden.");
                 if (selecting.Select(r => r.On).Distinct().Count() > 1)    // (6) conflicting rules (deterministic, but a smell)
-                    Info($"more than one activation rule selects '{d.Name}' with different on/off outcomes — the first matching rule wins (a likely mistake).");
+                    Info($"more than one activation rule selects '{d.Name}' with different on/off outcomes: the first matching rule wins (a likely mistake).");
             }
 
             // Array-binding rules referencing a not-yet-available fact (D6/T4 deferral) — surfaced so a
@@ -1323,9 +1452,25 @@ namespace Semanticus.Engine
                     if (string.IsNullOrEmpty(name)) continue;
                     var desc = m.GetCustomAttributes(true).OfType<System.ComponentModel.DescriptionAttribute>().FirstOrDefault();
                     methods[name] = m;   // tool Names are unique across the assembled MCP surface
-                    infos.Add(new OpInfo { Name = name, Description = FirstSentence(desc?.Description) });
+                    // [T215] Stamp the ratified taxonomy home here, once, so every consumer of the
+                    // catalog (Studio picker over RPC, agents over MCP) sees the same tree. An op
+                    // OpTaxonomy does not know ships with null question/shelf — visible, not hidden,
+                    // and OpTaxonomyTests fails naming it until its placement is ratified.
+                    OpTaxonomy.TryGet(name, out var question, out var shelf);
+                    infos.Add(new OpInfo { Name = name, Description = FirstSentence(desc?.Description), Question = question, Shelf = shelf });
                 }
-            return new OpSurfaceData { Infos = infos.OrderBy(o => o.Name, StringComparer.Ordinal).ToArray(), Methods = methods };
+            // [T215] The catalog's ORDER is the ratified tree's order (question page order, shelf page
+            // order, then name), so a consumer that groups in received order — the Studio picker —
+            // renders the page without re-deriving it. An unfiled op sorts last, visibly.
+            return new OpSurfaceData
+            {
+                Infos = infos
+                    .OrderBy(o => OpTaxonomy.OrderOf(o.Name).QuestionIndex)
+                    .ThenBy(o => OpTaxonomy.OrderOf(o.Name).ShelfIndex)
+                    .ThenBy(o => o.Name, StringComparer.Ordinal)
+                    .ToArray(),
+                Methods = methods
+            };
         });
 
         private static string FirstSentence(string s)
@@ -1340,6 +1485,51 @@ namespace Semanticus.Engine
 
         internal Func<Task> WorkflowStartReadyForTest;
 
+        /// <summary>[T220] Phase B entitlement over the WHOLE frozen closure. Not a new rule: `HasEnforcedGate`
+        /// is already a per-definition question, so this is the same question folded over one run's definitions.
+        /// A free root that reaches a hard-gated callee still enforces a paid gate, because the run is one plan
+        /// and one certificate; entitling only the root would sell that enforcement for nothing.
+        /// The same closure is used for planning and execution.</summary>
+        internal static bool ClosureRequiresPro(WorkflowOwnerClosure closure, string globalStrictness) =>
+            closure.Definitions.Any(d => d.HasEnforcedGate(closure.SettingsStrictness(d), globalStrictness));
+
+        /// <summary>[T220] Every verify kind declared anywhere in the frozen closure, so a callee-only
+        /// `bpa_clean` or `readiness_rescan` still takes its baseline at start.</summary>
+        internal static HashSet<string> ClosureVerifyKinds(WorkflowOwnerClosure closure) =>
+            closure.Definitions.SelectMany(d => d.Steps)
+                .Where(s => s.Gate != null).SelectMany(s => s.Gate.Verify)
+                .Select(v => v.Kind).ToHashSet(StringComparer.Ordinal);
+
+        /// <summary>[T220] The step-level conditions of every reachable owner, parsed once. Facts are still
+        /// gathered ONCE from their union.</summary>
+        internal static IEnumerable<PredicateExpr> ClosureConditionRoots(WorkflowOwnerClosure closure) =>
+            closure.Definitions.SelectMany(d => d.Steps)
+                .Where(s => !string.IsNullOrWhiteSpace(s.When))
+                .Select(s => WorkflowPredicate.Parse(s.When, out _))
+                .ToArray();
+
+        /// <summary>[T220] The start-of-run baselines, driven by the closure rather than the root. The scans are
+        /// INJECTED so this seam can be proved offline with invented results: a null scanner means no live
+        /// session, which is exactly today's "session != null" test and never a claimed pass. Readiness captures
+        /// two values through its own scan, which is why it stays separate from BPA rather than folding in.</summary>
+        internal static async Task<WorkflowRunAux> CaptureStartSnapshotsAsync(
+            WorkflowOwnerClosure closure, Func<Task<Semanticus.Analysis.BpaScorecard>> bpaScan, Func<Task<Semanticus.Analysis.Scorecard>> readinessScan)
+        {
+            var aux = new WorkflowRunAux();
+            var kinds = ClosureVerifyKinds(closure);
+            if (kinds.Contains("bpa_clean") && bpaScan != null)
+                aux.BpaKeys = (await bpaScan()).Violations.Where(v => !v.Waived)
+                    .Select(v => v.RuleId + "|" + v.ObjectRef).ToHashSet(StringComparer.Ordinal);
+            if (kinds.Contains("readiness_rescan") && readinessScan != null)
+            {
+                var sc = await readinessScan();
+                aux.ReadinessKeys = sc.Findings.Where(f => !f.Waived)
+                    .Select(f => f.RuleId + "|" + f.ObjectRef).ToHashSet(StringComparer.Ordinal);
+                aux.ReadinessOverall = sc.Overall;
+            }
+            return aux;
+        }
+
         public async Task<WorkflowRunView> StartWorkflowAsync(string name, string origin)
         {
             var context = _sessions.CurrentContext;
@@ -1351,24 +1541,68 @@ namespace Semanticus.Engine
                     $"'{name}' is a template (a recipe with blanks). Fill it in first: instantiate_workflow_template creates a runnable workflow from it.");
             var def = await GetWorkflowAsync(name);
 
+            // ---- PHASE A: resolve, validate, freeze and entitle before anything expensive happens. [T220]
+            // Validate the entire call graph before snapshots or registration: a missing or disabled callee
+            // cannot leave behind a partly started run.
+            var closureDefs = WorkflowParser.ReachableClosure(def, LoadWorkflowDefs(), LoadTemplateDefs(), out var handoffProblems);
+            if (handoffProblems.Count > 0)
+            {
+                var more = handoffProblems.Count > 1 ? $" ({handoffProblems.Count} in total: {string.Join(" ", handoffProblems.Skip(1).Select(f => f.Message))})" : "";
+                throw new InvalidOperationException(
+                    $"Workflow '{def.Name}' can't be started because its hand-offs do not resolve: {handoffProblems[0].Message}{more} Open the workflow to see the full report, then save the fix.");
+            }
+
             // §10.6 activation [D1][D4]: resolve the menu state once. A binding force-active workflow MUST be
             // startable even if manually disabled (the deadlock breaker, E1) — so the disabled-refusal is skipped
             // for it. A manual `enabled:false` still hard-refuses otherwise (the kill switch). A RULE-deactivated
             // workflow (off the menu, not manually off) is startable ON DEMAND with a teaching note (D4).
-            var (active, activeReason, forceActive) = await ResolveActivationForAsync(def);
+            var (active, activeReason, forceActive, forcedCallees) = await ResolveActivationForAsync(def, closureDefs.Skip(1));
             if (!SettingsEnabledFor(def.Name) && !forceActive)
-                throw new InvalidOperationException($"Workflow '{def.Name}' is turned off for this project, so it can't be started. Turn it back on in the Workflows tab, or call set_workflow_enabled(\"{def.Name}\", true) (it's still listed so you can re-enable it).");
+                throw new InvalidOperationException($"Workflow '{def.Name}' is turned off for this project, so it can't be started. Turn it back on in the Workflows tab.");
             if (def.Error != null)
-                throw new InvalidOperationException($"Workflow '{name}' has a parse error and cannot run: {def.Error} Run check_workflow to see the full admission report, then fix it with save_workflow (or read it with get_workflow).");
-            var settings = SettingsStrictnessFor(def.Name);
-            var global = GlobalStrictness();
+                throw new InvalidOperationException($"Workflow '{name}' has a parse error and cannot run: {def.Error} Open the workflow to see the full report, then save the fix.");
 
+            // A CALLEE's own kill switch. Activation only curates the menu, so a callee a rule currently hides
+            // is still reachable on demand exactly as a root is. `enabled:false` is different: it is the manual
+            // off switch, and letting a caller route around it would make it false advertising.
+            // [F-121] Force-active is the one thing that DOES beat the manual disable, at every position in the
+            // graph. The root rule above already skips its refusal for a workflow an enforced binding requires
+            // (E1, the deadlock breaker); this rule ignored that and so refused to reach a REQUIRED workflow
+            // through a hand-off. Owner plan §5.2 row 4 gives each owner its own force-active state and stop
+            // condition 4 forbids the root and callee rules differing, so the two now ask one question.
+            // Force-active means an enforced binding REQUIRES that name, not that a rule put it on the menu,
+            // and never a write back to its own `enabled` setting.
+            foreach (var reachable in closureDefs.Skip(1))
+                if (!SettingsEnabledFor(reachable.Name) && !forcedCallees.Contains(reachable.Name))
+                    throw new InvalidOperationException(
+                        $"Workflow '{def.Name}' hands off to '{reachable.Name}', which is turned off for this project, so the run can't start. Turn it back on in the Workflows tab, or call set_workflow_enabled(\"{reachable.Name}\", true).");
+
+            // One settings read per DISTINCT reachable name, plus one global read, and then the whole closure
+            // is frozen over exactly those values. Nothing loads or freezes a callee later in the run.
+            var global = GlobalStrictness();
+            var closure = new WorkflowOwnerClosure(closureDefs
+                .Select(d => (Def: WorkflowFreeze.Freeze(d), Settings: SettingsStrictnessFor(d.Name)))
+                .ToArray());
+            var settings = closure.SettingsStrictness(closure.Root);
+
+            // Keep admission tied to the parser's supported control fields. Calls are planned below from
+            // this same frozen closure; their input values remain a submission-time question.
+            var unexecutable = WorkflowParser.UnexecutableControlFields(def);
+            if (unexecutable.Count > 0)
+            {
+                var first = unexecutable[0];
+                var more = unexecutable.Count > 1 ? $" ({unexecutable.Count} in total: {string.Join(", ", unexecutable.Select(u => $"'{u.Field}' on {u.StepId}"))})" : "";
+                throw new InvalidOperationException(
+                    $"Workflow '{def.Name}' can't be started by this version: Step {first.StepNumber} ({first.StepId}) uses '{first.Field}:', and this engine reads that field but does not run it yet{more}. Starting it anyway would run the step as if the '{first.Field}:' were not there, which is not what the file says. You can still open the workflow and review it.");
+            }
+
+            // ---- PHASE B: the normal start preparation, over the whole frozen closure.
             // THE entitlement chokepoint (both doors inherit): what's paid is enforcement, not the
             // playbook — a workflow whose every gate resolves to off runs free (incl. via the
             // model-wide enforcement toggle: enforcement off ⇒ nothing enforced ⇒ nothing gated).
-            if (def.HasEnforcedGate(settings, global))
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "start_workflow (an enforced, evidence-verified workflow run)",
-                    "Free alternative: read the workflow with get_workflow and follow its steps manually.");
+            if (ClosureRequiresPro(closure, global))
+                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Starting an enforced workflow",
+                    "Free alternative: open the playbook and follow its steps by hand.");
 
             // [D4] Started though a rule currently hides it (activation curates the menu, it isn't a lock): record a
             // plain advisory so the run is honest. Skip when force-active (that's "required", not "off the menu").
@@ -1376,23 +1610,18 @@ namespace Semanticus.Engine
                 _sessions.Bus.PublishActivity(new ActivityEvent
                 {
                     Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin, Kind = "start_workflow_off_menu", Ok = true, Target = def.Name,
-                    Label = $"Started '{def.Name}' though it's off the current menu ({activeReason ?? "hidden by a rule"}) — you can still run it; activation curates the menu, it doesn't lock a workflow.",
+                    Label = $"Started '{def.Name}' though it's off the current menu ({activeReason ?? "hidden by a rule"}): you can still run it; activation curates the menu, it doesn't lock a workflow.",
                 });
 
             // Start-of-run snapshots for diff-based verifies — taken BEFORE any step mutates the model.
             var session = context.Session;
-            var aux = new WorkflowRunAux();
-            var kinds = def.Steps.Where(s => s.Gate != null).SelectMany(s => s.Gate.Verify).Select(v => v.Kind).ToHashSet(StringComparer.Ordinal);
-            if (kinds.Contains("bpa_clean") && session != null)
-                aux.BpaKeys = (await BpaScanAsync()).Violations.Where(v => !v.Waived).Select(v => v.RuleId + "|" + v.ObjectRef).ToHashSet(StringComparer.Ordinal);
-            if (kinds.Contains("readiness_rescan") && session != null)
-            {
-                var sc = await AiReadinessScanAsync();
-                aux.ReadinessKeys = sc.Findings.Where(f => !f.Waived).Select(f => f.RuleId + "|" + f.ObjectRef).ToHashSet(StringComparer.Ordinal);
-                aux.ReadinessOverall = sc.Overall;
-            }
+            var aux = await CaptureStartSnapshotsAsync(closure, session == null ? null : (Func<Task<Semanticus.Analysis.BpaScorecard>>)BpaScanAsync,
+                session == null ? null : (Func<Task<Semanticus.Analysis.Scorecard>>)AiReadinessScanAsync);
 
             var modelName = session == null ? null : await session.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
+            // Conditions in EVERY reachable owner contribute roots, but facts are still gathered ONCE and stay
+            // one point-in-time snapshot: no condition causes a second model read or git process.
+            var conditionFacts = await GatherFactsForAsync(ClosureConditionRoots(closure));
             var hook = System.Threading.Interlocked.Exchange(ref WorkflowStartReadyForTest, null);
             if (hook != null) await hook();
             WorkflowRunState run;
@@ -1401,12 +1630,17 @@ namespace Semanticus.Engine
             {
                 EnsureContextCurrent(context, "Workflow start");
                 var live = context.Live;   // bind the identity current at registration; a benign reconnect is allowed
-                run = context.WorkflowRuns.Start(def, settings, global);
-                run.Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
-                run.ModelIdentity = PaneIdentity(session, live);
-                run.ModelName = modelName;
-                run.ModelFingerprint = session == null ? null : VitalsFingerprintFor(session);
-                run.SessionId = session?.Id;
+                run = context.WorkflowRuns.Start(closure, global, initialize: candidate =>
+                {
+                    candidate.Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
+                    candidate.ModelIdentity = PaneIdentity(session, live);
+                    candidate.ModelName = modelName;
+                    candidate.ModelFingerprint = session == null ? null : VitalsFingerprintFor(session);
+                    candidate.SessionId = session?.Id;
+                    candidate.FrameFacts = conditionFacts;
+                    WorkflowRunner.InitializeCalls(candidate);
+                    WorkflowRunner.AdvancePastInapplicableSteps(candidate);
+                });
                 context.WorkflowAux[run.RunId] = aux;
                 return PublishWorkflowRun(context, run);
             }
@@ -1428,7 +1662,7 @@ namespace Semanticus.Engine
         /// <summary>Submit the run's current step. <paramref name="answersJson"/> is a JSON object:
         /// a value per gate-input name, or the explicit decline sentinel
         /// {"declined": true, "reason": "..."}. The gate evaluator's rejection text steers the agent.</summary>
-        public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin)
+        public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin, string callGate = null)
         {
             var context = _sessions.CurrentContext;
             var answers = ParseAnswers(answersJson);
@@ -1437,21 +1671,67 @@ namespace Semanticus.Engine
             {
                 EnsureContextCurrent(context, "Workflow step");
                 var run = context.WorkflowRuns.Require(runId);
-                // The step being submitted (for a witness-revision receipt's stepId) — captured BEFORE the submit
-                // advances the run.
-                var submittingStep = run.CurrentStep?.Id ?? stepId;
-                run.SubmissionOrigin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
-                try { await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync); }
-                finally
+                if (!string.IsNullOrWhiteSpace(callGate) && run.CurrentStep?.Call != null && !string.IsNullOrWhiteSpace(run.CurrentStep.Call.Workflow))
                 {
-                    // E3(a) — lock the witness on FIRST submission of any input that feeds a dax_equivalence probe, and
-                    // record a revision receipt on a later change. In `finally` so a re-submitted (hard-blocked) step's
-                    // changed witness is still captured; the run object is mutated in place either way.
-                    RecordWitnessLocks(run, submittingStep);
-                    run.SubmissionOrigin = null;
+                    var on = string.Equals(callGate.Trim(), "on", StringComparison.OrdinalIgnoreCase);
+                    run.CallStrictnessOverride[run.CurrentStep.Call.Workflow] = on ? "hard" : "off";
+                }
+                // Address, coherence, frozen-source and R1 (unusable deferred list on the DECLARING submission)
+                // refusals happen before the receipt scope. The runner validates again inside the transition,
+                // but a bad call must never rewrite witness evidence. A current unexpanded deferred loop's own
+                // expansion refusals are NOT in that list: they ride the expansion-only route below, which never
+                // enters the scope at all.
+                var submittingStep = WorkflowRunner.ValidateSubmission(run, stepId, answers);
+                // An expansion-only current row (self-sourced preparation, inline expansion, or a deferred loop
+                // reached unexpanded) only splices the plan: no verify runs, so there is no evidence to frame
+                // and no witness to lock.
+                // Classified after parsing and the address/coherence refusals above, and deliberately OUTSIDE the
+                // scope below — installing receipt bookkeeping for a transition that records none would let a
+                // setup call stamp a lock the first real iteration submission is supposed to own.
+                if (WorkflowRunner.IsExpansionOnlySubmission(run))
+                {
+                    await WorkflowRunner.SubmitStepAsync(run, stepId, answers, null);
+                    EnsureContextCurrent(context, "Workflow step");
+                    return PublishWorkflowRun(context, run, origin);
+                }
+                using (run.CaptureSubmissionFrame())
+                {
+                    // The step being submitted (for a witness-revision receipt's stepId) is captured before the
+                    // runner can advance. The proof frame is captured at the same boundary and remains selected
+                    // through receipt bookkeeping, even after StepIndex changes or the runner throws.
+                    run.SubmissionOrigin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
+                    var needsDaxInventory = run.CurrentStep?.Gate?.Inputs
+                        .Any(i => i.DaxPurity == "no-bare-measures") == true;
+                    (string[] Measures, (string Table, string Name, bool IsCalculated)[] Columns, string[] Functions,
+                        (string Name, bool IsCalculated)[] Tables)? modelDaxInventory =
+                        !needsDaxInventory || context.Session == null ? null
+                        : await context.Session.ReadAsync(m => (
+                            m.Tables.SelectMany(t => t.Measures).Select(mm => mm.Name).ToArray(),
+                            m.Tables.SelectMany(t => t.Columns.Select(c =>
+                                (t.Name, c.Name, c is CalculatedColumn || c is CalculatedTableColumn || t is CalculatedTable))).ToArray(),
+                            m.Functions.Select(f => f.Name).ToArray(),
+                            m.Tables.Select(t => (t.Name, t is CalculatedTable)).ToArray()));
+                    try
+                    {
+                        await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync,
+                            modelDaxInventory?.Measures, modelDaxInventory?.Columns, modelDaxInventory?.Functions,
+                            modelDaxInventory?.Tables);
+                    }
+                    finally
+                    {
+                        // E3(a) — lock the witness on FIRST submission of any input that feeds a dax_equivalence probe,
+                        // and record a revision receipt on a later change. The captured proof frame is still active here.
+                        RecordWitnessLocks(run, submittingStep);
+                        run.SubmissionOrigin = null;
+                    }
                 }
                 EnsureContextCurrent(context, "Workflow step");
                 return PublishWorkflowRun(context, run, origin);
+            }
+            catch (InvalidOperationException ex) when (!string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) && GateCopy.TryRead(ex, out _, out _))
+            {
+                GateCopy.TryRead(ex, out _, out var display);
+                throw new InvalidOperationException(display);
             }
             finally { context.WorkflowGate.Release(); }
         }
@@ -1466,14 +1746,19 @@ namespace Semanticus.Engine
                 var run = context.WorkflowRuns.Require(runId);
                 WorkflowRunner.SkipStep(run, stepId, reason);
                 var view = PublishWorkflowRun(context, run, origin);
+                var skipped = view.Steps[view.StepIndex - 1];
+                var certificateConsequence = skipped.Note != null
+                    && skipped.Note.Contains(WorkflowRunner.OverriddenCertificateConsequence, StringComparison.Ordinal)
+                    ? WorkflowRunner.OverriddenCertificateConsequence : null;
                 await PublishActivityAsync(new ActivityEvent
                 {
                     Kind = "skip_workflow_step",
                     Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
-                    Label = $"Workflow '{view.Workflow}': step skipped ({reason.Trim()})",
+                    Label = $"Workflow '{view.Workflow}': step skipped ({reason.Trim()})"
+                        + (certificateConsequence == null ? "" : " " + certificateConsequence),
                     Target = view.Workflow,
                     Ok = true,
-                    Result = new { view.RunId, StepId = view.Steps[view.StepIndex - 1].StepId, Reason = reason.Trim() },
+                    Result = new { view.RunId, StepId = skipped.StepId, Reason = reason.Trim(), CertificateConsequence = certificateConsequence },
                 });
                 return view;
             }
@@ -1536,7 +1821,7 @@ namespace Semanticus.Engine
                 {
                     Kind = "workflow_run",
                     Origin = origin ?? "human",
-                    Label = $"Workflow '{run.Def.Name}' {run.Status} ({run.Results.Count(r => r.Status == "passed")}/{run.Results.Length} steps passed)",
+                    Label = $"Workflow '{run.Def.Name}' {run.Status} ({run.Results.Count(r => r.Status == "passed")}/{run.Results.Count} steps passed)",
                     Target = run.Def.Name,
                     Ok = run.Status == "completed",
                     Result = WorkflowRunner.BuildRunRecord(run),
@@ -1581,20 +1866,56 @@ namespace Semanticus.Engine
             return Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(norm))).ToLowerInvariant();
         }
 
+        internal static string ExactDaxHash(string expr)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(expr ?? ""))).ToLowerInvariant();
+        }
+
+        /// <summary>[T220 / F-120] The dax_equivalence probes ONE submission may lock: the declarations carried by
+        /// the planned rows the captured submission frame can see. This used to scan every frozen definition the
+        /// run can reach, which asked a definition-shaped question and then answered it with frame-shaped data.
+        /// <c>AllAnswers</c> resolves inside the captured frame, so a plain caller input that merely SHARED a name
+        /// with a probe only a CALLEE declares minted a caller-frame witness receipt for a probe the caller never
+        /// declared. Row visibility here is the same rule <c>WorkflowRunner.OverlayAnswers</c> applies to the very
+        /// answers this scan reads: a same-frame row always, a cross-frame row only when neither side is a `call`
+        /// projection. Legitimate callee locking is untouched, because on the callee's own submission the callee
+        /// row IS the same-frame row.
+        ///
+        /// The answer-side CUTOFF is deliberately NOT applied to declarations. E3(a) locks a witness on FIRST
+        /// sight, and both shipped equivalence workflows collect the witness input several rows BEFORE the row
+        /// that declares the probe (`optimize-dax` step 1 vs step 4, `verified-measure` step 4 vs step 6). Bounding
+        /// declarations by the submitted row would move those locks later and silently drop every revision receipt
+        /// in between, a changed no-loop view byte and a changed permanent-record byte, which owner-plan stop
+        /// condition 7 forbids. Frame ownership is what the finding turns on, and frame ownership alone closes it.</summary>
+        private static IEnumerable<string> VisibleWitnessProbes(WorkflowRunState run)
+        {
+            var frame = run.AnswerResolutionContext().Frame;
+            var probes = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i < run.Plan.Count; i++)
+            {
+                var sameFrame = string.Equals(run.Plan[i].FrameId, frame.FrameId, StringComparison.Ordinal);
+                if (!sameFrame && (string.Equals(frame.ProjectionKind, "call", StringComparison.Ordinal)
+                    || string.Equals(run.FrameAtPlanIndex(i).ProjectionKind, "call", StringComparison.Ordinal)))
+                    continue;
+                foreach (var v in run.Plan[i].Step.Gate?.Verify ?? Array.Empty<VerifySpec>())
+                    if (v.Kind == "dax_equivalence" && !string.IsNullOrWhiteSpace(v.Probe) && seen.Add(v.Probe))
+                        probes.Add(v.Probe);
+            }
+            return probes;
+        }
+
         /// <summary>E3(a) — for every input that feeds a dax_equivalence probe, lock its normalized-expression hash on
         /// first sight and append a {beforeHash, afterHash, stepId, timestamp} receipt on any later change (never a
         /// silent replace). Called under _workflowGate right after a submit; defensive (a receipt must never break a
         /// submit).</summary>
-        private static void RecordWitnessLocks(WorkflowRunState run, string submittingStep)
+        internal static void RecordWitnessLocks(WorkflowRunState run, string submittingStep)
         {
             try
             {
                 var all = WorkflowRunner.AllAnswers(run);
-                var probes = run.Def.Steps
-                    .SelectMany(s => s.Gate?.Verify ?? Array.Empty<VerifySpec>())
-                    .Where(v => v.Kind == "dax_equivalence" && !string.IsNullOrWhiteSpace(v.Probe))
-                    .Select(v => v.Probe).Distinct(StringComparer.Ordinal);
-                foreach (var probe in probes)
+                foreach (var probe in VisibleWitnessProbes(run))
                 {
                     if (!all.TryGetValue(probe, out var a) || a == null || !a.Answered) continue;
                     var h = NormalizeDaxHash(a.Value);
@@ -1612,8 +1933,9 @@ namespace Semanticus.Engine
         }
 
         /// <summary>E3(b) — after a measure write, record its new normalized-expression hash as the WORKFLOW-AUTHORED
-        /// hash for every active run whose CURRENT step declares this op (the step-scoped rule EnforceBindingAsync
-        /// uses). A later change while NO declaring step is current leaves the recorded hash stale ⇒ the equivalence
+        /// hash for every active run whose CURRENT step declares this op and is an actual performing row (the same
+        /// step-scoped rule EnforceBindingAsync uses, expansion-only setup rows excluded alike). A later change
+        /// while NO declaring step is current leaves the recorded hash stale ⇒ the equivalence
         /// verify sees drift. Fully defensive: never throws into the measure-write path.</summary>
         private async Task RecordWorkflowAuthoredMeasureAsync(string op, string measureRef, string expression)
         {
@@ -1629,6 +1951,11 @@ namespace Semanticus.Engine
                 {
                     foreach (var run in context.WorkflowRuns.ActiveRuns())
                     {
+                        // Same rule, same classification: an expansion-only current row is not the moment a write
+                        // becomes workflow-authored. Recording provenance there would label a premature write as
+                        // attested and, worse, overwrite the real baseline, so the equivalence verify would then find
+                        // no drift and prove a witness against an unattested candidate.
+                        if (WorkflowRunner.IsExpansionOnlySubmission(run)) continue;
                         var step = run.CurrentStep;
                         if (step?.Ops == null || !step.Ops.Contains(op, StringComparer.Ordinal)) continue;
                         if (!context.WorkflowAux.TryGetValue(run.RunId, out var aux)) continue;
@@ -1646,7 +1973,7 @@ namespace Semanticus.Engine
         /// names the object the verifies act on (seed workflows collect it at the create/edit step).
         /// A verify that needs a target and can't find one FAILS with instructive text — an
         /// unrunnable check must never quietly pass a hard gate.</summary>
-        private async Task<VerifyResult> ExecuteWorkflowVerifyAsync(
+        internal async Task<VerifyResult> ExecuteWorkflowVerifyAsync(
             VerifySpec spec, WorkflowStep step, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
         {
             switch (spec.Kind)
@@ -1654,6 +1981,7 @@ namespace Semanticus.Engine
                 case "dax_probe": return await WorkflowDaxProbeAsync(spec, run, answers);
                 case "dax_equivalence": return await WorkflowDaxEquivalenceAsync(spec, step, run, answers);
                 case "expected_values": return await WorkflowExpectedValuesAsync(spec, step, run, answers);
+                case "anchor_coverage": return WorkflowAnchorCoverage(spec, step, run, answers);
                 case "bpa_clean": return await WorkflowBpaCleanAsync(spec, run, answers);
                 case "readiness_rescan": return await WorkflowReadinessRescanAsync(spec, run);
                 case "benchmark_delta": return await WorkflowBenchmarkDeltaAsync(spec, run, answers);
@@ -1671,14 +1999,46 @@ namespace Semanticus.Engine
             }
         }
 
-        private string LatestObjectRefAnswer(WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
+        /// <summary>The latest visible objectRef answer in plan order, bounded by the submitted row.
+        /// Its type belongs to the row that supplied the answer: a same-named text answer must never borrow
+        /// an older objectRef declaration, including one across a call boundary.</summary>
+        internal static string LatestObjectRefAnswer(WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
         {
-            string found = null;
-            foreach (var st in run.Def.Steps)
-                foreach (var input in st.Gate?.Inputs ?? Array.Empty<GateInput>())
-                    if (input.Type == "objectRef" && answers.TryGetValue(input.Name, out var a) && a.Answered)
-                        found = a.Value;
-            return found;
+            foreach (var source in WorkflowRunner.VisibleAnswerSources(run)
+                .OrderBy(x => x.Value.PlanIndex).ThenBy(x => x.Value.DeclarationOrder).Reverse())
+            {
+                if (source.Value.Declaration?.Type == "objectRef"
+                    && answers.TryGetValue(source.Key, out var answer) && answer?.Answered == true)
+                    return ResolveWorkflowObjectRefAlias(run, answer.Value);
+            }
+            return null;
+        }
+
+        private static string ResolveWorkflowObjectRefAlias(WorkflowRunState run, string objectRef)
+        {
+            if (run == null || string.IsNullOrWhiteSpace(objectRef)) return objectRef;
+            var current = objectRef;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (seen.Add(current) && run.ObjectRefAliases.TryGetValue(current, out var next)
+                && !string.IsNullOrWhiteSpace(next))
+                current = next;
+            return current;
+        }
+
+        private static Measure ResolveWorkflowMeasure(Model model, WorkflowRunState run, string objectRef)
+        {
+            if (ObjectRefs.Resolve(model, objectRef) is Measure direct) return direct;
+            var receipt = run?.LastPassedEquivalenceCandidate;
+            if (run?.CoverageSurface == null || receipt == null
+                || string.IsNullOrWhiteSpace(receipt.TargetLineageTag)
+                || string.IsNullOrWhiteSpace(receipt.TargetRefAtProof)
+                || !string.Equals(ResolveWorkflowObjectRefAlias(run, receipt.TargetRefAtProof), objectRef,
+                    StringComparison.OrdinalIgnoreCase))
+                return null;
+            var renamed = model.Tables.SelectMany(t => t.Measures)
+                .FirstOrDefault(m => string.Equals(m.LineageTag, receipt.TargetLineageTag, StringComparison.Ordinal));
+            if (renamed != null) run.ObjectRefAliases[objectRef] = ObjectRefs.For(renamed);
+            return renamed;
         }
 
         /// <summary>The workflow form of T87's referee. An answered `reportPaths` input supplies local PBIR
@@ -1797,7 +2157,7 @@ namespace Semanticus.Engine
                 .Where(c => c.Category == "Integrity" || c.Category == "Correctness");
             var decided = safetyNet.Sum(c => c.Passed + c.Failed);
             if (decided == 0)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "the safety-net suite could not decide any data-integrity or reconciliation check in this session (offline or all probes not verifiable) — connect a live model to replay it. " + detail };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "decided integrity or reconciliation checks", Detail = "the safety-net suite could not decide any data-integrity or reconciliation check in this session (offline or all probes not verifiable). Connect a live model to replay it. " + detail };
             return new VerifyResult { Kind = kind, Status = "passed", Detail = detail };
         }
 
@@ -1883,7 +2243,7 @@ namespace Semanticus.Engine
             }
 
             if (report.Ok)
-                return new VerifyResult { Kind = kind, Status = "passed", Detail = $"'{name}' passes the admission dry-run — it parses, every op is real, and every gate binding resolves. It is safe to enable." };
+                return new VerifyResult { Kind = kind, Status = "passed", Detail = $"'{name}' passes the admission dry-run: it parses, every op is real, and every gate binding resolves. It is safe to enable." };
 
             var warns = (report.Findings ?? Array.Empty<CheckFinding>())
                 .Where(f => string.Equals(f.Severity, "warn", StringComparison.Ordinal))
@@ -1891,7 +2251,7 @@ namespace Semanticus.Engine
             var reason = report.ParseError != null
                 ? "parse error: " + report.ParseError
                 : (warns.Length > 0 ? string.Join(" | ", warns) : "the admission dry-run reported it is not Ok.");
-            return new VerifyResult { Kind = kind, Status = "failed", Detail = $"'{name}' is NOT admissible — {reason}. Fix it with save_workflow and re-submit (get_workflow shows the current text; check_workflow shows the full report)." };
+            return new VerifyResult { Kind = kind, Status = "failed", Detail = $"'{name}' is NOT admissible: {reason}. Fix it with save_workflow and re-submit (get_workflow shows the current text; check_workflow shows the full report)." };
         }
 
         /// <summary>CERTIFIED TOTALS (month-end close): the enforcement gate — bound to what the close DECLARED,
@@ -1912,26 +2272,26 @@ namespace Semanticus.Engine
 
             var file = CertifiedFilePath();
             if (file == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "there is nowhere to store certified figures yet — open or save the model so its .semanticus sidecar has a home, then capture the close's totals with capture_baseline(label:…)." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "there is nowhere to store certified figures yet. Open or save the model so its .semanticus sidecar has a home, then capture the close's totals with capture_baseline(label:…)." };
 
             var cf = CertifiedStore.Load(file, out var corrupt);
             if (corrupt)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "the certified-figures store (.semanticus/certified-baselines.json) is present but unreadable — repair or move it, then re-capture the close's figures." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "the certified-figures store (.semanticus/certified-baselines.json) is present but unreadable. Repair or move it, then re-capture the close's figures." };
 
             var bl = CertifiedStore.Find(cf, label);
             if (bl == null || bl.Entries.Count == 0)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"no certified figures were captured under '{label}'. Capture every control total and the headline at its stated context with capture_baseline(label:\"{label}\") BEFORE signing off — that recording is what lets a later refresh or edit that moves a signed-off number be caught (detection, not prevention). This gate cannot pass until they are captured." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"no certified figures were captured under '{label}'. Capture every control total and the headline at its stated context with capture_baseline(label:\"{label}\") BEFORE signing off: that recording is what lets a later refresh or edit that moves a signed-off number be caught (detection, not prevention). This gate cannot pass until they are captured." };
             // P1-3: never bless a tampered record.
             if (!CertifiedStore.HashMatches(bl))
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the certified baseline '{label}' has been modified since capture (content hash mismatch) — refusing to pass the close on a tampered record. Re-capture the figures under a new label." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the certified baseline '{label}' has been modified since capture (content hash mismatch): refusing to pass the close on a tampered record. Re-capture the figures under a new label." };
 
             // The DECLARED control totals, strictly parsed. An unparseable line is a REFUSAL (P1-A) — never dropped
             // silently into an "attested" bucket where a typo would slip the gate.
             var (declared, bad) = ParseDeclaredControlTotals(run);
             if (bad.Count > 0)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the close's control-totals declaration has {bad.Count} line(s) the gate cannot parse as `measure:Table/Name ~ <dax context or (grand total)> ~ <exact value>`: {string.Join(" | ", bad.Take(5))}. Every certified figure must be machine-checkable — fix or remove each unparseable line; the gate will not silently treat it as attested." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the close's control-totals declaration has {bad.Count} line(s) the gate cannot parse as `measure:Table/Name ~ <dax context or (grand total)> ~ <exact value>`: {string.Join(" | ", bad.Take(5))}. Every certified figure must be machine-checkable. Fix or remove each unparseable line; the gate will not silently treat it as attested." };
             if (declared.Count == 0)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "the close declared no control totals to certify. Declare each certified figure as `measure:Table/Name ~ <dax context or (grand total)> ~ <exact value>` (one per line) so the gate can bind ref + context + value — it cannot pass on an empty declaration." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "the close declared no control totals to certify. Declare each certified figure as `measure:Table/Name ~ <dax context or (grand total)> ~ <exact value>` (one per line) so the gate can bind ref + context + value: it cannot pass on an empty declaration." };
 
             var tol = bl.Tolerance > 0 ? bl.Tolerance : CertifiedStore.Tolerance;
             var problems = new List<string>();
@@ -1944,7 +2304,7 @@ namespace Semanticus.Engine
                 if (entry == null) { problems.Add($"{d.Ref} at [{where}] is NOT certified at that context"); continue; }
                 // P2-3: a figure whose context references a measure can NEVER be re-checked identically — a hard close
                 // must not sign off on a number nobody can ever verify. Fail it, naming why.
-                if (!entry.StabilityProvable) { problems.Add($"{d.Ref} at [{where}] is certified but its context references a measure, so it can never be re-checked identically — restate the context with columns only (no measure reference), then re-capture"); continue; }
+                if (!entry.StabilityProvable) { problems.Add($"{d.Ref} at [{where}] is certified but its context references a measure, so it can never be re-checked identically. Restate the context with columns only (no measure reference), then re-capture"); continue; }
                 var cell = entry.Cells?.Length == 1 ? entry.Cells[0] : null;
                 if (cell == null || !cell.Number.HasValue) { problems.Add($"{d.Ref} at [{where}] is certified but not a single numeric value to check against {DaxBench.Fmt(d.Value)}"); continue; }
                 if (!DaxBench.ValuesEqual(cell.Number.Value, d.Value))
@@ -2003,9 +2363,14 @@ namespace Semanticus.Engine
             return (declared, bad);
         }
 
-        private static string ControlTotalsSlotText(WorkflowRunState run)
+        /// <summary>[T220] Control totals are DEFINITION provenance, not answer provenance, so a callee's
+        /// `baseline_captured` must read the callee's own instantiated slot_values even when the caller carries
+        /// a different control_totals value. Read through the submitted row's frozen owner, never inferred from
+        /// the root.</summary>
+        internal static string ControlTotalsSlotText(WorkflowRunState run)
         {
-            if (run?.Def?.Provenance == null || !run.Def.Provenance.TryGetValue("slot_values", out var sv) || string.IsNullOrWhiteSpace(sv)) return null;
+            var owner = run?.SubmittedRow == null ? run?.Def : run.RowOwner(run.SubmittedRow);
+            if (owner?.Provenance == null || !owner.Provenance.TryGetValue("slot_values", out var sv) || string.IsNullOrWhiteSpace(sv)) return null;
             try
             {
                 using var doc = JsonDocument.Parse(sv);
@@ -2023,15 +2388,15 @@ namespace Semanticus.Engine
         {
             const string kind = "dax_probe";
             if (_live == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline — no live connection, the probe was NOT verified (open_live/open_local and re-submit for real evidence)." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline: no live connection, so the probe could not be proven. Connect to a live model and submit this step again." };
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var expected) || !expected.Answered)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' has no answered value to compare against." };
             var target = LatestObjectRefAnswer(run, answers);
             if (target == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no answered objectRef-typed input names the measure to probe — the workflow must collect one (e.g. an input `target` of type objectRef) before this gate." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no answered objectRef-typed input names the measure to probe: the workflow must collect one (e.g. an input `target` of type objectRef) before this gate." };
 
             var s = _sessions.Require();
-            var name = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? mm.Name : null);
+            var name = await s.ReadAsync(m => ResolveWorkflowMeasure(m, run, target)?.Name);
             if (name == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"'{target}' does not resolve to a measure on the current model." };
 
@@ -2066,21 +2431,136 @@ namespace Semanticus.Engine
         /// input (comma-separated columns); an EMPTY effective grid is a grand-total-only comparison, which is not
         /// a proof — the gate blocks it as `unavailable` (E2 fail-closed). The pinned/open shape partition comes
         /// from the static pinnedShapes/openShapes keys unioned with the run-decided `openShapesFrom` input.</summary>
+        internal static bool ProbeRequiresCurrentDaxPurity(WorkflowRunState run, string probe)
+        {
+            // [T220] The guard now covers what this method actually reads. It used to open on run.Def.Steps,
+            // which has nothing to do with the exact earlier planned row it then inspects.
+            if (run == null || run.Plan == null || run.Results == null
+                || run.Plan.Count != run.Results.Count || string.IsNullOrWhiteSpace(probe)) return false;
+            for (var i = Math.Min(run.StepIndex, run.Results.Count - 1); i >= 0; i--)
+            {
+                if (!run.Results[i].Answers.ContainsKey(probe)) continue;
+                return run.Plan[i].Step.Gate?.Inputs.Any(input =>
+                    string.Equals(input.Name, probe, StringComparison.Ordinal)
+                    && string.Equals(input.DaxPurity, "no-bare-measures", StringComparison.Ordinal)) == true;
+            }
+            return false;
+        }
+
+        private static VerifyResult CurrentWitnessPurityDrift(string witness,
+            IReadOnlyCollection<string> modelMeasureNames,
+            IReadOnlyCollection<(string Table, string Name, bool IsCalculated)> modelColumns,
+            IReadOnlyCollection<string> modelFunctionNames,
+            IReadOnlyCollection<(string Name, bool IsCalculated)> modelTables)
+        {
+            const string kind = "dax_equivalence";
+            var functions = DaxBench.ModelFunctionReferences(witness, modelFunctionNames);
+            if (functions.Length != 0)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = "a witness that still resolves only to base columns",
+                    Detail = $"witness purity drift: the call {functions[0]}() now resolves to a model-defined function; a model function was renamed or added since the witness was locked. Inline the function's logic and re-submit the witness before equivalence.",
+                };
+
+            var calculatedTables = DaxBench.CalculatedTableReferences(witness, modelTables);
+            if (calculatedTables.Length != 0)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = "a witness that still resolves only to base tables and columns",
+                    Detail = $"witness purity drift: the reference {calculatedTables[0]} now resolves to a calculated table; a calculated table was created or renamed since the witness was locked. Rebuild the calculated table's row logic inline from base tables and re-submit the witness before equivalence.",
+                };
+
+            var calculated = DaxBench.CalculatedColumnReferences(witness, modelMeasureNames, modelColumns, out _);
+            if (calculated.Length != 0)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = "a witness that still resolves only to base columns",
+                    Detail = $"witness purity drift: the reference {calculated[0]} now resolves to a calculated column; a model object was changed or added since the witness was locked. Inline the column's logic and re-submit the witness before equivalence.",
+                };
+
+            var measures = DaxBench.MeasureReferences(witness, modelMeasureNames, modelColumns);
+            if (measures.Length == 0) return null;
+            var bareNames = new HashSet<string>(DaxBench.BareReferences(witness), StringComparer.OrdinalIgnoreCase);
+            var bareMeasure = measures.FirstOrDefault(bareNames.Contains);
+            var reference = DaxBench.BracketName(bareMeasure ?? measures[0]);
+            return new VerifyResult
+            {
+                Kind = kind,
+                Status = "unavailable",
+                Missing = "a witness that still resolves only to base columns",
+                Detail = bareMeasure != null
+                    ? $"witness purity drift: the bare reference {reference} now resolves to a measure; a model object was renamed or added since the witness was locked. Qualify the intended base-column reference, or rebuild and re-submit the witness before equivalence."
+                    : $"witness purity drift: the reference {reference} now resolves to a measure; a model object was renamed or added since the witness was locked. Rebuild the witness from qualified base columns and re-submit it before equivalence.",
+            };
+        }
+
         private async Task<VerifyResult> WorkflowDaxEquivalenceAsync(VerifySpec spec, WorkflowStep step, WorkflowRunState run, IReadOnlyDictionary<string, AnswerValue> answers)
         {
             const string kind = "dax_equivalence";
             // E2 — the mandatory-evidence verify: every applicable-but-no-evidence path is UNAVAILABLE (fail-closed,
             // blocks a hard step), naming what was missing. Only a real divergence on a PINNED shape is `failed`.
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var original) || !original.Answered)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the witness input '{spec.Probe}'", Detail = $"the probe input '{spec.Probe}' must carry the witness/original expression to compare against — it was not answered." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the witness input '{spec.Probe}'", Detail = $"the probe input '{spec.Probe}' must carry the witness/original expression to compare against: it was not answered." };
             var target = LatestObjectRefAnswer(run, answers);
             if (target == null)
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure ref", Detail = "no answered objectRef-typed input names the measure under proof." };
 
             var s = _sessions.Require();
-            var (current, canonRef) = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? (mm.Expression, ObjectRefs.For(mm)) : (null, null));
+            var purityRequired = ProbeRequiresCurrentDaxPurity(run, spec.Probe);
+            var modelState = await s.ReadAsync(m =>
+            {
+                var mm = ResolveWorkflowMeasure(m, run, target);
+                return (
+                    Current: mm?.Expression,
+                    CanonRef: mm == null ? null : ObjectRefs.For(mm),
+                    TargetLineageTag: mm?.LineageTag,
+                    Measures: purityRequired
+                        ? m.Tables.SelectMany(t => t.Measures).Select(measure => measure.Name).ToArray()
+                        : null,
+                    Columns: purityRequired
+                        ? m.Tables.SelectMany(t => t.Columns.Select(column =>
+                            (t.Name, column.Name, column is CalculatedColumn || column is CalculatedTableColumn || t is CalculatedTable))).ToArray()
+                        : null,
+                    Functions: purityRequired ? m.Functions.Select(function => function.Name).ToArray() : null,
+                    Tables: purityRequired ? m.Tables.Select(t => (t.Name, t is CalculatedTable)).ToArray() : null);
+            });
+            var current = modelState.Current;
+            var canonRef = modelState.CanonRef;
+            var targetLineageTag = modelState.TargetLineageTag;
             if (current == null)
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure", Detail = $"'{target}' does not resolve to a measure on the current model." };
+
+            // A locked witness is still DAX and therefore resolves against the CURRENT model. Re-run the same
+            // definition-gated purity boundary immediately before every comparison consumption, including the
+            // receipt-based not-applicable shortcut below. A rename or addition must not turn old text into a
+            // newly trusted measure, calculated column, or model function call.
+            if (purityRequired)
+            {
+                var drift = CurrentWitnessPurityDrift(original.Value, modelState.Measures, modelState.Columns,
+                    modelState.Functions, modelState.Tables);
+                if (drift != null) return drift;
+            }
+
+            var coverageBacked = run.CoverageSurface != null;
+            var currentHash = ExactDaxHash(current);
+            var priorCandidate = run.LastPassedEquivalenceCandidate;
+            if (coverageBacked
+                && !WorkflowRunner.WhenHolds(spec.When, answers)
+                && !string.IsNullOrWhiteSpace(targetLineageTag)
+                && string.Equals(priorCandidate?.TargetLineageTag, targetLineageTag, StringComparison.Ordinal)
+                && string.Equals(priorCandidate?.ExpressionHash, currentHash, StringComparison.Ordinal))
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "not_applicable",
+                    Detail = $"when '{spec.When}' did not hold and the candidate is byte-identical to the expression previously proven by dax_equivalence; not applicable.",
+                };
 
             // E3(b) — CANDIDATE DRIFT: the target's current expression no longer matches the last workflow-authored
             // write ⇒ someone changed it OUTSIDE the workflow, so the witness would be proven against an unattested
@@ -2093,23 +2573,43 @@ namespace Semanticus.Engine
                 return new VerifyResult
                 {
                     Kind = kind, Status = "unavailable", Missing = "an unchanged candidate",
-                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one) — re-author it inside the workflow before proving equivalence, so the witness is checked against an attested candidate.",
+                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one). Re-author it inside the workflow before proving equivalence, so the witness is checked against an attested candidate.",
                 };
 
             if (_live == null)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline — no live connection, so equivalence could not be proven (open_live/open_local and re-submit for real evidence)." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline: no live connection, so equivalence could not be proven (open_live/open_local and re-submit for real evidence)." };
 
-            var grid = answers.TryGetValue("equivalenceGrid", out var g) && g.Answered
-                ? g.Value.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToArray()
-                : Array.Empty<string>();
+            // Once anchor_coverage has locked the v7 surface, it is the authoritative partition. The accumulated
+            // answer remains the legacy source only for definitions that never established that lock.
+            var countersignActive = string.Equals(spec.OpenMismatch, "countersign", StringComparison.Ordinal);
+            if (countersignActive && !coverageBacked)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = "the locked anchor_coverage surface",
+                    Detail = "openMismatch countersign cannot classify open disputes because this run has no locked coverage surface. Declare and pass anchor_coverage before this equivalence step.",
+                };
+            var grid = coverageBacked
+                ? run.CoverageSurface.CurrentGrid.ToArray()
+                : answers.TryGetValue("equivalenceGrid", out var g) && g.Answered
+                    ? g.Value.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToArray()
+                    : Array.Empty<string>();
 
             // E1 ADDENDUM — resolve the per-run OPEN partition before spending a comparison. `openShapesFrom` binds
             // a step input whose ANSWER lists the run-decided open shapes (the v5 seed cannot know the partition at
             // authoring time — it comes from the requirement's context ledger). Answer validation is observable
             // offline (benchmark_delta's pattern), so it sits before the live check; a bad id refuses fail-closed.
             var effectiveGrid = DaxBench.NormalizeGroupBy(grid);   // THE effective-grid point — raw .Length reopens the whitespace bypass
-            var evaluatedIds = DaxBench.BuildComparisonShapes(grid).Select(sh => DaxBench.ShapeId(sh, effectiveGrid)).ToArray();
-            var openShapes = EquivalenceGate.ResolveOpenShapes(spec, answers, evaluatedIds, out var partitionError);
+            var evaluatedIds = DaxBench.BuildComparisonShapes(grid).Select(sh => DaxBench.ShapeId(sh, effectiveGrid)).ToList();
+            // Physical query dedup still runs one non-total query for a one-column grid. Coverage nevertheless owns
+            // separate axis and cross grains, so retain the latter as a logical id for partitioning and ledger state.
+            if (coverageBacked && effectiveGrid.Length == 1 && !evaluatedIds.Contains("cross", StringComparer.Ordinal))
+                evaluatedIds.Add("cross");
+            string partitionError = null;
+            var openShapes = coverageBacked
+                ? run.CoverageSurface.CurrentOpenGrains.ToArray()
+                : EquivalenceGate.ResolveOpenShapes(spec, answers, evaluatedIds.ToArray(), out partitionError);
             if (partitionError != null)
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a valid open-shape partition", Detail = partitionError };
 
@@ -2126,14 +2626,14 @@ namespace Semanticus.Engine
                 return new VerifyResult
                 {
                     Kind = kind, Status = "unavailable", Missing = "a stable verify identity",
-                    Detail = "internal error: this dax_equivalence spec is not among the submitting step's verify entries, so its partition lock cannot be keyed — report this; the spec array must not be copied between parse and execution.",
+                    Detail = "internal error: this dax_equivalence spec is not among the submitting step's verify entries, so its partition lock cannot be keyed. Report this; the spec array must not be copied between parse and execution.",
                 };
             var partitionBlock = EquivalenceGate.RegisterPartition(run, step?.Id ?? run.CurrentStep?.Id, verifyIndex, spec.Probe, openShapes);
             if (partitionBlock != null)
                 return new VerifyResult
                 {
                     Kind = kind, Status = "unavailable",
-                    Missing = "shape partition changed after evidence was seen — re-run the verify with the new partition on a fresh evaluation",
+                    Missing = "shape partition changed after evidence was seen. Re-run the verify with the new partition on a fresh evaluation",
                     Detail = partitionBlock,
                 };
 
@@ -2142,12 +2642,33 @@ namespace Semanticus.Engine
             // the evidence ladder turns that into a blocking 'unavailable' below, never a false 'passed').
             var eqSpec = await BuildQuerySpecAsync(_live, target);
             var eq = await DaxBench.VerifyEquivalenceAsync(_live, original.Value, current, grid, Array.Empty<string>(), 100000, eqSpec);
+            if (coverageBacked) eq = EquivalenceGate.PreserveLogicalCross(eq, effectiveGrid.Length);
 
             // E1/E2 — ONE evidence ladder (DaxBench.ClassifyEquivalenceEvidence) grades the comparison; the gate
             // applies the pinned/open shape ledger on top: pinned mismatches FAIL, open mismatches are RECORDED,
             // and every no-authoritative-evidence rung (error / degraded / degraded_mismatch / zero rows /
             // truncated / thin) is a blocking `unavailable` with the fidelity caveat preserved.
-            var outcome = EquivalenceGate.Evaluate(eq, spec.PinnedShapes, openShapes, effectiveGrid.Length);
+            var outcome = EquivalenceGate.Evaluate(eq, coverageBacked ? Array.Empty<string>() : spec.PinnedShapes,
+                openShapes, effectiveGrid.Length);
+            if (coverageBacked)
+            {
+                // Ledger updates happen for every v7 comparison whether or not this verify opts into countersign
+                // enforcement. That keeps the audit complete while preserving report-only behavior by default.
+                EquivalenceGate.RecordOpenMismatches(run, outcome.Shapes);
+                if (countersignActive)
+                {
+                    answers.TryGetValue("countersign", out var countersign);
+                    outcome = EquivalenceGate.ApplyOpenMismatchCountersign(run, step?.Id ?? run.CurrentStep?.Id,
+                        outcome, countersign);
+                }
+                if (string.Equals(outcome.Status, "passed", StringComparison.Ordinal))
+                    run.LastPassedEquivalenceCandidate = new EquivalenceCandidateReceipt
+                    {
+                        TargetLineageTag = targetLineageTag,
+                        ExpressionHash = currentHash,
+                        TargetRefAtProof = canonRef,
+                    };
+            }
             return new VerifyResult
             {
                 Kind = kind,
@@ -2196,6 +2717,15 @@ namespace Semanticus.Engine
         /// the continuation's resume time (which would falsely refuse it). Null in production.</summary>
         internal Action VerifyLaneContinuationHookForTest;
 
+        internal static (TimeSpan Token, int CommandTimeoutSeconds) ComputeVerifyQueryTiming(
+            TimeSpan remaining, int ceilingSeconds)
+        {
+            if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+            var ceiling = TimeSpan.FromSeconds(ceilingSeconds);
+            var token = remaining < ceiling ? remaining : ceiling;
+            return (token, Math.Max(1, (int)Math.Ceiling(token.TotalSeconds)));
+        }
+
         /// <summary>Run a verify-side query with a HARD ceiling — the scoped hardening from the live incident: verify
         /// execution must never crash, hang, or wedge the run. TWO PHASES over the serialized query lane:
         /// PHASE 1 — LANE WAIT, charged to the caller's TOTAL BUDGET (<paramref name="deadlineUtc"/>) only, never the
@@ -2243,9 +2773,8 @@ namespace Semanticus.Engine
                     // slightly extend a budget-limited deadline past the true budget).
                     var startUtc = DateTime.UtcNow;
                     var remaining = deadlineUtc - startUtc;
-                    if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
-                    var ceiling = TimeSpan.FromSeconds(VerifyQueryCeilingSeconds);
-                    var token = remaining < ceiling ? remaining : ceiling;
+                    var (token, commandTimeout) = ComputeVerifyQueryTiming(
+                        remaining, VerifyQueryCeilingSeconds);
                     // ARM CANCELLATION HERE — inside the lane lambda, BEFORE signaling started and BEFORE launching
                     // execution — anchored to the ABSOLUTE command-start deadline. Arming in the awaiting continuation
                     // was the hole: a scheduler delay between the start signal and the continuation would arm a fresh
@@ -2255,7 +2784,6 @@ namespace Semanticus.Engine
                     started.TrySetResult(commandDeadlineUtc);
                     // Only the ADOMD CommandTimeout (an integer property) rounds — UP, floor 1s, so the server
                     // bound is never tighter than the honest token (the token's cancellation stays authoritative).
-                    var commandTimeout = Math.Max(1, (int)Math.Ceiling(token.TotalSeconds));
                     // The completion timestamp is captured SYNCHRONOUSLY on the execution-producing thread (inside
                     // the stamped call's work body, immediately after the execute returns) — a timestamp taken after
                     // THIS await would record the continuation's RESUME time (the dispatcher queues continuations
@@ -2341,6 +2869,228 @@ namespace Semanticus.Engine
             || error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
             || error.IndexOf("cancel", StringComparison.OrdinalIgnoreCase) >= 0;
 
+        /// <summary>Offline v7 grain-lattice gate. The fixed equivalenceGrid/openGrains answer names are deliberate:
+        /// a seed opts into this behavior only by declaring anchor_coverage, then binds its anchor input normally.</summary>
+        internal static VerifyResult WorkflowAnchorCoverage(VerifySpec spec, WorkflowStep step, WorkflowRunState run,
+            IReadOnlyDictionary<string, AnswerValue> answers)
+        {
+            const string kind = "anchor_coverage";
+            VerifyResult Refuse(string missing, string detail) => new VerifyResult
+            {
+                Kind = kind,
+                Status = "failed",
+                Missing = missing,
+                Detail = detail,
+            };
+
+            if (string.IsNullOrWhiteSpace(spec?.Anchors) || answers == null
+                || !answers.TryGetValue(spec.Anchors, out var anchorAnswer) || !anchorAnswer.Answered)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = $"the anchors input '{spec?.Anchors}'",
+                    Detail = $"anchor_coverage needs an answered '{spec?.Anchors}' input carrying the anchor JSON.",
+                };
+
+            var omittedCurrentAnchorInput = run.RunAnchorLocks.TryGetValue(spec.Anchors, out var inheritedAnchorLock)
+                && (step?.Gate?.Inputs ?? Array.Empty<GateInput>()).Any(i => i.Name == spec.Anchors && i.Required == "optional")
+                && !run.Results[run.StepIndex].Answers.ContainsKey(spec.Anchors);
+            string anchorError = null;
+            var anchors = omittedCurrentAnchorInput
+                ? inheritedAnchorLock.CurrentAnchors
+                : AnchorGate.Parse(anchorAnswer.Value, out anchorError);
+            if (!omittedCurrentAnchorInput && anchorError != null)
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a well-formed anchor set", Detail = anchorError };
+
+            if (!answers.TryGetValue("equivalenceGrid", out var gridAnswer) || !gridAnswer.Answered)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "unavailable",
+                    Missing = "the equivalenceGrid declaration",
+                    Detail = "anchor_coverage needs an answered equivalenceGrid input before any candidate is authored.",
+                };
+
+            var rawGrid = (gridAnswer.Value ?? "").Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+            if (rawGrid.Length == 0)
+                return Refuse("at least one equivalenceGrid column", "equivalenceGrid is empty. List 1 to 6 qualified display columns and re-submit.");
+            if (rawGrid.Length > AnchorGate.MaxAxisColumns)
+                return Refuse($"an equivalenceGrid no wider than {AnchorGate.MaxAxisColumns} columns",
+                    $"equivalenceGrid exceeds the cap of {AnchorGate.MaxAxisColumns} columns. Keep at most {AnchorGate.MaxAxisColumns} display columns.");
+
+            var gridRefs = new List<string>();
+            var gridSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var authored in rawGrid)
+            {
+                if (!AnchorGate.TryParseColumnRef(authored, out var table, out var column))
+                    return Refuse("qualified equivalenceGrid column references",
+                        $"equivalenceGrid entry '{authored}' is not a qualified column reference. Use exactly 'Table'[Column].");
+                var parsed = new AnchorGate.AnchorColumn { Table = table, Column = column };
+                var canonical = AnchorGate.CanonicalRef(parsed);
+                if (!gridSeen.Add(canonical))
+                    return Refuse("unique equivalenceGrid columns",
+                        $"equivalenceGrid declares column '{canonical}' more than once. Remove duplicate columns.");
+                gridRefs.Add(canonical);
+            }
+
+            var validGrains = new List<string> { "grand_total" };
+            validGrains.AddRange(gridRefs.Select(x => "axis:" + x));
+            validGrains.Add("cross");
+            var validGrainSet = new HashSet<string>(validGrains, StringComparer.Ordinal);
+            var openGrains = new List<string>();
+            if (answers.TryGetValue("openGrains", out var openAnswer) && openAnswer.Answered)
+            {
+                var rawOpen = (openAnswer.Value ?? "").Trim();
+                if (rawOpen.StartsWith("[", StringComparison.Ordinal) && rawOpen.EndsWith("]", StringComparison.Ordinal))
+                    rawOpen = rawOpen.Substring(1, rawOpen.Length - 2);
+                foreach (var raw in rawOpen.Split(','))
+                {
+                    var id = raw.Trim().Trim('"', '\'');
+                    if (id.Length == 0) continue;
+                    if (!validGrainSet.Contains(id))
+                    {
+                        var provenance = "";
+                        if (id.StartsWith("axis:", StringComparison.Ordinal)
+                            && AnchorGate.TryParseColumnRef(id.Substring("axis:".Length), out var openTable, out var openColumn))
+                        {
+                            var openRef = AnchorGate.CanonicalRef(new AnchorGate.AnchorColumn { Table = openTable, Column = openColumn });
+                            if (!gridSeen.Contains(openRef))
+                                provenance = " The grid must list every display column the anchors and openGrains exercise.";
+                        }
+                        return Refuse("valid openGrains ids",
+                            $"openGrains id '{id}' is not valid for the declared grid. Valid ids: [{string.Join(", ", validGrains)}].{provenance}");
+                    }
+                    if (!openGrains.Contains(id, StringComparer.Ordinal)) openGrains.Add(id);
+                }
+            }
+
+            if (run.CoverageSurface != null)
+            {
+                var proposedGrid = new HashSet<string>(gridRefs, StringComparer.OrdinalIgnoreCase);
+                var proposedOpen = new HashSet<string>(openGrains, StringComparer.Ordinal);
+                var removedGrid = run.CoverageSurface.CurrentGrid.Where(x => !proposedGrid.Contains(x)).ToArray();
+                var removedOpen = run.CoverageSurface.CurrentOpenGrains.Where(x => !proposedOpen.Contains(x)).ToArray();
+                if (removedGrid.Length > 0 || removedOpen.Length > 0)
+                {
+                    var changes = new List<string>();
+                    if (removedGrid.Length > 0) changes.Add("removed or renamed grid columns [" + string.Join(", ", removedGrid) + "]");
+                    if (removedOpen.Length > 0) changes.Add("removed or renamed open grains [" + string.Join(", ", removedOpen) + "]");
+                    return Refuse("a superset-only coverage revision",
+                        "the locked coverage surface was narrowed: " + string.Join("; ", changes)
+                        + ". A later submission may only add grid columns or openGrains entries. Start a new run to change the enforced surface.");
+                }
+            }
+
+            var anchorRefs = anchors.SelectMany(a => a.Context)
+                .Select(AnchorGate.CanonicalRef)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var outsideGrid = anchorRefs.Where(x => !gridSeen.Contains(x)).ToArray();
+            if (outsideGrid.Length > 0)
+                return Refuse("grid provenance for every anchor column",
+                    $"the anchor set exercises column(s) [{string.Join(", ", outsideGrid)}] that are absent from equivalenceGrid. The grid must list every display column the anchors exercise.");
+
+            bool ContextEquals(AnchorGate.Anchor anchor, IEnumerable<string> refs)
+            {
+                var wanted = new HashSet<string>(refs, StringComparer.OrdinalIgnoreCase);
+                var actual = new HashSet<string>(anchor.Context.Select(AnchorGate.CanonicalRef), StringComparer.OrdinalIgnoreCase);
+                return actual.SetEquals(wanted);
+            }
+            bool Covers(AnchorGate.Anchor anchor, string grain)
+            {
+                if (grain == "grand_total") return !anchor.IsShaped && anchor.Context.Length == 0;
+                if (grain == "cross") return ContextEquals(anchor, gridRefs);
+                var axisRef = grain.Substring("axis:".Length);
+                if (!ContextEquals(anchor, new[] { axisRef })) return false;
+                return !anchor.IsShaped
+                    || (anchor.AxisColumns.Length == 1 && anchor.Slicers.Length == 0
+                        && string.Equals(AnchorGate.CanonicalRef(anchor.AxisColumns[0]), axisRef, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var anchored = validGrains.ToDictionary(g => g, g => anchors.Any(a => Covers(a, g)), StringComparer.Ordinal);
+            var openSet = new HashSet<string>(openGrains, StringComparer.Ordinal);
+            var contradictions = validGrains.Where(g => anchored[g] && openSet.Contains(g)).ToArray();
+            if (contradictions.Length > 0)
+                return Refuse("an exclusive anchored/open partition",
+                    $"anchor coverage contradicts openGrains for [{string.Join(", ", contradictions)}]. A grain cannot be both anchored and declared open. Remove its matching anchor or remove it from openGrains.");
+
+            var missing = validGrains.Where(g => !anchored[g] && !openSet.Contains(g)).ToArray();
+            if (missing.Length > 0)
+            {
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                };
+                string JsonValue(AnchorGate.AnchorFilter filter)
+                {
+                    if (filter == null) return JsonSerializer.Serialize("<placeholder>", jsonOptions);
+                    if (string.Equals(filter.Literal, "TRUE()", StringComparison.Ordinal)) return "true";
+                    if (string.Equals(filter.Literal, "FALSE()", StringComparison.Ordinal)) return "false";
+                    if (filter.Literal?.Length >= 2 && filter.Literal[0] == '"' && filter.Literal[filter.Literal.Length - 1] == '"')
+                        return JsonSerializer.Serialize(filter.Literal.Substring(1, filter.Literal.Length - 2).Replace("\"\"", "\""), jsonOptions);
+                    return filter.Literal;
+                }
+                string Skeleton(string grain)
+                {
+                    var refs = grain == "grand_total" ? Array.Empty<string>()
+                        : grain == "cross" ? gridRefs.ToArray()
+                        : new[] { grain.Substring("axis:".Length) };
+                    var entries = refs.Select(reference =>
+                    {
+                        var known = anchors.SelectMany(a => a.Context).FirstOrDefault(f =>
+                            string.Equals(AnchorGate.CanonicalRef(f), reference, StringComparison.OrdinalIgnoreCase));
+                        return JsonSerializer.Serialize(reference, jsonOptions) + ":" + JsonValue(known);
+                    });
+                    return "{\"context\":{" + string.Join(",", entries) + "},\"expect\":\"<placeholder>\"}";
+                }
+                var repairs = string.Join("; ", missing.Select(g => g + ": `" + Skeleton(g) + "`"));
+                return Refuse("one anchor or openGrains declaration for every grid grain",
+                    $"anchor coverage is incomplete. Missing grains and copy-paste flat anchor skeletons: {repairs}. Add an anchor for each grain or declare that grain in openGrains, then re-submit.");
+            }
+
+            if (run.CoverageSurface == null)
+            {
+                run.CoverageSurface = new CoverageSurfaceLock
+                {
+                    InitialGrid = gridRefs.ToArray(),
+                    CurrentGrid = gridRefs.ToArray(),
+                    InitialOpenGrains = openGrains.ToArray(),
+                    CurrentOpenGrains = openGrains.ToArray(),
+                    StepId = step?.Id ?? run.CurrentStep?.Id,
+                };
+            }
+            else
+            {
+                var addedGrid = gridRefs.Where(x => !run.CoverageSurface.CurrentGrid.Contains(x, StringComparer.OrdinalIgnoreCase)).ToArray();
+                var addedOpen = openGrains.Where(x => !run.CoverageSurface.CurrentOpenGrains.Contains(x, StringComparer.Ordinal)).ToArray();
+                if (addedGrid.Length > 0 || addedOpen.Length > 0)
+                {
+                    run.CoverageSurfaceRevisions.Add(new CoverageSurfaceRevision
+                    {
+                        BeforeGrid = run.CoverageSurface.CurrentGrid.ToArray(),
+                        AfterGrid = gridRefs.ToArray(),
+                        AddedGridColumns = addedGrid,
+                        BeforeOpenGrains = run.CoverageSurface.CurrentOpenGrains.ToArray(),
+                        AfterOpenGrains = openGrains.ToArray(),
+                        AddedOpenGrains = addedOpen,
+                        StepId = step?.Id ?? run.CurrentStep?.Id,
+                        TimestampUtc = DateTime.UtcNow.ToString("o"),
+                    });
+                    run.CoverageSurface.CurrentGrid = gridRefs.ToArray();
+                    run.CoverageSurface.CurrentOpenGrains = openGrains.ToArray();
+                }
+            }
+
+            var pinned = validGrains.Where(g => anchored[g]).ToArray();
+            return new VerifyResult
+            {
+                Kind = kind,
+                Status = "passed",
+                Detail = $"anchor coverage partitions all {validGrains.Count} grid grain(s). Anchored: [{string.Join(", ", pinned)}]. Open: [{string.Join(", ", openGrains)}]. Grid: [{string.Join(", ", gridRefs)}].",
+            };
+        }
+
         private sealed class PendingAnchorRevision
         {
             public AnchorGate.Anchor Accepted { get; set; }
@@ -2349,7 +3099,7 @@ namespace Semanticus.Engine
 
         private static (AnswerValue Answer, string StepId) FirstAnsweredAnchor(WorkflowRunState run, string input)
         {
-            for (var i = 0; i < run.Results.Length; i++)
+            for (var i = 0; i < run.Results.Count; i++)
                 if (run.Results[i].Answers.TryGetValue(input, out var answer) && answer.Answered)
                     return (answer, run.Results[i].StepId);
             return (null, null);
@@ -2387,13 +3137,30 @@ namespace Semanticus.Engine
             if (string.Equals(runLock.CurrentHash, proposedHash, StringComparison.Ordinal))
                 return null; // unchanged or inherited, including an inherited prior receipt
 
+            string RevisionContextKey(AnchorGate.Anchor anchor)
+            {
+                var context = (anchor?.Context ?? Array.Empty<AnchorGate.AnchorFilter>())
+                    .Select(f => new { r = AnchorGate.CanonicalRef(f).ToUpperInvariant(), v = f.Literal })
+                    .OrderBy(x => x.r, StringComparer.Ordinal)
+                    .ToArray();
+                return JsonSerializer.Serialize(context);
+            }
+
+            string AxisSetKey(AnchorGate.Anchor anchor) => string.Join("\n",
+                (anchor?.AxisColumns ?? Array.Empty<AnchorGate.AnchorColumn>())
+                    .Select(AnchorGate.CanonicalRef)
+                    .Select(x => x.ToUpperInvariant())
+                    .OrderBy(x => x, StringComparer.Ordinal));
+
             bool TryIndex(AnchorGate.Anchor[] anchors, string which, out Dictionary<string, AnchorGate.Anchor> index, out VerifyResult error)
             {
                 index = new Dictionary<string, AnchorGate.Anchor>(StringComparer.Ordinal);
                 error = null;
                 foreach (var anchor in anchors)
                 {
-                    var key = AnchorGate.CanonicalContextKey(anchor);
+                    // Revision matching deliberately ignores form but retains every parsed context value. This is
+                    // what permits a receipted flat-to-shaped repair without permitting coordinate laundering.
+                    var key = RevisionContextKey(anchor);
                     if (!index.TryAdd(key, anchor))
                     {
                         error = new VerifyResult
@@ -2413,21 +3180,35 @@ namespace Semanticus.Engine
                 || acceptedByContext.Keys.Any(k => !proposedByContext.ContainsKey(k)))
                 return new VerifyResult
                 {
-                    Kind = kind, Status = "unavailable", Missing = "an expectation-only anchor revision",
-                    Detail = "an anchor revision may correct expected values only; it may not add, remove, or replace locked contexts. Start a new workflow run to change context coverage.",
+                    Kind = kind, Status = "unavailable", Missing = "the locked anchor context coordinates",
+                    Detail = "an anchor revision may correct expected values or add visual form to the same coordinate; it may not add, remove, or replace locked contexts. Start a new workflow run to change context coverage.",
                 };
 
             foreach (var pair in proposedByContext)
             {
                 var accepted = acceptedByContext[pair.Key];
                 var candidate = pair.Value;
-                if (string.Equals(AnchorGate.ExpectationKey(accepted), AnchorGate.ExpectationKey(candidate), StringComparison.Ordinal))
+                if (accepted.IsShaped
+                    && (!candidate.IsShaped
+                        || !string.Equals(AxisSetKey(accepted), AxisSetKey(candidate), StringComparison.Ordinal)))
+                    return new VerifyResult
+                    {
+                        Kind = kind, Status = "unavailable", Missing = "a monotonic visual anchor form",
+                        Detail = "anchor form may only move toward visual semantics; start a new run to weaken it",
+                    };
+
+                var formUpgrade = !accepted.IsShaped && candidate.IsShaped;
+                var expectationChanged = !string.Equals(AnchorGate.ExpectationKey(accepted),
+                    AnchorGate.ExpectationKey(candidate), StringComparison.Ordinal);
+                if (!formUpgrade && !expectationChanged)
                     continue;
                 if (candidate.OriginalExpect == null || candidate.CorrectedExpect == null || string.IsNullOrWhiteSpace(candidate.ExtractQuery))
                     return new VerifyResult
                     {
                         Kind = kind, Status = "unavailable", Missing = $"a complete live receipt for changed anchor [{candidate.ContextLabel}]",
-                        Detail = $"anchor [{candidate.ContextLabel}] changed from {accepted.ExpectLabel} to {candidate.ExpectLabel}, but its JSON does not carry all required receipt fields: originalExpect, correctedExpect, extractQuery. Bare corrected JSON is refused.",
+                        Detail = formUpgrade
+                            ? $"anchor [{candidate.ContextLabel}] moved from flat to shaped, but its JSON does not carry all required receipt fields: originalExpect, correctedExpect, extractQuery. A form repair needs a full live receipt even when its expectation is unchanged."
+                            : $"anchor [{candidate.ContextLabel}] changed from {accepted.ExpectLabel} to {candidate.ExpectLabel}, but its JSON does not carry all required receipt fields: originalExpect, correctedExpect, extractQuery. Bare corrected JSON is refused.",
                     };
                 if (!string.Equals(AnchorGate.ExpectationKey(candidate.OriginalExpect), AnchorGate.ExpectationKey(accepted), StringComparison.Ordinal))
                     return new VerifyResult
@@ -2556,6 +3337,7 @@ namespace Semanticus.Engine
                 TimestampUtc = DateTime.UtcNow.ToString("o"),
                 Changes = evidence.ToArray(),
             });
+            run.AnchorFormRepairCount += changes.Count(x => !x.Accepted.IsShaped && x.Proposed.IsShaped);
             runLock.CurrentHash = after;
             runLock.CurrentAnchors = proposed;
             return null;
@@ -2573,7 +3355,7 @@ namespace Semanticus.Engine
             const string kind = "expected_values";
             // 1. The anchors input must be answered (its answer carries the locked anchor JSON).
             if (string.IsNullOrWhiteSpace(spec.Anchors) || !answers.TryGetValue(spec.Anchors, out var anchorAns) || !anchorAns.Answered)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the anchors input '{spec.Anchors}'", Detail = $"the anchors input '{spec.Anchors}' must carry the locked anchor set (a fenced JSON array of {{context, expect}}) — it was not answered." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"the anchors input '{spec.Anchors}'", Detail = $"the anchors input '{spec.Anchors}' must carry the locked anchor set (a fenced JSON array of {{context, expect}}): it was not answered." };
 
             // 2. Parse the anchors DEFENSIVELY AND STRICTLY — malformed JSON, an unknown/duplicate property, a
             // non-column-ref context key (the injection boundary), a lost value type, or a breached cap (MaxAnchors /
@@ -2591,7 +3373,7 @@ namespace Semanticus.Engine
             if (!omittedCurrentRevisionInput && parseError != null)
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a well-formed anchor set", Detail = parseError };
             if (anchors.Length == 0)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "at least one anchor", Detail = "the anchor set is empty — author at least one {context, expect} anchor the measure must reproduce, then re-submit." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "at least one anchor", Detail = "the anchor set is empty. Author at least one {context, expect} anchor the measure must reproduce, then re-submit." };
 
             // 2b. RUN-LEVEL LOCK + REVISION PLAN. The first answered declaration is captured before latest-wins can
             // shadow it. An unchanged/inherited set needs no receipt; a changed set must preserve contexts and carry
@@ -2605,7 +3387,7 @@ namespace Semanticus.Engine
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure ref", Detail = "no answered objectRef-typed input names the measure to check against the anchors." };
 
             var s = _sessions.Require();
-            var (current, canonRef) = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? (mm.Expression, ObjectRefs.For(mm)) : (null, null));
+            var (current, canonRef) = await s.ReadAsync(m => ResolveWorkflowMeasure(m, run, target) is Measure mm ? (mm.Expression, ObjectRefs.For(mm)) : (null, null));
             if (current == null)
                 return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "the target measure", Detail = $"'{target}' does not resolve to a measure on the current model." };
 
@@ -2620,7 +3402,7 @@ namespace Semanticus.Engine
                 return new VerifyResult
                 {
                     Kind = kind, Status = "unavailable", Missing = "an unchanged candidate",
-                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one) — re-author it inside the workflow before proving the anchors, so they are checked against an attested candidate.",
+                    Detail = $"candidate drift: '{canonRef}' was changed since the workflow authored it (its current expression hash no longer matches the workflow-authored one). Re-author it inside the workflow before proving the anchors, so they are checked against an attested candidate.",
                 };
 
             // 4b. RESOLVE every context column against the model (B1): the parsed table+column must exist; unknown
@@ -2659,16 +3441,16 @@ namespace Semanticus.Engine
                 return true;
             });
             if (unresolvedRef != null)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a resolvable anchor context", Detail = unresolvedRef + " — fix the anchor's column reference, then re-submit." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a resolvable anchor context", Detail = unresolvedRef + ". Fix the anchor's column reference, then re-submit." };
             var dateNote = dateRefs.Count == 0 ? ""
-                : $" Note: date-typed context column(s) [{string.Join(", ", dateRefs)}] are filtered via their quoted string form (DAX coerces the literal) — confirm the string matches the column's date representation.";
+                : $" Note: date-typed context column(s) [{string.Join(", ", dateRefs)}] are filtered via their quoted string form (DAX coerces the literal). Confirm the string matches the column's date representation.";
 
             // 5. Pin the CONNECTION IDENTITY for the whole proof: every anchor query and the query spec must use
             // this one instance — if the session's connection changes mid-proof, the verify refuses rather than
             // mixing evidence across connections (EvaluateAnchorsAsync re-checks per anchor).
             var live = _live;
             if (live == null)
-                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline — no live connection, so the anchors could not be evaluated (open_live/open_local and re-submit for real evidence)." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline: no live connection, so the anchors could not be evaluated (open_live/open_local and re-submit for real evidence)." };
 
             // A changed set is not accepted from prose. Execute every changed anchor's row-returning extractQuery on
             // this pinned connection, require real rows, and append the result hash + delta before the new values can
@@ -2685,13 +3467,17 @@ namespace Semanticus.Engine
             if (fidelity != null)
                 return new VerifyResult
                 {
-                    Kind = kind, Status = "unavailable", Missing = "a full-fidelity evaluation — " + fidelity,
+                    Kind = kind, Status = "unavailable", Missing = "a full-fidelity evaluation: " + fidelity,
                     Detail = "the anchors would evaluate under a REDUCED-fidelity surrogate (the target's identity could not be reproduced), so the values are not authoritative: " + fidelity + " Open the model live so the target's identity is known, then re-submit, or skip_workflow_step with a reason (recorded).",
                 };
 
             // 6/7. Evaluate + verdict (extracted so the connection-identity, budget, and ceiling semantics are
             // offline-testable against a hand-built spec + a test connection).
-            return await EvaluateAnchorsAsync(kind, anchors, current, eqSpec, live, dateNote);
+            var equivalenceGrid = run.CoverageSurface != null
+                && answers.TryGetValue("equivalenceGrid", out var gridAnswer) && gridAnswer.Answered
+                ? gridAnswer.Value.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToArray()
+                : Array.Empty<string>();
+            return await EvaluateAnchorsAsync(kind, anchors, current, eqSpec, live, dateNote, equivalenceGrid);
         }
 
         /// <summary>The anchor evaluation loop + verdict: each anchor runs as a SARGable point query against the
@@ -2701,16 +3487,42 @@ namespace Semanticus.Engine
         /// retirement), the verify refuses as `unavailable` — continuing would mix evidence across connections.
         /// Internal for the offline seam tests (the executor supplies a resolved spec + the pinned connection).</summary>
         internal async Task<VerifyResult> EvaluateAnchorsAsync(string kind, AnchorGate.Anchor[] anchors, string measureExpr,
-            DaxQuerySpec eqSpec, LiveConnection live, string dateNote)
+            DaxQuerySpec eqSpec, LiveConnection live, string dateNote, string[] equivalenceGrid = null)
         {
             VerifyResult MixedEvidence(string when) => new VerifyResult
             {
                 Kind = kind, Status = "unavailable", Missing = "a stable connection",
-                Detail = $"the live connection changed during evaluation ({when}) — evidence would be mixed across connections; reconnect (open_live, connect_xmla, or connect_local) and re-submit so every anchor is proven on one connection.",
+                Detail = $"the live connection changed during evaluation ({when}): evidence would be mixed across connections; reconnect (open_live, connect_xmla, or connect_local) and re-submit so every anchor is proven on one connection.",
             };
 
             var deadlineUtc = DateTime.UtcNow.AddSeconds(VerifyTotalBudgetSeconds);
-            var evaluated = new List<(AnchorGate.Anchor Anchor, string ActualLabel, bool Matched, long ElapsedMs)>();
+            var evaluated = new List<(AnchorGate.Anchor Anchor, object Actual, string ActualLabel, bool Matched, long ElapsedMs)>();
+
+            int ShapedValueIndex(ResultSet result, int fallback)
+            {
+                var named = Array.FindIndex(result.Columns ?? Array.Empty<ColumnDef>(), c =>
+                    string.Equals(c?.Name?.Trim(), "v", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(c?.Name?.Trim(), "[v]", StringComparison.OrdinalIgnoreCase));
+                return named >= 0 ? named : fallback;
+            }
+
+            string ContextEntryLabel(AnchorGate.AnchorFilter f) => AnchorGate.CanonicalRef(f) + "=" + f.ValueLabel;
+
+            async Task<string> NearbyMembersAsync(AnchorGate.Anchor anchor)
+            {
+                if (!ReferenceEquals(_sessions.CurrentContext.Live, live) || DateTime.UtcNow > deadlineUtc) return "";
+                var nearbyQuery = DaxBench.BuildShapedAnchorNearbyMembersQuery(anchor);
+                var (nearby, timedOut, _, _) = await RunVerifyQueryAsync(nearbyQuery, 5, live, deadlineUtc);
+                if (timedOut || !ReferenceEquals(_sessions.CurrentContext.Live, live) || !string.IsNullOrEmpty(nearby.Error)) return "";
+                var values = (nearby.Rows ?? Array.Empty<object[]>())
+                    .Where(row => row != null && row.Length > 0)
+                    .Take(5)
+                    .Select(row => DaxBench.Fmt(row[0]))
+                    .ToArray();
+                return values.Length == 0 ? ""
+                    : $" Nearby members for first axis column {AnchorGate.CanonicalRef(anchor.AxisColumns[0])}: {string.Join(", ", values)}.";
+            }
+
             for (var i = 0; i < anchors.Length; i++)
             {
                 var a = anchors[i];
@@ -2718,10 +3530,11 @@ namespace Semanticus.Engine
                 if (!ReferenceEquals(_sessions.CurrentContext.Live, live))
                     return MixedEvidence($"after {evaluated.Count} of {anchors.Length} anchor(s)");
                 if (DateTime.UtcNow > deadlineUtc)
-                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"completion within the total verify budget ({VerifyTotalBudgetSeconds}s)", Detail = $"the anchor set exceeded the total verify budget of {VerifyTotalBudgetSeconds}s after {evaluated.Count} of {anchors.Length} anchor(s) — trim the set or investigate the measure's cost, then re-submit." };
+                    return new VerifyResult { Kind = kind, Status = "unavailable", Missing = $"completion within the total verify budget ({VerifyTotalBudgetSeconds}s)", Detail = $"the anchor set exceeded the total verify budget of {VerifyTotalBudgetSeconds}s after {evaluated.Count} of {anchors.Length} anchor(s). Trim the set or investigate the measure's cost, then re-submit." };
 
-                var filters = a.Context.Select(AnchorGate.CompileContextFilter).ToArray();
-                var query = DaxBench.BuildMeasureContextQuery(measureExpr, filters, eqSpec, out _);
+                var query = a.IsShaped
+                    ? DaxBench.BuildShapedAnchorQuery(measureExpr, a, eqSpec, out _)
+                    : DaxBench.BuildMeasureContextQuery(measureExpr, a.Context.Select(AnchorGate.CompileContextFilter).ToArray(), eqSpec, out _);
                 var (rs, timedOut, retired, cause) = await RunVerifyQueryAsync(query, 10, live, deadlineUtc);
                 if (timedOut)
                     return cause == VerifyTimeoutCause.LaneWait
@@ -2730,13 +3543,13 @@ namespace Semanticus.Engine
                         ? new VerifyResult
                         {
                             Kind = kind, Status = "unavailable", Missing = $"completion within the total verify budget ({VerifyTotalBudgetSeconds}s)",
-                            Detail = $"anchor at [{a.ContextLabel}]: the total verify budget was exhausted waiting for the query lane (another query held the connection the whole time) — re-submit when the connection is idle.",
+                            Detail = $"anchor at [{a.ContextLabel}]: the total verify budget was exhausted waiting for the query lane (another query held the connection the whole time). Re-submit when the connection is idle.",
                         }
                         : new VerifyResult
                         {
                             Kind = kind, Status = "unavailable", Missing = "a completed anchor query within the evaluation ceiling",
-                            Detail = $"anchor at [{a.ContextLabel}]: query exceeded the evaluation ceiling — narrow the anchor context or investigate the measure, then re-submit."
-                                + (retired ? " The connection was retired because the query ignored cancellation — reconnect (open_live, connect_xmla, or connect_local) before re-submitting." : ""),
+                            Detail = $"anchor at [{a.ContextLabel}]: query exceeded the evaluation ceiling. Narrow the anchor context or investigate the measure, then re-submit."
+                                + (retired ? " The connection was retired because the query ignored cancellation. Reconnect (open_live, connect_xmla, or connect_local) before re-submitting." : ""),
                         };
                 // Identity pin, POST-query: the result may only be consumed if the pinned connection is STILL the
                 // session's connection — a swap during the query (even the final anchor's) makes it untrusted.
@@ -2744,9 +3557,50 @@ namespace Semanticus.Engine
                     return MixedEvidence($"while anchor {i + 1} of {anchors.Length} was evaluating; its result is untrusted");
                 if (!string.IsNullOrEmpty(rs.Error))
                     return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a completed anchor query", Detail = $"anchor at [{a.ContextLabel}] query failed: {rs.Error}" };
-                var actual = rs.RowCount > 0 && rs.Rows[0].Length > 0 ? rs.Rows[0][0] : null;
+
+                object actual;
+                if (a.IsShaped)
+                {
+                    if (rs.RowCount == 0)
+                    {
+                        var coordinate = string.Join(", ", a.RowCoordinate.Select(ContextEntryLabel));
+                        var slicers = a.Slicers.Length == 0 ? "(none)" : string.Join(", ", a.Slicers.Select(ContextEntryLabel));
+                        var nearby = await NearbyMembersAsync(a);
+                        return new VerifyResult
+                        {
+                            Kind = kind,
+                            Status = "unavailable",
+                            Missing = "the shaped anchor row in the visible set",
+                            Detail = $"anchor at [{a.ContextLabel}]: row coordinate [{coordinate}] was absent from the visible set under these slicers [{slicers}]. Fix the coordinate or slicers and re-submit.{nearby}",
+                        };
+                    }
+                    if (rs.RowCount > 1)
+                        return new VerifyResult
+                        {
+                            Kind = kind,
+                            Status = "unavailable",
+                            Missing = "one row for the shaped anchor coordinate",
+                            Detail = $"internal error: shaped anchor at [{a.ContextLabel}] returned {rs.RowCount} rows even though every axis column has a row-coordinate value. Report this result; the coordinate filter must return at most one row.",
+                        };
+
+                    var valueIndex = ShapedValueIndex(rs, a.AxisColumns.Length);
+                    if (rs.Rows == null || rs.Rows.Length == 0 || rs.Rows[0] == null || valueIndex < 0 || valueIndex >= rs.Rows[0].Length)
+                        return new VerifyResult
+                        {
+                            Kind = kind,
+                            Status = "unavailable",
+                            Missing = "the shaped anchor value column",
+                            Detail = $"internal error: shaped anchor at [{a.ContextLabel}] returned one row without its 'v' value column. Report this result; the shaped query must return axis columns followed by 'v' and '__present'.",
+                        };
+                    actual = rs.Rows[0][valueIndex];
+                }
+                else
+                {
+                    // The v6 flat-anchor path intentionally retains its original zero-row-as-BLANK behavior.
+                    actual = rs.RowCount > 0 && rs.Rows[0].Length > 0 ? rs.Rows[0][0] : null;
+                }
                 var matched = AnchorGate.Matches(a, actual, out var actualLabel);
-                evaluated.Add((a, actualLabel, matched, rs.ElapsedMs));
+                evaluated.Add((a, actual, actualLabel, matched, rs.ElapsedMs));
             }
 
             // Identity pin, PRE-verdict: a swap that landed after the last anchor's post-query check must still
@@ -2760,11 +3614,72 @@ namespace Semanticus.Engine
             var bad = evaluated.Where(r => !r.Matched).ToArray();
             if (bad.Length == 0)
                 return new VerifyResult { Kind = kind, Status = "passed", Detail = $"all {evaluated.Count} anchor(s) matched: {payload}{dateNote}" };
+
+            var hints = new Dictionary<AnchorGate.Anchor, string>();
+            var grid = DaxBench.NormalizeGroupBy(equivalenceGrid);
+            var hintEvaluations = 0;
+            foreach (var mismatch in bad.Where(r => !r.Anchor.IsShaped))
+            {
+                if (hintEvaluations >= 2 || grid.Length == 0 || DateTime.UtcNow > deadlineUtc) break;
+                AnchorGate.AnchorFilter matchingAxis = null;
+                foreach (var gridRef in grid)
+                {
+                    if (!AnchorGate.TryParseColumnRef(gridRef, out var gridTable, out var gridColumn)) continue;
+                    matchingAxis = mismatch.Anchor.Context.FirstOrDefault(f =>
+                        string.Equals(f.Table, gridTable, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(f.Column, gridColumn, StringComparison.OrdinalIgnoreCase));
+                    if (matchingAxis != null) break;
+                }
+                if (matchingAxis == null || !ReferenceEquals(_sessions.CurrentContext.Live, live)) continue;
+
+                var shaped = new AnchorGate.Anchor
+                {
+                    Context = mismatch.Anchor.Context,
+                    AxisColumns = new[] { new AnchorGate.AnchorColumn { Table = matchingAxis.Table, Column = matchingAxis.Column } },
+                    Number = mismatch.Anchor.Number,
+                    Blank = mismatch.Anchor.Blank,
+                    Text = mismatch.Anchor.Text,
+                };
+                hintEvaluations++;
+                var hintQuery = DaxBench.BuildShapedAnchorQuery(measureExpr, shaped, eqSpec, out _);
+                var (hintResult, hintTimedOut, _, _) = await RunVerifyQueryAsync(hintQuery, 10, live, deadlineUtc);
+                if (hintTimedOut || !ReferenceEquals(_sessions.CurrentContext.Live, live)
+                    || !string.IsNullOrEmpty(hintResult.Error) || hintResult.RowCount != 1) continue;
+                var hintValueIndex = ShapedValueIndex(hintResult, shaped.AxisColumns.Length);
+                if (hintResult.Rows == null || hintResult.Rows.Length == 0 || hintResult.Rows[0] == null
+                    || hintValueIndex < 0 || hintValueIndex >= hintResult.Rows[0].Length) continue;
+                var visualActual = hintResult.Rows[0][hintValueIndex];
+                if (DaxBench.ValuesEqual(mismatch.Actual, visualActual)) continue;
+
+                var skeletonJsonOptions = new JsonSerializerOptions
+                {
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                };
+                string JsonContextValue(AnchorGate.AnchorFilter f)
+                {
+                    if (string.Equals(f.Literal, "TRUE()", StringComparison.Ordinal)) return "true";
+                    if (string.Equals(f.Literal, "FALSE()", StringComparison.Ordinal)) return "false";
+                    if (f.Literal?.Length >= 2 && f.Literal[0] == '"' && f.Literal[f.Literal.Length - 1] == '"')
+                        return JsonSerializer.Serialize(f.Literal.Substring(1, f.Literal.Length - 2).Replace("\"\"", "\""), skeletonJsonOptions);
+                    return f.Literal;
+                }
+                var contextJson = string.Join(",", shaped.Context.Select(f =>
+                    JsonSerializer.Serialize(AnchorGate.CanonicalRef(f), skeletonJsonOptions) + ":" + JsonContextValue(f)));
+                var expectJson = shaped.Blank ? JsonSerializer.Serialize("BLANK", skeletonJsonOptions)
+                    : shaped.Number.HasValue ? shaped.Number.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                    : JsonSerializer.Serialize(shaped.Text ?? "", skeletonJsonOptions);
+                var skeleton = "{\"context\":{" + contextJson + "},\"axis\":"
+                    + JsonSerializer.Serialize(new[] { AnchorGate.CanonicalRef(matchingAxis) }, skeletonJsonOptions)
+                    + ",\"expect\":" + expectJson + "}";
+                hints[mismatch.Anchor] = " Flat and visual semantics disagree at this coordinate; the anchor form is load-bearing. Copy-paste shaped-anchor skeleton: `" + skeleton + "`.";
+            }
+
             return new VerifyResult
             {
                 Kind = kind, Status = "failed",
                 Detail = $"{bad.Length} of {evaluated.Count} anchor(s) diverged: "
-                    + string.Join("; ", bad.Select(r => $"[{r.Anchor.ContextLabel}] expected {r.Anchor.ExpectLabel} but got {r.ActualLabel}"))
+                    + string.Join("; ", bad.Select(r => $"[{r.Anchor.ContextLabel}] expected {r.Anchor.ExpectLabel} but got {r.ActualLabel}"
+                        + (hints.TryGetValue(r.Anchor, out var hint) ? hint : "")))
                     + $". Adjudicate each against a raw-row extract; fix the measure (or correct a wrong anchor) and re-submit. Full set: {payload}{dateNote}",
             };
         }
@@ -2784,19 +3699,19 @@ namespace Semanticus.Engine
             // keeps these branches observable offline — the live timing itself can't be), so fail-fast on them,
             // then skip honestly when there's simply no connection to time against.
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var baseAns) || !baseAns.Answered)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' has no answered BASELINE (the pre-rewrite warm median in ms) — run benchmark_dax_coldwarm BEFORE the rewrite and answer the input with the warm median." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' has no answered BASELINE (the pre-rewrite warm median in ms). Run benchmark_dax_coldwarm BEFORE the rewrite and answer the input with the warm median." };
             if (!double.TryParse(baseAns.Value, System.Globalization.NumberStyles.Any, inv, out var baselineMs))
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the baseline '{baseAns.Value}' is not a number of milliseconds — record it with benchmark_dax_coldwarm (use the warm median) and answer the input with just the number." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the baseline '{baseAns.Value}' is not a number of milliseconds. Record it with benchmark_dax_coldwarm (use the warm median) and answer the input with just the number." };
 
             var target = LatestObjectRefAnswer(run, answers);
             if (target == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no answered objectRef-typed input names the measure to benchmark — the workflow must collect one (e.g. an input `target` of type objectRef) before this gate." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no answered objectRef-typed input names the measure to benchmark: the workflow must collect one (e.g. an input `target` of type objectRef) before this gate." };
 
             if (_live == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "offline — no live connection, the benchmark delta was NOT verified (open_live/open_local and re-submit for real timing evidence)." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "a live connection", Detail = "offline: no live connection, so the benchmark delta could not be proven. Connect to a live model and submit this step again." };
 
             var s = _sessions.Require();
-            var name = await s.ReadAsync(m => ObjectRefs.Resolve(m, target) is Measure mm ? mm.Name : null);
+            var name = await s.ReadAsync(m => ResolveWorkflowMeasure(m, run, target)?.Name);
             if (name == null)
                 return new VerifyResult { Kind = kind, Status = "failed", Detail = $"'{target}' does not resolve to a measure on the current model." };
 
@@ -2819,7 +3734,7 @@ namespace Semanticus.Engine
             // wall-clock verdict is inconclusive, not a guarantee.
             var detail = $"[{name}] warm median {medianMs.ToString("0.#", inv)} ms vs baseline {baselineMs.ToString("0.#", inv)} ms "
                        + $"(ratio {ratio.ToString("0.##", inv)}, tolerance {tolerance.ToString("0.##", inv)}, 5 warm runs)"
-                       + (passed ? "" : " — the rewrite regressed past tolerance; revert with update_measure or re-optimize.")
+                       + (passed ? "" : ": the rewrite regressed past tolerance; revert with update_measure or re-optimize.")
                        + " Single-machine wall-clock; treat near-tolerance results as inconclusive.";
             return new VerifyResult { Kind = kind, Status = passed ? "passed" : "failed", Detail = detail };
         }
@@ -2830,10 +3745,10 @@ namespace Semanticus.Engine
         {
             const string kind = "bpa_clean";
             if (_sessions.Current == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "no open session." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "an open model", Detail = "no open model, so the BPA scan could not be proven. Open the model and submit this step again." };
             _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux);
             if (aux?.BpaKeys == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run BPA snapshot exists (no session was open at start_workflow) — a before/after diff is impossible; abort and restart the workflow with the model open." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run BPA snapshot exists (no session was open at start_workflow): a before/after diff is impossible; abort and restart the workflow with the model open." };
             var before = aux.BpaKeys;
             var scan = await BpaScanAsync();
             var fresh = scan.Violations.Where(v => !v.Waived).Where(v => !before.Contains(v.RuleId + "|" + v.ObjectRef)).ToArray();
@@ -2858,21 +3773,58 @@ namespace Semanticus.Engine
         {
             const string kind = "readiness_rescan";
             if (_sessions.Current == null)
-                return new VerifyResult { Kind = kind, Status = "skipped", Detail = "no open session." };
+                return new VerifyResult { Kind = kind, Status = "unavailable", Missing = "an open model", Detail = "no open model, so readiness could not be re-scored. Open the model and submit this step again." };
             _sessions.CurrentContext.WorkflowAux.TryGetValue(run.RunId, out var aux);
             if (aux?.ReadinessKeys == null)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run readiness snapshot exists (no session was open at start_workflow) — a before/after diff is impossible; abort and restart the workflow with the model open." };
-            var before = aux.ReadinessKeys;
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = "no start-of-run readiness snapshot exists (no session was open at start_workflow): a before/after diff is impossible; abort and restart the workflow with the model open." };
             var sc = await AiReadinessScanAsync();
-            var fresh = sc.Findings.Where(f => !f.Waived).Where(f => !before.Contains(f.RuleId + "|" + f.ObjectRef)).ToArray();
-            var delta = aux == null ? 0 : sc.Overall - aux.ReadinessOverall;
+            return EvaluateReadinessRescan(aux.ReadinessKeys, aux.ReadinessOverall, sc, run.Def?.Name);
+        }
+
+        // Main's gate: fail on new findings, a falling score, or make-ai-ready that did not improve.
+        // Extracted so tests can pin the same rule without opening a session.
+        internal static VerifyResult EvaluateReadinessRescan(HashSet<string> beforeKeys, double beforeOverall, Semanticus.Analysis.Scorecard after, string workflowName = null)
+        {
+            const string kind = "readiness_rescan";
+            var remaining = (after.Findings ?? Array.Empty<Semanticus.Analysis.ReadinessFinding>())
+                .Where(f => !f.Waived)
+                .Select(f => f.RuleId + "|" + f.ObjectRef)
+                .ToHashSet(StringComparer.Ordinal);
+            var fresh = remaining.Where(key => !beforeKeys.Contains(key)).Select(key =>
+            {
+                var parts = key.Split('|');
+                return after.Findings.FirstOrDefault(f => f.RuleId == parts[0] && f.ObjectRef == (parts.Length > 1 ? parts[1] : ""));
+            }).Where(f => f != null).ToArray();
+            var delta = after.Overall - beforeOverall;
+            var improved = after.Overall > beforeOverall + 0.049 || remaining.Count < beforeKeys.Count;
+            var fell = after.Overall + 0.049 < beforeOverall;
+            var mustImprove = string.Equals(workflowName, "make-ai-ready", StringComparison.OrdinalIgnoreCase);
+            if (fresh.Length > 0)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "failed",
+                    Detail = $"{fresh.Length} new readiness finding(s): " + string.Join("; ", fresh.Take(10).Select(f => $"{f.RuleId} on {f.ObjectName}")) + (fresh.Length > 10 ? " …" : ""),
+                };
+            if (fell)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "failed",
+                    Detail = $"readiness score fell to {after.Overall:0.#} ({delta:0.#} vs start of run). Fix the regression and submit this step again.",
+                };
+            if (mustImprove && remaining.Count > 0 && !improved)
+                return new VerifyResult
+                {
+                    Kind = kind,
+                    Status = "failed",
+                    Detail = $"the model is no more ready than when this run started; score {after.Overall:0.#} ({(delta >= 0 ? "+" : "")}{delta:0.#}). Do the prep work, then submit this step again.",
+                };
             return new VerifyResult
             {
                 Kind = kind,
-                Status = fresh.Length == 0 ? "passed" : "failed",
-                Detail = fresh.Length == 0
-                    ? $"no new readiness findings; score {sc.Overall:0.#} ({(delta >= 0 ? "+" : "")}{delta:0.#} vs start of run)."
-                    : $"{fresh.Length} NEW readiness finding(s): " + string.Join("; ", fresh.Take(10).Select(f => $"{f.RuleId} on {f.ObjectName}")) + (fresh.Length > 10 ? " …" : ""),
+                Status = "passed",
+                Detail = $"no new readiness findings; score {after.Overall:0.#} ({(delta >= 0 ? "+" : "")}{delta:0.#} vs start of run).",
             };
         }
     }

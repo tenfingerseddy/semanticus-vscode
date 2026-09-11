@@ -13,9 +13,26 @@ way.)
 
 ## Use
 
+**Needs Node 22.12 or newer.** That floor is `puppeteer-core` 25's own (`engines.node >= 22.12.0`), declared
+in this package's `engines` too, and every script here checks it at startup and says so plainly instead of
+failing somewhere inside puppeteer. It is not negotiable downwards: measured on the registry 2026-08-18, the
+newest `puppeteer-core` 24.x still pulls `extract-zip` and `ip-address` and `npm audit` reports 3 advisories,
+while every version that drops them declares this floor. Clean audit and Node 20 are not both available.
+
+No CI job installs or runs this directory, so the floor binds local runs only. CI touches this package in
+exactly one way: `Semanticus.VSCode/test/dependency-audit.test.mjs` finds all four `package-lock.json` roots
+under `Semanticus.VSCode/` and runs `npm audit` in each, on Node 20. `npm audit` reads the lockfile and does
+not install anything or evaluate `engines`, so it is unaffected.
+
+**`npm install` here does NOT download a browser.** This package depends on `puppeteer-core`, which is the
+library without the bundled Chromium. Install a shell once with
+`npx @puppeteer/browsers install chrome-headless-shell@stable` (it lands in `~/.cache/puppeteer`), or point
+`SEMANTICUS_BROWSER` at a Chromium executable. When several versions are cached the **newest** is used, and
+the choice is printed; it used to be whichever the filesystem listed first.
+
 ```bash
 cd Semanticus.VSCode/tools/uishot
-npm install                          # one-time: puppeteer-core + downloads chrome-headless-shell
+npm install                          # puppeteer-core only. It downloads NO browser -- see above.
 npm run build:webview --prefix ../..  # rebuild media/studio first if you changed the React webview
                                       # (propgrid assets are static — no build needed)
 
@@ -41,8 +58,10 @@ node pageshot.mjs page.html out.png [widthPx]  # screenshot ANY local HTML file 
 ## How it works (and why)
 
 - **Isolated Chromium, not Edge.** The machine's Edge hands off to the user's running instance, so it can't be
-  driven headlessly. `shot.mjs` uses puppeteer's cached **`chrome-headless-shell`** (downloaded by
-  `npm install`). Override with `SEMANTICUS_BROWSER=<chromium.exe>`.
+  driven headlessly. `shot.mjs` uses the cached **`chrome-headless-shell`** in `~/.cache/puppeteer`, which
+  `npm install` does NOT put there (see above); install it once with `npx @puppeteer/browsers install
+  chrome-headless-shell@stable`. The newest cached build **for this platform** is used. Override with
+  `SEMANTICUS_BROWSER=<chromium.exe>`.
 - **Served over HTTP, not file://.** Headless Chromium refuses to screenshot `file://`, so `shot.mjs` serves
   the extension dir on a throwaway `127.0.0.1` server and points the browser at it.
 - **Engine mocked in the page.** Each harness HTML stubs `acquireVsCodeApi()` and answers the webview's

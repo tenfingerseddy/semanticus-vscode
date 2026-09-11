@@ -40,8 +40,8 @@ namespace Semanticus.Engine
                     CompatibilityLevel = cl,
                     CalendarsSupported = cl >= CalendarOps.MinCompatibilityLevel,
                     Note = cl >= CalendarOps.MinCompatibilityLevel
-                        ? (infos.Count == 0 ? "No calendars defined. define_calendar / define_calendar_from_template creates one." : null)
-                        : $"Compatibility level {cl} < {CalendarOps.MinCompatibilityLevel}: calendars unavailable until set_compatibility_level({CalendarOps.MinCompatibilityLevel}).",
+                        ? (infos.Count == 0 ? "No calendars defined yet. Use a template to create one." : null)
+                        : $"Compatibility level {cl} is below {CalendarOps.MinCompatibilityLevel}. Raise it in Properties to author calendars.",
                 };
             });
         }
@@ -112,7 +112,7 @@ namespace Semanticus.Engine
                 var t = RequireCalendarTable(m, tableRef);
                 tableName = t.Name;
                 if (CalendarOps.Raw(t).Calendars.ContainsName(name))
-                    throw new InvalidOperationException($"Table '{t.Name}' already has a calendar named '{name}'. Use tag_calendar_column to extend it, or delete_calendar first.");
+                    throw new InvalidOperationException($"Table '{t.Name}' already has a calendar named '{name}'. Add a mapping to it, or delete it first.");
                 CalendarOps.Mutate(m, t, tom =>
                 {
                     var cal = new TOM.Calendar { Name = name, LineageTag = Guid.NewGuid().ToString() };
@@ -124,7 +124,7 @@ namespace Semanticus.Engine
             return new CalendarResult
             {
                 Revision = rev, Table = tableName, Calendar = name, Mappings = mapped.ToArray(),
-                Note = "Calendar-aware DAX (e.g. TOTALYTD(expr, '" + name + "')) can now target this calendar. Persist with save_model.",
+                Note = "Calendar-aware DAX (e.g. TOTALYTD(expr, '" + name + "')) can now target this calendar. Save the model to keep this change.",
             };
         }
 
@@ -155,7 +155,7 @@ namespace Semanticus.Engine
                 var t = RequireCalendarTable(m, tableRef);
                 tableName = t.Name;
                 if (!CalendarOps.Raw(t).Calendars.ContainsName(calendarName ?? string.Empty))
-                    throw new InvalidOperationException($"Table '{t.Name}' has no calendar named '{calendarName}'. define_calendar creates one; list_calendars shows what exists.");
+                    throw new InvalidOperationException($"Table '{t.Name}' has no calendar named '{calendarName}'. Create a calendar first.");
                 CalendarOps.Mutate(m, t, tom =>
                 {
                     var cal = tom.Calendars[calendarName];
@@ -180,12 +180,23 @@ namespace Semanticus.Engine
         private static Table RequireCalendarTable(Model m, string tableRef)
         {
             if (string.IsNullOrWhiteSpace(tableRef)) throw new InvalidOperationException("A table is required (name or 'table:Name' ref).");
-            return ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"{tableRef} is not a table in this model — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+            return ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"{tableRef} is not a table in this model. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
         }
 
         private static TOM.Column RequireColumn(TOM.Table tom, string name)
             => tom.Columns.Find((name ?? string.Empty).Trim())
                ?? throw new InvalidOperationException($"Table '{tom.Name}' has no column named '{name}'. Mappings reference columns on the calendar's own table.");
+
+        /// <summary>The Date category is the calendar's date anchor. Mapping a string (or any non-date) column
+        /// onto it silently replaces a correct mapping and then writes that corruption to disk. Associated
+        /// columns and the time-related bucket may be any type (month names, holiday flags).</summary>
+        internal static void RequireMappingType(TOM.Column col, TOM.TimeUnit? unit)
+        {
+            if (unit != TOM.TimeUnit.Date) return;
+            if (col.DataType == TOM.DataType.DateTime) return;
+            throw new InvalidOperationException(
+                $"'{col.Name}' is {col.DataType}, so it cannot be the date column. Pick a date or date/time column.");
+        }
 
         /// <summary>Parse a TimeUnit name; null/empty/"timeRelated" means the untagged time-related bucket.</summary>
         private static TOM.TimeUnit? ParseTimeUnit(string timeUnit)
@@ -206,6 +217,7 @@ namespace Semanticus.Engine
             {
                 var col = RequireColumn(tom, spec?.Column);
                 var unit = ParseTimeUnit(spec.TimeUnit);
+                RequireMappingType(col, unit);
                 if (unit == null)
                 {
                     var bucket = cal.CalendarColumnGroups.OfType<TOM.TimeRelatedColumnGroup>().FirstOrDefault();
@@ -244,7 +256,7 @@ namespace Semanticus.Engine
                 if (a.PrimaryColumn == col)
                 {
                     if (a.AssociatedColumns.Count > 0)
-                        throw new InvalidOperationException($"'{col.Name}' is the primary {a.TimeUnit} column and still has associated columns — remove those first, or tag a replacement primary.");
+                        throw new InvalidOperationException($"'{col.Name}' is the primary {a.TimeUnit} column and still has associated columns. Remove those first, or tag a replacement primary.");
                     cal.CalendarColumnGroups.Remove(a); mapped.Add($"{col.Name} ⇸ {a.TimeUnit}"); hit = true;
                 }
             }

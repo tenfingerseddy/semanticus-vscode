@@ -87,7 +87,7 @@ namespace Semanticus.Engine
                 try { return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
                 catch (IOException) { System.Threading.Thread.Sleep(15); }
             }
-            throw new IOException($"Could not acquire the lock for {path} within 3s — another process is holding it. Try again.");
+            throw new IOException($"Could not acquire the lock for {path} within 3s: another process is holding it. Try again.");
         }
     }
 }

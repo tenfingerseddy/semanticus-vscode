@@ -53,8 +53,8 @@ interface Sort { col: number; dir: 1 | -1 }
  * view-only — `rows` are never mutated, and nothing re-queries the engine. `filterable={false}` hides the
  * whole filter bar (and the funnels) — used for tiny embedded grids.
  */
-export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu }: {
-  columns: GridColumn[]; rows: unknown[][]; height?: number | string; filterable?: boolean;
+export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false }: {
+  columns: GridColumn[]; rows: unknown[][]; height?: number | string; filterable?: boolean; truncated?: boolean;
   // Opt-in header affordances (used by the M Code sample so its preview headers double as the column-op surface):
   showTypeGlyph?: boolean;                                            // a small type badge before each column name
   onColumnMenu?: (colIndex: number, anchor: HTMLElement) => void;     // ⌄ / right-click → open the caller's column-ops menu
@@ -74,7 +74,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
 
   // Filters are bound by column INDEX, so a schema change (new query) would mis-apply them — reset on the
   // column signature, not on every render (a same-shape refresh keeps the user's filters).
-  const colSig = useMemo(() => columns.map((c) => c.name + '' + (c.type || '')).join(''), [columns]);
+  const colSig = useMemo(() => JSON.stringify(columns.map((c) => [c.name, c.type || ''])), [columns]);
   useEffect(() => { setFilters({}); setOpen(null); }, [colSig]);
 
   const fams = useMemo(() => familiesOf(columns, rows), [columns, rows]);
@@ -131,6 +131,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
               className="text-[12px] px-2 py-1 rounded-md outline-none w-56" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
             <span className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>
               {view.length === rows.length ? `${rows.length.toLocaleString()} rows` : `${view.length.toLocaleString()} of ${rows.length.toLocaleString()}`}
+              {truncated ? '. More rows exist.' : ''}
             </span>
             {dirty && (
               <button onClick={resetAll} className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>Reset</button>

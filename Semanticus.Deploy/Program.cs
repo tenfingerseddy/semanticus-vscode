@@ -100,7 +100,7 @@ foreach (var oc in optModel.Cultures)
 Console.WriteLine($"CHANGE SET: {desc} descriptions, {hid} visibility, {cat} data-categories, {ren} renames, {cult} linguistic-schema");
 foreach (var l in log.Take(40)) Console.WriteLine("   " + l);
 
-if (!commit) { Console.WriteLine("\nDRY RUN — nothing written. Re-run with --commit to deploy."); return 0; }
+if (!commit) { Console.WriteLine("\nDRY RUN: nothing written. Re-run with --commit to deploy."); return 0; }
 
 Console.WriteLine("\ncommitting via Model.SaveChanges() ...");
 live.SaveChanges();

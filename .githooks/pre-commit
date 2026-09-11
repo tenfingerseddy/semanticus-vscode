@@ -1,0 +1,159 @@
+#!/bin/sh
+# Refuse a commit whose TASKS.md defines one task id twice, whose finding queue breaks an offline invariant,
+# or whose FIXED findings cite a commit or a test that does not hold up.
+#
+# WHY THIS IS A HOOK AND NOT ONLY A CI JOB. On 2026-07-29 two register-writing jobs ran in parallel, both
+# read the ids from origin/main, both took the next free ones, and both took the SAME ones. A rule already
+# forbade running them in parallel; the rule was written and then broken twice within hours. CI catches the
+# collision at merge, which is after the wrong ids have been written, pushed, and reasoned from. This kills
+# it at the commit that creates it.
+#
+# It checks the STAGED content, not the working tree, because those differ exactly when someone is part way
+# through fixing a collision and only some of the fix is staged.
+#
+# Install it with:   git config core.hooksPath .githooks
+# A fresh clone does NOT pick that up on its own; git has no committed-hook mechanism. The `verify-semanticus`
+# skill runs that line at step 0, so any agent that verifies anything installs it, and the `tasks-register`
+# workflow is the independent backstop for a clone where nobody ever did.
+#
+# TWO WINDOWS TRAPS, both measured here on 2026-07-30 rather than guessed.
+#
+# 1. `mktemp` returns an MSYS path (`/tmp/tmp.XXXX`). `node` is a native Windows binary and resolves that as
+#    `C:\tmp\tmp.XXXX`, which does not exist, so the checker died with ENOENT. The first version of this hook
+#    then printed "TASKS.md has duplicate task id definitions" over a crash it had never verified, which is
+#    worse than no hook. `git rev-parse --git-path` returns a real Windows path that both `sh` and `node`
+#    accept, and it lives inside the git directory so the scratch file can never be staged.
+#
+# 2. This file must be LF. `core.autocrlf=true` is set on this machine, so `.gitattributes` pins
+#    `.githooks/* text eol=lf`; without it `#!/bin/sh` becomes `/bin/sh\r` and every commit dies with
+#    "bad interpreter".
+#
+# The refusal below NEVER states the cause it has not read. The checker's own output is the explanation, and
+# the renumbering advice is printed only when that output actually names duplicate definitions.
+
+set -e
+
+MSYS_NO_PATHCONV=1
+export MSYS_NO_PATHCONV
+
+# TWO REGISTERS NOW, and the second one is why this block changed. docs/findings.md is the finding queue, the
+# same checker reads it, and its rows point INTO TASKS.md. So:
+#   - a commit that touches EITHER file is checked, because a findings-only commit can break the link just as
+#     easily as a register-only one; and
+#   - BOTH files are read from the index, never one from the index and the other from the working tree. That
+#     mixture is what this hook was written to avoid, and extending it naively reintroduced exactly that:
+#     the checker's second argument defaults to the working-tree path, so a staged fix would have been
+#     compared against an unstaged register.
+# Match the repo-root TASKS.md exactly; a TASKS.md in a subdirectory is not the register.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -qxE 'TASKS\.md|docs/findings\.md'; then
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+checker="$repo_root/tools/tasks-register-check.mjs"
+
+if [ ! -f "$checker" ]; then
+    echo "STOP: the register check is missing at tools/tasks-register-check.mjs." >&2
+    echo "Commit refused. A hook that cannot find its checker must not pass silently." >&2
+    exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "STOP: node is not on PATH, so the register check cannot run." >&2
+    echo "Commit refused. Install node, or run the commit where node is available." >&2
+    echo "A skipped gate is never a pass." >&2
+    exit 1
+fi
+
+# Read each staged blob by its object id, so no colon-prefixed pathspec (`:TASKS.md`) is ever handed to git:
+# on Windows the MSYS layer rewrites arguments that look like colon-separated path lists.
+staged_tasks=$(git rev-parse --git-path tasks-register-staged.tmp)
+staged_findings=$(git rev-parse --git-path findings-register-staged.tmp)
+trap 'rm -f "$staged_tasks" "$staged_findings"' EXIT INT TERM
+
+blob=$(git ls-files -s -- TASKS.md | cut -d ' ' -f 2)
+if [ -z "$blob" ]; then
+    echo "STOP: TASKS.md is in the commit but its object id could not be read." >&2
+    echo "Commit refused rather than checking the wrong content." >&2
+    exit 1
+fi
+git cat-file blob "$blob" > "$staged_tasks"
+
+if [ ! -s "$staged_tasks" ]; then
+    echo "STOP: the staged TASKS.md was read as empty, so the check would be blind." >&2
+    echo "Commit refused." >&2
+    exit 1
+fi
+
+# The finding queue arrived after this hook did, so a commit on an older tree legitimately has no such file.
+# That case runs the task half only and SAYS so, rather than inventing an empty register to check.
+findings_blob=$(git ls-files -s -- docs/findings.md | cut -d ' ' -f 2)
+if [ -n "$findings_blob" ]; then
+    git cat-file blob "$findings_blob" > "$staged_findings"
+    if [ ! -s "$staged_findings" ]; then
+        echo "STOP: the staged docs/findings.md was read as empty, so the finding-queue check would be blind." >&2
+        echo "Commit refused." >&2
+        exit 1
+    fi
+    output=$(node "$checker" "$staged_tasks" "$staged_findings" 2>&1) && status=0 || status=$?
+else
+    echo "docs/findings.md is not in the index, so only the task register is checked here."
+    output=$(node "$checker" "$staged_tasks" 2>&1) && status=0 || status=$?
+fi
+echo "$output"
+
+if [ "$status" -ne 0 ]; then
+    echo "" >&2
+    echo "STOP: the register check failed (TASKS.md, docs/findings.md, or the link between them)." >&2
+    echo "Commit refused." >&2
+    echo "Its output is above and is the explanation; this hook does not restate a cause it did not read." >&2
+    if echo "$output" | grep -q 'is defined .* times'; then
+        echo "" >&2
+        echo "Two rows defining one id means two pieces of work share a primary key." >&2
+        echo "Renumber the newer row to the next free id, taken from the MERGED register:" >&2
+        echo "  git fetch origin --quiet && git show \"origin/main:TASKS.md\"" >&2
+        echo "The branch point is not good enough. Reading it there is how the collision happens." >&2
+    fi
+    exit 1
+fi
+
+# THE FOURTH CHECK: every FIXED finding names a real commit and a real, running test.
+# tools/tasks-register-check.mjs above proves the SHAPE of a FIXED row; tools/findings-fixed-commits.mjs
+# proves its SUBSTANCE (the sha resolves, the commit touched what the row names, the test exists in a suite CI
+# actually runs). In one day it caught three defects the shape check had already let through into commits:
+# malformed `test:` citations, a placeholder sha, and a dead sha quoted mid-sentence. So it runs here too, at
+# the commit that creates the row, not only in the `tasks-register` workflow.
+#
+# WHAT IT READS, so the index-versus-working-tree rule above stays honest. The register itself is judged from
+# the INDEX: the same staged blob its sibling just checked. But the checker also reads git history (the object
+# database, which staging cannot change) and, from the WORKING TREE, the named test files and the workflow
+# files that bind its suite allowlist, because readFileSync inside the checker knows nothing about the index.
+# Two consequences of that, named rather than silent:
+#   - a named test file that is staged but deleted from the working tree refuses here (the safe direction);
+#   - a named test file that sits in the working tree but is not part of this commit passes here and fails in
+#     CI. The `tasks-register` workflow, checked out at fetch-depth 0, is the backstop for exactly that gap.
+# The checker's own self-test, tools/findings-fixed-commits.test.mjs, is NOT run here: it builds throwaway git
+# repositories, which costs seconds on every commit for an invariant this commit cannot change. It runs in the
+# `tasks-register` workflow beside the checker, and that is the only assertion this hook leaves to CI.
+#
+# A cited commit must exist LOCALLY. A row citing a sha that lives on origin but was never fetched (a squash
+# commit GitHub minted, say) refuses here as "does not exist"; `git fetch origin` and retry. Refusing is the
+# safe direction, and on a SHALLOW clone the checker already refuses (exit 2) rather than passing over history
+# it cannot see.
+if [ -n "$findings_blob" ]; then
+    fixed_checker="$repo_root/tools/findings-fixed-commits.mjs"
+    if [ ! -f "$fixed_checker" ]; then
+        echo "STOP: the FIXED-evidence check is missing at tools/findings-fixed-commits.mjs." >&2
+        echo "Commit refused. A hook that cannot find its checker must not pass silently." >&2
+        exit 1
+    fi
+    fixed_output=$(node "$fixed_checker" "$staged_findings" 2>&1) && fixed_status=0 || fixed_status=$?
+    echo "$fixed_output"
+    if [ "$fixed_status" -ne 0 ]; then
+        echo "" >&2
+        echo "STOP: a FIXED verdict in the staged docs/findings.md does not hold up against git or the tests." >&2
+        echo "Commit refused." >&2
+        echo "The check's output is above and is the explanation; this hook does not restate a cause it did not read." >&2
+        exit 1
+    fi
+fi

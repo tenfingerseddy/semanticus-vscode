@@ -1,24 +1,19 @@
 // Rasterize an SVG → PNG in the isolated chrome-headless-shell (same browser the uishot harness uses).
 // Usage: node rasterize.mjs <input.svg> <output.png> [sizePx=128] [scale=2]
 // Renders the SVG to fill a size×size viewport at deviceScaleFactor=scale, so the PNG is (size*scale)².
-import puppeteer from 'puppeteer-core';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { findBrowser, requireSupportedNode } from './browser.mjs';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-function findBrowser() {
-  if (process.env.SEMANTICUS_BROWSER && existsSync(process.env.SEMANTICUS_BROWSER)) return process.env.SEMANTICUS_BROWSER;
-  const cacheRoot = join(homedir(), '.cache', 'puppeteer', 'chrome-headless-shell');
-  if (existsSync(cacheRoot)) {
-    for (const v of readdirSync(cacheRoot)) {
-      const exe = join(cacheRoot, v, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-      if (existsSync(exe)) return exe;
-    }
-  }
-  for (const c of ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-                   'C:/Program Files/Google/Chrome/Application/chrome.exe']) if (existsSync(c)) return c;
-  throw new Error('No Chromium found. Run `npm install` in tools/uishot, or set SEMANTICUS_BROWSER.');
-}
+// THE FLOOR CHECK RUNS BEFORE PUPPETEER IS LOADED, AND THE ORDER IS THE WHOLE POINT. This used to be a
+// static `import puppeteer from 'puppeteer-core'`, which the runtime resolves, parses and evaluates before
+// one line of this file runs. `requireSupportedNode()` therefore could not fire on the Node versions it
+// exists for: on Node 20 the run died inside puppeteer with the opaque error the guard was written to
+// replace, and the guard's message was never reached. A dynamic import after the check is what makes the
+// check reachable. `browser.mjs` imports no puppeteer, so nothing can reorder this again by accident.
+requireSupportedNode();
+const puppeteer = (await import('puppeteer-core')).default;
+
 
 const [, , inSvg, outPng, sizeArg, scaleArg] = process.argv;
 if (!inSvg || !outPng) { console.error('usage: node rasterize.mjs <in.svg> <out.png> [size=128] [scale=2]'); process.exit(2); }

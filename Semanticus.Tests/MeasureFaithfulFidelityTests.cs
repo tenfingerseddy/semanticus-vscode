@@ -289,19 +289,19 @@ verify:
             Assert.StartsWith("Compared a rewrite (degraded:", degradedMatch);
             Assert.DoesNotContain("Verified", degradedMatch);
             Assert.Contains("NOT verified", degradedMatch);
-            Assert.Equal("Compared a rewrite (degraded) — difference observed, not authoritative",
+            Assert.Equal("Compared a rewrite (degraded): difference observed, not authoritative",
                 McpTools.EquivalenceLabel(Eq(allMatch: false, mismatches: 1, fidelity: "x"), grid));
 
             // The rungs the pre-fix label lied about: zero rows / truncated / thin / error are NOT "Verified".
-            Assert.StartsWith("Compared a rewrite — could not verify", McpTools.EquivalenceLabel(Eq(rows: 0), grid));
-            Assert.StartsWith("Compared a rewrite — could not verify", McpTools.EquivalenceLabel(Eq(truncated: true), grid));
-            Assert.StartsWith("Compared a rewrite — could not verify", McpTools.EquivalenceLabel(Eq(error: "boom"), grid));
-            Assert.Equal("Compared a rewrite — matched at the grand total only — NOT verified",
+            Assert.StartsWith("Compared a rewrite: could not verify", McpTools.EquivalenceLabel(Eq(rows: 0), grid));
+            Assert.StartsWith("Compared a rewrite: could not verify", McpTools.EquivalenceLabel(Eq(truncated: true), grid));
+            Assert.StartsWith("Compared a rewrite: could not verify", McpTools.EquivalenceLabel(Eq(error: "boom"), grid));
+            Assert.Equal("Compared a rewrite: matched at the grand total only, NOT verified",
                 McpTools.EquivalenceLabel(Eq(), null));
 
             // Only the authoritative rungs earn "Verified".
-            Assert.Equal("Verified a rewrite — equivalent", McpTools.EquivalenceLabel(Eq(), grid));
-            Assert.Equal("Verified a rewrite — NOT equivalent", McpTools.EquivalenceLabel(Eq(allMatch: false, mismatches: 1), grid));
+            Assert.Equal("Verified a rewrite: equivalent", McpTools.EquivalenceLabel(Eq(), grid));
+            Assert.Equal("Verified a rewrite: NOT equivalent", McpTools.EquivalenceLabel(Eq(allMatch: false, mismatches: 1), grid));
         }
 
         // ---- round 3: untrusted spec degrades, never vanishes -----------------------------------------
@@ -467,7 +467,7 @@ verify:
         [Fact]
         public void Mcp_label_whitespace_grid_is_thin_not_verified()
         {
-            Assert.Equal("Compared a rewrite — matched at the grand total only — NOT verified",
+            Assert.Equal("Compared a rewrite: matched at the grand total only, NOT verified",
                 McpTools.EquivalenceLabel(Eq(), new[] { "  " }));
         }
 

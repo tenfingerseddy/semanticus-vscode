@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { rpc, onDidChange, onActivity, copyText } from './bridge';
 import { KIND_GLYPH, KIND_COLOR, resolveColor } from './lineagetypes';
 import { Evidence, useRichEvidence, matchRich } from './evidence';
+import { opLabel } from './copy';
 import { useTier, isEntitlementError, ProBadge } from './pro';
 
 // ===================================================================================================
@@ -65,12 +66,9 @@ const VERDICT_GLYPH: Record<string, string> = {
   attributed: '✓', interval: '?', 'data-suspected': '!', inconclusive: 'i',
 };
 
-// Ops whose raw id would leak engine language into the UI — rendered with a plain-English label instead
-// (the raw op id stays available in the record's Details/raw JSON for anyone who needs it).
-const OP_LABEL: Record<string, string> = {
-  blame_value: 'What moved this number?',
-};
-const opLabel = (op: string) => OP_LABEL[op] ?? op;
+// The row's op name comes from the shared labeller, never the raw engine id: every op id is snake_case, so
+// one unmapped op would print machinery into the audit trail (UX-02 / UX-06, D-209). The raw id stays in the
+// record's Details/raw JSON for anyone who needs it.
 
 // When several records share one revision (apply_plan: per-item verdicts + a "batch" summary), the badge that welds to
 // the timeline row must be the most SIGNIFICANT one — a red "overridden" or amber "needs-review" must never be hidden by
@@ -199,6 +197,7 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
   const liveItems = items.slice(undoneCount);
   const aiCount = liveItems.filter((i) => isAi(i.origin)).length;
   const youCount = liveItems.length - aiCount;
+  const overrides = [...(chain?.records ?? [])].filter((r) => r.overrideReason).sort((a, b) => b.seq - a.seq);
 
   return (
     <div className="sem-evidence-page sem-centered-page flex flex-col gap-4 min-w-0">
@@ -225,6 +224,16 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
           </div>
         </div>
         {msg && <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>{msg}</div>}
+        {overrides.length > 0 && (
+          <div className="mt-3 flex flex-col gap-1.5" data-testid="published-with-reason">
+            <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Published with a reason</div>
+            {overrides.map((r) => (
+              <div key={r.seq} className="text-[12px] px-2 py-1.5 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 12%, transparent)' }}>
+                <span className="font-semibold">Reason:</span> {r.overrideReason}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="text-[10.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
           Tip: hover any edit and choose <span style={{ color: 'var(--sem-fg)' }}>Undo to here</span> to roll back that edit and everything after it.
         </div>
@@ -236,8 +245,9 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
         <Panel>
           <div className="text-[13px]" style={{ color: 'var(--sem-fg)' }}>No edits yet this session.</div>
           <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            Changes you make in Studio and changes the AI Assistant makes both land here: live, attributed, and
-            reversible from one place. Try “Apply safe fixes”, or ask the AI Assistant to improve the model.
+            Changes made in Studio and by the AI Assistant appear here in the VS Code view, with who made each change
+            shown. The AI Assistant sees model changes on its next call, and you can undo them from one place. Try
+            “Apply safe fixes”, or ask the AI Assistant to improve the model.
           </div>
         </Panel>
       ) : (
@@ -310,8 +320,12 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
     setBusy('restore'); setError(null);
     try {
       const r = await rpc<HistoryRestoreResult>('restoreHistoryCheckpoint', restorePreview.target.hash, true, 'human');
-      if (r.error) setError(r.error);
-      else { setResult(r.note || 'Checkpoint restored.'); setRestorePreview(null); await load(); }
+      if (r.restored) {
+        setResult(r.note || 'The files were restored.');
+        if (r.error) setError(r.error);
+        setRestorePreview(null);
+        await load();
+      } else if (r.error) setError(r.error);
     } catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   };
@@ -341,7 +355,7 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
               {createPreview && !createPreview.error && (
                 <div className="mt-2 rounded-md p-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
                   <div className="text-[11px]">{createPreview.note}</div>
-                  <div className="text-[10px] tnum mt-1" style={{ color: 'var(--sem-muted)' }}>{createPreview.files.length ? createPreview.files.join(' · ') : 'No file delta; this will mark the accepted state.'}</div>
+                  <div className="text-[10px] tnum mt-1" style={{ color: 'var(--sem-muted)' }}>{createPreview.files.length ? createPreview.files.join(' · ') : createPreview.savedModelFirst ? 'The open model will be saved first. Then its files will be committed.' : 'No files have changed. This checkpoint will mark the current files as accepted.'}</div>
                   <div className="flex gap-2 mt-2"><MiniButton onClick={confirmCreate} disabled={busy != null}>{busy === 'create' ? 'Creating…' : 'Create checkpoint'}</MiniButton><MiniButton onClick={() => setCreatePreview(null)}>Cancel</MiniButton></div>
                 </div>
               )}
@@ -411,7 +425,7 @@ function Entry({ it, now, latest, undone, busy, record, revertCount, onAction, f
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-medium" style={{ color: ai ? accent : 'var(--sem-fg)' }}>{ai ? 'AI Assistant' : 'You'}</span>
-          <span className="text-[12px]" style={{ color: 'var(--sem-fg)', textDecoration: undone ? 'line-through' : 'none' }}>{it.label || 'edited the model'}</span>
+          <span className="text-[12px]" style={{ color: 'var(--sem-fg)', textDecoration: undone ? 'line-through' : 'none' }}>{it.label ? opLabel(it.label) : 'edited the model'}</span>
           {/* verdict badge — ONLY when a persistent Verified Edits record welds to this row. No record = no badge:
               silence is honest here (an un-verified edit isn't "unproven"; it simply wasn't checked). */}
           {record && <VerdictBadge verdict={record.verdict} title={record.overrideReason ? `Override: ${record.overrideReason}` : record.summary} />}

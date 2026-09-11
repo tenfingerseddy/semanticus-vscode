@@ -25,15 +25,15 @@ namespace Semanticus.Engine
         // reversible, and bookkeeping writes are sidecar/annotation state a model rollback doesn't cover.
 
         private const string IoReason =
-            "it performs external/system I/O, which dry_run cannot rehearse — run it directly, or use its own preview path";
+            "it performs external/system I/O, which dry_run cannot rehearse: run it directly, or use its own preview path";
         private const string CloudReason =
-            "it already defaults to dry-run internally (it will not write without a commit/consent flag) — run it directly";
+            "it already defaults to dry-run internally (it will not write without a commit/consent flag): run it directly";
         private const string TimelineReason =
-            "dry_run cannot rehearse the undo timeline — undo is already reversible, so just run undo_change / redo_change";
+            "dry_run cannot rehearse the undo timeline: undo is already reversible, so just run undo_change / redo_change";
         private const string CompositeReason =
-            "its later steps read earlier writes, so a rolled-back rehearsal would diverge — use propose_plan / the op's own preview path / apply one typed op at a time";
+            "its later steps read earlier writes, so a rolled-back rehearsal would diverge: use propose_plan / the op's own preview path / apply one typed op at a time";
         private const string BookkeepingReason =
-            "it writes bookkeeping state (workflow / knowledge / waiver), not a model-definition edit — dry_run rehearses model edits and does not apply here";
+            "it writes bookkeeping state (workflow / knowledge / waiver), not a model-definition edit: dry_run rehearses model edits and does not apply here";
 
         // Exact op-name → reason. Flattened from the families below so lookup is O(1) and every message is uniform.
         private static readonly Dictionary<string, string> DenyExact = BuildDenyExact();
@@ -85,7 +85,8 @@ namespace Semanticus.Engine
                 // would silently break the report's "nothing was changed" guarantee. Denied for the same reason.
                 "set_spec", "clear_spec", "load_spec", "save_spec", "propose_plan", "propose_replace", "add_plan_item", "set_plan_item",
                 "clear_plan", "capture_baseline", "save_layout", "set_verified_mode", "load_bpa_rules", "reset_bpa_rules",
-                "load_readiness_rules", "reset_readiness_rules");   // rule-annotation writers — same family as the BPA pair
+                "load_readiness_rules", "reset_readiness_rules",   // rule-annotation writers — same family as the BPA pair
+                "set_publish_destination", "remember_xmla_connection", "forget_connection", "label_connection");   // connection-registry writers — a rehearsal would persist them outside model rollback
             return d;
         }
 
@@ -157,7 +158,7 @@ namespace Semanticus.Engine
             var report = new DryRunReport
             {
                 Op = op,
-                Note = "Rehearsal only — nothing was changed, no undo entry, no broadcast. Run the op itself to apply.",
+                Note = "Rehearsal only: nothing was changed, no undo entry, no broadcast. Run the op itself to apply.",
             };
             var collector = new DryRunCollector();
             DryRunScope.Current = collector;
@@ -205,7 +206,7 @@ namespace Semanticus.Engine
                     catch (Exception ex)
                     {
                         throw new InvalidOperationException(
-                            $"dry_run '{op}': argument '{p.Name}' could not be read as {p.ParameterType.Name} — {ex.Message}. Signature: {op}({Signature(pars)}).");
+                            $"dry_run '{op}': argument '{p.Name}' could not be read as {p.ParameterType.Name}: {ex.Message}. Signature: {op}({Signature(pars)}).");
                     }
                 }
                 else if (p.HasDefaultValue) args[i] = p.DefaultValue;
@@ -224,7 +225,7 @@ namespace Semanticus.Engine
             try { doc = JsonDocument.Parse(argsJson); }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"dry_run '{op}': args must be a JSON object of {{argName: value}} — {ex.Message}.");
+                throw new InvalidOperationException($"dry_run '{op}': args must be a JSON object of {{argName: value}}: {ex.Message}.");
             }
             using (doc)
             {

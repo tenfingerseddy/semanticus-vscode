@@ -225,7 +225,7 @@ namespace Semanticus.Engine
         }
 
         private static string HintFor(string matchClass) => matchClass == DaxMatchClassifier.Reference
-            ? "This is a reference to another object. Rename that object (rename_object) to change it everywhere safely — a text replace would break the formula."
+            ? "This is a reference to another object. Rename that object (rename_object) to change it everywhere safely: a text replace would break the formula."
             : "This is part of the DAX formula (a function, operator, or number). Edit the expression directly to change it.";
 
         private static string LegacyWhere(string field) => field switch

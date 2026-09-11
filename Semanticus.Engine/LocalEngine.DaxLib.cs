@@ -27,7 +27,7 @@ namespace Semanticus.Engine
 
         public async Task<DaxLibPackageDetail> DaxLibPackageInfoAsync(string id, string version)
         {
-            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required — daxlib_search finds packages and returns the id to pass here.");
+            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
             var ver = await ResolveVersionAsync(id, version, DaxLibCt).ConfigureAwait(false);
             DaxLibMetadata meta = null;
             try { meta = await DaxLibRest.MetadataAsync(id, ver, DaxLibCt).ConfigureAwait(false); }
@@ -58,7 +58,7 @@ namespace Semanticus.Engine
             // FREE (Kane, 2026-07-04 — was Pro-gated at launch of the lane): installing community UDFs is
             // top-of-funnel adoption, not the enforcement/bulk-referee value Pro charges for. Still one
             // atomic, undoable batch.
-            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required — daxlib_search finds packages and returns the id to pass here.");
+            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
 
             var s = _sessions.Require();   // a model must be open to install into
             var ver = await ResolveVersionAsync(id, version, DaxLibCt).ConfigureAwait(false);
@@ -74,7 +74,16 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"Install DaxLib package {id} {ver}", m =>
             {
                 if (m.Database == null) throw new InvalidOperationException("Model has no database.");
-                if (m.Database.CompatibilityLevel < 1702) m.Database.CompatibilityLevel = 1702;   // UDFs need CL>=1702 (one-way upgrade)
+                // UDFs need CL>=1702, so a lower model has to move up. That move is real and it outlives this
+                // install in the user's hands (the model stops opening in older tools), so it is reported, never
+                // silent (D-197). The move itself is an ordinary undoable property change, so one undo takes the
+                // functions and the level back together.
+                if (m.Database.CompatibilityLevel < 1702)
+                {
+                    var was = m.Database.CompatibilityLevel;
+                    m.Database.CompatibilityLevel = 1702;
+                    warnings.Add($"This model was at compatibility level {was}. Functions need level 1702, so the model was moved up to 1702.");
+                }
 
                 var prov = DaxLibStore.Load(m);
                 foreach (var pkg in plan.Packages)
@@ -133,14 +142,14 @@ namespace Semanticus.Engine
         // free; trapping installed UDFs behind a paywall would be hostile, like un-waiving a finding is never gated).
         public async Task<SetResult> DaxLibUninstallAsync(string id, string origin)
         {
-            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required — daxlib_list_installed shows the packages recorded in this model and their ids.");
+            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_list_installed shows the packages recorded in this model and their ids.");
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, $"Uninstall DaxLib package {id}", m =>
             {
                 var prov = DaxLibStore.Load(m);
                 var rec = DaxLibStore.Find(prov, id)
-                    ?? throw new InvalidOperationException($"DaxLib package '{id}' is not recorded as installed in this model — daxlib_list_installed shows what is installed here (check the id).");
+                    ?? throw new InvalidOperationException($"DaxLib package '{id}' is not recorded as installed in this model: daxlib_list_installed shows what is installed here (check the id).");
                 foreach (var fnName in rec.Functions ?? Array.Empty<string>())
                 {
                     var f = m.Functions.FirstOrDefault(x => string.Equals(x.Name, fnName, StringComparison.OrdinalIgnoreCase));
@@ -162,7 +171,7 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(version)) return version.Trim();
             var versions = await DaxLibRest.VersionsAsync(id, ct).ConfigureAwait(false);
             var pick = versions.FirstOrDefault(v => v.IndexOf('-') < 0) ?? versions.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(pick)) throw new InvalidOperationException($"DaxLib package '{id}' has no published versions — confirm the id with daxlib_search, or list the versions with daxlib_versions.");
+            if (string.IsNullOrWhiteSpace(pick)) throw new InvalidOperationException($"DaxLib package '{id}' has no published versions: confirm the id with daxlib_search, or list the versions with daxlib_versions.");
             return pick;
         }
 
@@ -193,7 +202,7 @@ namespace Semanticus.Engine
                     return;
                 }
                 if (!inProgress.Add(id)) { warnings.Add($"dependency cycle broken at '{id}'."); return; }
-                if (ordered.Count >= 50) throw new InvalidOperationException("DaxLib dependency graph exceeded 50 packages — refusing to install.");
+                if (ordered.Count >= 50) throw new InvalidOperationException("DaxLib dependency graph exceeded 50 packages: refusing to install.");
 
                 var ver = await ResolveVersionAsync(id, version, ct).ConfigureAwait(false);
                 var content = await DaxLibRest.GetContentAsync(id, ver, ct).ConfigureAwait(false);

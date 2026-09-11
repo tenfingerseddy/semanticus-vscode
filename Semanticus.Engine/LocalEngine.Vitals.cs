@@ -26,7 +26,7 @@ namespace Semanticus.Engine
 
         private const string VitalsProInvite =
             "See what moved a number, automatically, with Pro. You can still compare snapshots by hand: " +
-            "capture a baseline before an edit and compare after — free (capture_baseline / compare_baseline).";
+            "capture a baseline before an edit and compare after, free (capture_baseline / compare_baseline).";
 
         /// <summary>Ambient capture is HOST-ATTACHED (the ExperienceTee precedent): only the owner host
         /// (Program.Serve / owner-mode MCP) enables it, so engine instances in tests never write sidecar
@@ -257,7 +257,7 @@ namespace Semanticus.Engine
             if (_entitlement == null || !_entitlement.IsPro)
                 return new BlameResult { Status = "pro", Verdict = "pro", MeasureRef = measureRef, Note = VitalsProInvite };
             if (string.IsNullOrWhiteSpace(measureRef))
-                return new BlameResult { Status = "error", Verdict = "inconclusive", Note = "measureRef is required — the measure whose number moved (e.g. 'measure:Sales/Total Sales')." };
+                return new BlameResult { Status = "error", Verdict = "inconclusive", Note = "measureRef is required: the measure whose number moved (e.g. 'measure:Sales/Total Sales')." };
 
             // Canonicalize against the open model when it still resolves; a DELETED measure's history is
             // still queryable by the ref it was recorded under.
@@ -333,9 +333,9 @@ namespace Semanticus.Engine
             {
                 result.Verdict = "data-suspected";
                 result.Cause = "data-suspected";
-                note = $"Every formula behind {name} is identical at both points and none of the recorded edits touches its dependencies — " +
-                       "the data itself most likely changed (a refresh or a source change), or a structural change wasn't recorded. " +
-                       "Proving a data cause needs a pre-edit shadow copy of the model, which v1 does not keep — treat this as a suspicion, not a finding.";
+                note = $"Every formula behind {name} is identical at both points and none of the recorded edits touches its dependencies. " +
+                       "The data itself most likely changed (a refresh or a source change), or a structural change wasn't recorded. " +
+                       "Proving a data cause needs a pre-edit shadow copy of the model, which v1 does not keep. Treat this as a suspicion, not a finding.";
             }
             else if (result.Candidates.Length == 1)
             {
@@ -343,18 +343,18 @@ namespace Semanticus.Engine
                 var c = result.Candidates[0];
                 result.Cause = (c.FormulaChanged || core.FormulaChanged) ? "formula" : "structural";
                 note = result.Cause == "formula"
-                    ? $"{name} moved from {result.Before} to {result.After}, and exactly one recorded edit sits between the two points ({c.Op}, revision {c.Revision}) — a formula in this number's dependency tree changed (see the diff)."
-                    : $"{name} moved from {result.Before} to {result.After}, and exactly one recorded edit sits between the two points ({c.Op}, revision {c.Revision}) — it touched this number's dependencies without changing a formula (e.g. a relationship or structure change).";
+                    ? $"{name} moved from {result.Before} to {result.After}, and exactly one recorded edit sits between the two points ({c.Op}, revision {c.Revision}): a formula in this number's dependency tree changed (see the diff)."
+                    : $"{name} moved from {result.Before} to {result.After}, and exactly one recorded edit sits between the two points ({c.Op}, revision {c.Revision}): it touched this number's dependencies without changing a formula (e.g. a relationship or structure change).";
             }
             else
             {
                 result.Verdict = "interval";
                 note = $"{name} moved from {result.Before} to {result.After}. {result.Candidates.Length} recorded edits sit in that window, " +
-                       "ranked by how much each one touches this number's dependencies (formula changes first) — the top one is the most likely cause. " +
+                       "ranked by how much each one touches this number's dependencies (formula changes first): the top one is the most likely cause. " +
                        "This is a ranking over the window, NOT a causal claim.";
             }
             if (result.UntrackedEdits > 0)
-                note += $" {result.UntrackedEdits} more session edit(s) happened inside this window without a recorded snapshot — they are candidates too.";
+                note += $" {result.UntrackedEdits} more session edit(s) happened inside this window without a recorded snapshot: they are candidates too.";
             if (core.UntrackedEdits < 0)
                 note += " The window spans two sessions, so edits between them may not all be recorded.";
             if (unreadable > 0)
@@ -386,7 +386,7 @@ namespace Semanticus.Engine
                 await PublishActivityAsync(new ActivityEvent
                 {
                     Kind = "blame_value", Origin = origin ?? "agent",
-                    Label = $"What moved {name}? — {PlainVerdict(result.Verdict)}", Target = canonical, Ok = true, Result = result,
+                    Label = $"What moved {name}? {PlainVerdict(result.Verdict)}", Target = canonical, Ok = true, Result = result,
                 });
             }
             catch { /* evidence is a ride-along */ }
@@ -430,10 +430,10 @@ namespace Semanticus.Engine
                 Truncated = pruned > 0 || unreadable > 0,
             };
             var notes = new List<string>();
-            if (series.Count == 0) notes.Add("No recorded history for this measure yet — history builds up automatically at apply/optimize/deploy/save moments (Pro).");
-            if (pruned > 0) notes.Add($"Older history was pruned by retention ({pruned} point(s) dropped — the store keeps the most recent {VitalsStore.MaxRecords} points / {VitalsStore.MaxBytes / (1024 * 1024)}MB).");
+            if (series.Count == 0) notes.Add("No recorded history for this measure yet: history builds up automatically at apply/optimize/deploy/save moments (Pro).");
+            if (pruned > 0) notes.Add($"Older history was pruned by retention ({pruned} point(s) dropped: the store keeps the most recent {VitalsStore.MaxRecords} points / {VitalsStore.MaxBytes / (1024 * 1024)}MB).");
             if (unreadable > 0) notes.Add($"{unreadable} unreadable history line(s) were skipped.");
-            if (series.Count > 0 && series.All(p => !p.HasValue)) notes.Add("Formulas were recorded, but no values have been observed yet — numbers are read at deploy moments, when the live model actually reflects the edits (or not at all without a live connection).");
+            if (series.Count > 0 && series.All(p => !p.HasValue)) notes.Add("Formulas were recorded, but no values have been observed yet: numbers are read at deploy moments, when the live model actually reflects the edits (or not at all without a live connection).");
             result.Note = notes.Count > 0 ? string.Join(" ", notes) : null;
             return result;
         }

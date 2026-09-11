@@ -63,8 +63,24 @@ namespace Semanticus.Engine
     public sealed class EquivalenceMismatch
     {
         public string Context { get; set; }     // the group-by key values for this row
+        // In-memory identity carrier only (built at query time, consumed by the coordinate hasher, propagated by
+        // Clone). Kept off BOTH serializers: System.Text.Json for the persisted terminal record AND Newtonsoft for the
+        // RPC wire, so a v6 payload never gains a `contextParts` field over either door.
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public MismatchContextPart[] ContextParts { get; set; } = Array.Empty<MismatchContextPart>();
         public string ValueA { get; set; }
         public string ValueB { get; set; }
+    }
+
+    /// <summary>One structured group-by member in a mismatch coordinate. Identity code consumes these pairs
+    /// directly, never the human display string, so delimiter-bearing values cannot alias another row.</summary>
+    public sealed class MismatchContextPart
+    {
+        public string Name { get; set; }
+        public string Type { get; set; }
+        public string Value { get; set; }
+        public MismatchContextPart Clone() => new MismatchContextPart { Name = Name, Type = Type, Value = Value };
     }
 
     /// <summary>
@@ -208,8 +224,9 @@ namespace Semanticus.Engine
                     var t = await DaxTrace.ProfileAsync(live, query);
                     if (!string.IsNullOrEmpty(t.Error)) return new ColdWarmBenchmark { Error = t.Error, Runs = i };
                     traceAvailable |= t.TraceAvailable; rowCount = t.RowCount;
-                    coldTotal.Add(t.TotalMs); coldSe.Add(t.SeMs);
-                    detail.Add(new ColdWarmRun { Index = i + 1, Cold = true, TotalMs = t.TotalMs, SeMs = t.SeMs, SeQueries = t.SeQueries });
+                    var total = CredibleTotalMs(t);
+                    coldTotal.Add(total); coldSe.Add(t.SeMs);
+                    detail.Add(new ColdWarmRun { Index = i + 1, Cold = true, TotalMs = total, SeMs = t.SeMs, SeQueries = t.SeQueries });
                 }
             }
 
@@ -219,10 +236,17 @@ namespace Semanticus.Engine
                 var t = await DaxTrace.ProfileAsync(live, query);
                 if (!string.IsNullOrEmpty(t.Error)) return new ColdWarmBenchmark { Error = t.Error, Runs = runs + i };
                 traceAvailable |= t.TraceAvailable; rowCount = t.RowCount;
-                warmTotal.Add(t.TotalMs); warmSe.Add(t.SeMs);
-                detail.Add(new ColdWarmRun { Index = i + 1, Cold = false, TotalMs = t.TotalMs, SeMs = t.SeMs, SeQueries = t.SeQueries });
+                var total = CredibleTotalMs(t);
+                warmTotal.Add(total); warmSe.Add(t.SeMs);
+                detail.Add(new ColdWarmRun { Index = i + 1, Cold = false, TotalMs = total, SeMs = t.SeMs, SeQueries = t.SeQueries });
             }
 
+            var baseNote = !clearForCold ? "Warm-only: the cache was not cleared (cold runs skipped)."
+                         : !clearAvailable ? "Cache could not be cleared (needs local Power BI Desktop or an admin XMLA endpoint): the 'cold' runs are not truly cold; treat cold ≈ warm."
+                         : !traceAvailable ? "Server timings unavailable: totals are wall-clock; the SE split is 0."
+                         : null;
+            var seAllZero = coldSe.Concat(warmSe).All(x => x == 0);
+            var cred = TimingCredibilityNote(coldTotal.Concat(warmTotal), seAllZero, traceAvailable);
             return new ColdWarmBenchmark
             {
                 Runs = runs,
@@ -232,11 +256,39 @@ namespace Semanticus.Engine
                 ColdSe = Stats(coldSe), WarmSe = Stats(warmSe),
                 Detail = detail.ToArray(),
                 RowCount = rowCount,
-                Note = !clearForCold ? "Warm-only — the cache was not cleared (cold runs skipped)."
-                     : !clearAvailable ? "Cache could not be cleared (needs local Power BI Desktop or an admin XMLA endpoint) — the 'cold' runs are not truly cold; treat cold ≈ warm."
-                     : !traceAvailable ? "Server timings unavailable — totals are wall-clock; the SE split is 0."
-                     : null,
+                Note = JoinNotes(baseNote, cred),
             };
+        }
+
+        /// <summary>Wall-clock wait when we have it. A 0 ms server Duration is not a round trip.</summary>
+        internal static long CredibleTotalMs(ServerTimings t)
+        {
+            if (t == null) return 0;
+            return t.WallMs > 0 ? t.WallMs : t.TotalMs;
+        }
+
+        internal static string FormatTimingMs(double ms)
+        {
+            if (ms < 1) return "under 1 ms";
+            if (Math.Abs(ms - Math.Round(ms)) < 0.05) return ((long)Math.Round(ms)) + " ms";
+            return ms.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " ms";
+        }
+
+        internal static string TimingCredibilityNote(IEnumerable<long> runsMs, bool seAllZero, bool traceAvailable)
+        {
+            var parts = new List<string>();
+            if (runsMs != null && runsMs.Any(t => t < 1))
+                parts.Add("A time of under 1 ms means the clock could not measure that run. It is not a round trip to the model.");
+            if (traceAvailable && seAllZero)
+                parts.Add("Storage engine 0 ms means the server reported no storage work (cached or the trace missed it), not a measured round trip.");
+            return parts.Count == 0 ? null : string.Join(" ", parts);
+        }
+
+        private static string JoinNotes(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a)) return b;
+            if (string.IsNullOrEmpty(b)) return a;
+            return a + " " + b;
         }
 
         // Population mean / standard deviation / min / max over a temperature's runs.
@@ -337,10 +389,22 @@ namespace Semanticus.Engine
                 {
                     if (ValuesEqual(row[aIdx], row[bIdx])) continue;
                     shapeMismatchCount++;
-                    var ctx = keyCount > 0
-                        ? string.Join(", ", Enumerable.Range(0, keyCount).Select(k => $"{rs.Columns[k].Name}={Fmt(row[k])}"))
+                    var parts = Enumerable.Range(0, keyCount).Select(k => new MismatchContextPart
+                    {
+                        Name = rs.Columns[k].Name,
+                        Type = MismatchValueType(row[k]),
+                        Value = Fmt(row[k]),
+                    }).ToArray();
+                    var ctx = parts.Length > 0
+                        ? string.Join(", ", parts.Select(p => $"{p.Name}={p.Value}"))
                         : "(grand total)";
-                    var cell = new EquivalenceMismatch { Context = ctx, ValueA = Fmt(row[aIdx]), ValueB = Fmt(row[bIdx]) };
+                    var cell = new EquivalenceMismatch
+                    {
+                        Context = ctx,
+                        ContextParts = parts,
+                        ValueA = Fmt(row[aIdx]),
+                        ValueB = Fmt(row[bIdx]),
+                    };
                     if (shapeSample.Count < 10) shapeSample.Add(cell);          // bounded per-shape sample
                     if (mismatches.Count < 50) mismatches.Add(cell);           // bounded overall list
                 }
@@ -482,6 +546,64 @@ namespace Semanticus.Engine
             else sb.Append("CALCULATE (\n        ").Append(value).Append(",\n        ").Append(string.Join(",\n        ", filters)).Append("\n    )");
             sb.Append("\n)");
             return sb.ToString();
+        }
+
+        /// <summary>Compile one PARSED non-axis context entry as a SUMMARIZECOLUMNS slicer argument. The typed
+        /// literal was fixed at the anchor parser boundary and the reference is rebuilt from parsed parts, so no
+        /// authored query text or string-to-number re-guessing reaches the query.</summary>
+        public static string CompileSlicerArg(AnchorGate.AnchorFilter f) =>
+            "TREATAS ( { " + f.Literal + " }, " + AnchorGate.CanonicalRef(f) + " )";
+
+        /// <summary>Build one measure-faithful shaped-anchor query. Axis columns stay in authored order, non-axis
+        /// context entries become TREATAS slicers, and the fully-specified row coordinate filters the server result
+        /// to zero or one rows while the nonblank sentinel preserves a BLANK measure value.</summary>
+        public static string BuildShapedAnchorQuery(string expr, AnchorGate.Anchor anchor, DaxQuerySpec spec, out string fidelityNote)
+        {
+            if (anchor?.IsShaped != true)
+                throw new ArgumentException("A shaped-anchor query requires at least one parsed axis column.", nameof(anchor));
+
+            var plan = PlanEval(spec, comparison: false, expr);
+            fidelityNote = plan.Note;
+            var define = plan.HostQuoted != null;
+            var value = define ? plan.Refs[0] : InlineScalar(expr);
+            var axes = anchor.AxisColumns.Select(AnchorGate.CanonicalRef).ToArray();
+            var slicers = anchor.Slicers.Select(CompileSlicerArg).ToArray();
+            var coordinate = anchor.AxisColumns.Select(axis =>
+            {
+                var f = anchor.RowCoordinate.Single(c =>
+                    string.Equals(c.Table, axis.Table, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(c.Column, axis.Column, StringComparison.OrdinalIgnoreCase));
+                return AnchorGate.CompileContextFilter(f);
+            }).ToArray();
+
+            var sb = new StringBuilder();
+            if (define) sb.Append("DEFINE\n    MEASURE ").Append(plan.HostQuoted).Append(plan.Refs[0]).Append(" = ").Append(InlineScalar(expr)).Append('\n');
+            sb.Append("EVALUATE\nFILTER (\n    SUMMARIZECOLUMNS (\n");
+            var args = new List<string>();
+            foreach (var axis in axes) args.Add("        " + axis);
+            foreach (var slicer in slicers) args.Add("        " + slicer);
+            args.Add("        \"v\", " + value);
+            args.Add("        \"__present\", 1");
+            sb.Append(string.Join(",\n", args));
+            sb.Append("\n    ),\n    ").Append(string.Join(" &&\n    ", coordinate)).Append("\n)");
+            return sb.ToString();
+        }
+
+        /// <summary>Return up to five visible members of a shaped anchor's first axis under the same slicers. This
+        /// diagnostic query is intentionally measure-free and bounded; it is used only to repair an absent row
+        /// coordinate.</summary>
+        public static string BuildShapedAnchorNearbyMembersQuery(AnchorGate.Anchor anchor)
+        {
+            if (anchor?.IsShaped != true)
+                throw new ArgumentException("A nearby-members query requires at least one parsed axis column.", nameof(anchor));
+
+            var axis = AnchorGate.CanonicalRef(anchor.AxisColumns[0]);
+            var args = new List<string> { "        " + axis };
+            args.AddRange(anchor.Slicers.Select(f => "        " + CompileSlicerArg(f)));
+            args.Add("        \"__present\", 1");
+            return "EVALUATE\nTOPN (\n    5,\n    SUMMARIZECOLUMNS (\n"
+                + string.Join(",\n", args)
+                + "\n    ),\n    " + axis + ", ASC\n)\nORDER BY " + axis;
         }
 
         /// <summary>A single scalar evaluated under a caller-supplied filter context. A hard measure is only
@@ -660,6 +782,184 @@ namespace Semanticus.Engine
             }
         }
 
+        /// <summary>Return the distinct bare bracket references in authored DAX after comments and string literals
+        /// are removed by the shared token scanner. In a measure expression these are the measure-reference form;
+        /// a raw-column witness must use qualified column references, which keeps this boundary unambiguous.</summary>
+        internal static string[] MeasureReferences(string dax, IEnumerable<string> modelMeasureNames = null,
+            IEnumerable<(string Table, string Name, bool IsCalculated)> modelColumns = null)
+        {
+            var bare = new List<string>();
+            var qualified = new List<(string Table, string Name)>();
+            ScanRefs(StripCommentsAndStrings(dax), null, bare, qualified);
+            var inventory = modelMeasureNames == null ? null
+                : new HashSet<string>(modelMeasureNames, StringComparer.OrdinalIgnoreCase);
+            static string ColumnKey(string table, string name) => (table ?? "") + "\0" + (name ?? "");
+            var columns = modelColumns == null ? null : new HashSet<string>(
+                modelColumns.Select(c => ColumnKey(c.Table, c.Name)), StringComparer.OrdinalIgnoreCase);
+            var bareMeasures = inventory == null ? bare : bare.Where(inventory.Contains);
+            return bareMeasures.Concat(qualified
+                    .Where(q => inventory != null && inventory.Contains(q.Name)
+                        && (columns == null || !columns.Contains(ColumnKey(q.Table, q.Name))))
+                    .Select(q => q.Name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        internal static string[] CalculatedColumnReferences(string dax, IEnumerable<string> modelMeasureNames,
+            IEnumerable<(string Table, string Name, bool IsCalculated)> modelColumns,
+            out bool bareNameAlsoMatchesBaseColumn)
+        {
+            bareNameAlsoMatchesBaseColumn = false;
+            if (modelColumns == null) return Array.Empty<string>();
+            var bare = new List<string>();
+            var qualified = new List<(string Table, string Name)>();
+            ScanRefs(StripCommentsAndStrings(dax), null, bare, qualified);
+            static string ColumnKey(string table, string name) => (table ?? "") + "\0" + (name ?? "");
+            var columns = modelColumns.ToArray();
+            var measureNames = modelMeasureNames == null ? null
+                : new HashSet<string>(modelMeasureNames, StringComparer.OrdinalIgnoreCase);
+            var calculated = new HashSet<string>(columns.Where(c => c.IsCalculated)
+                .Select(c => ColumnKey(c.Table, c.Name)), StringComparer.OrdinalIgnoreCase);
+            var bareCalculatedNames = new HashSet<string>(bare
+                .Where(name => measureNames == null || !measureNames.Contains(name))
+                .Where(name => columns.Any(c => c.IsCalculated
+                    && string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))),
+                StringComparer.OrdinalIgnoreCase);
+            bareNameAlsoMatchesBaseColumn = bareCalculatedNames.Any(name => columns.Any(c => !c.IsCalculated
+                && string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)));
+            var qualifiedMatches = qualified.Where(q => calculated.Contains(ColumnKey(q.Table, q.Name)))
+                .Select(q => (q.Table, q.Name));
+            var bareMatches = columns.Where(c => c.IsCalculated && bareCalculatedNames.Contains(c.Name))
+                .Select(c => (c.Table, c.Name));
+            return qualifiedMatches.Concat(bareMatches)
+                .Select(c => QuoteTable(c.Table) + BracketName(c.Name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        /// <summary>Return model calculated tables referenced as quoted table identifiers or unquoted table
+        /// tokens. Quoted identifiers are always table-shaped in DAX. For bare tokens, the model inventory is the
+        /// fail-closed disambiguator; a token followed by a call parenthesis, including a dotted call, is a function
+        /// rather than a table. Strings, comments, and bracketed member names were removed or preserved atomically
+        /// by <see cref="StripCommentsAndStrings"/>, so their contents cannot manufacture table references.</summary>
+        internal static string[] CalculatedTableReferences(string dax,
+            IEnumerable<(string Name, bool IsCalculated)> modelTables)
+        {
+            if (modelTables == null) return Array.Empty<string>();
+            var calculated = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var table in modelTables.Where(t => t.IsCalculated && !string.IsNullOrWhiteSpace(t.Name)))
+                calculated[table.Name] = table.Name;
+            if (calculated.Count == 0) return Array.Empty<string>();
+
+            var sanitized = StripCommentsAndStrings(dax);
+            var matches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int i = 0, n = sanitized.Length;
+            while (i < n)
+            {
+                if (sanitized[i] == '\'')
+                {
+                    var name = new StringBuilder();
+                    i++;
+                    while (i < n)
+                    {
+                        if (sanitized[i] != '\'') { name.Append(sanitized[i++]); continue; }
+                        if (i + 1 < n && sanitized[i + 1] == '\'') { name.Append('\''); i += 2; continue; }
+                        i++;
+                        break;
+                    }
+                    if (calculated.TryGetValue(name.ToString(), out var canonical)) matches.Add(canonical);
+                    continue;
+                }
+                if (sanitized[i] == '[')
+                {
+                    i++;
+                    while (i < n)
+                    {
+                        if (sanitized[i] != ']') { i++; continue; }
+                        if (i + 1 < n && sanitized[i + 1] == ']') { i += 2; continue; }
+                        i++;
+                        break;
+                    }
+                    continue;
+                }
+                if (!char.IsLetter(sanitized[i]) && sanitized[i] != '_') { i++; continue; }
+
+                var start = i++;
+                while (i < n && (char.IsLetterOrDigit(sanitized[i]) || sanitized[i] == '_')) i++;
+                var token = sanitized.Substring(start, i - start);
+                var after = i;
+                while (after < n && char.IsWhiteSpace(sanitized[after])) after++;
+                if (after < n && sanitized[after] == '.')
+                {
+                    // Dotted names are the model-function form. Skip the chain so none of its namespace parts can
+                    // be mistaken for an unquoted table token.
+                    var cursor = after;
+                    while (cursor < n && sanitized[cursor] == '.')
+                    {
+                        cursor++;
+                        while (cursor < n && char.IsWhiteSpace(sanitized[cursor])) cursor++;
+                        if (cursor >= n || (!char.IsLetter(sanitized[cursor]) && sanitized[cursor] != '_')) break;
+                        cursor++;
+                        while (cursor < n && (char.IsLetterOrDigit(sanitized[cursor]) || sanitized[cursor] == '_')) cursor++;
+                        while (cursor < n && char.IsWhiteSpace(sanitized[cursor])) cursor++;
+                    }
+                    if (cursor < n && sanitized[cursor] == '(') { i = cursor; continue; }
+                }
+                if (after < n && sanitized[after] == '(') continue;
+                if (calculated.TryGetValue(token, out var bareCanonical)) matches.Add(bareCanonical);
+            }
+
+            return matches.Select(QuoteTable).OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        internal static string[] ModelFunctionReferences(string dax, IEnumerable<string> modelFunctionNames)
+        {
+            if (modelFunctionNames == null) return Array.Empty<string>();
+            var inventory = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in modelFunctionNames.Where(n => !string.IsNullOrWhiteSpace(n)))
+                inventory[name.Trim()] = name.Trim();
+            if (inventory.Count == 0) return Array.Empty<string>();
+
+            var sanitized = StripCommentsAndStrings(dax);
+            var calls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int i = 0, n = sanitized.Length;
+            while (i < n)
+            {
+                if (sanitized[i] == '\'' || sanitized[i] == '[')
+                {
+                    var close = sanitized[i] == '\'' ? '\'' : ']';
+                    i++;
+                    while (i < n)
+                    {
+                        if (sanitized[i] != close) { i++; continue; }
+                        if (i + 1 < n && sanitized[i + 1] == close) { i += 2; continue; }
+                        i++; break;
+                    }
+                    continue;
+                }
+                if (!char.IsLetter(sanitized[i]) && sanitized[i] != '_') { i++; continue; }
+                var parts = new List<string>();
+                while (true)
+                {
+                    var start = i++;
+                    while (i < n && (char.IsLetterOrDigit(sanitized[i]) || sanitized[i] == '_')) i++;
+                    parts.Add(sanitized.Substring(start, i - start));
+                    var dot = i; while (dot < n && char.IsWhiteSpace(sanitized[dot])) dot++;
+                    if (dot >= n || sanitized[dot] != '.') break;
+                    var next = dot + 1; while (next < n && char.IsWhiteSpace(sanitized[next])) next++;
+                    if (next >= n || (!char.IsLetter(sanitized[next]) && sanitized[next] != '_')) break;
+                    i = next;
+                }
+                var open = i; while (open < n && char.IsWhiteSpace(sanitized[open])) open++;
+                if (open < n && sanitized[open] == '(') calls.Add(string.Join(".", parts));
+            }
+            return calls.Where(inventory.ContainsKey).Select(call => inventory[call])
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        internal static string[] BareReferences(string dax) => MeasureReferences(dax);
+
         /// <summary>A candidate references the target measure ITSELF — a circular rewrite. Validated BEFORE any
         /// comparison/apply: shipping it would only fail later inside the engine with a generic error (or worse,
         /// mutate the model into a self-referencing measure). Two circular shapes, both token-aware (comments and
@@ -681,7 +981,7 @@ namespace Semanticus.Engine
                 && string.Equals(q.Name, targetName, StringComparison.OrdinalIgnoreCase));
         }
 
-        internal const string CircularRewriteNote = "candidate references the target measure itself — circular rewrite";
+        internal const string CircularRewriteNote = "candidate references the target measure itself: circular rewrite";
 
         // The ENTIRE expression is one bare bracket ref ("[Total Sales]" — the Baseline.MeasureRefExpr shape).
         // Already measure-faithful inline: the reference itself carries the implicit CALCULATE AND preserves the
@@ -725,7 +1025,7 @@ namespace Semanticus.Engine
         private static string UnclassifiableNote(string bareRef) =>
             "Evaluated INLINE, not as a deployed measure: the expression contains a bare reference ("
             + BracketName(bareRef) + ") that could be an unqualified column reference, and no target measure "
-            + "identity was supplied — a DEFINE MEASURE home table cannot be chosen safely (unqualified columns "
+            + "identity was supplied: a DEFINE MEASURE home table cannot be chosen safely (unqualified columns "
             + "bind to the measure's home table). Context-transition and calculation-group semantics may differ "
             + "from the deployed measure.";
 
@@ -765,7 +1065,7 @@ namespace Semanticus.Engine
             var calcGroupNote = untrusted
                 ? "The live connection could not be matched to the editing session (file-opened session or a different "
                   + "endpoint/database), so calculation-group presence and measure identity on the CONNECTED model are "
-                  + "unknown — the candidates run under query-scoped names whose identity-sensitive semantics "
+                  + "unknown: the candidates run under query-scoped names whose identity-sensitive semantics "
                   + "(ISSELECTEDMEASURE / SELECTEDMEASURENAME) may differ from a deployed measure. Open the model with "
                   + "open_live/open_local for a full-fidelity proof."
                 : CalcGroupNote;
@@ -846,15 +1146,15 @@ namespace Semanticus.Engine
             if (!string.IsNullOrEmpty(v.Error))
                 // Error still ranks FIRST (nothing ran to completion), but a degraded-evaluation caveat survives
                 // into the detail — the failure happened under the surrogate, which may itself be the cause.
-                return ("unverified", "equivalence check failed to run — " + v.Error
+                return ("unverified", "equivalence check failed to run: " + v.Error
                     + (string.IsNullOrEmpty(v.Fidelity) ? "" : " (ran under degraded evaluation: " + v.Fidelity + ")"));
             if (!v.AllMatch && !string.IsNullOrEmpty(v.Fidelity))
-                return ("degraded_mismatch", $"difference observed in {v.MismatchCount} context(s) under a DEGRADED comparison — not authoritative (the reduced-fidelity surrogate itself can cause divergence): {v.Fidelity}");
+                return ("degraded_mismatch", $"difference observed in {v.MismatchCount} context(s) under a DEGRADED comparison: not authoritative (the reduced-fidelity surrogate itself can cause divergence): {v.Fidelity}");
             if (!v.AllMatch) return ("failed", $"changes results in {v.MismatchCount} context(s)");
             if (v.RowsCompared <= 0) return ("unverified", "equivalence check compared 0 rows (nothing to prove)");
-            if (v.Truncated) return ("unverified", $"equivalence matrix exceeded the row cap ({v.RowsCompared}+ rows) — coverage incomplete");
-            if (!string.IsNullOrEmpty(v.Fidelity)) return ("degraded", "values matched, but the comparison ran with REDUCED fidelity — " + v.Fidelity);
-            if (groupByLength == 0) return ("thin", "grand-total match only — not a per-context equivalence proof");
+            if (v.Truncated) return ("unverified", $"equivalence matrix exceeded the row cap ({v.RowsCompared}+ rows): coverage incomplete");
+            if (!string.IsNullOrEmpty(v.Fidelity)) return ("degraded", "values matched, but the comparison ran with REDUCED fidelity: " + v.Fidelity);
+            if (groupByLength == 0) return ("thin", "grand-total match only, not a per-context equivalence proof");
             return ("proven", null);
         }
 
@@ -912,6 +1212,16 @@ namespace Semanticus.Engine
         private static bool IsNumeric(object o) =>
             o is byte || o is sbyte || o is short || o is ushort || o is int || o is uint
             || o is long || o is ulong || o is float || o is double || o is decimal;
+
+        internal static string MismatchValueType(object value)
+        {
+            if (value == null || value is DBNull) return "blank";
+            if (value is string || value is char) return "string";
+            if (value is bool) return "bool";
+            if (value is DateTime || value is DateTimeOffset) return "date";
+            if (IsNumeric(value)) return "number";
+            return "other:" + value.GetType().FullName;
+        }
 
         internal static string Fmt(object o) => o switch
         {

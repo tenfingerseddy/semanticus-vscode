@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Semanticus.Analysis;
+using StreamJsonRpc;
 
 namespace Semanticus.Engine
 {
@@ -20,11 +21,27 @@ namespace Semanticus.Engine
             _origin = origin == "agent" ? "agent" : "human";
         }
 
-        public Task<OpenResult> open(string path) => _engine.OpenAsync(path);
-        public Task<OpenResult> createModel(string name = null, int compatibilityLevel = 1604) => _engine.CreateModelAsync(name, compatibilityLevel);
-        public Task<OpenResult> openLocal(string dataSource = null, string database = null) => _engine.OpenLocalAsync(dataSource, database);
-        public Task<OpenResult> openLive(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false) => _engine.OpenLiveAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth);
-        public Task<DeployReport> deployLive(string endpoint, string database, string authMode = "serviceprincipal", string rawToken = null, string tenantId = null, bool commit = false, string origin = "human", string overrideReason = null) => _engine.DeployLiveAsync(endpoint, database, authMode, rawToken, tenantId, commit, _origin, overrideReason);
+        public async Task<OpenResult> open(string path, bool discardUnsaved = false)
+        {
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            return await _engine.OpenAsync(path, discardUnsaved);
+        }
+        public async Task<OpenResult> createModel(string name = null, int compatibilityLevel = 1604, bool discardUnsaved = false)
+        {
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            return await _engine.CreateModelAsync(name, compatibilityLevel, discardUnsaved);
+        }
+        public async Task<OpenResult> openLocal(string dataSource = null, string database = null, bool discardUnsaved = false)
+        {
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            return await _engine.OpenLocalAsync(dataSource, database, discardUnsaved);
+        }
+        public async Task<OpenResult> openLive(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false)
+        {
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            return await _engine.OpenLiveAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin, discardUnsaved);
+        }
+        public Task<DeployReport> deployLive(string endpoint, string database, string authMode = "serviceprincipal", string rawToken = null, string tenantId = null, bool commit = false, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null) => _engine.DeployLiveAsync(endpoint, database, authMode, rawToken, tenantId, commit, _origin, overrideReason, confirmToken, deleteRefs);
         public Task<RefreshTypeInfo[]> listRefreshTypes() => _engine.ListRefreshTypesAsync();
         public Task<RefreshReport> refreshPartition(string partitionRef, string refreshType = "Full", string endpoint = null, string database = null, string authMode = null, string rawToken = null, string tenantId = null, bool commit = false, string origin = "human") => _engine.RefreshPartitionAsync(partitionRef, refreshType, endpoint, database, authMode, rawToken, tenantId, commit, _origin);
         public Task<TreeNode[]> listTree(string parentRef) => _engine.ListTreeAsync(parentRef);
@@ -41,7 +58,8 @@ namespace Semanticus.Engine
         public Task<ExplainDossier> explainValue(string measureRef, ExplainFilterContext context = null, bool decompose = true, string decomposeBy = null, int topK = 5, string origin = "human") => _engine.ExplainValueAsync(measureRef, context, decompose, decomposeBy, topK, _origin);
         public Task<VerifiedEditsChain> listVerifiedEdits() => _engine.ListVerifiedEditsAsync();
         public Task<string> exportVerifiedEdits(string format = "md") => _engine.ExportVerifiedEditsAsync(format);
-        public Task<TestSuiteRunResult> runTests(bool persist = false, string origin = "human") => _engine.RunTestSuiteAsync(persist, _origin);
+        public Task<TestSuiteRunResult> runTests(bool persist = false, string origin = "human", string[] only = null, string[] sections = null) => _engine.RunTestSuiteAsync(persist, _origin, only, sections);
+        public Task<ReconcileOutcome> tryTest(TestDefinition def, string origin = "human") => _engine.TryTestAsync(def, _origin);
         public Task<TestSuiteInfo> listTests() => _engine.ListTestDefinitionsAsync();
         public Task<TestDefinition> saveTest(TestDefinition def, string origin = "human") => _engine.SaveTestDefinitionAsync(def, _origin);
         public Task<bool> deleteTest(string id, string origin = "human") => _engine.DeleteTestDefinitionAsync(id, _origin);
@@ -61,13 +79,18 @@ namespace Semanticus.Engine
         public Task<WorkflowProfileInfo[]> listWorkflowProfiles() => _engine.ListWorkflowProfilesAsync();
         public Task<WorkflowProfileResult> activateWorkflowProfile(string name, string origin = "human") => _engine.ActivateWorkflowProfileAsync(name, _origin);
         public Task<WorkflowDef> getWorkflow(string name) => _engine.GetWorkflowAsync(name);
+        public Task<WorkflowDocumentResult> getWorkflowDocument(string name, string sessionId = null) => _engine.GetWorkflowDocumentAsync(name, sessionId);
+        public Task<WorkflowUpgradeResult> upgradeWorkflow(string name, bool dryRun = true, string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null) => _engine.UpgradeWorkflowAsync(name, dryRun, expectByteHash, expectPath, _origin, sessionId);
+        public Task<WorkflowDocumentEditResult> editWorkflowDocument(string name, string expectByteHash, string exactText, string expectPath, string origin = "human", string sessionId = null) => _engine.EditWorkflowDocumentAsync(name, expectByteHash, exactText, expectPath, _origin, sessionId);
+        public Task<WorkflowLayout> getWorkflowLayout(string name) => _engine.GetWorkflowLayoutAsync(name);
+        public Task<WorkflowLayout> saveWorkflowLayout(string name, System.Collections.Generic.Dictionary<string, WorkflowPosition> positions, string expectedRevision = null) => _engine.SaveWorkflowLayoutAsync(name, positions, expectedRevision);
         public Task<WorkflowRunView> startWorkflow(string name, string origin = "human") => _engine.StartWorkflowAsync(name, _origin);
         public Task<WorkflowRunView> getWorkflowRun(string runId = null) => _engine.GetWorkflowRunAsync(runId);
-        public Task<WorkflowRunView> submitWorkflowStep(string runId = null, string stepId = null, string answersJson = null, string origin = "human") => _engine.SubmitWorkflowStepAsync(runId, stepId, answersJson, _origin);
+        public Task<WorkflowRunView> submitWorkflowStep(string runId = null, string stepId = null, string answersJson = null, string origin = "human", string callGate = null) => _engine.SubmitWorkflowStepAsync(runId, stepId, answersJson, _origin, callGate);
         public Task<WorkflowRunView> skipWorkflowStep(string runId = null, string stepId = null, string reason = null, string origin = "human") => _engine.SkipWorkflowStepAsync(runId, stepId, reason, _origin);
         public Task<WorkflowRunView> abortWorkflow(string runId = null, string reason = null, string origin = "human") => _engine.AbortWorkflowAsync(runId, reason, _origin);
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> exportWorkflowEvidence(string runId = null) => _engine.ExportWorkflowEvidenceAsync(runId);
-        public Task<WorkflowInfo[]> saveWorkflow(string name, string markdown, string origin = "human") => _engine.SaveWorkflowAsync(name, markdown, _origin);
+        public Task<WorkflowInfo[]> saveWorkflow(string name, string markdown, string origin = "human", bool createOnly = false) => _engine.SaveWorkflowAsync(name, markdown, _origin, createOnly);
         public Task<WorkflowInfo[]> deleteWorkflow(string name, string origin = "human") => _engine.DeleteWorkflowAsync(name, _origin);
         public Task<WorkflowTemplateInfo[]> listWorkflowTemplates() => _engine.ListWorkflowTemplatesAsync();
         public Task<WorkflowTemplate> getWorkflowTemplate(string name) => _engine.GetWorkflowTemplateAsync(name);
@@ -95,11 +118,11 @@ namespace Semanticus.Engine
         public Task<PrimerSuggestionDecision> rejectPrimerSuggestion(string id, string origin = "human") => _engine.RejectPrimerSuggestionAsync(id, _origin);
         public Task<ModelFingerprint> getModelFingerprint() => _engine.GetModelFingerprintAsync();
         public Task<InterviewListResult> listInterviewQuestions(string scope = null) => _engine.ListInterviewQuestionsAsync(scope);
-        public Task<InterviewQuestion> addInterviewQuestion(string question, string tier, string query = null, string scalarExpr = null, string paraphraseExpr = null, string[] groupBy = null, string[] filters = null, string expectedValue = null, string expectedMatrixJson = null, bool expectRefusal = false, string fixRuleId = null, string seedSource = null, string scope = "project", string origin = "human") => _engine.AddInterviewQuestionAsync(question, tier, query, scalarExpr, paraphraseExpr, groupBy, filters, expectedValue, expectedMatrixJson, expectRefusal, fixRuleId, seedSource, scope, _origin);
+        public Task<InterviewQuestion> addInterviewQuestion(string question, string tier, string query = null, string scalarExpr = null, string paraphraseExpr = null, string[] groupBy = null, string[] filters = null, string expectedValue = null, string expectedMatrixJson = null, bool expectRefusal = false, string fixRuleId = null, string seedSource = null, string scope = "project", string origin = "human", string id = null) => _engine.AddInterviewQuestionAsync(question, tier, query, scalarExpr, paraphraseExpr, groupBy, filters, expectedValue, expectedMatrixJson, expectRefusal, fixRuleId, seedSource, scope, _origin, id);
         public Task<InterviewRunResult> runInterview(string questionId = null, string inlineJson = null, bool abstained = false, string attemptDax = null, string origin = "human") => _engine.RunInterviewAsync(questionId, inlineJson, abstained, attemptDax, _origin);
         public Task<SetResult> deleteInterviewQuestion(string id, string origin = "human") => _engine.DeleteInterviewQuestionAsync(id, _origin);
         public Task<InterviewSeedResult> listInterviewSeeds(string source = null, string measure = null) => _engine.ListInterviewSeedsAsync(source, measure);
-        public Task<SaveResult> save(string path, string format) => _engine.SaveAsync(path, format);
+        public Task<SaveResult> save(string path = null, string format = null, bool overwrite = false) => _engine.SaveAsync(path, format, overwrite);
         public Task<SessionInfo> sessionInfo() => _engine.SessionInfoAsync();
         public Task<ConnectionContext> connectionContext() => _engine.ConnectionContextAsync();
         public Task<ModelConnectionRecord> rememberXmlaConnection(string endpoint, string database = null, string modelName = null, string authMode = "azcli", string origin = "human") => _engine.RememberXmlaConnectionAsync(endpoint, database, modelName, authMode, _origin);
@@ -111,7 +134,7 @@ namespace Semanticus.Engine
         public Task<ModelGraph> getModelGraph() => _engine.GetModelGraphAsync();
         public Task<LayoutData> getLayout() => _engine.GetLayoutAsync();
         public Task<SaveLayoutResult> saveLayout(LayoutNode[] tables, string origin = "human") => _engine.SaveLayoutAsync(tables, _origin);
-        public Task<VpaxExportResult> exportVpax(string path) => _engine.ExportVpaxAsync(path);
+        public Task<VpaxExportResult> exportVpax(string path, string origin = "human") => _engine.ExportVpaxAsync(path, _origin);
         public Task<SearchResult> searchModel(string query, int max = 100) => _engine.SearchModelAsync(query, max);
         public Task<SearchResult> searchModelEx(SearchOptions opts) => _engine.SearchModelAsync(opts);
         public Task<ReplaceResult> replaceInObject(ReplaceRequest req, string origin = "human") => _engine.ReplaceInObjectAsync(req, _origin);
@@ -164,8 +187,8 @@ namespace Semanticus.Engine
         public Task<string> createCalculatedTable(string name, string expression, string origin = "human") => _engine.CreateCalculatedTableAsync(name, expression, _origin);
         public Task<string> createFieldParameter(string name, FieldParameterItem[] items, string origin = "human") => _engine.CreateFieldParameterAsync(name, items, _origin);
         public Task<SetResult> setColumnDataType(string columnRef, string dataType, string origin = "human") => _engine.SetColumnDataTypeAsync(columnRef, dataType, _origin);
-        public Task<SourceSchema> getSourceSchema(string tableRef, string authMode = "azcli", string tenantId = null) => _engine.GetSourceSchemaAsync(tableRef, authMode, tenantId);
-        public Task<SchemaDiff> diffSchema(string tableRef, SourceColumn[] sourceColumns = null, string authMode = "azcli", string tenantId = null) => _engine.DiffSchemaAsync(tableRef, sourceColumns, authMode, tenantId);
+        public Task<SourceSchema> getSourceSchema(string tableRef, string authMode = "azcli", string tenantId = null, string origin = "human") => _engine.GetSourceSchemaAsync(tableRef, authMode, tenantId, _origin);
+        public Task<SchemaDiff> diffSchema(string tableRef, SourceColumn[] sourceColumns = null, string authMode = "azcli", string tenantId = null, string origin = "human") => _engine.DiffSchemaAsync(tableRef, sourceColumns, authMode, tenantId, _origin);
         public Task<ApplySchemaResult> applySchemaUpdate(string tableRef, SchemaUpdateItem[] items, string origin = "human") => _engine.ApplySchemaUpdateAsync(tableRef, items, _origin);
         public Task<string> createCalculatedColumn(string tableRef, string name, string expression, string origin = "human") => _engine.CreateCalculatedColumnAsync(tableRef, name, expression, _origin);
         public Task<string> createRelationship(string fromColumnRef, string toColumnRef, string crossFilter = null, bool? isActive = null, string origin = "human") => _engine.CreateRelationshipAsync(fromColumnRef, toColumnRef, crossFilter, isActive, _origin);
@@ -187,6 +210,7 @@ namespace Semanticus.Engine
         public Task<DaxLibInstalledRecord[]> daxLibListInstalled() => _engine.DaxLibListInstalledAsync();
         public Task<SetResult> daxLibUninstall(string id, string origin = "human") => _engine.DaxLibUninstallAsync(id, _origin);
         public Task<SetResult> deleteObject(string objRef, string origin = "human") => _engine.DeleteObjectAsync(objRef, _origin);
+        public Task<SetResult> deleteObjects(string[] objRefs, string origin = "human") => _engine.DeleteObjectsAsync(objRefs, _origin);
         // targetRef stays after the ignored legacy-origin slot so installed clients retain their positional shape.
         public Task<string> duplicateObject(string objRef, string newName = null, string origin = "human", string targetRef = null) => _engine.DuplicateObjectAsync(objRef, newName, targetRef, _origin);
         public Task<ObjectProperty[]> getObjectProperties(string objRef) => _engine.GetObjectPropertiesAsync(objRef);
@@ -203,8 +227,8 @@ namespace Semanticus.Engine
         public Task<UnusedResult> unusedObjects() => _engine.UnusedObjectsAsync();
         public Task<ReportAnalysisResult> analyzeReports(string[] paths) => _engine.AnalyzeReportsAsync(paths);
         public Task<RemoveSafeReport> removeSafeObjects(string[] refs = null, string[] reportPaths = null, string origin = "human") => _engine.RemoveSafeObjectsAsync(refs, reportPaths, _origin);
-        public Task<CloudReport[]> listReports(string workspaceId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.ListReportsAsync(workspaceId, authMode, tenantId, cancellationToken);
-        public Task<ReportAnalysisResult> analyzeCloudReports(string workspaceId, string[] reportIds, bool consent = false, string authMode = "azcli", string tenantId = null, string runId = null, CancellationToken cancellationToken = default) => _engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId, cancellationToken);
+        public Task<CloudReport[]> listReports(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListReportsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
+        public Task<ReportAnalysisResult> analyzeCloudReports(string workspaceId, string[] reportIds, bool consent = false, string authMode = "azcli", string tenantId = null, string runId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId, _origin, cancellationToken);
         public Task<string> scriptObjects(string[] refs, string format) => _engine.ScriptObjectsAsync(refs, format);
         public Task<ApplyScriptResult> applyDaxScript(string script, string origin = "human") => _engine.ApplyDaxScriptAsync(script, _origin);
         public Task<ApplyScriptResult> applyTmdlScript(string script, string origin = "human") => _engine.ApplyTmdlScriptAsync(script, _origin);
@@ -241,12 +265,13 @@ namespace Semanticus.Engine
         public Task<SetResult> deleteCalendar(string tableRef, string name, string origin = "human") => _engine.DeleteCalendarAsync(tableRef, name, _origin);
         public Task<CalendarResult> tagCalendarColumn(string tableRef, string calendarName, string column, string timeUnit = null, bool associated = false, bool remove = false, string origin = "human") => _engine.TagCalendarColumnAsync(tableRef, calendarName, column, timeUnit, associated, remove, _origin);
         public Task<CalendarResult> defineCalendarFromTemplate(string template, string tableName = null, string dateColumn = null, int fiscalStartMonth = 7, string startExpr = null, string endExpr = null, string calendarName = null, string origin = "human") => _engine.DefineCalendarFromTemplateAsync(template, tableName, dateColumn, fiscalStartMonth, startExpr, endExpr, calendarName, _origin);
-        public Task<ConnectionStatus> connectXmla(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null) => _engine.ConnectXmlaAsync(endpoint, database, authMode, rawToken, tenantId);
+        public Task<ConnectionStatus> connectXmla(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human") => _engine.ConnectXmlaAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin);
         public Task<ConnectionStatus> connectLocal(string dataSource = null, string database = null) => _engine.ConnectLocalAsync(dataSource, database);
         public Task<LocalInstance[]> listLocalInstances() => _engine.ListLocalInstancesAsync();
         public Task<ConnectionStatus> connectionStatus() => _engine.ConnectionStatusAsync();
         public Task<ConnectionStatus> disconnect() => _engine.DisconnectAsync();
-        public Task<ResultSet> runDax(string query, int maxRows = 10000, string origin = "human") => _engine.RunDaxAsync(query, maxRows, _origin);
+        public Task<ResultSet> runDax(string query, int maxRows = 10000, string origin = "human", CancellationToken cancellationToken = default) => _engine.RunDaxAsync(query, maxRows, _origin, cancellationToken);
+        public Task<CancelQueryResult> cancelDax() => _engine.CancelDaxAsync();
         public Task<ResultSet> runDmv(string query, int maxRows = 10000) => _engine.RunDmvAsync(query, maxRows);
         public Task<ResultSet> previewTable(string table, int topN = 200, string origin = "human") => _engine.PreviewTableAsync(table, topN, _origin);
         public Task<ResultSet> pivotMeasure(string measureExpr, string[] rowFields, string colField, string[] filters, int maxRows = 100000, string origin = "human") => _engine.PivotMeasureAsync(measureExpr, rowFields, colField, filters, maxRows, _origin);
@@ -294,16 +319,25 @@ namespace Semanticus.Engine
         // An authenticated human connection may open interactive sign-in; an agent connection stays non-interactive
         // even if it sends a legacy human origin value.
         public Task<ModelDiff> compareModels(ModelRef left, ModelRef right, bool includeEqual = false, string origin = "human") => _engine.CompareModelsAsync(left, right, includeEqual, _origin);
-        public Task<ApplyDiffResult> applyDiff(ModelRef left, ModelRef right, string[] selectedRefs = null, bool commit = false, string origin = "human", string overrideReason = null) => _engine.ApplyDiffAsync(left, right, selectedRefs, commit, _origin, overrideReason);
+        public Task<ApplyDiffResult> applyDiff(ModelRef left, ModelRef right, string[] selectedRefs = null, bool commit = false, string origin = "human", string overrideReason = null, string confirmToken = null) => _engine.ApplyDiffAsync(left, right, selectedRefs, commit, _origin, overrideReason, confirmToken);
         public Task<CherryPickResult> cherryPick(ModelRef source, string[] refs, bool includeDependencies = true, bool commit = false, string origin = "human") => _engine.CherryPickAsync(source, refs, includeDependencies, commit, _origin);
         // The authenticated Studio connection may open interactive sign-in for a reference-model browse. An agent
         // connection cannot promote itself through the ignored legacy origin value.
-        public Task<TreeNode[]> listReferenceTree(ModelRef reference, string origin = "human") => _engine.ListReferenceTreeAsync(reference, _origin);
+        // vscode-jsonrpc sends a lone object as named JSON-RPC params. StreamJsonRpc then looks for a method whose
+        // parameter names match the object's keys (kind, path, ...) and reports "Unable to find method 'listR...'"
+        // (D-035). A one-argument overload with UseSingleObjectParameterDeserialization binds that object as ModelRef.
+        // The two-argument form stays for positional callers (byPosition, MCP-via-RPC). Authenticated origin wins.
+        [JsonRpcMethod(UseSingleObjectParameterDeserialization = true)]
+        public Task<TreeNode[]> listReferenceTree(ModelRef reference) => _engine.ListReferenceTreeAsync(reference, _origin);
+        public Task<TreeNode[]> listReferenceTree(ModelRef reference, string origin) => _engine.ListReferenceTreeAsync(reference, _origin);
         public Task<ConnectionContext> clearReferenceBinding() => _engine.ClearReferenceBindingAsync();
-        public Task<DeployGate> deployGate(ModelRef compareTarget = null) => _engine.DeployGateAsync(compareTarget);
+        public Task<DeployGate> deployGate(ModelRef compareTarget = null, string origin = "human") => _engine.DeployGateAsync(compareTarget, _origin);
         public Task<ModelConnectionRecord[]> listConnections() => _engine.ListConnectionsAsync();
         public Task<ConnectionHistoryEvent[]> listConnectionHistory(string connectionId = null) => _engine.ListConnectionHistoryAsync(connectionId);
         public Task<ConnectionAccountProbe[]> probeConnectionAccounts() => _engine.ProbeConnectionAccountsAsync();
+        public Task<AuthPrerequisites> probeAuthPrerequisites(string mode, string tenantId = null) => _engine.ProbeAuthPrerequisitesAsync(mode, tenantId);
+        public Task<AccountProfile[]> listAccountProfiles() => _engine.ListAccountProfilesAsync();
+        public Task<AccountProfile[]> setDefaultAccountProfile(string profileId, string origin = "human") => _engine.SetDefaultAccountProfileAsync(profileId, _origin);
         public Task<ModelConnectionRecord> labelConnection(string id, string label, string origin = "human") => _engine.LabelConnectionAsync(id, label, _origin);
         public Task<ModelConnectionRecord> setConnectionWorkingFolder(string id, string folder) => _engine.SetConnectionWorkingFolderAsync(id, folder);
         public Task<bool> forgetConnection(string id, string origin = "human") => _engine.ForgetConnectionAsync(id, _origin);
@@ -316,23 +350,23 @@ namespace Semanticus.Engine
         public Task<RestorePointPurgeResult> purgeRestorePoints(string id = null, int? olderThanDays = null,
             bool confirm = false, string confirmToken = null, string origin = "human") =>
             _engine.PurgeRestorePointsAsync(id, olderThanDays, confirm, confirmToken, _origin);
-        public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, cancellationToken);
-        public Task<DeploymentPipeline[]> listDeploymentPipelines(string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.ListDeploymentPipelinesAsync(authMode, tenantId, cancellationToken);
-        public Task<PipelineStage[]> getPipelineStages(string pipelineId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.GetPipelineStagesAsync(pipelineId, authMode, tenantId, cancellationToken);
-        public Task<StageItem[]> getStageItems(string pipelineId, string stageId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.GetStageItemsAsync(pipelineId, stageId, authMode, tenantId, cancellationToken);
-        public Task<DeployPreview> previewDeploy(string pipelineId, string sourceStageId, string targetStageId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, tenantId, cancellationToken);
+        public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, _origin, cancellationToken);
+        public Task<DeploymentPipeline[]> listDeploymentPipelines(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDeploymentPipelinesAsync(authMode, tenantId, _origin, cancellationToken);
+        public Task<PipelineStage[]> getPipelineStages(string pipelineId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetPipelineStagesAsync(pipelineId, authMode, tenantId, _origin, cancellationToken);
+        public Task<StageItem[]> getStageItems(string pipelineId, string stageId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetStageItemsAsync(pipelineId, stageId, authMode, tenantId, _origin, cancellationToken);
+        public Task<DeployPreview> previewDeploy(string pipelineId, string sourceStageId, string targetStageId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, tenantId, _origin, cancellationToken);
         public Task<DeployStageReport> deployStage(string pipelineId, string sourceStageId, string targetStageId, string[] items = null, string note = null, bool commit = false, string confirmToken = null, bool forceOverride = false, string authMode = "azcli", string tenantId = null, string origin = "human", string overrideReason = null, CancellationToken cancellationToken = default) => _engine.DeployStageAsync(pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, tenantId, _origin, overrideReason, cancellationToken);
-        public Task<DeploymentHistoryEntry[]> deploymentHistory(string pipelineId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.DeploymentHistoryAsync(pipelineId, authMode, tenantId, cancellationToken);
-        public Task<FabricGitConnection> fabricGitConnection(string workspaceId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.FabricGitConnectionAsync(workspaceId, authMode, tenantId, cancellationToken);
-        public Task<FabricGitStatus> fabricGitStatus(string workspaceId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.FabricGitStatusAsync(workspaceId, authMode, tenantId, cancellationToken);
+        public Task<DeploymentHistoryEntry[]> deploymentHistory(string pipelineId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.DeploymentHistoryAsync(pipelineId, authMode, tenantId, _origin, cancellationToken);
+        public Task<FabricGitConnection> fabricGitConnection(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitConnectionAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
+        public Task<FabricGitStatus> fabricGitStatus(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitStatusAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<FabricGitResult> fabricGitCommit(string workspaceId, string comment = null, string[] items = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitCommitAsync(workspaceId, comment, items, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<FabricGitResult> fabricGitUpdate(string workspaceId, string conflictPolicy = "PreferRemote", bool allowOverride = false, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitUpdateAsync(workspaceId, conflictPolicy, allowOverride, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<FabricGitResult> fabricGitConnect(string workspaceId, string provider, string organization, string project = null, string repository = null, string branch = "main", string directory = null, string connectionId = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitConnectAsync(workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<FabricGitResult> fabricGitDisconnect(string workspaceId, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitDisconnectAsync(workspaceId, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<CicdPublishResult> cicdPublish(string workspaceId, string itemId, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.CicdPublishAsync(workspaceId, itemId, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<CicdScaffold> cicdGenerate(string target = "github", string workspaceId = null, string environment = "PROD", bool write = false) => _engine.CicdGenerateAsync(target, workspaceId, environment, write);
-        public Task<DataAgentList> listDataAgents(string workspaceId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.ListDataAgentsAsync(workspaceId, authMode, tenantId, cancellationToken);
-        public Task<DataAgentDetail> getDataAgent(string workspaceId, string agentId, string authMode = "azcli", string tenantId = null, CancellationToken cancellationToken = default) => _engine.GetDataAgentAsync(workspaceId, agentId, authMode, tenantId, cancellationToken);
+        public Task<DataAgentList> listDataAgents(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDataAgentsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
+        public Task<DataAgentDetail> getDataAgent(string workspaceId, string agentId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetDataAgentAsync(workspaceId, agentId, authMode, tenantId, _origin, cancellationToken);
         public Task<DataAgentConfig> generateDataAgentConfig(int maxColumnsPerTable = 200) => _engine.GenerateDataAgentConfigFromModelAsync(maxColumnsPerTable);
         public Task<DataAgentWriteReport> createDataAgent(string workspaceId, string name, string aiInstructions = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<DataAgentWriteReport> updateDataAgent(string workspaceId, string agentId, string aiInstructions = null, string datasourceFolder = null, string datasourceJson = null, string fewshotsJson = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, tenantId, _origin, cancellationToken);

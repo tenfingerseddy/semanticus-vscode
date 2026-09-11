@@ -197,7 +197,24 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(path)) { args.Add("--"); args.Add(path); }
             var r = await RunAsync(dir, args.ToArray());
             if (!r.Ok) return new GitDiffResult { Path = path, Error = Error(r) };
-            var text = r.Stdout;
+            var text = r.Stdout ?? "";
+            // `git diff` ignores untracked files, so a brand-new uncommitted model looks identical to a clean tree.
+            if (!staged)
+            {
+                var untrackedArgs = new List<string> { "ls-files", "--others", "--exclude-standard" };
+                if (!string.IsNullOrWhiteSpace(path)) { untrackedArgs.Add("--"); untrackedArgs.Add(path); }
+                var u = await RunAsync(dir, untrackedArgs.ToArray());
+                if (u.Ok)
+                {
+                    var files = (u.Stdout ?? "").Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+                    if (files.Length > 0)
+                    {
+                        var listing = "New files not yet committed:\n" + string.Join("\n", files);
+                        text = string.IsNullOrWhiteSpace(text) ? listing : text.TrimEnd() + "\n\n" + listing;
+                    }
+                }
+            }
             return new GitDiffResult { Path = path, Text = text, Empty = string.IsNullOrWhiteSpace(text) };
         }
 
@@ -248,5 +265,21 @@ namespace Semanticus.Engine
 
         // Trim+merge stdout/stderr into one user-facing line (git writes progress/results to stderr).
         internal static string Combine(GitRun r) => Scrub(string.Join("\n", new[] { r.Stdout?.Trim(), r.Stderr?.Trim() }.Where(s => !string.IsNullOrEmpty(s))));
+
+        // The line a person needs: last fatal:/error:. Fetch progress ("From <remote>") stays in Combine.
+        internal static string Reason(GitRun r)
+        {
+            var full = Combine(r);
+            if (string.IsNullOrEmpty(full)) return full;
+            var lines = full.Replace("\r\n", "\n").Split('\n');
+            for (var i = lines.Length - 1; i >= 0; i--)
+            {
+                var line = lines[i].Trim();
+                if (line.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
+                    || line.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+                    return line;
+            }
+            return full;
+        }
     }
 }

@@ -280,7 +280,7 @@ namespace Semanticus.Tests
 
                 Assert.True(r.Applied, r.Error);
                 Assert.Equal(0, r.Count);                                   // nothing applied — it converged
-                Assert.Contains("no-op", r.Note);
+                Assert.Contains("No-op", r.Note);
                 Assert.Contains("measure:Sales/Total", r.Note);
                 Assert.True(pushed);
                 Assert.Equal("2", pushedRefs[0]);                          // the pushed model already matches live (no revert)

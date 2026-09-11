@@ -42,6 +42,8 @@ check('no index = balance only', "SUM ( 'Foo'[Bar] )", false, none);
 check('no index still catches imbalance', 'SUM ( [x]', false, has("Unclosed '('"));
 check('dax string with escaped quotes', 'IF ( [Margin] > 0, "say ""hi""", "no" )', true, none);
 check('empty', '', true, none);
+check('sumx one arg is arity warning', 'SUMX(Sales)', true, has('SUMX needs 2 arguments, not 1'));
+check('sumx two args is fine', 'SUMX(Sales, 1)', true, none);
 
 // collectVars (for VAR-name completion)
 function vcheck(name, text, expect) {

@@ -2,7 +2,7 @@
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
   "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your AI Assistant co-edits the same live model.",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -43,8 +43,7 @@
     "mcp"
   ],
   "activationEvents": [
-    "onView:semanticusModel",
-    "onCommand:semanticus.openModel"
+    "onFileSystem:semanticus"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -121,6 +120,16 @@
         "icon": "$(folder-opened)"
       },
       {
+        "command": "semanticus.quickOpenModel",
+        "title": "Semanticus: Find a remembered model",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "semanticus.manageConnections",
+        "title": "Semanticus: Manage Connections",
+        "icon": "$(gear)"
+      },
+      {
         "command": "semanticus.openStudio",
         "title": "Semanticus: Open Studio",
         "icon": "$(right-panel-hide)"
@@ -132,8 +141,12 @@
       },
       {
         "command": "semanticus.saveToLive",
-        "title": "Semanticus: Save to Live Model… (deploy metadata)",
+        "title": "Semanticus: Publish to Live Model",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "semanticus.applyPropertyField",
+        "title": "Semanticus: Apply the property you are editing"
       },
       {
         "command": "semanticus.refresh",
@@ -245,6 +258,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "semanticus.manageConnections",
+          "when": "view == semanticusModel",
+          "group": "navigation@1"
+        },
+        {
           "command": "semanticus.findInModel",
           "when": "view == semanticusModel",
           "group": "navigation@1"
@@ -306,6 +324,9 @@
         { "command": "semanticus.newCalcColumn", "when": "view == semanticusModel && viewItem == table", "group": "1_create@2" },
         { "command": "semanticus.newHierarchy", "when": "view == semanticusModel && viewItem == table", "group": "1_create@3" },
         { "command": "semanticus.newTable", "when": "view == semanticusModel && viewItem == table", "group": "1_create@4" },
+        { "command": "semanticus.newTable", "when": "view == semanticusModel && viewItem == emptyModel", "group": "1_create@1" },
+        { "command": "semanticus.newCalcTable", "when": "view == semanticusModel && viewItem == emptyModel", "group": "1_create@2" },
+        { "command": "semanticus.newCalcGroup", "when": "view == semanticusModel && viewItem == emptyModel", "group": "1_create@3" },
         { "command": "semanticus.newCalcTable", "when": "view == semanticusModel && viewItem == table", "group": "1_create@5" },
         { "command": "semanticus.newCalcItem", "when": "view == semanticusModel && viewItem == calcgroup", "group": "1_create@1" },
         { "command": "semanticus.newRelationship", "when": "view == semanticusModel && viewItem =~ /^(column|calcColumn)$/", "group": "1_create@1" },
@@ -355,22 +376,19 @@
         { "command": "semanticus.formatDaxOnline", "when": "editorLangId == dax", "group": "1_modification@1" }
       ],
       "commandPalette": [
-        { "command": "semanticus.studioGoGroup", "when": "false" },
-        { "command": "semanticus.studioGoTab", "when": "false" },
         { "command": "semanticus.formatDaxOnline", "when": "editorLangId == dax" },
-        { "command": "semanticus.copyRefToModel", "when": "false" },
-        { "command": "semanticus.copyRefObject", "when": "false" },
-        { "command": "semanticus.pasteIntoModel", "when": "false" },
-        { "command": "semanticus.copyObject", "when": "false" },
-        { "command": "semanticus.pasteObject", "when": "false" },
-        { "command": "semanticus.addToDiagram", "when": "false" },
-        { "command": "semanticus.showLineage", "when": "false" },
-        { "command": "semanticus.editMCode", "when": "false" }
+        { "command": "semanticus.applyPropertyField", "when": "false" },
+        { "command": "semanticus.timeIntelligence", "when": "view == semanticusModel && viewItem == measure" }
       ]
     },
     "keybindings": [
       { "command": "semanticus.studioSearch", "key": "ctrl+f", "mac": "cmd+f", "when": "activeWebviewPanelId == 'semanticusStudio'" },
       { "command": "semanticus.save", "key": "ctrl+s", "mac": "cmd+s", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.save", "key": "ctrl+s", "mac": "cmd+s", "when": "activeWebviewPanelId == 'semanticusConnections'" },
+      { "command": "semanticus.save", "key": "ctrl+s", "mac": "cmd+s", "when": "activeWebviewPanelId == 'semanticusSchemaDiff'" },
+      { "command": "semanticus.save", "key": "ctrl+s", "mac": "cmd+s", "when": "focusedView == semanticusProperties" },
+      { "command": "workbench.action.showCommands", "key": "ctrl+shift+p", "mac": "cmd+shift+p", "when": "activeWebviewPanelId == 'semanticusStudio' || focusedView == semanticusProperties" },
+      { "command": "semanticus.applyPropertyField", "key": "ctrl+s", "mac": "cmd+s", "when": "focusedView == semanticusProperties" },
       { "command": "semanticus.studioPrevTab", "key": "ctrl+alt+left", "when": "activeWebviewPanelId == 'semanticusStudio'" },
       { "command": "semanticus.studioNextTab", "key": "ctrl+alt+right", "when": "activeWebviewPanelId == 'semanticusStudio'" },
       { "command": "semanticus.studioGoGroup", "args": "understand", "key": "ctrl+shift+1", "when": "activeWebviewPanelId == 'semanticusStudio'" },
@@ -383,7 +401,7 @@
       { "command": "semanticus.undo", "key": "ctrl+z", "mac": "cmd+z", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.redo", "key": "ctrl+shift+z", "mac": "cmd+shift+z", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.redo", "key": "ctrl+y", "when": "focusedView == semanticusModel" },
-      { "command": "semanticus.renameObject", "key": "f2", "when": "focusedView == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective|dfolder)$/" },
+      { "command": "semanticus.renameObjectInputBox", "key": "f2", "when": "focusedView == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective|dfolder)$/" },
       { "command": "semanticus.deleteObject", "key": "delete", "mac": "cmd+backspace", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.newMeasure", "key": "ctrl+alt+n", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.openStudio", "key": "ctrl+alt+s", "when": "focusedView =~ /^semanticus(Model|Reference)$/" },
@@ -392,7 +410,8 @@
       { "command": "semanticus.pasteObject", "key": "ctrl+v", "mac": "cmd+v", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.applyDaxScript", "key": "ctrl+enter", "mac": "cmd+enter", "when": "editorTextFocus && editorLangId == dax && resourceScheme == untitled" },
       { "command": "semanticus.applyTmdlScript", "key": "ctrl+enter", "mac": "cmd+enter", "when": "editorTextFocus && editorLangId == tmdl && resourceScheme == untitled" },
-      { "command": "semanticus.formatDaxOnline", "key": "ctrl+alt+f", "when": "editorTextFocus && editorLangId == dax" }
+      { "command": "semanticus.formatDaxOnline", "key": "ctrl+alt+f", "when": "editorTextFocus && editorLangId == dax" },
+      { "command": "semanticus.saveToLive", "key": "ctrl+alt+p", "mac": "cmd+alt+p", "when": "semanticus.liveBound" }
     ],
     "configuration": {
       "title": "Semanticus",
@@ -405,7 +424,7 @@
         "semanticus.licenseToken": {
           "type": "string",
           "default": "",
-          "description": "Semanticus Pro license token. When set, the AI Assistant connection includes it automatically. Leave empty for the Free tier."
+          "description": "Semanticus Pro license token. Used when this editor cannot keep the token in secure storage. Leave empty for the Free tier."
         },
         "semanticus.modelPath": {
           "type": "string",
@@ -429,8 +448,9 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "tsc -p ./ && node scripts/run-tests.mjs",
-    "build:webview": "cd webview && npm install --no-fund --no-audit && npm run build",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "check:lockfile": "node test/lockfile-drift.test.mjs",
+    "build:webview": "cd webview && npm ci --no-fund --no-audit && npm run build && node ../test/source-byte-hygiene.test.mjs",
     "build": "npm run build:webview && npm run compile",
     "package": "node scripts/package.mjs",
     "package:win": "node scripts/package.mjs win32-x64"

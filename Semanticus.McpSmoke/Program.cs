@@ -35,7 +35,9 @@ namespace Semanticus.McpSmoke
             var sessions = new SessionManager();
             // Smoke harness runs as Pro so it exercises the BULK functionality; the Pro GATE itself is covered by
             // Semanticus.Tests/EntitlementGateTests.
-            var owner = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+            var bim = FindTestBim();
+            // A checkout under the temp directory still needs the same fixture sidecar as a normal checkout.
+            var owner = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro(), Path.GetDirectoryName(bim));
             using var server = new RpcServer(sessions, owner, pipeName, uiChallenge);
             using var cts = new CancellationTokenSource();
             var serverTask = server.RunAsync(cts.Token);
@@ -44,7 +46,6 @@ namespace Semanticus.McpSmoke
             RemoteEngine claude = null;
             try
             {
-                var bim = FindTestBim();
                 var open = await owner.OpenAsync(bim);   // VS-Code-side opens the model
                 Check("owner opened the model", open.Tables > 0);
                 Console.WriteLine($"[i] owner opened '{open.ModelName}': {open.Tables} tables, {open.Measures} measures");
@@ -130,6 +131,36 @@ namespace Semanticus.McpSmoke
                 Check("MCP redo_change re-applies the edit (Claude + UI both read it again) + reports undo-able",
                     redone != null && redone.CanUndo
                     && await McpTools.GetDax(claude, measureRef) == newExpr && await ui.GetDax(measureRef) == newExpr);
+
+                // ---- EXPLICIT SESSION TARGETING (T172): update_measure / rename_object carry an optional sessionId
+                // and pass it as the engine's expectedSession fence. This leg is the CROSS-PROCESS one (tool body to
+                // RemoteEngine to RPC to owner), so it proves the id actually survives the proxy hop rather than being
+                // dropped on the way, which is exactly how the argument was lost before. A stale/foreign id must refuse
+                // BEFORE mutating: the expression, the object's name and the UI's view all stay put. Engine-side fence
+                // semantics are pinned in Semanticus.Tests/McpSessionTargetingTests.cs and the header-save fence suite
+                // beside it. (Spelling that other suite's file name out here would read to the coverage oracle as a
+                // reference to an unrelated op, so it is deliberately named in prose.)
+                async Task<string> SessionRefusal(Func<Task> act) { try { await act(); return null; } catch (Exception ex) { return ex.Message; } }
+                var liveSid = (await McpTools.ModelOverview(claude)).SessionId;
+                Check("MCP model_overview hands the agent a sessionId to target with", !string.IsNullOrEmpty(liveSid));
+
+                const string foreignSid = "s-not-this-session";
+                var setRefused = await SessionRefusal(() => McpTools.UpdateMeasure(claude, measureRef, "999", foreignSid));
+                Check("MCP update_measure with a stale sessionId refuses across the proxy and writes nothing",
+                    setRefused != null && setRefused.Contains("model changed before this edit landed")
+                    && await McpTools.GetDax(claude, measureRef) == newExpr && await ui.GetDax(measureRef) == newExpr);
+
+                var renameRefused = await SessionRefusal(() => McpTools.RenameObject(claude, measureRef, "SmokeWrongModel", foreignSid));
+                Check("MCP rename_object with a stale sessionId refuses across the proxy and writes nothing",
+                    renameRefused != null && renameRefused.Contains("model changed before this edit landed")
+                    && !(await McpTools.ListMeasures(claude)).Any(m => m.Name == "SmokeWrongModel")
+                    && await McpTools.GetDax(claude, measureRef) == newExpr);   // the ref still resolves: nothing was renamed
+
+                // The live id is ACCEPTED, and the pair leaves the model exactly as the legs below expect it.
+                var targetedEdit = await McpTools.UpdateMeasure(claude, measureRef, newExpr + " /* targeted */", liveSid);
+                var targetedBack = await McpTools.UpdateMeasure(claude, measureRef, newExpr, liveSid);
+                Check("MCP update_measure with the LIVE sessionId is accepted (the fence gates the wrong model, not the right one)",
+                    targetedEdit.Changed && targetedBack.Changed && await McpTools.GetDax(claude, measureRef) == newExpr);
 
                 // ---- HEALTH DELTA (feature #4): a threshold-crossing agent edit (an undescribed measure = a
                 // net-new Warning+ finding on the touched object) rides model/didChange to the UI client with
@@ -294,10 +325,12 @@ namespace Semanticus.McpSmoke
                     applyRes.Applied.Contains(measureRef) && applyRes.Skipped.Length == 0
                     && await McpTools.GetDax(claude, measureRef) == editedExpr);
                 await McpTools.UpdateMeasure(claude, measureRef, newExpr);   // restore for the checks below
-                var skipRes = await McpTools.ApplyDaxScript(claude, "// @object measure:Nope/Missing\n1\n");
-                Check("MCP apply_dax_script: a non-resolvable ref is skipped (surfaced, not applied, teaching the fix)",
-                    skipRes.Skipped.Any(s => s.StartsWith("measure:Nope/Missing") && s.Contains("list_objects"))
-                    && skipRes.Applied.Length == 0);   // the skip entry now carries the result-contract recovery text
+                string skipMsg = null;
+                try { await McpTools.ApplyDaxScript(claude, "// @object measure:Nope/Missing\n1\n"); }
+                catch (Exception ex) { skipMsg = ex.Message; }
+                Check("MCP apply_dax_script: a non-resolvable ref refuses the batch and writes nothing",
+                    skipMsg != null && skipMsg.Contains("Nothing was written") && skipMsg.Contains("list_objects")
+                    && await McpTools.GetDax(claude, measureRef) == newExpr);
 
                 // apply_tmdl selected-measure round-trip over the MCP/RPC proxy. The native `ref table` wrapper keeps
                 // every unselected sibling out of the document; undo makes this net-zero for the remaining smoke.
@@ -549,6 +582,16 @@ namespace Semanticus.McpSmoke
                 var clearPerm = await McpTools.SetTablePermission(claude, roleName, "table:" + rlsTable, "");
                 Check("MCP set_table_permission with an empty filter clears it",
                     clearPerm.Changed && (await McpTools.ListRoles(claude)).First(r => r.Name == roleName).TableFilters.Length == 0);
+
+                // The textbook row filter is COMPLETE: a column compared to a string literal must save over the MCP
+                // door (round-4 UAT refused it on both doors). Uses a real column, so no unknown-reference warning
+                // can stand in for the trailing-operator defect, and clears it again to stay net-zero.
+                var literalFilter = $"'{realCol.Table}'[{realCol.Name}] = \"North\"";
+                var literalSet = await McpTools.SetTablePermission(claude, roleName, "table:" + realCol.Table, literalFilter);
+                Check("MCP set_table_permission accepts a string-equality row filter (the textbook shape)",
+                    literalSet.Changed && (await McpTools.ListRoles(claude)).First(r => r.Name == roleName)
+                        .TableFilters.Any(f => f.Table == realCol.Table && f.FilterExpression == literalFilter));
+                await McpTools.SetTablePermission(claude, roleName, "table:" + realCol.Table, "");
 
                 // A role created with NO permission defaults to None; adding a filter auto-promotes it None->Read (echoed + flagged).
                 const string promoRole = "Smoke RLS Promote";
@@ -843,7 +886,7 @@ namespace Semanticus.McpSmoke
                 try { await McpTools.DeployLive(claude); }
                 catch (Exception ex) { deployThrew = true; deployErr = ex.Message; }
                 Check("MCP deploy_live with no endpoint on a non-live-bound session throws a clear error (no silent no-op)",
-                    deployThrew && deployErr != null && deployErr.IndexOf("not live-bound", StringComparison.OrdinalIgnoreCase) >= 0);
+                    deployThrew && deployErr != null && deployErr.IndexOf("not connected to a publish destination", StringComparison.OrdinalIgnoreCase) >= 0);
 
                 // An explicit endpoint with no dataset must fail clearly (a WRITE never guesses a "first dataset").
                 // The guard runs before any auth/network, so it's offline-testable against a dummy endpoint.
@@ -860,14 +903,21 @@ namespace Semanticus.McpSmoke
                 Check("deploy auth: loopback endpoints classify as LOCAL (integrated, no token)",
                     Semanticus.Engine.LiveDeploy.IsLocalEndpoint("localhost:51234")
                     && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("127.0.0.1:55001")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("127.0.0.2:51234")
                     && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("::1")
-                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("[::1]:51234"));
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("[::1]:51234")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("0:0:0:0:0:0:0:1")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("::ffff:127.0.0.1")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("http://localhost:51234")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("Data Source=\"localhost:51234\"")
+                    && Semanticus.Engine.LiveDeploy.IsLocalEndpoint("localhost.:51234"));
                 Check("deploy auth: cloud/scheme + loopback-spoof endpoints are NEVER local (token required for the write)",
                     !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("powerbi://api.powerbi.com/v1.0/myorg/WS")
                     && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("asazure://westus.asazure.windows.net/srv")
                     && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("https://example/xmla")
                     && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("localhost.evil.com")
                     && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("127.0.0.1.evil.com")
+                    && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("128.0.0.1:51234")
                     && !Semanticus.Engine.LiveDeploy.IsLocalEndpoint(""));
 
                 // ---- CLEAR CACHE (the cold/warm-benchmark primitive; non-destructive; gated on shared endpoints) ----
@@ -1085,7 +1135,7 @@ namespace Semanticus.McpSmoke
                 // exercises the real execute path and proves a failure is REPORTED (Committed=false + Error), not thrown.
                 var commitFail = await McpTools.RefreshPartition(claude, partRef, "Full", "localhost:1", "NoDb", "serviceprincipal", null, true);
                 Check("MCP refresh_partition COMMIT failure is reported via Error (Committed=false), not thrown across the door",
-                    commitFail != null && !commitFail.Committed && !string.IsNullOrEmpty(commitFail.Error) && commitFail.Error.Contains("nothing was committed"));
+                    commitFail != null && !commitFail.Committed && !string.IsNullOrEmpty(commitFail.Error) && commitFail.Error.Contains("Nothing was committed"));
 
                 // ---- token-mode expiry: a supplied raw token's REAL JWT 'exp' is honoured (so the session's
                 // reuse/skew logic can't be fooled into reusing a short-lived token). Non-JWT input falls back to a

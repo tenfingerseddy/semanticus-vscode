@@ -36,10 +36,9 @@ namespace Semanticus.Engine.Entitlement
         /// <summary>The default construction: read the ambient license + public-key override + dev flag, at now.</summary>
         public static LicenseEntitlement FromEnvironment() => FromEnvironmentOrToken(null);
 
-        /// <summary>Construction preferring an EXPLICIT license token (e.g. from the engine's <c>--license</c> CLI arg),
-        /// falling back to env (SEMANTICUS_LICENSE) then the ~/.semanticus/license file. This is the RELIABLE delivery
-        /// path: an attaching MCP process's env is ignored (the gate follows the OWNER engine), and Claude Code's
-        /// <c>env:</c> passthrough is unreliable — so the extension / .mcp.json should pass the license as an arg, not env.</summary>
+        /// <summary>Construction preferring an EXPLICIT license token (from stdin via <c>--license-stdin</c>),
+        /// falling back to env (SEMANTICUS_LICENSE) then the user license file. An attaching MCP process inherits
+        /// the owner's entitlement over the pipe; the token must not be placed on argv.</summary>
         public static LicenseEntitlement FromEnvironmentOrToken(string explicitToken) => Evaluate(
             !string.IsNullOrWhiteSpace(explicitToken) ? explicitToken.Trim()
                 : (Environment.GetEnvironmentVariable("SEMANTICUS_LICENSE") ?? ReadLicenseFile()),

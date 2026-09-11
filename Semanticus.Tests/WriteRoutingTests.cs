@@ -130,6 +130,29 @@ namespace Semanticus.Tests
             finally { engine.Dispose(); }
         }
 
+        // D-185 / EDIT-09 s2-apply-invalid-tmdl
+        [Fact]
+        public async Task Measure_tmdl_apply_refuses_an_invalid_expression_without_mutation()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Pro());
+            await engine.CreateModelAsync("InvalidMeasureTmdl", 1604);
+            await engine.CreateTableAsync("T", "agent");
+            var measure = await engine.CreateMeasureAsync("table:T", "Selected", "1", "agent");
+            var script = await engine.ScriptObjectsAsync(new[] { measure }, "tmdl");
+            var invalid = script.Replace("= 1", "= SUM(");
+            Assert.NotEqual(script, invalid);
+
+            var revision = sessions.Current.Revision;
+            var result = await engine.ApplyTmdlScriptAsync(invalid, "agent");
+
+            Assert.Empty(result.Applied);
+            Assert.Single(result.Skipped);
+            Assert.Contains("not valid DAX", result.Skipped[0], StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(revision, sessions.Current.Revision);
+            Assert.Equal("1", await engine.GetDaxAsync(measure));
+        }
+
         [Fact]
         public async Task Multi_measure_tmdl_round_trip_is_one_undoable_selection()
         {

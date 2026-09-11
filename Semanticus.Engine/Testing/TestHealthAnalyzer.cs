@@ -90,8 +90,8 @@ namespace Semanticus.Engine
     /// <summary>
     /// E3 — clones the ReadinessAnalyzer scoring discipline for tests: weighted categories, a category with no
     /// decisive checks stays DORMANT (excluded from the weighted average — the Applicable=0 dormant-or-dock
-    /// convention; its NotVerifiable checks still count in COVERAGE, so an offline run reads "A on 0% coverage",
-    /// which I2 makes impossible to mistake for health), and hard gates override the average downward. PURE:
+    /// convention; its NotVerifiable checks still count in COVERAGE, and the letter may not outrun that coverage,
+    /// so an empty or mostly-unknown suite cannot wear an A), and hard gates override the average downward. PURE:
     /// reports in, health out — no I/O, no model, identical on both doors.
     /// </summary>
     public static class TestHealthAnalyzer
@@ -177,14 +177,21 @@ namespace Semanticus.Engine
             int nvAll = cats.Sum(c => c.NotVerifiable);
             int suspAll = cats.Sum(c => c.Suspect);
             var decisiveAll = cats.Sum(c => c.Passed + c.Failed);
+            var coveragePct = checkedAll > 0 ? Math.Round(100.0 * decisiveAll / checkedAll, 1) : 0.0;
+            // A letter may not outrun how much of the suite was actually decided. Grade A on 17% coverage
+            // is a lie even when every decided check passed: the same thresholds that make a score an A
+            // also have to hold for coverage, and an empty suite is F, not a perfect unused average.
+            var graded = checkedAll == 0 ? 0.0 : Math.Min(overall, coveragePct);
+            if (graded + 0.05 < overall)
+                gatedBy.Add("Too little of the suite was checked to earn a higher grade");
             return new TestHealth
             {
-                Overall = Math.Round(overall, 1),
-                Grade = GradeFor(overall),
+                Overall = Math.Round(graded, 1),
+                Grade = GradeFor(graded),
                 GatedBy = gatedBy.ToArray(),
                 // Coverage counts DECIDED checks only: Suspect is "awaiting its root cause", NotVerifiable is
                 // "couldn't check" — neither is coverage a user can lean on.
-                CoveragePct = checkedAll > 0 ? Math.Round(100.0 * decisiveAll / checkedAll, 1) : 0.0,
+                CoveragePct = coveragePct,
                 Checked = checkedAll,
                 Passed = cats.Sum(c => c.Passed),
                 Failed = cats.Sum(c => c.Failed),

@@ -146,7 +146,7 @@ const unused = {
     { ref: measureRefs[measureRefs.length - 1], name: nodes.find((n) => n.ref === measureRefs[measureRefs.length - 1]).name, kind: 'measure', table: 'Inventory', isHidden: true, verdict: 'usedByUnusedOnly', refCount: 1, blockedBy: ['(a hidden staging measure)'], reason: 'Referenced only by objects that are themselves unused (hidden/dead).' },
   ],
   safeCount: 2, usedByUnusedOnlyCount: 1, cautionCount: 1,
-  caveat: 'Model-only — published-report field usage is not yet included. Verify against report usage before deleting.',
+  caveat: 'Model-only. Published-report field usage is not yet included. Verify against report usage before deleting.',
 };
 
 // ---- report analysis (with visuals[]) — usedRefs reference real measures/columns ---------------
@@ -174,7 +174,7 @@ const reportAnalysis = {
     },
     {
       path: 'C:/pbip/Ops.Report', name: 'Ops (paginated)', read: false, fieldCount: 0, unresolved: 0,
-      usedRefs: [], extensionMeasures: [], error: 'Paginated (RDL) report — its field usage is not parsed.',
+      usedRefs: [], extensionMeasures: [], error: 'Paginated (RDL) report: its field usage is not parsed.',
     },
   ],
   reportsRead: 2, reportsUnreadable: 1,

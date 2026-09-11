@@ -21,12 +21,12 @@ namespace Semanticus.Engine
                 default:
                     Console.Error.WriteLine("Semanticus.Engine");
                     Console.Error.WriteLine("Usage:");
-                    Console.Error.WriteLine("  serve --workspace <dir> [--open <modelPathOrFolder>] [--pipe <name>] [--license <token>] --ui-challenge-stdin");
+                    Console.Error.WriteLine("  serve --workspace <dir> [--open <modelPathOrFolder>] [--pipe <name>] --ui-challenge-stdin [--license-stdin]");
                     Console.Error.WriteLine("        Owner mode: hosts the model over a named pipe for the VS Code UI.");
-                    Console.Error.WriteLine("  mcp   --workspace <dir> [--open <modelPathOrFolder>] [--license <token>]");
+                    Console.Error.WriteLine("  mcp   --workspace <dir> [--open <modelPathOrFolder>]");
                     Console.Error.WriteLine("        MCP stdio server for Claude Code. Attaches to a running engine if present,");
                     Console.Error.WriteLine("        otherwise owns the model itself. Register with: claude mcp add.");
-                    Console.Error.WriteLine("        --license delivers a Pro license reliably (prefer over an env block).");
+                    Console.Error.WriteLine("        A Pro license reaches the owner over stdin (--license-stdin), not as a command-line value.");
                     return mode == "help" ? 0 : 1;
             }
         }
@@ -40,6 +40,14 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(uiChallenge))
             {
                 Console.Error.WriteLine("[engine] --ui-challenge-stdin is required in owner/UI mode; refusing to expose an unauthenticated human RPC door.");
+                return 2;
+            }
+            // An out-of-range challenge is refused HERE, not left to RpcServer's constructor: an ArgumentException
+            // escaping Main is an unhandled exception, and the runtime answers that with an abort (exit 134, core
+            // dump) instead of a message. Same plain refusal and same exit code as the missing-value case above.
+            if (!RpcHandshake.IsValidChallenge(uiChallenge))
+            {
+                Console.Error.WriteLine("[engine] --ui-challenge-stdin must be 32 to 128 characters; refusing to start the human RPC door with a weak challenge.");
                 return 2;
             }
 
@@ -67,10 +75,10 @@ namespace Semanticus.Engine
             using (lockStream)
             {
                 var sessions = new SessionManager();
-                // Entitlement is delivered via --license (reliable) → env → ~/.semanticus/license. The OWNER engine's
-                // entitlement is authoritative: an attaching MCP proxy inherits it over RPC (do NOT rely on the MCP
-                // process's own env). The extension should pass --license here when launching the owner.
-                var engine = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(GetOpt(args, "--license")), workspace);
+                // Entitlement is delivered via stdin (--license-stdin) → env → the user license file. The OWNER
+                // engine's entitlement is authoritative: an attaching MCP proxy inherits it over RPC. Never put the
+                // token on argv: /proc/<pid>/cmdline is world-readable.
+                var engine = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, Console.In)), workspace);
                 // Learning Loop L0: the owner host tees the dual-drive stream to .semanticus/experience.jsonl
                 // (beside the model; live/unsaved sessions fall back to the workspace's .semanticus/).
                 using var experience = new ExperienceTee(sessions, workspace);
@@ -120,17 +128,14 @@ namespace Semanticus.Engine
             // fail LOUD. The deadline is checked at loop entry, immediately before the (slow) pipe connect, and
             // immediately before the owner-lock acquisition (file-system I/O can stall too); each backoff delay
             // is capped to the time remaining, so a 600ms sleep started just under the deadline can't overrun it.
-            // Capping the connect itself isn't practical (ConnectAsync's own ~5s timeout governs it), so the one
-            // worst case is a single in-flight connect started just under the deadline overrunning it by ~5s.
+            // The connect itself is capped to 1s (and to time remaining) so a miss against a missing socket cannot
+            // consume the whole election the way ConnectAsync's old 5s default did (D-118).
             var election = System.Diagnostics.Stopwatch.StartNew();
             var deadline = TimeSpan.FromSeconds(5);
+            var sawAliveOwner = false;
             int FailElection()
             {
-                Console.Error.WriteLine(
-                    "[mcp] FATAL: could not attach to a running engine or acquire the workspace owner lock (.semanticus/engine.lock) within "
-                    + $"{deadline.TotalSeconds:0}s. Another Semanticus engine is likely starting, restarting, or exited uncleanly. Wait a moment and "
-                    + "reconnect; if it persists, close other VS Code windows for this workspace, or delete .semanticus/engine.lock if you are "
-                    + "certain no engine is running.");
+                Console.Error.WriteLine(EngineBroker.McpAttachFailureMessage(deadline, sawAliveOwner));
                 return 1;   // fail LOUD — never run as a second, lockless owner
             }
             for (var attempt = 0; ; attempt++)
@@ -139,27 +144,32 @@ namespace Semanticus.Engine
                 var info = EngineBroker.ReadInfo(workspace);
                 if (EngineBroker.IsAlive(info))
                 {
+                    sawAliveOwner = true;
                     if (EngineBroker.HasExecutableProvenance(info) && !EngineBroker.ExecutableMatches(info))
                     {
                         Console.Error.WriteLine("[mcp] FATAL: the running Semanticus engine belongs to a different installed or F5 build. Restart the engine, then reconnect the AI Assistant.");
                         return 1;
                     }
                     if (!EngineBroker.HasExecutableProvenance(info))
-                        Console.Error.WriteLine("[mcp] WARNING: the running engine predates executable provenance. Attaching for this session; restart the engine to record its source.");
+                        Console.Error.WriteLine("[mcp] WARNING: the running engine predates executable provenance. Joining for this session; restart the engine to record its source.");
                     // Re-check right before the connect: it is the one slow step, and entering it at the deadline
                     // would stretch the election well past what the message promises.
                     if (election.Elapsed >= deadline) return FailElection();
                     try
                     {
-                        engine = await RemoteEngine.ConnectAsync(info.PipeName, workspace, requireMatchingExecutable: true);
-                        Console.Error.WriteLine($"[mcp] attached to running engine (pid {info.Pid}, pipe {info.PipeName}).");
+                        // Cap the connect so one miss against a missing socket cannot consume the whole election
+                        // (D-118: the advertised short name often is not where this process looks).
+                        var remainMs = (int)Math.Max(50, (deadline - election.Elapsed).TotalMilliseconds);
+                        var connectMs = Math.Min(1000, remainMs);
+                        engine = await RemoteEngine.ConnectAsync(info.PipeName, workspace, timeoutMs: connectMs, requireMatchingExecutable: true, pipePath: info.PipePath);
+                        Console.Error.WriteLine($"[mcp] joined the running session (pid {info.Pid}, pipe {info.PipeName}).");
                         break;
                     }
                     catch (Exception ex)
                     {
                         // The owner died (or its pipe vanished) between the aliveness probe and the connect — the
                         // TOCTOU is unavoidable, exiting on it is not. Re-enter; we may now win the lock ourselves.
-                        Console.Error.WriteLine($"[mcp] engine pid {info.Pid} looked alive but could not be attached ({ex.Message}) — re-entering the owner election.");
+                        Console.Error.WriteLine($"[mcp] session pid {info.Pid} looked alive but could not be joined ({ex.Message}): trying again.");
                     }
                 }
                 else
@@ -183,9 +193,10 @@ namespace Semanticus.Engine
             if (engine == null)
             {
                 var sessions = new SessionManager();
-                // Claude became the owner (no VS Code engine running): read the license from --license (reliable) →
-                // env → file. Prefer --license in .mcp.json args over an env block (Claude Code env passthrough is unreliable).
-                var local = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(GetOpt(args, "--license")), workspace);
+                // Claude became the owner (no VS Code engine running): read the license from env or the user license
+                // file. An attaching MCP process inherits the owner's entitlement over the pipe, so .mcp.json must
+                // not carry the token on argv.
+                var local = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, null)), workspace);
                 // Learning Loop L0 (owner only — an attached proxy must not double-write the owner's log).
                 // Process-lifetime: the bus holds the subscription; the host never detaches it.
                 _ = new ExperienceTee(sessions, workspace);
@@ -215,10 +226,11 @@ namespace Semanticus.Engine
                 // initialization as the agent's system context. FIRST line points at the blessed primer so a
                 // fresh/compacted agent orients unprompted. Kept short — it must not duplicate tool descriptions.
                 .AddMcpServer(o => o.ServerInstructions =
-                    "Call get_model_summary first for orientation — it is the token-budgeted session-start primer " +
+                    "Call get_model_summary first for orientation: it is the token-budgeted session-start primer " +
                     "(connection, tier, model shape + grade, in-flight work, last-session tail, suggested next actions) " +
-                    "and names the drill-down op for each section. Semanticus operates one LIVE semantic model over two " +
-                    "doors (this MCP surface + a VS Code UI); every edit is undoable and broadcast to both.")
+                    "and names the drill-down op for each section. Semanticus operates one LIVE semantic model through " +
+                    "this MCP surface and the VS Code UI. Every edit is undoable. The VS Code view updates at once; " +
+                    "the AI Assistant sees the change on its next call.")
                 .WithStdioServerTransport()
                 .WithToolsFromAssembly()
                 // A failed tool call must carry the engine's TEACHING message (scrubbed), not the SDK's opaque

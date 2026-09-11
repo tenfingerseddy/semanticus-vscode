@@ -49,7 +49,7 @@ export function DataAgentView() {
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const tier = useTier();   // shared entitlement read (pro.tsx) — drives the Pro badges on every write button
   // WHO signs in matters: azcli may be logged into a DIFFERENT tenant than the model's XMLA session (hit
-  // live: the tab listed a client tenant's workspaces while the model was nexwave-bound). The user picks
+  // live: the tab listed one tenant's workspaces while the model was bound to a different tenant). The user picks
   // the auth mode + tenant here, persisted, and every Fabric call on this tab carries the choice.
   const [authMode, setAuthMode] = usePersistedState<string>('dataagent.authMode', 'azcli');
   const [tenantId, setTenantId] = usePersistedState<string>('dataagent.tenantId', '');
@@ -204,7 +204,6 @@ function AgentRail({ list, listErr, selected, workspaceId, authMode, tenantId, t
       <div className="p-2 flex flex-col gap-2">
         <NewAgentForm workspaceId={workspaceId} authMode={authMode} tenantId={tenantId} tier={tier} onCreated={onCreated} />
         {listErr && <Banner color="var(--sem-bad)">{listErr}</Banner>}
-        {list?.note && <div className="text-[10.5px] px-1" style={{ color: 'var(--sem-muted)' }}>{list.note}</div>}
         {list == null ? (
           <Muted className="px-1 py-2">Loading agents…</Muted>
         ) : list.agents.length === 0 ? (
@@ -798,7 +797,6 @@ function EmptyWorkspace({ list }: { list: DataAgentList }) {
             Item types seen here: {list.observedItemTypes.join(' · ')}
           </div>
         )}
-        {list.note && <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>{list.note}</div>}
       </div>
     </div>
   );

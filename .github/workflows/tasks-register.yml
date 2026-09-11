@@ -1,0 +1,155 @@
+name: Task register
+
+# TASKS.md is the canonical status register and its task ids are its primary keys. Two agents working in
+# parallel both read origin/main, both took the next free ids, and both took the SAME ones, so two pull
+# requests defined T177-T181 meaning ten different things. Only a merge conflict caught it.
+#
+# THIS DELIBERATELY DOES NOT LIVE IN ci.yml, and the reason changed on 2026-07-30. It used to say that ci.yml
+# carries `paths-ignore: '**/*.md'`, so a documents-only pull request bought no run at all. #294 DELETED
+# paths-ignore outright and replaced it with the `decide` classifier, which now treats both registers as code,
+# so that justification had stopped being true about this repository. Filed as F-009 and fixed here.
+#
+# THE REASON THAT SURVIVES is a different one: these jobs need nothing but node. No submodules, no .NET SDK, no
+# JDK, no npm install. Keeping them out of ci.yml means a register-only change is answered in one cheap ubuntu
+# minute instead of riding the nine-leg battery. The invariants themselves are ALSO asserted inside the
+# required `gate`, from Semanticus.VSCode/test/findings-register.test.mjs under `npm test`, so this workflow
+# being unrequired costs no coverage.
+#
+# It is keyed on the register AND on its own two files, because a gate that can be silently disabled by
+# editing the gate is not a gate either.
+#
+# One node invocation, no dependencies, no checkout of submodules: cheap enough that keying it narrowly is
+# about honesty rather than cost.
+
+# SECOND REGISTER, SAME MACHINE. docs/findings.md is the finding queue: one row per review finding, a closed
+# three-state verdict set, and a bidirectional link to TASKS.md for anything scheduled. It exists because
+# findings were being produced far faster than they were consumed and the automated reviews were not being
+# read at all. Its offline invariants are checked by the same node script as the task register.
+#
+# The ONLINE half is the second job below, and it is separate for an honest reason rather than a tidy one: it
+# enumerates the live Codex review-comment ids over the API, so it needs a token and it cannot run in a
+# token-less local checkout. It FAILS when it cannot look. Splitting it means the part that cannot run
+# everywhere is named, instead of being a silent skip inside a check that reports success.
+#
+# WHERE THE TEETH ARE, stated plainly: `gate` in ci.yml is the one context branch protection requires, and
+# THIS workflow is not it. The offline finding invariants are therefore also asserted from
+# Semanticus.VSCode/test/findings-register.test.mjs, which `npm test` discovers inside build-and-smoke, so a
+# green required check cannot sit on top of a broken register. The online enumeration is only here, so it can
+# report red without blocking a merge. That is a known limit, not a claim of coverage.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'TASKS.md'
+      - 'docs/findings.md'
+      - 'tools/tasks-register-check.mjs'
+      - 'tools/findings-codex-coverage.mjs'
+      - 'Semanticus.VSCode/test/tasks-register.test.mjs'
+      - 'Semanticus.VSCode/test/findings-register.test.mjs'
+      - '.github/workflows/tasks-register.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'TASKS.md'
+      - 'docs/findings.md'
+      - 'tools/tasks-register-check.mjs'
+      - 'tools/findings-codex-coverage.mjs'
+      - 'Semanticus.VSCode/test/tasks-register.test.mjs'
+      - 'Semanticus.VSCode/test/findings-register.test.mjs'
+      - '.github/workflows/tasks-register.yml'
+  # THE SWEEP NEEDS A TRIGGER THE REGISTER CANNOT SUPPRESS. The push trigger above is keyed on paths, so a merge
+  # to `main` that touches none of them would never fire it, and "the pull request that broke the invariant is
+  # exactly the one that does not buy a run" is the mistake this whole workflow was written to avoid. A daily
+  # schedule bounds staleness at 24 hours plus the window, for three cheap node jobs a day, and it is far cheaper
+  # than dropping the paths filter (roughly six merges a day here) or blocking per pull request.
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+# A superseded run on a pull request is worth nothing; a superseded run on main is still evidence.
+concurrency:
+  group: tasks-register-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  pull-requests: read          # the online job reads each pull request's review comments
+
+jobs:
+  duplicate-task-ids:
+    name: Every task id is defined exactly once
+    if: github.event.repository.private == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The check's OWN test runs here too, not only under `npm test`. This workflow is the cheap one-node-
+      # minute answer to a register-only change (the header explains why it exists at all), and a check that
+      # arrives without the thing that proves it can still see the register proves nothing. (This comment
+      # used to justify itself by ci.yml's paths-ignore, which #294 deleted — the same stale claim F-009
+      # fixed in the header, missed here.) It needs no dependencies, so this costs one node invocation.
+      - name: Prove the check can still read every row shape
+        run: node Semanticus.VSCode/test/tasks-register.test.mjs
+
+      # The same argument, for the finding queue: every invariant is planted and caught here, so the failure
+      # path is observed rather than assumed. A gate whose failure has never been seen may be refusing nothing.
+      - name: Prove every finding-queue invariant can still fail
+        run: node Semanticus.VSCode/test/findings-register.test.mjs
+
+      # One invocation, both registers. The exit code is the OR, so a clean task register cannot report success
+      # over a broken finding queue.
+      - name: Check both registers (duplicate task ids, and the finding queue's offline invariants)
+        run: node tools/tasks-register-check.mjs
+
+  # FIXED is the one verdict that asserts a defect is GONE, so its evidence is checked against git rather than
+  # merely being present. This needs history: actions/checkout clones at depth 1 by default, and every commit
+  # older than HEAD would then be absent. The tool REFUSES on a shallow clone rather than shrugging at a missing
+  # object, so fetch-depth: 0 is load-bearing here and not tidiness.
+  fixed-findings-name-real-commits:
+    name: Every FIXED finding names a commit that touched what it claims
+    if: github.event.repository.private == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Prove the FIXED checks can still fail (needs real history)
+        run: node tools/findings-fixed-commits.test.mjs
+      - name: Verify every FIXED verdict against git
+        run: node tools/findings-fixed-commits.mjs
+
+  codex-findings-are-rowed:
+    name: Every Codex finding has a row
+    if: github.event.repository.private == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # ENUMERATES the live review-comment ids for every pull request the register names in
+      # codex/PR#<n>/<comment-id> form, and requires one row per id. Keyed on a pull-request number alone, an
+      # agent under deadline folds twenty findings into one row and nothing can see it; this is the version of
+      # the invariant with teeth. It exits non-zero when it cannot reach the API, and never passes by default.
+      - name: Require one register row per live Codex review comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/findings-codex-coverage.mjs
+
+      # THE SWEEP, on `main` only. Ruled 2026-07-30: intake is not blocked per pull request, because that costs a
+      # second push on every reviewed one, about $1.26 each, forever. Instead EVERY pull request merged above the
+      # floor frozen in tools/findings-codex-coverage.mjs must have its Codex comments rowed. There is no time
+      # window: a 14-day one let an unrowed finding age out of the sweep on day fifteen and the gate go green
+      # having proved nothing (F-027). Detective rather than preventive: it cannot stop the merge that created
+      # the gap, but the gap cannot persist, because main goes red and stays red. Same job, so no extra runner.
+      - name: Sweep the recent merges on main
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FINDINGS_SWEEP: '1'
+        run: node tools/findings-codex-coverage.mjs

@@ -51,7 +51,7 @@ namespace Semanticus.Engine
 
         internal static async Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string token, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required — list_deployment_pipelines returns the pipelines and their ids.");
+            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required: list_deployment_pipelines returns the pipelines and their ids.");
             using var http = NewClient(token);
             var url = "deploymentPipelines/" + Uri.EscapeDataString(pipelineId) + "/stages";
             var stages = await GetAllPagesAsync<PipelineStage>(http, url, ct).ConfigureAwait(false);
@@ -60,8 +60,8 @@ namespace Semanticus.Engine
 
         internal static async Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string token, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required — list_deployment_pipelines returns the pipelines and their ids.");
-            if (string.IsNullOrWhiteSpace(stageId)) throw new ArgumentException("A stage id is required — get_pipeline_stages lists the stages (with ids) for a pipeline.");
+            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required: list_deployment_pipelines returns the pipelines and their ids.");
+            if (string.IsNullOrWhiteSpace(stageId)) throw new ArgumentException("A stage id is required: get_pipeline_stages lists the stages (with ids) for a pipeline.");
             using var http = NewClient(token);
             var url = "deploymentPipelines/" + Uri.EscapeDataString(pipelineId) + "/stages/" + Uri.EscapeDataString(stageId) + "/items";
             return (await GetAllPagesAsync<StageItem>(http, url, ct).ConfigureAwait(false)).ToArray();
@@ -110,7 +110,7 @@ namespace Semanticus.Engine
 
         internal static async Task<DeploymentHistoryEntry[]> ListDeploymentOperationsAsync(string pipelineId, string token, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required — list_deployment_pipelines returns the pipelines and their ids.");
+            if (string.IsNullOrWhiteSpace(pipelineId)) throw new ArgumentException("A deployment-pipeline id is required: list_deployment_pipelines returns the pipelines and their ids.");
             using var http = NewClient(token);
             var url = "deploymentPipelines/" + Uri.EscapeDataString(pipelineId) + "/operations";
             return (await GetAllPagesAsync<DeploymentHistoryEntry>(http, url, ct).ConfigureAwait(false)).ToArray();
@@ -123,7 +123,7 @@ namespace Semanticus.Engine
         {
             var r = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
             if (r.Status == 202) return await FetchResultAsync(http, r, ct).ConfigureAwait(false);
-            if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+            if (!r.Ok) throw NonSuccessHttp(r);
             return r.Body;
         }
 
@@ -149,17 +149,24 @@ namespace Semanticus.Engine
         {
             if (st.Status == "Succeeded") return null;
             var msg = (st.ErrorCode != null ? st.ErrorCode + ": " : "")
-                + (st.ErrorMessage ?? (st.Status != null ? st.Status + " — operation did not succeed" : fallback));
+                + (st.ErrorMessage ?? (st.Status != null ? st.Status + ": operation did not succeed" : fallback));
             return string.IsNullOrEmpty(operationId) ? msg : msg + $" (operation {operationId})";
         }
 
-        private static async Task<string> FetchResultAsync(HttpClient http, FabricResponse started, CancellationToken ct)
+        private static async Task<string> FetchResultAsync(HttpClient http, FabricResponse started, CancellationToken ct, PollBudget? budget = null)
         {
-            var st = await PollFrom202Async(http, started, ct).ConfigureAwait(false);
-            if (st.Status != "Succeeded") throw new InvalidOperationException("operation " + st.Status + (st.ErrorMessage != null ? ": " + st.ErrorMessage : ""));
+            var st = await PollFrom202Async(http, started, ct, budget).ConfigureAwait(false);
+            if (st.Status != "Succeeded")
+            {
+                // An interactive (budgeted) read surfaces the human ErrorMessage directly (the ramp-deadline message,
+                // or a real Fabric failure reason); the write lanes keep the "operation <status>:" shape the CI-CD
+                // smoke pins (Program.cs asserts the "poll window" text on the default path).
+                if (budget is not null && !string.IsNullOrEmpty(st.ErrorMessage)) throw new InvalidOperationException(st.ErrorMessage);
+                throw new InvalidOperationException("operation " + st.Status + (st.ErrorMessage != null ? ": " + st.ErrorMessage : ""));
+            }
             var url = "operations/" + Uri.EscapeDataString(started.OperationId) + "/result";
             var r = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
-            if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+            if (!r.Ok) throw NonSuccessHttp(r);
             return r.Body;
         }
 
@@ -220,24 +227,43 @@ namespace Semanticus.Engine
         // as "unreadable" per-report (fail-loud) rather than aborting the batch. $schema drift is tolerated downstream.
         internal sealed class ReportPart { public string Path; public string Content; }   // a base64-decoded text (.json) PBIR part
 
-        internal static async Task<ReportPart[]> GetReportDefinitionAsync(string workspaceId, string reportId, string format, string token, CancellationToken ct)
+        // budgetOverride is a TEST seam only (a short budget so the hard-ceiling path is deterministically exercisable);
+        // production always uses the InteractiveRead preset.
+        internal static async Task<ReportPart[]> GetReportDefinitionAsync(string workspaceId, string reportId, string format, string token, CancellationToken ct, PollBudget? budgetOverride = null)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required.");
             if (string.IsNullOrWhiteSpace(reportId)) throw new ArgumentException("A report id is required.");
             using var http = NewClient(token);
             var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/reports/" + Uri.EscapeDataString(reportId)
                       + "/getDefinition?format=" + Uri.EscapeDataString(string.IsNullOrWhiteSpace(format) ? "PBIR" : format);
-            var body = await PostForResultAsync(http, url, null, ct).ConfigureAwait(false);
-            return DecodeDefinitionParts(body);
+
+            // Interactive read: bound the WHOLE round-trip (POST + poll + result GET) by a HARD wall-clock ceiling so a
+            // stuck Fabric LRO fails fast instead of draining the ~8-min write ceiling. The linked-CTS is the true stop:
+            // the in-loop ramp deadline returns gracefully in the common case, but only a real cancellation can
+            // interrupt an in-flight 429 backoff (up to 60s) or socket read (up to the 100s HttpClient timeout). A
+            // budget-driven cancel (OUR token, not the caller's) is converted to a fail-loud "unreadable" message per
+            // report; a genuine caller cancel (ct) still propagates untouched.
+            var budget = budgetOverride ?? PollBudget.InteractiveRead;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(budget.MaxWallClock + TimeSpan.FromSeconds(2));   // small grace so the graceful in-loop deadline wins while polling; the hard stop still bounds a stuck socket
+            try
+            {
+                var body = await PostForResultAsync(http, url, null, cts.Token, budget).ConfigureAwait(false);
+                return DecodeDefinitionParts(body);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && cts.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(ReportReadTimeoutMessage(budget));
+            }
         }
 
         // POST analog of GetForResultAsync: 200/201 returns the body directly; a 202 is an LRO whose result lives at
         // operations/{id}/result (getDefinition follows this pattern). Returns the result JSON.
-        internal static async Task<string> PostForResultAsync(HttpClient http, string url, string jsonBody, CancellationToken ct)
+        internal static async Task<string> PostForResultAsync(HttpClient http, string url, string jsonBody, CancellationToken ct, PollBudget? budget = null)
         {
             var r = await SendAsync(http, HttpMethod.Post, url, jsonBody, ct).ConfigureAwait(false);
-            if (r.Status == 202) return await FetchResultAsync(http, r, ct).ConfigureAwait(false);
-            if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+            if (r.Status == 202) return await FetchResultAsync(http, r, ct, budget).ConfigureAwait(false);
+            if (!r.Ok) throw NonSuccessHttp(r);
             return r.Body;
         }
 
@@ -353,12 +379,14 @@ namespace Semanticus.Engine
             for (var page = 0; page < maxPages; page++)
             {
                 var r = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
-                if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+                if (!r.Ok) throw NonSuccessHttp(r);
                 responseBytes += r.BodyBytes;
                 if (responseBytes > maxResponseBytes)
                     throw new InvalidOperationException($"Fabric pagination exceeded the {FormatBytes(maxResponseBytes)} aggregate response limit; results are incomplete.");
                 var env = JsonSerializer.Deserialize<Envelope<T>>(r.Body, JsonOpts);
-                if (env?.Value != null) items.AddRange(env.Value);
+                if (env?.Value == null)
+                    throw new InvalidOperationException("Fabric REST returned a 200 object without a value array.");
+                items.AddRange(env.Value);
                 if (string.IsNullOrEmpty(env?.ContinuationToken)) break;
                 if (page == maxPages - 1)
                     throw new InvalidOperationException($"Fabric pagination exceeded the {maxPages}-page safety limit; results are incomplete.");
@@ -371,24 +399,70 @@ namespace Semanticus.Engine
             return items;
         }
 
+        // A short, wall-clock-bounded poll budget for INTERACTIVE reads (report getDefinition), distinct from the
+        // write/deploy lanes' 240-poll ceiling. The cadence is a fast RAMP (a sub-second first check so a ready op
+        // returns instantly, doubling up to MaxDelayMs) and MaxWallClock is the graceful deadline; the true hard stop
+        // is the caller's linked-CTS (see GetReportDefinitionAsync). Threaded as an optional TRAILING param down the
+        // read chain ONLY — null everywhere else keeps the write/deploy/git/data-agent behaviour byte-for-byte.
+        internal readonly record struct PollBudget(TimeSpan MaxWallClock, int InitialDelayMs, int MaxDelayMs)
+        {
+            internal static readonly PollBudget InteractiveRead = new(TimeSpan.FromSeconds(30), 250, 3000);
+        }
+
+        // Honest, jargon-free copy for an interactive report-read that ran out its budget (no em dash — this surfaces
+        // verbatim in the Lineage UI, unlike the internal "poll window" text the write lanes keep).
+        private static string ReportReadTimeoutMessage(PollBudget b)
+            => $"Fabric did not finish preparing this report's definition within {(int)b.MaxWallClock.TotalSeconds}s. "
+             + "This is usually capacity or queue latency, or a report saved in a legacy format that cannot be downloaded. Try again shortly.";
+
         // ---- long-running operation poller (testable) — for the Phase-3 write/deploy lanes ----
         // Pull the operation id out of a 202 response's x-ms-operation-id header, then poll to a terminal state.
-        internal static async Task<FabricOperationState> PollFrom202Async(HttpClient http, FabricResponse started, CancellationToken ct)
+        internal static async Task<FabricOperationState> PollFrom202Async(HttpClient http, FabricResponse started, CancellationToken ct, PollBudget? budget = null)
         {
             if (started.Status != 202) throw new InvalidOperationException($"Expected a 202 Accepted to start an operation; got {started.Status}.");
             if (string.IsNullOrEmpty(started.OperationId)) throw new InvalidOperationException("The 202 response carried no x-ms-operation-id header.");
-            return await PollOperationAsync(http, started.OperationId, ct, started.RetryAfter ?? 0).ConfigureAwait(false);
+            return await PollOperationAsync(http, started.OperationId, ct, started.RetryAfter ?? 0, budget: budget).ConfigureAwait(false);
         }
 
-        internal static async Task<FabricOperationState> PollOperationAsync(HttpClient http, string operationId, CancellationToken ct, int firstDelaySeconds = 0, int maxPolls = 240)
+        internal static async Task<FabricOperationState> PollOperationAsync(HttpClient http, string operationId, CancellationToken ct, int firstDelaySeconds = 0, int maxPolls = 240, PollBudget? budget = null)
         {
             var url = "operations/" + Uri.EscapeDataString(operationId);
+
+            // Interactive-read path: a human is waiting on "Analyse". Poll on a fast ramp bounded by a wall-clock
+            // DEADLINE, and fail fast + honest instead of draining the write-lane 240-poll ceiling. Only
+            // GetReportDefinitionAsync opts in; every write/deploy/git/data-agent caller passes no budget and runs the
+            // unchanged loop below. The server Retry-After is honoured but never allowed past the cap or the deadline.
+            if (budget is { } b)
+            {
+                var deadline = DateTime.UtcNow + b.MaxWallClock;
+                // Seed the first delay from the greater of the ramp start and the 202's Retry-After (seconds, clamped
+                // before the *1000 so it can't overflow), capped at MaxDelayMs — so we never poll faster than Fabric
+                // asked, while a missing Retry-After keeps the fast sub-second first check.
+                var delayMs = Math.Clamp(Math.Max(b.InitialDelayMs, Math.Min(Math.Max(firstDelaySeconds, 0), 600) * 1000), 0, b.MaxDelayMs);
+                while (true)
+                {
+                    if (delayMs > 0) await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                    var rr = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+                    if (!rr.Ok) throw NonSuccessHttp(rr);
+                    var state = ParseOperationState(rr.Body);
+                    if (state.Status is "Succeeded" or "Failed") return state;
+                    if (DateTime.UtcNow >= deadline)
+                        return new FabricOperationState { Status = "Running", ErrorMessage = ReportReadTimeoutMessage(b) };
+                    // Exponential ramp capped at MaxDelayMs; a server Retry-After can slow us but not exceed the cap.
+                    // Clamp Retry-After (seconds) before the *1000 so an absurd header value can't overflow the int.
+                    var nextMs = Math.Min(delayMs <= 0 ? b.InitialDelayMs : delayMs * 2, b.MaxDelayMs);
+                    if (rr.RetryAfter is int ra && ra > 0) nextMs = Math.Min(Math.Max(Math.Min(ra, 600) * 1000, nextMs), b.MaxDelayMs);
+                    var remainingMs = (int)Math.Max(0, (deadline - DateTime.UtcNow).TotalMilliseconds);
+                    delayMs = Math.Min(nextMs, remainingMs);
+                }
+            }
+
             var wait = Math.Max(0, Math.Min(firstDelaySeconds, 30));
             for (var i = 0; i < maxPolls; i++)
             {
                 if (wait > 0) await Task.Delay(TimeSpan.FromSeconds(wait), ct).ConfigureAwait(false);
                 var r = await SendAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
-                if (!r.Ok) throw new InvalidOperationException(ParseError(r.Body, r.Status));
+                if (!r.Ok) throw NonSuccessHttp(r);
                 var st = ParseOperationState(r.Body);
                 if (st.Status is "Succeeded" or "Failed") return st;   // terminal set per the MS sample; keep polling otherwise
                 wait = Math.Max(1, Math.Min(r.RetryAfter ?? 2, 30));   // honour Retry-After between polls, default 2s
@@ -407,6 +481,30 @@ namespace Semanticus.Engine
             public string DeploymentId; // deployment-id on a deploy 202 (the pipeline-history operation id)
             public int? RetryAfter;     // seconds
             public bool Ok => Status >= 200 && Status < 300;
+        }
+
+        // Non-success HTTP keeps its status on this inner type so a wrapper cannot erase it. The outer
+        // InvalidOperationException keeps every existing catch (Exception) / Message check working.
+        internal sealed class FabricHttpException : Exception
+        {
+            internal int Status { get; }
+            internal FabricHttpException(int status, string message) : base(message) => Status = status;
+        }
+
+        internal static InvalidOperationException NonSuccessHttp(int status, string body)
+        {
+            var msg = ParseError(body, status);
+            return new InvalidOperationException(msg, new FabricHttpException(status, msg));
+        }
+
+        internal static InvalidOperationException NonSuccessHttp(FabricResponse r)
+            => NonSuccessHttp(r.Status, r.Body);
+
+        internal static FabricHttpException FindHttp(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+                if (e is FabricHttpException f) return f;
+            return null;
         }
 
         internal static Task<FabricResponse> SendAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
@@ -540,8 +638,8 @@ namespace Semanticus.Engine
         private static string StatusHint(int status, string code) => status switch
         {
             401 => "  [Sign in again, or the token lacks the Fabric scope.]",
-            403 => "  [Authenticated, but you lack the role — deployment-pipeline reads need an Admin pipeline role (stages) and Contributor on the stage workspace (items). A service principal also needs the tenant's 'Service principals can use Fabric APIs' setting.]",
-            404 => "  [Not found — check the id.]",
+            403 => "  [Authenticated, but you lack the role: deployment-pipeline reads need an Admin pipeline role (stages) and Contributor on the stage workspace (items). A service principal also needs the tenant's 'Service principals can use Fabric APIs' setting.]",
+            404 => "  [Not found: check the id.]",
             _ => string.Empty,
         };
 

@@ -17,6 +17,42 @@ namespace Semanticus.Engine
         public bool Truncated { get; set; }
         public long ElapsedMs { get; set; }
         public string Error { get; set; }
+        /// <summary>The query text that produced this result, so a later editor change cannot be paired with the wrong number.</summary>
+        public string Query { get; set; }
+        /// <summary>True when the query was stopped before it finished. <see cref="Error"/> is <see cref="StoppedMessage"/>.</summary>
+        public bool Cancelled { get; set; }
+
+        public const string StoppedMessage = "The query was stopped.";
+
+        /// <summary>Plain announcement for both doors. A capped grid must never read as a complete count.</summary>
+        public static string RowAnnouncement(int rowCount, bool truncated)
+        {
+            if (rowCount == 1 && !truncated) return "1 row";
+            var rows = rowCount + (rowCount == 1 ? " row" : " rows");
+            return truncated ? rows + " shown. More rows exist." : rows;
+        }
+
+        public static ResultSet FromCancelled() => new ResultSet { Error = StoppedMessage, Cancelled = true };
+
+        /// <summary>Cut a result to maxRows and mark it capped. Also stamps <see cref="Query"/> when missing.</summary>
+        public static ResultSet ApplyCap(ResultSet source, int maxRows, string query = null)
+        {
+            if (source == null) return source;
+            if (string.IsNullOrEmpty(source.Query) && !string.IsNullOrEmpty(query)) source.Query = query;
+            if (source.Cancelled || !string.IsNullOrEmpty(source.Error)) return source;
+            var cap = maxRows <= 0 ? 10000 : maxRows;
+            var rows = source.Rows ?? Array.Empty<object[]>();
+            if (rows.Length > cap)
+            {
+                var kept = new object[cap][];
+                Array.Copy(rows, kept, cap);
+                source.Rows = kept;
+                source.RowCount = cap;
+                source.Truncated = true;
+            }
+            else if (source.RowCount <= 0) source.RowCount = rows.Length;
+            return source;
+        }
         /// <summary>True when <see cref="Error"/> is an agent-policy REFUSAL (the query was never executed), not a
         /// query failure. A structured marker set only at the GuardAgent folds, so downstream wrappers (the interview
         /// scorer) can pick the right recovery advice without sniffing message text — "get approval / ask a human"
@@ -30,9 +66,16 @@ namespace Semanticus.Engine
         /// tell "sign in" from "fix the DAX" without misreading a DAX ERROR("Unauthorized") as an auth failure.</summary>
         public bool AuthFailed { get; set; }
 
-        public static ResultSet FromError(string error) => new ResultSet { Error = error };
+        public static ResultSet FromError(string error) => new ResultSet { Error = DaxErrorText.Plain(error) };
         public static ResultSet FromRefusal(string reason, string approvalId = null) =>
             new ResultSet { Error = reason, PolicyRefused = true, ApprovalId = approvalId };
+    }
+
+    /// <summary>Stop a running live query. Both doors call the same engine method.</summary>
+    public sealed class CancelQueryResult
+    {
+        public bool Stopped { get; set; }
+        public string Message { get; set; }
     }
 
     public sealed class ConnectionStatus

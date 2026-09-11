@@ -218,8 +218,8 @@ namespace Semanticus.Engine
 
         private static string Hint(int status) => status switch
         {
-            404 => "  [Not found — check the package id / version (try daxlib_versions).]",
-            400 => "  [Bad request — 'take' must be 1..100.]",
+            404 => "  [Not found: check the package id / version (try daxlib_versions).]",
+            400 => "  [Bad request: 'take' must be 1..100.]",
             _ => string.Empty,
         };
 
@@ -234,7 +234,7 @@ namespace Semanticus.Engine
             using var ms = new MemoryStream(zipBytes);
             using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
             if (zip.Entries.Count > MaxZipEntries)
-                throw new InvalidOperationException($"DaxLib package has {zip.Entries.Count} entries (cap {MaxZipEntries}) — refusing to read.");
+                throw new InvalidOperationException($"DaxLib package has {zip.Entries.Count} entries (cap {MaxZipEntries}): refusing to read.");
             string Read(params string[] names)
             {
                 foreach (var n in names)
@@ -247,7 +247,7 @@ namespace Semanticus.Engine
             }
             var functions = Read("lib/functions.tmdl");
             if (string.IsNullOrWhiteSpace(functions))
-                throw new InvalidOperationException("The package has no lib/functions.tmdl — nothing to install.");
+                throw new InvalidOperationException("The package has no lib/functions.tmdl: nothing to install.");
             return new DaxLibContent
             {
                 ManifestJson = Read("manifest.daxlib"),
@@ -262,7 +262,7 @@ namespace Semanticus.Engine
         private static string ReadEntryCapped(ZipArchiveEntry e)
         {
             if (e.Length > MaxEntryBytes)   // honest fast-path reject (the streaming cap below catches a lying Length)
-                throw new InvalidOperationException($"DaxLib package entry '{e.FullName}' is {e.Length} bytes (cap {MaxEntryBytes}) — refusing to read.");
+                throw new InvalidOperationException($"DaxLib package entry '{e.FullName}' is {e.Length} bytes (cap {MaxEntryBytes}): refusing to read.");
             using var s = e.Open();
             using var buf = new MemoryStream();
             var chunk = new byte[81920];
@@ -272,7 +272,7 @@ namespace Semanticus.Engine
             {
                 total += read;
                 if (total > MaxEntryBytes)
-                    throw new InvalidOperationException($"DaxLib package entry '{e.FullName}' exceeds the {MaxEntryBytes} byte cap — refusing to read (possible decompression bomb).");
+                    throw new InvalidOperationException($"DaxLib package entry '{e.FullName}' exceeds the {MaxEntryBytes} byte cap: refusing to read (possible decompression bomb).");
                 buf.Write(chunk, 0, read);
             }
             return Encoding.UTF8.GetString(buf.ToArray());

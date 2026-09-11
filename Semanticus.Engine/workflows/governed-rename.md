@@ -47,8 +47,8 @@ premature apply cannot masquerade as a preview.
 ops: [add_plan_item, get_plan]
 inputs:
   - name: planItemId
-    question: "The proposed rename Change Plan item id returned by add_plan_item."
-    type: text
+    question: "Which staged rename should this step use? Pick one, or stage it now."
+    type: planItem
     required: required
 verify:
   - kind: plan_item_staged

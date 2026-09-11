@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A1 exit-gate 9 (spec §11.3): this package MUST have no runtime package dependency and no
+    reference to Microsoft, TOM, ANTLR, Tabular Editor, or Semanticus.Core. There are deliberately
+    ZERO <PackageReference> and ZERO <ProjectReference> elements here. It uses only the net8.0 BCL.
+    It is intentionally NOT added to Semanticus.sln (kernel work is isolated from the shipping build).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Semanticus.Dax</RootNamespace>
+    <AssemblyName>Semanticus.Dax</AssemblyName>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    Non-public test seams are visible only to the conformance tests and the fatal-depth child probe. This
+    is not a package dependency and adds no reference to an external assembly.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Semanticus.Dax.Tests" />
+    <InternalsVisibleTo Include="Semanticus.DaxDeepProbe" />
+  </ItemGroup>
+
+</Project>

@@ -62,6 +62,8 @@
       props: [
         P('Name', 'Name', 'Basic', 'string', 'LH Gold'),
         P('Description', 'Description', 'Basic', 'string', 'Curated semantic model over the governed gold layer.'),
+        P('CompatibilityLevel', 'Compatibility level', 'Basic', 'number', '1604',
+          { hint: 'Raising this cannot be undone. Older tools may no longer open the model.' }),
         P('Culture', 'Culture', 'Basic', 'string', 'en-AU'),
         P('DefaultPowerBIDataSourceVersion', 'Default Data Source Version', 'Options', 'enum', 'PowerBI_V3',
           { options: ['PowerBI_V1', 'PowerBI_V2', 'PowerBI_V3'] }),
@@ -94,7 +96,7 @@
       props: [
         P('Name', 'Name', 'Basic', 'string', 'Total Sales'),
         P('Description', 'Description', 'Basic', 'string',
-          'Sum of SalesAmount across all rows. The base sales KPI; reused by the time-intelligence measures.'),
+          'Sum of SalesAmount across all rows. The base sales KPI; reused by the time-intelligence measures.\nUsed by YTD, QTD and prior-year measures.\nKeep this short: a long note must scroll inside the box, not push Format String down.'),
         P('DisplayFolder', 'Display Folder', 'Basic', 'string', 'Sales\\KPIs', { suggestions: FOLDERS }),
         P('IsHidden', 'Is Hidden', 'Basic', 'bool', 'False'),
         P('FormatString', 'Format String', 'Formatting', 'string', '\\$#,##0.00;(\\$#,##0.00);"—"'),
@@ -119,8 +121,9 @@
         P('Description', 'Description', 'Basic', 'string', 'Net sale amount per order line.'),
         P('DisplayFolder', 'Display Folder', 'Basic', 'string', '', { suggestions: FOLDERS }),
         P('IsHidden', 'Is Hidden', 'Basic', 'bool', 'False'),
+        P('SortByColumn', 'Sort by column', 'Basic', 'enum', '(none)', { options: ['(none)', 'Product', 'Order Date'] }),
         P('FormatString', 'Format String', 'Formatting', 'string', '#,##0.00'),
-        P('SummarizeBy', 'Summarize By', 'Options', 'enum', 'Sum', { options: ['Default', 'None', 'Sum', 'Min', 'Max', 'Count', 'Average', 'DistinctCount'] }),
+        P('SummarizeBy', 'Default summarization', 'Options', 'enum', 'Sum', { options: ['Default', 'None', 'Sum', 'Min', 'Max', 'Count', 'Average', 'DistinctCount'] }),
       ],
     };
 

@@ -571,5 +571,46 @@ Do the thing for {{surfaceName}}.
             }
             finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
         }
+
+        [Fact]
+        public async Task Rule_set_on_with_a_false_condition_hides_the_workflow_on_both_doors()
+        {
+            // D-236. "set: on" reads as SHOWN WHEN THE CONDITION HOLDS (that is the label the engine itself
+            // broadcasts), so a condition that cannot hold must leave the workflow hidden. Before the fix the
+            // unmatched rule was skipped outright and the lookup fell through to default-on, so the workflow
+            // stayed offered while the rule that was supposed to gate it read as satisfied to no one.
+            // date.dayOfMonth is 1..31, so ">= 32" can never hold.
+            var ws = NewWorkspace();
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                using (engine)
+                {
+                    await engine.SetWorkflowActivationAsync("act-vehicle", "date.dayOfMonth >= 32", "on", "agent");
+
+                    var mcp = Find(await McpTools.ListWorkflows(engine), "act-vehicle");
+                    Assert.False(mcp.Active);
+                    Assert.False(string.IsNullOrWhiteSpace(mcp.ActiveReason));
+                    Assert.DoesNotContain("dayOfMonth", mcp.ActiveReason);   // plain reason, never a predicate echo
+
+                    // The RPC door answers from the same session, so it must agree.
+                    var rpc = Find(await new EngineRpcTarget(engine).listWorkflows(), "act-vehicle");
+                    Assert.False(rpc.Active);
+                    Assert.Equal(mcp.Active, rpc.Active);
+
+                    // The gate opens when the condition does hold, and re-closes when it cannot.
+                    await engine.SetWorkflowActivationAsync("act-vehicle", "date.dayOfMonth >= 1", "on", "agent");
+                    Assert.True(Find(await McpTools.ListWorkflows(engine), "act-vehicle").Active);
+                    await engine.SetWorkflowActivationAsync("act-vehicle", "date.dayOfMonth >= 32", "on", "agent");
+                    Assert.False(Find(await McpTools.ListWorkflows(engine), "act-vehicle").Active);
+
+                    // An off-gate whose condition does not hold still leaves the workflow's normal (on) state.
+                    await engine.SetWorkflowActivationAsync("act-vehicle", "date.dayOfMonth >= 32", "off", "agent");
+                    Assert.True(Find(await McpTools.ListWorkflows(engine), "act-vehicle").Active);
+                }
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
     }
 }

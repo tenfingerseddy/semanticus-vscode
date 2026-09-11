@@ -40,6 +40,8 @@ export interface ContextBusyOwnerGate<T extends object> {
   release(candidate: ContextBusyOwner<T> | null | undefined): boolean;
 }
 
+export function reconcileTableSelection(selected: string | null | undefined, tableNames: string[] | null | undefined): string;
+export function policyFetchAllowed(selected: string | null | undefined, tableNames: string[] | null | undefined): boolean;
 export function mContextToken(table: string | null | undefined, query: string | null | undefined, revision: number): string;
 export function isMContextCurrent(captured: string, current: string): boolean;
 export function pollingExpressionForSave(value: string | null | undefined): string | null;

@@ -348,8 +348,9 @@ namespace Semanticus.Tests
             using (engine)
             {
                 // A committed deploy into a RED gate with no reason is PAUSED (not a hard wall — a reason unblocks it).
+                var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db");
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                    engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: null));
+                    engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: null, confirmToken: token));
                 Assert.Contains("blocked by the deploy gate", ex.Message);
                 Assert.Empty((await engine.ListVerifiedEditsAsync()).Records);   // paused before anything shipped ⇒ no record
             }
@@ -366,8 +367,9 @@ namespace Semanticus.Tests
                 Exception caught = null;
                 try
                 {
+                    var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db");
                     await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human",
-                        overrideReason: "ship it — demo");
+                        overrideReason: "ship it — demo", confirmToken: token);
                 }
                 catch (Exception ex) { caught = ex; }
 
@@ -385,7 +387,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Green_gate_needs_no_reason()
         {
-            // A cheap PASSING gate: the same fresh 2-measure model with descriptions added ⇒ 0% undescribed, 0 BPA ⇒
+            // A cheap PASSING gate: the same fresh 2-measure model with descriptions, format strings and a date table ⇒
             // the gate passes. (Making the AdventureWorks fixture green is impractical — 138 blocking BPA errors — so
             // the checkpoint's green path is exercised on a purpose-built model instead.)
             var sm = new SessionManager();
@@ -395,16 +397,27 @@ namespace Semanticus.Tests
                 await engine.CreateModelAsync("GateTest", 1567);
                 var t = await engine.CreateTableAsync("Facts", "human");
                 var m1 = await engine.CreateMeasureAsync(t, "Sales Amount", "1", "human");
-                var m2 = await engine.CreateMeasureAsync(t, "Total Cost", "1", "human");
+                var m2 = await engine.CreateMeasureAsync(t, "Total Cost", "2", "human");   // distinct DAX: identical bodies are AVOID_DUPLICATE_MEASURES (sev 2, no auto-fix)
                 await engine.SetDescriptionAsync(m1, "The total sales amount in reporting currency.", "human");
                 await engine.SetDescriptionAsync(m2, "The total cost of goods sold in reporting currency.", "human");
+                // The Microsoft BPA corpus blocks on three more severity>=2 no-auto-fix rules a bare 2-measure model
+                // trips: PROVIDE_FORMAT_STRING_FOR_MEASURES, AVOID_DUPLICATE_MEASURES and MODEL_SHOULD_HAVE_A_DATE_TABLE.
+                // Give the model what each rule actually asks for rather than softening the gate.
+                await engine.SetMeasureFormatAsync(m1, "#,0", "human");
+                await engine.SetMeasureFormatAsync(m2, "#,0", "human");
+                var dt = await engine.CreateTableAsync("Date", "human");
+                var dkey = await engine.CreateColumnAsync(dt, "Date", "DateTime", "Date", "human");
+                await engine.SetObjectPropertyAsync(dkey, "IsKey", "true", "human");
+                await engine.SetObjectPropertyAsync(dkey, "FormatString", "yyyy-mm-dd", "human");
+                await engine.MarkDateTableAsync(dt, "Date", "human");   // DataCategory = "Time"
 
                 // Commit with NO reason: the gate is GREEN so the checkpoint waves it through — the call then fails on
                 // the (refused) localhost connection, NOT on the gate, and no override record is written.
                 Exception caught = null;
                 try
                 {
-                    await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: null);
+                    var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db");
+                    await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: null, confirmToken: token);
                 }
                 catch (Exception ex) { caught = ex; }
 
@@ -617,7 +630,7 @@ namespace Semanticus.Tests
             {
                 // One record carrying BOTH a Summary and an OverrideReason (adjacent hash fields) — the deploy override
                 // is the cheapest way to produce it offline (localhost:59999 fails AFTER the record is written).
-                try { await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "same value approved by finance"); }
+                try { var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db"); await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "same value approved by finance", confirmToken: token); }
                 catch { /* the refused connection is expected — the record was already written pre-push */ }
 
                 // Shift the boundary: steal the reason's first word onto the end of Summary (\n-joined) and drop it from
@@ -648,7 +661,7 @@ namespace Semanticus.Tests
             var (engine, _, _, _) = await OpenRedGateModelAsync();
             using (engine)
             {
-                try { await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "ship it — demo"); }
+                try { var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db"); await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "ship it — demo", confirmToken: token); }
                 catch { /* refused connection after the checkpoint — the override record is already written */ }
 
                 var rec = (await engine.ListVerifiedEditsAsync()).Records.Single(r => r.Op == "deploy_live");
@@ -683,7 +696,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 // A reason engineered to look like a fake "record 99" heading if rendered verbatim on its own line.
-                try { await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "ship it\n## 99. fake — proven\n"); }
+                try { var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db"); await engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: "ship it\n## 99. fake — proven\n", confirmToken: token); }
                 catch { /* connection refused after the checkpoint — the override record is written */ }
 
                 var md = await engine.ExportVerifiedEditsAsync("md");

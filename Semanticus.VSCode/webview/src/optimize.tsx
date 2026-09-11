@@ -48,7 +48,11 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
   async function load() { try { setPlan(await rpc<ChangePlanView>('getPlan')); setErr(null); } catch (e) { setErr(String((e as Error).message ?? e)); } }
   useEffect(() => {
     void load();
-    const off = onPlanChange((v) => setPlan(v as ChangePlanView));
+    const off = onPlanChange((v) => {
+      const next = v as ChangePlanView;
+      setPlan(next);
+      if ((next.summary?.applied ?? 0) === 0) setReport(null);
+    });
     return off;
   }, []);
 
@@ -80,7 +84,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
     try { const r = await rpc<ApplyPlanReport>('applyPlan', ids, 'human'); setReport(r); await load(); }
     catch (e) {
       // A free click on a bulk apply gets the plain invitation, not a raw exception in a red banner.
-      if (isEntitlementError(e)) setUpsell('Applying changes one at a time is free. Pro applies the whole approved set in one undoable transaction and re-checks your score.');
+      if (isEntitlementError(e)) setUpsell('Apply one change at a time with Apply on each row. Pro applies the whole approved set in one undoable step and re-checks your score.');
       else setErr(String((e as Error).message ?? e));
     } finally { setBusy(false); }
   }
@@ -145,8 +149,8 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
             <Button primary disabled={busy !== false} onClick={analyse}>{busy === 'analyse' ? 'Analysing…' : hasPlan ? 'Re-analyse' : 'Analyse model'}</Button>
             {hasPlan && <Button disabled={busy !== false || (s?.approved ?? 0) === 0} onClick={() => apply(null, 'apply')}
               title={tier === 'free' && (s?.approved ?? 0) > 1
-                ? 'Pro applies the whole approved set in one undoable transaction. Applying one change at a time stays free.'
-                : 'Apply every approved change as one undoable transaction.'}>
+                ? 'Pro applies the whole approved set in one undoable step. Apply one change at a time with Apply on each row.'
+                : 'Apply every approved change as one undoable step.'}>
               {busy === 'apply' ? 'Applying…' : `Apply approved (${s?.approved ?? 0})`}
               <ProBadge show={tier === 'free' && (s?.approved ?? 0) > 1} />
             </Button>}
@@ -226,6 +230,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
                     onSave={() => { const v = (drafts[it.id] ?? '').trim(); if (v) void setItem(it.id, v, null); }}
                     onReject={() => setItem(it.id, null, false)}
                     onCopy={() => copyForClaude(it)}
+                    onApply={() => void apply([it.id], 'apply')}
                   />
                 ))}
               </div>
@@ -237,11 +242,11 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
   );
 }
 
-function Row({ it, draft, onDraft, onToggle, onSave, onReject, onCopy }: {
+function Row({ it, draft, onDraft, onToggle, onSave, onReject, onCopy, onApply }: {
   it: ChangeItem; draft: string; onDraft: (v: string) => void;
-  onToggle: () => void; onSave: () => void; onReject: () => void; onCopy: () => void;
+  onToggle: () => void; onSave: () => void; onReject: () => void; onCopy: () => void; onApply: () => void;
 }) {
-  const risk = RISK[it.risk] ?? RISK.safe;
+  const risk = it.source === 'ai' ? RISK.ai : (RISK[it.risk] ?? RISK.safe);
   const st = STATUS[it.status] ?? { label: uiLabel(it.status), color: 'var(--sem-muted)' };
   const approved = it.status === 'approved';
   const done = it.status === 'applied';
@@ -287,6 +292,9 @@ function Row({ it, draft, onDraft, onToggle, onSave, onReject, onCopy }: {
         )}
       </div>
 
+      {approved && !done && (
+        <MiniButton onClick={onApply}>Apply</MiniButton>
+      )}
       {!done && !needsContent && it.status !== 'rejected' && (
         <button onClick={onReject} title="Reject (exclude from apply)" className="shrink-0 mt-0.5 text-[11px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)' }}>✕</button>
       )}

@@ -42,7 +42,10 @@ namespace Semanticus.Tests
             var after = await engine.ExportTestReportAsync();
             Assert.Contains("signable test report is Pro", after.Note);
             Assert.Null(after.Error);
-            Assert.Null(after.Markdown);
+            Assert.False(string.IsNullOrWhiteSpace(after.Markdown));
+            Assert.False(string.IsNullOrWhiteSpace(after.Html));
+            Assert.True(string.IsNullOrWhiteSpace(after.Json));
+            Assert.True(string.IsNullOrWhiteSpace(after.ContentHash));
         }
 
         [Fact]

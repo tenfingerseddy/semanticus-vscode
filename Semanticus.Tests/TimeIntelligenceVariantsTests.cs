@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Threading.Tasks;
 using Semanticus.Engine;
 using Xunit;
 
@@ -271,5 +273,24 @@ namespace Semanticus.Tests
             new TiClassification { Kind = kind, BaseMeasure = baseMeasure, DateColumnRef = "'Date'[Date]" };
 
         private static DateTime D(int year, int month, int day) => new DateTime(year, month, day);
+
+        // D-058: the palette Generate Time-Intelligence command must reach the same engine path as the tree menu.
+        [Fact]
+        public async Task Generate_time_intelligence_creates_ytd_on_the_selected_measure()
+        {
+            using var engine = new LocalEngine(new SessionManager());
+            await engine.CreateModelAsync("TiGen", 1604);
+            var t = await engine.CreateTableAsync("Sales", "agent");
+            await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "agent");
+            await engine.CreateTableAsync("Date", "agent");
+            await engine.CreateColumnAsync("table:Date", "Date", "DateTime", "Date", "agent");
+            await engine.CreateMeasureAsync(t, "Total Amount", "SUM ( Sales[Amount] )", "agent");
+
+            var r = await engine.GenerateTimeIntelligenceAsync("measure:Sales/Total Amount", "column:Date/Date", null, null, "agent");
+            Assert.Contains(r.Created, c => c.Name == "Total Amount YTD");
+            var names = (await engine.ListMeasuresAsync()).Select(m => m.Name).ToArray();
+            Assert.Contains("Total Amount YTD", names);
+            Assert.Contains("Total Amount PY", names);
+        }
     }
 }

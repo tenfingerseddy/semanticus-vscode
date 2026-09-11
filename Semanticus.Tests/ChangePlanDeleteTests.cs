@@ -32,6 +32,7 @@ namespace Semanticus.Tests
             Assert.Equal("proposed", item.Status);
             Assert.Equal("structural", item.Risk);
             Assert.Equal("Structure", item.Category);
+            Assert.Equal("deterministic", item.Source);
 
             var refused = await engine.ApplyPlanAsync(new[] { item.Id }, "human");
             Assert.Equal(0, refused.AppliedCount);
@@ -44,6 +45,7 @@ namespace Semanticus.Tests
 
             await engine.UndoAsync("human");
             Assert.Contains((await engine.ListMeasuresAsync()), m => m.Ref == target.Ref);
+            Assert.Equal("approved", (await engine.GetPlanAsync()).Items.Single(i => i.Id == item.Id).Status);
         }
 
         [Fact]

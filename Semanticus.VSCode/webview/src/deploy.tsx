@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { rpc, onDidChange, onActivity } from './bridge';
 import { CompareView, type CompareSeed, type ModelDiff } from './compare';
 import { useConnection } from './connection';
+import { openConnectionsOnView } from './connectionshub';
 import { compareSeedFromSession } from './contextbar';
 import { uiLabel } from './copy';
+import {
+  checkingCopy, deployHeaderState, fabricGitWorkspaceMessage, nothingToPublishCopy, previewFailedCopy,
+  publishAccountLine, publishButtonLabel,
+} from './publishcopy';
 
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased). The semantic model diff (ModelDiff) +
 // its drill-down render via the shared <CompareGrid> — the Deploy Source-Control panel is a preset of the
@@ -11,7 +16,7 @@ import { uiLabel } from './copy';
 interface GitFileChange { path: string; status: string; staged: boolean; worktree: boolean; }
 interface GitStatus { isRepo: boolean; repoRoot?: string; workingDir?: string; branch?: string; detached?: boolean; upstream?: string; ahead: number; behind: number; files: GitFileChange[]; modelDirty: boolean; note?: string; }
 interface InterviewAdvisory { questions: number; replayed: number; right: number; wrong: number; unverified: number; notReplayable: number; changes?: { question: string; before?: string; after: string }[]; note?: string; }
-interface DeployGate { pass: boolean; grade?: string; bpaViolations: number; bpaBlocking: number; blockers: string[]; changes: number; interview?: InterviewAdvisory | null; note?: string; }
+interface DeployGate { pass: boolean; grade?: string; bpaViolations: number; bpaBlocking: number; blockers: string[]; olderWarnings?: number; checkLine?: string; changes: number; interview?: InterviewAdvisory | null; note?: string; }
 interface GitCommitResult { committed: boolean; hash?: string; error?: string; note?: string; savedModelFirst?: boolean; }
 interface GitActionResult { ok: boolean; output?: string; error?: string; modelReloadNeeded?: boolean; }
 interface ConnectionRecord { id: string; kind: string; endpoint: string; database: string; modelName: string; label?: string | null; }
@@ -29,16 +34,22 @@ interface FabricGitResult { committed: boolean; action?: string; direction?: str
 interface CicdFile { path: string; content: string; }
 interface CicdScaffold { files: CicdFile[]; written: boolean; writtenPaths: string[]; skippedPaths: string[]; note?: string; error?: string; }
 interface CicdPublishResult { committed: boolean; action?: string; workspaceId?: string; itemId?: string; modelPath?: string; partCount: number; sampleParts: string[]; status?: string; plan?: string; error?: string; }
+interface LivePublishReport {
+  committed: boolean; endpoint?: string; database?: string; totalChanges: number;
+  changes?: string[]; added?: number; liveOnly?: string[]; unmatched?: string[]; conflicts?: string[];
+  matchNote?: string; error?: string; confirmToken?: string;
+}
 
 type DeployMode = 'push' | 'rollback' | 'promote' | 'advanced';
 type AdvancedView = 'delivery' | 'dataagent';
 
 // One release decision surface: review and push the working copy, restore a guarded snapshot, promote between stages,
 // or open the less-common delivery and Data Agent tools. The same engine operations remain available to both doors.
-export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvanced = 'delivery', restoreTarget, onRestoreConsumed }: {
+export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvanced = 'delivery', restoreTarget, onRestoreConsumed, publishNonce = 0 }: {
   seed?: CompareSeed | null; dataAgent?: ReactNode; initialMode?: DeployMode; initialAdvanced?: AdvancedView;
   restoreTarget?: { id: string; endpoint: string; database: string; nonce: number } | null;
   onRestoreConsumed?: () => void;
+  publishNonce?: number;
 }) {
   const { session, conn, context, openConnections } = useConnection();
   const [mode, setMode] = useState<DeployMode>(initialMode);
@@ -95,6 +106,17 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const timer = useRef<number | undefined>(undefined);
   // Editing the workspace id invalidates a loaded preview — clear it so the gated buttons hide until Status reloads.
   const fgEditWs = (v: string) => { setFgWs(v); setFgStatus(null); setFgConn(null); setFgResult(null); setFgErr(null); setFgPending(null); };
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [selective, setSelective] = useState(false);
+  const [preview, setPreview] = useState<LivePublishReport | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishOverride, setPublishOverride] = useState('');
+  const [publishNeedReason, setPublishNeedReason] = useState(false);
+  const [publishGate, setPublishGate] = useState<DeployGate | null>(null);
+  const [publishResult, setPublishResult] = useState<string | null>(null);
+  const [deleteRefs, setDeleteRefs] = useState<string[]>([]);
 
   // Default the promote source→target to the last hop (e.g. Test→Prod) whenever the selected pipeline's stages load.
   useEffect(() => {
@@ -125,6 +147,55 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     return () => { offC(); offA(); window.clearTimeout(timer.current); };
   }, []);
   useEffect(() => { if (seed) setMode('push'); }, [seed?.nonce]);
+  async function loadPreview(ticked: string[] = []) {
+    setPreview(null);
+    setPreviewBusy(true); setPreviewErr(null); setPublishNeedReason(false); setPublishGate(null);
+    try {
+      const dry = await rpc<LivePublishReport>('deployLive', null, null, null, null, null, false, 'human', null, null, ticked);
+      let g: DeployGate | null = null;
+      try { g = await rpc<DeployGate>('deployGate', null); } catch { g = null; }
+      if (g) {
+        setPublishGate(g);
+        if (!g.pass) setPublishNeedReason(true);
+      }
+      if (dry.error) { setPreviewErr(dry.error); setPreview(null); }
+      else setPreview(dry);
+    } catch (e) { setPreviewErr(String((e as Error).message ?? e)); setPreview(null); }
+    finally { setPreviewBusy(false); }
+  }
+  function openPublish() {
+    setMode('push'); setPublishOpen(true); setSelective(false); setPublishResult(null); setDeleteRefs([]);
+    void loadPreview([]);
+  }
+  function toggleDelete(ref: string) {
+    const next = deleteRefs.includes(ref) ? deleteRefs.filter((r) => r !== ref) : [...deleteRefs, ref];
+    setDeleteRefs(next);
+    void loadPreview(next);
+  }
+  async function confirmPublish(reason?: string) {
+    if (!preview?.confirmToken) return;
+    setPublishBusy(true); setPreviewErr(null);
+    try {
+      const res = await rpc<LivePublishReport>('deployLive', null, null, null, null, null, true, 'human', reason?.trim() || null, preview.confirmToken, deleteRefs);
+      if (res.error) { setPreviewErr(res.error); return; }
+      if (res.committed) {
+        const dest = res.database || targetName;
+        const n = res.totalChanges ?? 0;
+        setPublishResult(`Published ${n} change${n === 1 ? '' : 's'} to ${dest}.`);
+        setPublishOpen(false); setPreview(null); setPublishNeedReason(false); setPublishOverride(''); setDeleteRefs([]);
+        await loadRestorePoints();   // the push just wrote a restore point — the header + snapshot counts must follow it now
+      } else setPreviewErr(res.error || 'Publish made no changes.');
+    } catch (e) {
+      const emsg = String((e as Error).message ?? e);
+      if (emsg.includes('blocked by the deploy gate')) { setPreviewErr(emsg); setPublishNeedReason(true); }
+      else setPreviewErr(emsg);
+    } finally { setPublishBusy(false); }
+  }
+  useEffect(() => {
+    if (!publishNonce) return;
+    openPublish();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishNonce]);
 
   async function loadRestorePoints() {
     setRestoreBusy('load'); setRestoreErr(null);
@@ -169,7 +240,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     if (r.error) setErr(r.error); else setMsg('');
   });
   const push = () => run('push', async () => { const r = await rpc<GitActionResult>('gitPush', null, null, true, 'human'); if (!r.ok) setErr(r.error || r.output || 'push failed'); });
-  const pull = () => run('pull', async () => { const r = await rpc<GitActionResult>('gitPull', 'human'); if (!r.ok) setErr(r.error || 'pull failed'); });
+  const pull = () => run('pull', async () => { const r = await rpc<GitActionResult>('gitPull', 'human'); if (!r.ok) setErr(r.error || 'pull failed'); else if (r.modelReloadNeeded) setErr('The files on disk changed. Reload the model to match the files.'); });
   const checkGate = () => run('gate', async () => setGate(await rpc<DeployGate>('deployGate', null)));
 
   async function loadPipelines() {
@@ -211,6 +282,8 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   // (the engine no longer throws across the door), so we surface that in the panel-local fgErr.
   const fgLoad = () => run('fgload', async () => {
     setFgErr(null); setFgResult(null); setFgPending(null); setFgStatus(null); setFgConn(null);
+    const missing = fabricGitWorkspaceMessage(fgWs);
+    if (missing) { setFgErr(missing); return; }
     const ws = fgWs.trim();
     const conn = await rpc<FabricGitConnection>('fabricGitConnection', ws, 'azcli');
     const st = await rpc<FabricGitStatus>('fabricGitStatus', ws, 'azcli');
@@ -307,10 +380,22 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     && (!visibleDatabase || !c.database || norm(c.database) === norm(visibleDatabase)));
   const targetName = target?.modelName || target?.database || visibleDatabase || (visibleEndpoint ? visibleEndpoint.slice(visibleEndpoint.lastIndexOf('/') + 1) : 'No live target');
   const targetLabel = target?.label || (endpoint ? 'treated as production' : null);
-  const changeCount = diff ? diff.created + diff.updated + diff.deleted : null;
-  const changeText = changeCount == null ? (dirty ? 'working-copy changes not counted' : 'working-copy state loading') : `${changeCount} working-copy change${changeCount === 1 ? '' : 's'}`;
-  const driftText = endpoint ? 'not checked' : 'not connected';
   const lastRestore = restorePoints[0]?.capturedUtc ? relativeTime(restorePoints[0].capturedUtc) : 'none';
+  const liveBound = !!session?.liveBound;
+  // A local working copy is not live-bound (the engine keeps LiveOrigin null for it by the open_live/open_local
+  // write-authority pin), but it can still publish when a destination resolves from the connection registry
+  // (PublishConnectionId). Gate Publish on the resolved destination, not on liveBound alone (D-178 / D-226).
+  const canPublish = liveBound || !!(context?.publishing?.available);
+  const header = deployHeaderState({
+    loading: previewBusy && publishOpen && !preview && !previewErr,
+    liveBound: canPublish,
+    modelName: session?.modelName || 'the open model',
+    targetName,
+    changeCount: preview ? preview.totalChanges : null,
+    previewError: previewErr,
+    lastRestore,
+  });
+  const account = context?.publishing?.account || session?.currentAccount;
 
   return (
     <div className="h-full overflow-auto" style={{ color: 'var(--sem-fg)' }}>
@@ -319,28 +404,39 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-[16px] font-semibold m-0">Deploy</h2>
             {targetLabel && <Badge color={target?.label ? 'var(--sem-muted)' : 'var(--sem-warn)'}>{targetLabel}</Badge>}
+            <button type="button" data-testid="publish-button" onClick={openPublish} disabled={!canPublish || previewBusy || publishBusy}
+              title={canPublish ? 'Review changes, then publish to the live model' : 'Open a live model to publish'}
+              className="ml-auto px-3 py-1.5 rounded-md text-[12px] font-semibold disabled:opacity-50"
+              style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: '1px solid var(--sem-accent)' }}>Publish</button>
           </div>
-          <div className="text-[13px] mt-1" style={{ color: 'var(--sem-fg)' }}>
-            Editing <b>{session?.modelName || 'the open model'}</b> · target <b>{targetName}</b> · {changeText} · drift: {driftText} · last restore point: {lastRestore}
-          </div>
+          <div className="text-[13px] mt-1" data-testid="deploy-header" style={{ color: 'var(--sem-fg)' }}>{header.line}</div>
           <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            Unknown state stays explicit. Review is read-only until Validate selection, and every write still needs a separate confirmation.
-            <button type="button" onClick={openConnections} className="underline ml-1">Change publish destination</button>
+            Ctrl+S saves what is in front of you. It never publishes.
+            <button type="button" onClick={() => { openConnectionsOnView('setup'); openConnections(); }} className="underline ml-1">Change publish destination</button>
           </div>
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <ModeBtn active={mode === 'push'} onClick={() => setMode('push')}>Push changes</ModeBtn>
+            <ModeBtn active={mode === 'push'} onClick={() => { setMode('push'); setSelective(false); }}>Publish</ModeBtn>
             <ModeBtn active={mode === 'rollback'} onClick={() => setMode('rollback')}>Roll back</ModeBtn>
             <ModeBtn active={mode === 'promote'} onClick={() => setMode('promote')}>Promote</ModeBtn>
             <ModeBtn active={mode === 'advanced'} onClick={() => setMode('advanced')}>Advanced</ModeBtn>
+            {mode === 'push' && <button type="button" className="ml-auto text-[12px] underline" style={{ color: 'var(--sem-muted)', background: 'none', border: 0 }}
+              onClick={() => { setSelective(true); setPublishOpen(false); }}>Choose what to publish</button>}
           </div>
         </div>
-        {mode === 'push' && <CompareView seed={reviewSeed} embedded />}
+        {publishResult && <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-good) 12%, transparent)', color: 'var(--sem-good)', border: '1px solid var(--sem-border)' }}>{publishResult}</div>}
+        {mode === 'push' && publishOpen && <PublishConfirm preview={preview} busy={previewBusy || publishBusy} error={previewErr}
+          targetName={targetName} endpoint={endpoint || ''} account={account} needReason={publishNeedReason} reason={publishOverride}
+          gate={publishGate} deleteRefs={deleteRefs} onToggleDelete={toggleDelete}
+          onReason={setPublishOverride} onConfirm={() => void confirmPublish(publishNeedReason ? publishOverride : undefined)}
+          onCancel={() => { setPublishOpen(false); setPublishNeedReason(false); setDeleteRefs([]); }} />}
+        {mode === 'push' && !publishOpen && !selective && <div className="text-[12px] px-1" style={{ color: 'var(--sem-muted)' }}>Press Publish to review the changes that will go live.</div>}
+        {mode === 'push' && selective && <CompareView key={session?.sessionId ?? 'none'} seed={reviewSeed} embedded />}
         {mode === 'rollback' && <RollbackPanel points={restorePoints} selectedId={restoreId}
           onSelect={(id) => { setRestoreId(id); setRestorePreview(null); setRestoreResult(null); setRestoreErr(null); }}
           preview={restorePreview} result={restoreResult} error={restoreErr} busy={restoreBusy}
           onPreview={previewRollback} onConfirm={confirmRollback} onReload={loadRestorePoints} />}
         {mode === 'advanced' && <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-          <div className="text-[11px] mb-2" style={{ color: 'var(--sem-muted)' }}>Less-common release and consumption tools stay available without competing with Push, Roll back or Promote.</div>
+          <div className="text-[11px] mb-2" style={{ color: 'var(--sem-muted)' }}>Less-common release and consumption tools stay available without competing with Publish, Roll back or Promote.</div>
           <div className="flex items-center gap-2 flex-wrap">
             <ModeBtn active={advancedView === 'delivery'} onClick={() => setAdvancedView('delivery')}>Delivery tools</ModeBtn>
             <ModeBtn active={advancedView === 'dataagent'} onClick={() => setAdvancedView('dataagent')}>Data Agent</ModeBtn>
@@ -371,7 +467,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
 
             {gate && (
               <div className="mb-2 text-[12px] rounded px-3 py-1.5" style={{ background: 'color-mix(in srgb,var(--sem-' + (gate.pass ? 'good' : 'bad') + ') 12%, transparent)' }}>
-                gate {gate.pass ? '✓ pass' : '✗ blocked'} · readiness {gate.grade} · BPA {gate.bpaViolations} ({gate.bpaBlocking} blocking){gate.blockers?.length ? ' · ' + gate.blockers.join(', ') : ''}
+                {gate.checkLine || ((gate.pass ? 'Checks on this change: nothing to fix.' : 'Checks on this change: ' + (gate.blockers || []).join(' ')) + (gate.olderWarnings ? ' The model has ' + gate.olderWarnings + ' older warning' + (gate.olderWarnings === 1 ? '' : 's') + ' this change did not cause. See them on AI Readiness.' : ''))}
               </div>
             )}
             {/* Interview advisory (present only when the model has a saved question pack). Informational by
@@ -481,7 +577,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <input value={fgWs} onChange={(e) => fgEditWs(e.target.value)} placeholder="workspace id"
             style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 250 }} />
-          <Btn onClick={fgLoad} busy={busy === 'fgload'} disabled={!fgWs.trim()}>Status</Btn>
+          <Btn onClick={fgLoad} busy={busy === 'fgload'}>Status</Btn>
         </div>
         {fgErr && <div className="text-[12px] mb-1 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{fgErr}</div>}
         {fgConn && (
@@ -607,6 +703,85 @@ function relativeTime(utc: string): string {
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60); if (hours < 48) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+function shortLiveOnlyName(ref: string): string {
+  const cut = ref.indexOf(' (live-only');
+  const r = cut >= 0 ? ref.slice(0, cut) : ref;
+  const colon = r.indexOf(':');
+  const rest = colon >= 0 ? r.slice(colon + 1) : r;
+  const slash = rest.lastIndexOf('/');
+  return slash >= 0 ? rest.slice(slash + 1) : rest;
+}
+function PublishConfirm({ preview, busy, error, targetName, endpoint, account, needReason, reason, onReason, onConfirm, onCancel, gate, deleteRefs, onToggleDelete }: {
+  preview: LivePublishReport | null; busy: boolean; error: string | null; targetName: string; endpoint: string;
+  account?: string | null; needReason: boolean; reason: string; onReason: (v: string) => void;
+  onConfirm: () => void; onCancel: () => void; gate?: DeployGate | null;
+  deleteRefs: string[]; onToggleDelete: (ref: string) => void;
+}) {
+  const dest = targetName || preview?.database || 'the live model';
+  const changes = preview?.changes ?? [];
+  const shown = changes.slice(0, 12);
+  const more = Math.max(0, (preview?.totalChanges ?? 0) - shown.length);
+  const liveOnly = preview?.liveOnly ?? [];
+  const count = preview?.totalChanges ?? 0;
+  const empty = !!preview && count === 0 && deleteRefs.length === 0;
+  const what = error && !preview ? previewFailedCopy(dest, error)
+    : busy && !preview ? checkingCopy(dest)
+    : count === 0 ? nothingToPublishCopy(dest, liveOnly)
+    : null;
+  return (
+    <div className="rounded-lg overflow-hidden" data-testid="publish-confirm" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
+      <div className="flex items-baseline gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--sem-border)' }}>
+        <h3 className="text-[14px] font-semibold m-0">Publish to {dest}</h3>
+        <span className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Nothing is written until you press the button.</span>
+      </div>
+      <ConfirmRow k="What">{what ? <div>{what}</div> : (
+        <div><b>{count === 1 ? '1 change' : `${count} changes`} to publish</b>
+          {busy && !preview ? <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Checking for changes…</div> : null}
+          {shown.length > 0 && <ul className="mt-1 mb-0 pl-4">{shown.map((c) => <li key={c}>{c}</li>)}</ul>}
+          {more > 0 && <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>and {more} more</div>}
+        </div>
+      )}</ConfirmRow>
+      {liveOnly.length > 0 && <ConfirmRow k="Extra on live">
+        <div>
+          <div className="text-[12px] mb-1" style={{ color: 'var(--sem-muted)' }}>Nothing is removed unless you tick it.</div>
+          {liveOnly.map((ref) => (
+            <label key={ref} className="flex items-center gap-2 text-[12px] py-0.5">
+              <input type="checkbox" checked={deleteRefs.includes(ref)} onChange={() => onToggleDelete(ref)} />
+              <span>{shortLiveOnlyName(ref)}</span>
+            </label>
+          ))}
+        </div>
+      </ConfirmRow>}
+      <ConfirmRow k="Where"><div>{dest}{endpoint && <div className="text-[11px] font-mono" style={{ color: 'var(--sem-muted)' }}>{endpoint}</div>}</div></ConfirmRow>
+      <ConfirmRow k="As"><div data-testid="publish-account">{publishAccountLine(account)}</div></ConfirmRow>
+      <ConfirmRow k="Checks">
+        <div data-testid="publish-checks" style={{ color: gate && !gate.pass ? 'var(--sem-bad)' : 'var(--sem-fg)' }}>
+          {busy && !gate ? 'Checking this change…' : (gate?.checkLine || 'Checks on this change: nothing to fix.')}
+        </div>
+      </ConfirmRow>
+      {error && <div className="px-4 py-2 text-[12px]" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb,var(--sem-bad) 10%, transparent)' }}>{error}</div>}
+      {needReason && <div className="px-4 py-2">
+        <input value={reason} onChange={(e) => onReason(e.target.value)} placeholder="Why publish anyway?" className="w-full"
+          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} />
+      </div>}
+      <div className="flex items-center gap-3 px-4 pt-3 pb-1">
+        <Btn primary onClick={onConfirm} busy={busy} disabled={empty || !preview?.confirmToken || (needReason && !reason.trim())}>
+          {needReason ? 'Publish anyway with a reason' : publishButtonLabel(count, dest, deleteRefs.length)}
+        </Btn>
+        <button type="button" className="text-[12px] underline" style={{ color: 'var(--sem-muted)', background: 'none', border: 0 }} onClick={onCancel}>Cancel</button>
+      </div>
+      <div className="px-4 pb-3 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Publishing changes the model's design, not its data. No data refresh.</div>
+    </div>
+  );
+}
+function ConfirmRow({ k, children }: { k: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-2 px-4 py-2" style={{ gridTemplateColumns: '120px 1fr', borderBottom: '1px solid var(--sem-border)' }}>
+      <div className="text-[11px] uppercase tracking-wide pt-0.5" style={{ color: 'var(--sem-muted)' }}>{k}</div>
+      <div className="text-[13px]">{children}</div>
+    </div>
+  );
 }
 function ModeBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button onClick={onClick} className="px-3 py-1.5 rounded-md text-[12px] font-medium"

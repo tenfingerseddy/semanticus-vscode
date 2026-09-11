@@ -7,8 +7,10 @@ import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResult
 import { uiLabel } from './copy';
 import {
   liveRuns, mostRecentLive, mostRecentTerminal, runForWorkflow, focusedRun,
-  stepGateSkipped, type RunMapState,
+  stepGateSkipped, runSections, frameProgress, frameIsCurrent, providedAnswerDraft, type RunFrameItem, type RunSection, type RunRow, type RunMapState,
 } from './workflowruns.mjs';
+import { createDefinitionLoader } from './workflowload.mjs';
+import { gateArg, submitStepArgs } from './workflowsubmit.mjs';
 
 // ===================================================================================================
 // Workflows — a workflow is "a skill with teeth": a named, versioned playbook (markdown instructions per
@@ -37,11 +39,33 @@ export interface WorkflowInfo {
 export interface GateInput { name: string; question: string; type: string; required: string }
 export interface VerifySpec { kind: string; when?: string; probe?: string; scope?: string; intent?: string }
 export interface GateSpec { strictness?: string | null; inputs: GateInput[]; verify: VerifySpec[] }
-export interface WorkflowStep { id: string; number: number; title: string; instructions: string; gate?: GateSpec | null; ops: string[] }
+export interface ForEachSpec {
+  inLiteral?: string[] | null;
+  inInput?: string | null;
+  as?: string;
+  maxIterations?: number;
+}
+export interface CallSpec {
+  workflow?: string;
+  with?: Record<string, string>;
+  returns?: string[];
+}
+export interface WorkflowStep {
+  id: string; number: number; title: string; instructions: string; gate?: GateSpec | null; ops: string[];
+  when?: string | null;
+  forEach?: ForEachSpec | null;
+  call?: CallSpec | null;
+  hasExplicitId?: boolean;
+}
 export interface WorkflowDef {
   name: string; title: string; description: string; version: number; strictness?: string;
   triggers: string[]; source: string; filePath?: string; error?: string | null; steps: WorkflowStep[];
   provenance?: Record<string, string>;   // unknown frontmatter keys (a distilled workflow carries derived_from here)
+  schemaVersion?: number;
+  kind?: string | null;
+  whenToUse?: string | null;
+  tags?: string[];
+  slots?: unknown[];
 }
 export interface AnswerValue { value?: string | null; declined?: boolean; declineReason?: string | null; answered?: boolean }
 // status: passed | failed | unavailable (blocked, Missing names why) | not_applicable (when: not met) | skipped (legacy advisory)
@@ -54,6 +78,24 @@ export interface VerifyResult {
 export interface WitnessLockView { probe: string; hash: string }
 export interface WitnessRevision { probe: string; beforeHash: string; afterHash: string; stepId: string; timestampUtc: string }
 export interface PartitionRevision { key: string; before: string; after: string; stepId: string; timestampUtc: string }
+export interface AnchorLockView { anchorsInput: string; initialHash: string; currentHash: string; stepId: string }
+export interface AnchorRevisionChange {
+  context: string; originalExpect: string; correctedExpect: string; extractQuery: string;
+  extractRowCount: number; extractTruncated: boolean; extractResultHash: string;
+}
+export interface AnchorRevision {
+  key?: string | null; anchorsInput: string; beforeHash: string; afterHash: string; stepId: string;
+  timestampUtc: string; changes: AnchorRevisionChange[];
+}
+export interface ShapeMismatchLedgerEntry {
+  shapeId: string; open: boolean; state: string; totalMismatchCount: number; lastMismatchCount: number;
+  lastMismatchReconciledCount: number;
+  cells: { coordinate: string; displayContext: string; candidateValue: string; witnessValue: string }[];
+}
+export interface ShapeMismatchCountersign {
+  shapeId: string; coordinate: string; candidateValue: string; witnessValue: string;
+  stated: string; stepId: string; timestampUtc: string;
+}
 export interface StepResult {
   stepId: string; title: string; status: string; note?: string | null;
   answers: Record<string, AnswerValue>; verifyResults: VerifyResult[]; effectiveStrictness?: string | null;
@@ -61,12 +103,31 @@ export interface StepResult {
 export interface CurrentStepView {
   stepId: string; title: string; instructions: string; questions: GateInput[];
   verifyKinds: string[]; effectiveStrictness?: string | null; ops: string[];
+  providedAnswers?: Record<string, AnswerValue> | null;
+  handOff?: { callee?: string; calleeTitle?: string; expectedReturns?: string[]; nextStepTitle?: string; gateOff?: boolean } | null;
 }
+interface WorkflowRunFrameProof {
+  stepId: string; state: string; steps: StepResult[];
+  parentFrameIndex?: number | null;
+  witnessLocks?: WitnessLockView[]; witnessRevisions?: WitnessRevision[]; partitionRevisions?: PartitionRevision[];
+  anchorLocks?: AnchorLockView[]; anchorRevisions?: AnchorRevision[];
+  shapeMismatchLedger?: ShapeMismatchLedgerEntry[]; shapeMismatchCountersigns?: ShapeMismatchCountersign[];
+}
+export interface WorkflowIterationFrame extends WorkflowRunFrameProof {
+  kind: 'iteration'; iterationIndex: number; loopVariable: string; loopValue: string;
+}
+export interface WorkflowCallFrame extends WorkflowRunFrameProof {
+  kind: 'call'; workflow: string; depth: number; passed: string[]; returned: string[]; returnNote?: string | null;
+}
+export type WorkflowRunFrame = WorkflowIterationFrame | WorkflowCallFrame;
 export interface WorkflowRunView {
   runId: string; workflow: string; title: string; workflowVersion: number; status: string; abortReason?: string | null;
   startedUtc?: string | null; finishedUtc?: string | null; modelName?: string | null; modelFingerprint?: string | null;
-  stepIndex: number; totalSteps: number; steps: StepResult[]; currentStep?: CurrentStepView | null;
+  stepIndex: number; totalSteps: number; totalStepsProvisional?: boolean | null; steps: StepResult[]; frames?: WorkflowRunFrame[]; currentStep?: CurrentStepView | null;
   witnessLocks?: WitnessLockView[] | null; witnessRevisions?: WitnessRevision[] | null; partitionRevisions?: PartitionRevision[] | null;
+}
+function totalStepsText(run: WorkflowRunView) {
+  return run.totalStepsProvisional ? `at least ${run.totalSteps} steps` : `${run.totalSteps} steps`;
 }
 interface WorkflowEnforcement { mode?: string | null; enforced: boolean; note?: string | null }
 
@@ -106,6 +167,8 @@ const opLabel = (op: string) => BINDABLE_OPS.find((b) => b.op === op)?.label ?? 
 // Overview mode (no run) uses the neutral 'todo' style with the step number in the circle.
 const STEP_STYLE: Record<string, { glyph: string; color: string; label: string }> = {
   passed: { glyph: '✓', color: 'var(--sem-good)', label: 'passed' },
+  done: { glyph: '·', color: 'var(--sem-muted)', label: 'done' },
+  not_applicable: { glyph: '◇', color: 'var(--sem-muted)', label: 'did not apply' },
   skipped: { glyph: '⤼', color: 'var(--sem-muted)', label: 'skipped' },
   failed: { glyph: '✕', color: 'var(--sem-bad)', label: 'failed' },
   in_progress: { glyph: '▶', color: 'var(--sem-accent)', label: 'current' },
@@ -163,6 +226,21 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
   // section. A nonce so repeat clicks on the same row re-fire the scroll.
   const [govTarget, setGovTarget] = useState<{ name: string; nonce: number } | null>(null);
   const govNonce = useRef(0);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+  // ONE loader for every door that fetches a definition (selection change, library notification, human
+  // save). A response installs only if it is still the newest request AND its workflow is still the
+  // selected one, so a slow response for a workflow the person has left cannot overwrite what is on
+  // screen. Built once , the ticket state lives inside it, so a per-render rebuild would reset the rule.
+  const defLoader = useRef<ReturnType<typeof createDefinitionLoader<WorkflowDef>> | null>(null);
+  if (!defLoader.current) {
+    defLoader.current = createDefinitionLoader<WorkflowDef>({
+      rpc: (method, ...args) => rpc<WorkflowDef>(method, ...(args as string[])),
+      setDef,
+      currentSelection: () => selectedRef.current,
+    });
+  }
+  const defLoad = defLoader.current;
 
   const refreshPolicy = () => rpc<WorkflowPolicy>('getWorkflowPolicy').then(setPolicy).catch(() => undefined);
   const refreshProfiles = () => rpc<WorkflowProfileInfo[]>('listWorkflowProfiles').then(setProfiles).catch(() => setProfiles([]));
@@ -178,6 +256,7 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
     const offLib = onWorkflowLibraryChange((v) => {
       setLibrary(v as WorkflowInfo[]);
       refreshEnforcement(); refreshPolicy(); refreshProfiles();
+      defLoad.loadAfterNotification();
     });
     return () => { offLib(); };
   }, []);
@@ -191,12 +270,8 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
   }, [navTarget?.nonce]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the selected workflow's definition (full instructions + gates) — free: reading the playbook is content.
-  useEffect(() => {
-    if (!selected) { setDef(null); return; }
-    let alive = true;
-    rpc<WorkflowDef>('getWorkflow', selected).then((d) => { if (alive) setDef(d); }).catch(() => { if (alive) setDef(null); });
-    return () => { alive = false; };
-  }, [selected]);
+  // Same loader as the notification path, so one validity rule decides which response is allowed to install.
+  useEffect(() => defLoad.loadForSelection(selected), [selected]);
 
   // Derived run views off the shared map (BLOCKER 2): the live set drives the count + banner; the focused run
   // drives the Runs section; the most-recent terminal run drives Home + the playbook's last-run panel.
@@ -236,8 +311,10 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
     if (await startRun(name)) return;
     setSection('library'); setOpenName(name); setSelected(name);
   };
-  const submit = async (runId: string, stepId: string, answersJson: string) => {
-    onRunUpdate(await rpc<WorkflowRunView>('submitWorkflowStep', runId, stepId, answersJson, 'human'));
+  const submit = async (runId: string, stepId: string, answersJson: string, callGate?: string) => {
+    // Built by the shared module so every element is a string or null: the bridge structured-clones these
+    // arguments, and one DOM event among them fails the whole call (D-171: the Submit step could not move).
+    onRunUpdate(await rpc<WorkflowRunView>('submitWorkflowStep', ...submitStepArgs(runId, stepId, answersJson, 'human', callGate)));
   };
   const skip = async (runId: string, stepId: string, reason: string) => {
     onRunUpdate(await rpc<WorkflowRunView>('skipWorkflowStep', runId, stepId, reason, 'human'));
@@ -357,7 +434,7 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
             <AuthorSection
               creating={creating} info={library?.find((w) => w.name === selected) ?? null} def={def}
               onNew={newPlaybook}
-              onSaved={(n) => { setCreating(false); setSelected(n); rpc<WorkflowDef>('getWorkflow', n).then(setDef).catch(() => undefined); }}
+              onSaved={(n) => { setCreating(false); setSelected(n); defLoad.reload(n); }}
               onDeleted={() => { setCreating(false); setSelected(null); setSection('library'); }} />
           )}
         </div>
@@ -436,7 +513,7 @@ function LiveBanner({ run, liveCount, startedByYou, onContinue }: { run: Workflo
     <div className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, var(--sem-border))' }}>
       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: 'var(--sem-accent)', boxShadow: '0 0 0 4px var(--sem-accent-soft)' }} />
       <span className="text-[12px] font-semibold">{run.title || run.workflow} is running</span>
-      <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>step {Math.min(run.stepIndex + 1, run.totalSteps)} of {run.totalSteps}, started by {startedByYou ? 'you' : 'the AI Assistant'}{more ? ` · ${liveCount} runs live` : ''}</span>
+      <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>step {Math.min(run.stepIndex + 1, run.totalSteps)} of {totalStepsText(run)}, started by {startedByYou ? 'you' : 'the AI Assistant'}{more ? ` · ${liveCount} runs live` : ''}</span>
       <button onClick={onContinue} className="ml-auto text-[11px] px-2.5 py-1 rounded-md font-semibold shrink-0" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{more ? 'Continue runs' : 'Continue run'}</button>
     </div>
   );
@@ -455,7 +532,7 @@ function EnforcementOffBanner({ onFix }: { onFix: () => void }) {
 // HOME — the calm landing: the current/recent run, the two ratified quick-start jobs, and three quiet cards.
 // ===================================================================================================
 const HEROES: { workflow: string; title: string; blurb: string }[] = [
-  { workflow: 'make-ai-ready', title: 'Make the model AI-ready', blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant fills the gaps and the readiness grade shows the improvement.' },
+  { workflow: 'make-ai-ready', title: 'Make the model AI-ready', blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant works through the gaps, and the readiness score shows whether the model held or improved.' },
   { workflow: 'verified-measure', title: 'Author a hard measure', blurb: 'Pin what the requirement says, lock expected values from raw rows, and prove one candidate against an independent raw-row witness.' },
 ];
 function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, onStartHero, onExplain, onBrowse, onGuided, onGovernance, onOpenRun }: {
@@ -467,6 +544,8 @@ function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, on
   const total = library?.length ?? 0;
   const available = (library ?? []).filter((w) => !w.error && w.enabled !== false).length;
   const heroExists = (n: string) => (library ?? []).some((w) => w.name === n);
+  const needle = q.trim().toLowerCase();
+  const hits = needle ? (library ?? []).filter((w) => matchesFilter(w, needle)) : [];
   return (
     <div className="flex flex-col gap-4 min-w-0">
       {/* current or most-recent activity — only when there is something to say (calm by default) */}
@@ -474,7 +553,7 @@ function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, on
         <button onClick={onOpenRun} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: recentRun.status === 'completed' ? 'var(--sem-good)' : 'var(--sem-muted)' }} />
           <span className="text-[12px] font-semibold">{recentRun.title || recentRun.workflow}</span>
-          <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>Last run {recentRun.status === 'completed' ? 'completed' : uiLabel(recentRun.status).toLowerCase()} · {recentRun.steps.filter((s) => s.status === 'passed').length}/{recentRun.totalSteps} steps passed</span>
+          <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>Last run {recentRun.status === 'completed' ? 'completed' : uiLabel(recentRun.status).toLowerCase()} · {recentRun.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(recentRun)} passed</span>
           <span className="ml-auto text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>View run →</span>
         </button>
       )}
@@ -492,16 +571,31 @@ function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, on
 
       <div className="flex items-center gap-3">
         <button onClick={() => onBrowse()} className="text-[12px] px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>Browse all playbooks ({total})</button>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search playbooks"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search playbooks" data-wf-home-search
           onKeyDown={(e) => { if (e.key === 'Enter') onBrowse(q.trim()); }}
           className="flex-1 text-[12px] px-3 py-1.5 rounded-lg outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
       </div>
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-        <QuietCard kicker="Guided setup" title="Ready-made playbooks" body="Fill in your details once, preview in plain words, then apply." onClick={onGuided} />
-        <QuietCard kicker="Library" title={`${total} playbooks, ${available} available`} body="Browse, inspect, or turn any playbook on or off." onClick={() => onBrowse()} />
-        <QuietCard kicker="Policy" title={profileTitle} body={enforced ? 'Enforcement on.' : 'Enforcement off; gates are skipped.'} onClick={onGovernance} />
-      </div>
+      {needle ? (
+        hits.length === 0 ? (
+          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No playbooks match “{q.trim()}”.</div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {hits.map((w) => (
+              <button key={w.name} onClick={() => onExplain(w.name)} className="text-left rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+                <div className="text-[13px] font-semibold">{w.title || w.name}</div>
+                {w.description && <div className="text-[11.5px] mt-0.5 truncate" style={{ color: 'var(--sem-muted)' }}>{w.description}</div>}
+              </button>
+            ))}
+          </div>
+        )
+      ) : (
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          <QuietCard kicker="Guided setup" title="Ready-made playbooks" body="Fill in your details once, preview in plain words, then apply." onClick={onGuided} />
+          <QuietCard kicker="Library" title={`${total} playbooks, ${available} available`} body="Browse, inspect, or turn any playbook on or off." onClick={() => onBrowse()} />
+          <QuietCard kicker="Policy" title={profileTitle} body={enforced ? 'Enforcement on.' : 'Enforcement off; gates are skipped.'} onClick={onGovernance} />
+        </div>
+      )}
     </div>
   );
 }
@@ -676,7 +770,10 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
       </div>
 
       {broken ? (
-        <ErrorPanel name={info?.name || name} error={info?.error || 'This workflow file could not be read.'} />
+        <>
+          <ErrorPanel name={info?.name || name} error={info?.error || 'This workflow file could not be read.'} />
+          <div><Button onClick={onEdit}>Edit workflow</Button></div>
+        </>
       ) : (
         <>
           <div className="flex items-start gap-4 flex-wrap">
@@ -760,7 +857,7 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
                 {terminal && run ? (
                   <>
                     <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>
-                      {run.status === 'completed' ? 'Completed' : uiLabel(run.status)} · {run.steps.filter((s) => s.status === 'passed').length} of {run.totalSteps} passed · {run.steps.reduce((n, s) => n + s.verifyResults.filter((v) => v.status === 'passed').length, 0)} verified checks sealed.
+                      {run.status === 'completed' ? 'Completed' : uiLabel(run.status)} · {run.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(run)} passed · {run.steps.reduce((n, s) => n + s.verifyResults.filter((v) => v.status === 'passed').length, 0)} verified checks recorded.
                     </div>
                     <button onClick={() => onEvidence(run)} className="text-[11px] font-semibold mt-1.5" style={{ color: 'var(--sem-accent)' }}>Evidence report</button>
                   </>
@@ -785,7 +882,7 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
 function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, onSubmit, onSkip, onAbort, onEvidence, onBrowse }: {
   run: WorkflowRunView | null; liveRuns: WorkflowRunView[]; focusedRunId: string | null; onFocusRun: (id: string) => void;
   startedByYou: boolean;
-  onSubmit: (runId: string, stepId: string, answersJson: string) => Promise<void>;
+  onSubmit: (runId: string, stepId: string, answersJson: string, callGate?: string) => Promise<void>;
   onSkip: (runId: string, stepId: string, reason: string) => Promise<void>;
   onAbort: (runId: string, reason: string) => Promise<void>; onEvidence: () => void; onBrowse: () => void;
 }) {
@@ -824,7 +921,7 @@ function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, on
                   : rActive
                     ? { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }
                     : { background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px dashed var(--sem-border)' }}>
-                {r.title || r.workflow} · {rActive ? `step ${Math.min(r.stepIndex + 1, r.totalSteps)}/${r.totalSteps}` : uiLabel(r.status)}
+                {r.title || r.workflow} · {rActive ? `step ${Math.min(r.stepIndex + 1, r.totalSteps)} of ${totalStepsText(r)}` : uiLabel(r.status)}
               </button>
             );
           })}
@@ -1315,7 +1412,7 @@ function HideWhenControl({ info, policy, tier, onSetActivation, err }: {
           className="flex-1 min-w-[180px] text-[11.5px] px-2 py-1 rounded-md outline-none"
           style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace' }} />
         <button type="button" disabled={applyBlocked}
-          title={!isPro ? PRO_ACT_REASON : !when.trim() ? 'Type a condition first. Use an example below to start.' : 'Save this rule. It takes effect on both doors immediately.'}
+          title={!isPro ? PRO_ACT_REASON : !when.trim() ? 'Type a condition first. Use an example below to start.' : 'Save this rule. The views here update at once, and your AI Assistant sees it on its next call.'}
           onClick={() => void apply()}
           className="text-[11px] px-2 py-1 rounded-md font-semibold disabled:opacity-45"
           style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
@@ -1396,35 +1493,89 @@ function OverviewStep({ step }: { step: WorkflowStep }) {
 // Actions carry THIS run's id up to the shell so a switch to another live run never targets the wrong run.
 function RunRail({ run, onSubmit, onSkip, onAbort }: {
   run: WorkflowRunView;
-  onSubmit: (runId: string, stepId: string, answersJson: string) => Promise<void>;
+  onSubmit: (runId: string, stepId: string, answersJson: string, callGate?: string) => Promise<void>;
   onSkip: (runId: string, stepId: string, reason: string) => Promise<void>; onAbort: (runId: string, reason: string) => Promise<void>;
 }) {
   const rid = run.runId;
+  const currentId = run.status === 'active' ? run.currentStep?.stepId : null;
+  const renderStep = ({ result, n }: RunRow) => (
+    <RunStep key={`${rid}:${result.stepId}`} n={n} result={result}
+      current={currentId === result.stepId ? run.currentStep ?? null : null}
+      onSubmit={(stepId, json, gate) => onSubmit(rid, stepId, json, gate)}
+      onSkip={(stepId, reason) => onSkip(rid, stepId, reason)} onAbort={(reason) => onAbort(rid, reason)} />
+  );
   return (
     <Panel>
-      <SectionTitle>Run <span style={{ color: 'var(--sem-muted)' }}>· {run.steps.filter((s) => s.status === 'passed').length}/{run.totalSteps} passed</span></SectionTitle>
+      <SectionTitle>Run <span style={{ color: 'var(--sem-muted)' }}>· {run.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(run)} passed</span></SectionTitle>
       <div className="relative mt-2">
         <RailLine />
         <div className="flex flex-col">
-          {run.steps.map((s, i) => (
-            <RunStep key={s.stepId} n={i + 1} result={s}
-              current={run.status === 'active' && run.currentStep?.stepId === s.stepId ? run.currentStep : null}
-              onSubmit={(stepId, json) => onSubmit(rid, stepId, json)}
-              onSkip={(stepId, reason) => onSkip(rid, stepId, reason)} onAbort={(reason) => onAbort(rid, reason)} />
-          ))}
+          <RunSections sections={runSections(run)} runId={rid} currentId={currentId} renderStep={renderStep} />
         </div>
       </div>
     </Panel>
   );
 }
 
+function RunSections({ sections, runId, currentId, renderStep }: {
+  sections: RunSection[]; runId: string; currentId?: string | null; renderStep: (row: RunRow) => React.ReactNode;
+}) {
+  return <>{sections.map((section) => section.kind === 'step' ? renderStep(section.row)
+    : section.frameKind === 'call' ? section.items.map((item) => (
+      <RunFrameCard key={`${runId}:frame-${item.frameIndex}`} item={item} total={1} runId={runId} currentId={currentId} renderStep={renderStep} />
+    )) : (
+      <div key={`${runId}:${section.key}`} className="relative my-2 rounded-lg border p-3" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+        <div className="flex items-center gap-2 flex-wrap mb-2">
+          <b className="text-[12px]">Repeat · {section.items[0].rows[0]?.result.title ?? uiLabel(section.stepId)}</b>
+          <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>
+            {section.items.filter((item) => !['pending', 'in_progress'].includes(frameProgress(item, currentId))).length} of {section.items.length} items finished
+          </span>
+        </div>
+        {section.items.map((item) => (
+          <RunFrameCard key={`${runId}:frame-${item.frameIndex}`} item={item} total={section.items.length} runId={runId} currentId={currentId} renderStep={renderStep} />
+        ))}
+      </div>
+    ))}</>;
+}
+
+function RunFrameCard({ item, total, runId, currentId, renderStep }: {
+  item: RunFrameItem; total: number; runId: string; currentId?: string | null; renderStep: (row: RunRow) => React.ReactNode;
+}) {
+  const status = frameProgress(item, currentId);
+  const current = frameIsCurrent(item, currentId);
+  const [expanded, setExpanded] = useState(false);
+  const open = current || expanded;
+  const style = stepStyle(status);
+  const frame = item.frame;
+  return (
+    <div className="rounded-md border mt-1.5 px-2.5 py-2" style={{ borderColor: current ? 'var(--sem-accent)' : 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
+      <button type="button" className="w-full text-left flex items-center gap-2 min-w-0" aria-expanded={open}
+        onClick={() => setExpanded((value) => !value)} disabled={current}>
+        <span className="text-[11px]" style={{ color: style.color }}>{style.glyph}</span>
+        {frame.kind === 'iteration' ? <>
+          <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-muted)' }}>Item {frame.iterationIndex + 1} of {total}</span>
+          <span className="text-[12px] font-semibold break-words min-w-0">{frame.loopValue}</span>
+        </> : <span className="text-[12px] font-semibold">Run workflow · {uiLabel(frame.workflow)}</span>}
+        <span className="text-[9px] uppercase ml-auto shrink-0" style={{ color: style.color }}>{style.label}</span>
+        {!current && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>{open ? '▾' : '▸'}</span>}
+      </button>
+      {frame.kind === 'call' && <div className="text-[10.5px] mt-1 flex flex-wrap gap-x-4 gap-y-1" style={{ color: 'var(--sem-muted)' }}>
+        <span>{item.rows.filter(({ result }) => !['pending', 'in_progress'].includes(result.status)).length} of {item.rows.length} planned steps finished</span>
+        <span>Inputs received: {frame.passed.length ? frame.passed.map((name) => uiLabel(name)).join(', ') : 'none'}</span>
+        <span>{frame.returnNote || `Outputs returned: ${frame.returned.length ? frame.returned.map((name) => uiLabel(name)).join(', ') : status === 'pending' || current ? 'none yet' : 'none'}`}</span>
+      </div>}
+      {open && <div className="mt-1"><RunSections sections={item.sections} runId={runId} currentId={currentId} renderStep={renderStep} /></div>}
+    </div>
+  );
+}
+
 function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
   n: number; result: StepResult; current: CurrentStepView | null;
-  onSubmit: (stepId: string, answersJson: string) => Promise<void>;
+  onSubmit: (stepId: string, answersJson: string, callGate?: string) => Promise<void>;
   onSkip: (stepId: string, reason: string) => Promise<void>; onAbort: (reason: string) => Promise<void>;
 }) {
   const st = stepStyle(result.status);
-  const done = result.status === 'passed' || result.status === 'skipped' || result.status === 'failed';
+  const done = result.status === 'passed' || result.status === 'done' || result.status === 'not_applicable' || result.status === 'skipped' || result.status === 'failed';
   const notable = !!result.note
     || Object.values(result.answers).some((a) => a.declined)
     || result.verifyResults.some((v) => v.status !== 'passed');
@@ -1465,7 +1616,7 @@ function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
 
         {current && (
           <CurrentStepCard current={current}
-            onSubmit={(json) => onSubmit(current.stepId, json)}
+            onSubmit={(json, gate) => onSubmit(current.stepId, json, gate)}
             onSkip={(reason) => onSkip(current.stepId, reason)} onAbort={onAbort} />
         )}
       </div>
@@ -1473,30 +1624,62 @@ function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
   );
 }
 
+function personGateError(raw: string) {
+  if (/Ask the user/i.test(raw) || /\{"declined"/.test(raw) || /gate input/.test(raw))
+    return raw.includes('may not be declined') ? 'This one cannot be declined. Type an answer.'
+      : raw.includes('without a reason') ? 'Say why you are declining.'
+      : 'This question still needs an answer.';
+  return raw;
+}
+
 function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
-  current: CurrentStepView; onSubmit: (answersJson: string) => Promise<void>;
+  current: CurrentStepView; onSubmit: (answersJson: string, callGate?: string) => Promise<void>;
   onSkip: (reason: string) => Promise<void>; onAbort: (reason: string) => Promise<void>;
 }) {
-  const [vals, setVals] = useState<Record<string, string>>({});
-  const [declined, setDeclined] = useState<Record<string, boolean>>({});
-  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState(() => providedAnswerDraft(current.providedAnswers));
+  const { vals, declined, reasons } = draft;
+  const edited = useRef(new Set<string>());
+  useEffect(() => {
+    if (current.providedAnswers) setDraft((previous) => providedAnswerDraft(current.providedAnswers, previous, edited.current));
+  }, [current.providedAnswers]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const declineIncomplete = current.questions.some((q) => declined[q.name] && !(reasons[q.name] || '').trim());
+  const declineIncomplete = current.questions.some((q) => q.required !== 'required' && declined[q.name] && !(reasons[q.name] || '').trim());
+  const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
+  const [callGate, setCallGate] = useState<string | null>(null);
 
-  const doSubmit = async () => {
-    if (declineIncomplete) { setErr('A declined question needs a reason before you can submit.'); return; }
-    setBusy(true); setErr(null);
+  const doSubmit = async (gateOverride?: string) => {
+    const nextErr: Record<string, string> = {};
+    if (!gateSkipped) {
+      for (const q of current.questions) {
+        if (q.required === 'optional') continue;
+        if (q.required === 'required' && declined[q.name]) nextErr[q.name] = 'This one cannot be declined. Type an answer.';
+        else if (declined[q.name] && !(reasons[q.name] || '').trim()) nextErr[q.name] = 'Say why you are declining.';
+        else if (!declined[q.name] && !(vals[q.name] || '').trim() && !edited.current.has(q.name)) nextErr[q.name] = 'This question still needs an answer.';
+      }
+    }
+    if (Object.keys(nextErr).length > 0) {
+      setFieldErr(nextErr);
+      setErr(Object.keys(nextErr).length === 1
+        ? Object.values(nextErr)[0]
+        : `${Object.keys(nextErr).length} questions still need an answer before this step can be submitted.`);
+      return;
+    }
+    if (declineIncomplete) { setErr('Say why you are declining.'); return; }
+    setBusy(true); setErr(null); setFieldErr({});
     try {
       const payload: Record<string, unknown> = {};
       for (const q of current.questions) {
-        if (declined[q.name]) payload[q.name] = { declined: true, reason: (reasons[q.name] || '').trim() };
-        else if ((vals[q.name] || '').trim() !== '') payload[q.name] = vals[q.name];
+        if (q.required !== 'required' && declined[q.name]) payload[q.name] = { declined: true, reason: (reasons[q.name] || '').trim() };
+        else if (edited.current.has(q.name) || (vals[q.name] || '').trim() !== '') payload[q.name] = vals[q.name] ?? '';
       }
-      await onSubmit(JSON.stringify(payload));
+      // gateArg drops anything that is not a gate string. A handler bound straight to onClick is called with
+      // the DOM click event, which is not a gate and cannot be cloned onto the wire (D-171).
+      await onSubmit(JSON.stringify(payload), gateArg(gateOverride) ?? callGate ?? undefined);
     } catch (e) {
-      setErr(String((e as Error).message ?? e));
+      const raw = String((e as Error).message ?? e);
+      setErr(personGateError(raw));
     } finally { setBusy(false); }
   };
 
@@ -1514,10 +1697,20 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
       )}
       <Markdown md={current.instructions} />
 
+      {current.handOff?.gateOff && (
+        <div className="mt-3 rounded-md px-2.5 py-2 text-[11.5px]" style={{ background: 'var(--sem-surface)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }}>
+          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>This step hands off to {current.handOff.calleeTitle || 'another playbook'}.</div>
+          <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>Its gate is turned off, so it asks no questions and hands nothing back.{current.handOff.nextStepTitle ? ` ${current.handOff.nextStepTitle} needs those values.` : ''}</div>
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="rounded-md border px-2 py-1 text-[11px] font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} onClick={() => { setCallGate('on'); void doSubmit('on'); }}>Turn its gate on for this run</button>
+            <button type="button" className="rounded-md border px-2 py-1 text-[11px]" onClick={() => { setCallGate('off'); void doSubmit('off'); }}>Continue without them</button>
+          </div>
+        </div>
+      )}
       {current.ops.length > 0 && (
         <div className="flex items-center gap-1 mt-2.5 flex-wrap">
           <span className="text-[10px] uppercase tracking-wide font-semibold mr-1" style={{ color: 'var(--sem-muted)' }}>actions</span>
-          {current.ops.map((op) => <OpChip key={op} op={op} />)}
+          {current.ops.map((op) => <OpChip key={op} op={op} onStage={(id) => { const planQ = current.questions.find((q) => q.type === 'planItem'); if (planQ) { edited.current.add(planQ.name); setDraft((m) => ({ ...m, vals: { ...m.vals, [planQ.name]: id } })); } }} />)}
         </div>
       )}
 
@@ -1535,10 +1728,10 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
               <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Gate</div>
               {current.questions.map((q) => (
                 <GateField key={q.name} q={q}
-                  value={vals[q.name] ?? ''} declined={!!declined[q.name]} reason={reasons[q.name] ?? ''}
-                  onValue={(v) => setVals((m) => ({ ...m, [q.name]: v }))}
-                  onDecline={(d) => setDeclined((m) => ({ ...m, [q.name]: d }))}
-                  onReason={(r) => setReasons((m) => ({ ...m, [q.name]: r }))} />
+                  value={vals[q.name] ?? ''} declined={!!declined[q.name]} reason={reasons[q.name] ?? ''} error={fieldErr[q.name]}
+                  onValue={(v) => { edited.current.add(q.name); setDraft((m) => ({ ...m, vals: { ...m.vals, [q.name]: v } })); }}
+                  onDecline={(d) => { edited.current.add(q.name); setDraft((m) => ({ ...m, declined: { ...m.declined, [q.name]: d } })); }}
+                  onReason={(r) => { edited.current.add(q.name); setDraft((m) => ({ ...m, reasons: { ...m.reasons, [q.name]: r } })); }} />
               ))}
             </div>
           )}
@@ -1562,7 +1755,7 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        <Button primary disabled={busy} onClick={doSubmit}>{busy ? 'Submitting…' : 'Submit step'}</Button>
+        <Button primary disabled={busy} onClick={() => { void doSubmit(); }}>{busy ? 'Submitting…' : 'Submit step'}</Button>
         <ReasonButton label="Skip with reason" title="Skip this step (a reason is required)." onConfirm={onSkip} />
         <ReasonButton label="Abort" title="Abort the whole run (a reason is required)." onConfirm={onAbort} danger />
       </div>
@@ -1570,8 +1763,8 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
   );
 }
 
-function GateField({ q, value, declined, reason, onValue, onDecline, onReason }: {
-  q: GateInput; value: string; declined: boolean; reason: string;
+function GateField({ q, value, declined, reason, error, onValue, onDecline, onReason }: {
+  q: GateInput; value: string; declined: boolean; reason: string; error?: string;
   onValue: (v: string) => void; onDecline: (d: boolean) => void; onReason: (r: string) => void;
 }) {
   const required = q.required === 'required';
@@ -1579,26 +1772,56 @@ function GateField({ q, value, declined, reason, onValue, onDecline, onReason }:
     <div className="rounded-lg p-2.5" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
       <div className="flex items-start gap-2">
         <label className="text-[12px] flex-1" style={{ color: 'var(--sem-fg)' }}>{q.question || uiLabel(q.name)}</label>
-        <span className="shrink-0 text-[9px] tnum px-1.5 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{uiLabel(q.type)}</span>
-        {required && <span className="shrink-0 text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 14%, transparent)' }}>required</span>}
+        <span className="shrink-0 text-[9px] tnum px-1.5 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{q.type === 'planItem' ? 'Staged rename' : uiLabel(q.type)}</span>
+        {required && <span title="This one cannot be declined." className="shrink-0 text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 14%, transparent)' }}>Required</span>}
+        {q.required === 'optional' && <span className="shrink-0 text-[9px]" style={{ color: 'var(--sem-muted)' }}>Optional</span>}
       </div>
-      {!declined && (
+      {!declined && q.type === 'planItem' && <PlanItemPicker value={value} onValue={onValue} />}
+      {!declined && q.type !== 'planItem' && (
         <textarea value={value} onChange={(e) => onValue(e.target.value)} rows={q.type === 'text' ? 2 : 1} spellCheck={false} placeholder={uiLabel(q.name)}
           className="mt-1.5 w-full text-[12px] px-2 py-1 rounded-md outline-none resize-y"
           style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
       )}
+      {q.required !== 'required' && (
       <div className="mt-1.5 flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: 'var(--sem-muted)' }}>
           <input type="checkbox" checked={declined} onChange={(e) => onDecline(e.target.checked)} />
-          Decline to answer and record a reason
+          I can't answer this. Record why instead.
         </label>
-        {declined && !required && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Recorded as an explicit decline (auditable).</span>}
+        {declined && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Recorded as an explicit decline.</span>}
       </div>
-      {declined && (
-        <textarea value={reason} onChange={(e) => onReason(e.target.value)} rows={2} spellCheck={false} placeholder="Why are you declining this question? (required)"
+      )}
+      {declined && q.required !== 'required' && (
+        <textarea value={reason} onChange={(e) => onReason(e.target.value)} rows={2} spellCheck={false} placeholder="Say why you are declining."
           className="mt-1.5 w-full text-[12px] px-2 py-1 rounded-md outline-none resize-y"
           style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid color-mix(in srgb, var(--sem-warn) 45%, transparent)' }} />
       )}
+      {error && <div className="mt-1.5 text-[11px]" style={{ color: 'var(--sem-bad)' }}>{error}</div>}
+    </div>
+  );
+}
+
+function PlanItemPicker({ value, onValue }: { value: string; onValue: (v: string) => void }) {
+  const [items, setItems] = useState<{ id: string; title?: string; objRef?: string; after?: string; status?: string }[]>([]);
+  useEffect(() => {
+    rpc<{ items?: { id: string; title?: string; objRef?: string; after?: string; status?: string }[] }>('getPlan')
+      .then((p) => setItems(p.items ?? [])).catch(() => undefined);
+  }, []);
+  const stage = async () => {
+    const target = items[0]?.objRef;
+    if (!target) return;
+    const plan = await rpc<{ items?: { id: string }[] }>('addPlanItem', target, 'rename', items[0]?.after ?? '', 'Staged rename', null, null);
+    const id = plan.items?.[plan.items.length - 1]?.id;
+    if (id) onValue(id);
+  };
+  return (
+    <div className="mt-1.5">
+      {items.length === 0 && <div className="mb-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No staged rename yet. Stage it now from the answers already given.</div>}
+      <select value={value} onChange={(e) => onValue(e.target.value)} className="w-full rounded-md border px-2 py-1 text-[12px]" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', borderColor: 'var(--sem-border)' }}>
+        <option value="">Pick a staged rename</option>
+        {items.map((it) => <option key={it.id} value={it.id}>{it.title || it.objRef || it.id} {it.after ? `→ ${it.after}` : ''} ({it.status || 'proposed'})</option>)}
+      </select>
+      <button type="button" className="mt-1.5 text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }} onClick={() => void stage()}>Stage it now</button>
     </div>
   );
 }
@@ -1680,12 +1903,37 @@ function StatusNode({ status }: { status: string }) {
     </div>
   );
 }
-export function OpChip({ op }: { op: string }) {
-  const label = op === 'export_workflow_evidence' ? 'Evidence report' : uiLabel(op);
+export function OpChip({ op, onStage }: { op: string; onStage?: (id: string) => void }) {
+  const label = op === 'export_workflow_evidence' ? 'Evidence report'
+    : op === 'add_plan_item' ? 'Stage it now'
+    : op === 'get_plan' ? 'Open Change Plan'
+    : uiLabel(op);
+  const clickable = op === 'add_plan_item' || op === 'get_plan';
+  const go = async () => {
+    if (op === 'get_plan') {
+      window.dispatchEvent(new CustomEvent('semanticus-open-tab', { detail: 'Change Plan' }));
+      return;
+    }
+    if (op === 'add_plan_item' && onStage) {
+      const plan = await rpc<{ items?: { id: string; objRef?: string; after?: string }[] }>('getPlan');
+      const first = plan.items?.[0];
+      if (!first?.objRef) return;
+      const next = await rpc<{ items?: { id: string }[] }>('addPlanItem', first.objRef, 'rename', first.after ?? '', first.objRef, null, null);
+      const id = next.items?.[next.items.length - 1]?.id;
+      if (id) onStage(id);
+    }
+  };
+  if (!clickable) {
+    return (
+      <span title="The AI Assistant does that part." className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+        <span style={{ color: 'var(--sem-accent)' }}>▸</span> {label}
+      </span>
+    );
+  }
   return (
-    <span className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+    <button type="button" onClick={() => void go()} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
       <span style={{ color: 'var(--sem-accent)' }}>▸</span> {label}
-    </span>
+    </button>
   );
 }
 export function Pill({ children, tint, title }: { children: React.ReactNode; tint?: string; title?: string }) {

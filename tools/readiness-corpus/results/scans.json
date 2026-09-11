@@ -471,7 +471,7 @@
    "repo": "AllanYiin/TabularModelBook",
    "path": "Ch08/Ch08/Model.bim",
    "kind": "training",
-   "error": "open_model: open_model failed: Unable to load Tabular Model (Compatibility Level 1200+) from C:\\Users\\KaneSnyder(nexwave)\\Semanticus\\tools\\readiness-corpus\\work\\AllanYiin__TabularModelBook\\Ch08\\Ch08\\M"
+   "error": "open_model: open_model failed: Unable to load Tabular Model (Compatibility Level 1200+) from <repo>\\tools\\readiness-corpus\\work\\AllanYiin__TabularModelBook\\Ch08\\Ch08\\M"
   }
  ]
 }

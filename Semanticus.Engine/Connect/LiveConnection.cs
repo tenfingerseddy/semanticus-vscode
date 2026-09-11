@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Adomd = Microsoft.AnalysisServices.AdomdClient;
 using TOM = Microsoft.AnalysisServices.Tabular;
@@ -17,7 +18,8 @@ namespace Semanticus.Engine
     public sealed class LiveConnection : IDisposable
     {
         private readonly Adomd.AdomdConnection _conn;
-        private readonly Func<string, ResultSet> _executeForTest;
+        private readonly Func<string, CancellationToken, ResultSet> _executeForTest;
+        private CancellationTokenSource _currentCts;
         private string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
         private readonly ModelDispatcher _queryThread = new ModelDispatcher();
         // A session-scoped trace sees every query on this XMLA session. Keep the trace setup, warm-up, real query
@@ -63,7 +65,7 @@ namespace Semanticus.Engine
         public string DesktopPath { get; internal set; }
 
         private LiveConnection(string kind, string dataSource, Adomd.AdomdConnection conn, string connectionString,
-            Func<string, ResultSet> executeForTest = null)
+            Func<string, CancellationToken, ResultSet> executeForTest = null)
         {
             Kind = kind; DataSource = dataSource; _conn = conn; _connectionString = connectionString;
             _executeForTest = executeForTest;
@@ -116,7 +118,20 @@ namespace Semanticus.Engine
         // which is fine — these tests only assert connection PRESENCE and that Dispose() is clean.
         internal static LiveConnection ForTest(string kind, string dataSource, string database = null,
             Func<string, ResultSet> execute = null) =>
+            ForTest(kind, dataSource, database, execute == null ? null : (q, ct) => execute(q));
+
+        internal static LiveConnection ForTest(string kind, string dataSource, string database,
+            Func<string, CancellationToken, ResultSet> execute) =>
             new LiveConnection(kind, dataSource, new Adomd.AdomdConnection(), "", execute) { Database = database };
+
+        /// <summary>Stop the in-flight query. Returns false when nothing was running.</summary>
+        public bool CancelCurrent()
+        {
+            var cts = _currentCts;
+            if (cts == null) return false;
+            try { cts.Cancel(); } catch { /* best-effort */ }
+            return true;
+        }
 
         public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds) =>
             RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds));
@@ -133,9 +148,9 @@ namespace Semanticus.Engine
         // DaxTrace already owns the exclusive lane while it warms and runs the captured query. Re-entering through
         // ExecuteAsync would deadlock, so trace code uses this narrow bypass. It still preserves ADOMD thread affinity.
         internal Task<ResultSet> ExecuteWithinExclusiveAsync(string query, int maxRows, int commandTimeoutSeconds,
-            System.Threading.CancellationToken ct = default) =>
+            CancellationToken ct = default) =>
             _executeForTest != null
-                ? Task.Run(() => _executeForTest(query))
+                ? Task.Run(() => RunTestExecute(query, maxRows, ct))
                 : _queryThread.RunAsync(() => Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds, ct));
 
         /// <summary>ExecuteWithinExclusiveAsync PLUS the command's TRUE completion timestamp, captured
@@ -145,10 +160,26 @@ namespace Semanticus.Engine
         /// asynchronously), so a timestamp taken after ANY await would mis-time an on-time completion as late —
         /// this stamp makes the continuation's resume time irrelevant in both directions.</summary>
         internal Task<(ResultSet Rs, DateTime CompletedUtc)> ExecuteWithinExclusiveStampedAsync(string query, int maxRows,
-            int commandTimeoutSeconds, System.Threading.CancellationToken ct = default) =>
+            int commandTimeoutSeconds, CancellationToken ct = default) =>
             _executeForTest != null
-                ? Task.Run(() => { var r = _executeForTest(query); return (r, DateTime.UtcNow); })
+                ? Task.Run(() => { var r = RunTestExecute(query, maxRows, ct); return (r, DateTime.UtcNow); })
                 : _queryThread.RunAsync(() => { var r = Execute(query, maxRows <= 0 ? 10000 : maxRows, commandTimeoutSeconds, ct); return (r, DateTime.UtcNow); });
+
+        private ResultSet RunTestExecute(string query, int maxRows, CancellationToken ct)
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var mine = linked;
+            Interlocked.Exchange(ref _currentCts, mine);
+            try
+            {
+                if (mine.IsCancellationRequested) return ResultSet.FromCancelled();
+                var r = _executeForTest(query, mine.Token);
+                if (mine.IsCancellationRequested) return ResultSet.FromCancelled();
+                return ResultSet.ApplyCap(r ?? new ResultSet(), maxRows, query);
+            }
+            catch (OperationCanceledException) { return ResultSet.FromCancelled(); }
+            finally { Interlocked.CompareExchange(ref _currentCts, null, mine); }
+        }
 
         internal async Task<T> RunExclusiveAsync<T>(Func<Task<T>> operation)
         {
@@ -165,18 +196,19 @@ namespace Semanticus.Engine
         }
 
         private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds,
-            System.Threading.CancellationToken ct = default)
+            CancellationToken ct = default)
         {
             var sw = Stopwatch.StartNew();
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var mine = linked;
+            Interlocked.Exchange(ref _currentCts, mine);
             try
             {
+                if (mine.IsCancellationRequested) return ResultSet.FromCancelled();
                 using var cmd = new Adomd.AdomdCommand(query, _conn) { CommandTimeout = commandTimeoutSeconds <= 0 ? 120 : commandTimeoutSeconds };
-                // Real cancellation for the verify-ceiling path: the registration calls Cancel from the token's
-                // callback thread (documented safe cross-thread, mirroring SqlCommand.Cancel); ExecuteReader/Read
-                // then throw a cancellation error which folds into the ResultSet.Error below.
-                using var reg = ct.CanBeCanceled
-                    ? ct.Register(() => { try { cmd.Cancel(); } catch { /* best-effort — CommandTimeout still bounds the server */ } })
-                    : default;
+                // Real cancellation: CancelCurrent and the caller token both fire AdomdCommand.Cancel so the
+                // SERVER-side operation stops and the serialized query lane is released.
+                using var reg = mine.Token.Register(() => { try { cmd.Cancel(); } catch { /* best-effort — CommandTimeout still bounds the server */ } });
                 using var rdr = cmd.ExecuteReader();
                 var cols = Enumerable.Range(0, rdr.FieldCount)
                     .Select(i => new ColumnDef { Name = rdr.GetName(i), Type = SafeTypeName(rdr, i) })
@@ -185,25 +217,29 @@ namespace Semanticus.Engine
                 var truncated = false;
                 while (rdr.Read())
                 {
+                    if (mine.IsCancellationRequested) return ResultSet.FromCancelled();
                     if (rows.Count >= maxRows) { truncated = true; break; }
                     var r = new object[rdr.FieldCount];
                     for (var i = 0; i < rdr.FieldCount; i++) r[i] = rdr.IsDBNull(i) ? null : rdr.GetValue(i);
                     rows.Add(r);
                 }
                 sw.Stop();
-                return new ResultSet { Columns = cols, Rows = rows.ToArray(), RowCount = rows.Count, Truncated = truncated, ElapsedMs = sw.ElapsedMilliseconds };
+                return new ResultSet { Columns = cols, Rows = rows.ToArray(), RowCount = rows.Count, Truncated = truncated, ElapsedMs = (long)Math.Round(sw.Elapsed.TotalMilliseconds), Query = query };
             }
             catch (Exception ex)
             {
                 sw.Stop();
+                if (mine.IsCancellationRequested || ex is OperationCanceledException)
+                    return ResultSet.FromCancelled();
                 // Scrub before surfacing (golden rule #1): query errors normally carry only DAX-semantic text, but
                 // this Error is now also fanned out to every Studio client via model/activity, so never let a stray
                 // secret (or server/RLS detail) ride a raw exception message out. ScrubSecrets is a no-op on normal text.
                 // Classify auth with the NARROW, XMLA/Entra-specific matcher (this is a DAX query path, so a broad
                 // matcher would flag a DAX ERROR("Unauthorized") as a sign-in problem). A typed AuthFailed marker lets
                 // the interview scorer tell "sign in" from "fix the DAX" without re-sniffing the scrubbed message.
-                return new ResultSet { Error = ScrubSecrets(ex.Message), AuthFailed = XmlaAuthHint.IsQueryAuthFailure(ex.Message), ElapsedMs = sw.ElapsedMilliseconds };
+                return new ResultSet { Error = DaxErrorText.Plain(ScrubSecrets(ex.Message)), AuthFailed = XmlaAuthHint.IsQueryAuthFailure(ex.Message), ElapsedMs = (long)Math.Round(sw.Elapsed.TotalMilliseconds), Query = query };
             }
+            finally { Interlocked.CompareExchange(ref _currentCts, null, mine); }
         }
 
         private static string SafeTypeName(Adomd.AdomdDataReader rdr, int i)

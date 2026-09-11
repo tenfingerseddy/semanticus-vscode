@@ -217,6 +217,11 @@ function renderVarReturn(nodes, indent, o) {
             break;
         }
         else {
+            if ('tok' in node && (node.tok.k === 'lc' || node.tok.k === 'bc')) {
+                lines.push(node.tok.v);
+                i++;
+                continue;
+            }
             const s = inlineSeq([node], o);
             if (s)
                 lines.push(s);

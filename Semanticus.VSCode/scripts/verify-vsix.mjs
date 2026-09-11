@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,11 @@ const EXACT_FILES = new Set([
   'extension.vsixmanifest',
   'extension/LICENSE.txt',
   'extension/NOTICE',
+  // The full third-party notices, staged from the repository root by scripts/package.mjs. NOTICE alone is a
+  // summary: the verbatim MIT, BSD-3-Clause, Apache-2.0, ISC and 0BSD texts and the two Microsoft EULA links
+  // live only in this file, and a .vsix recipient receives no other copy of them. Being in EXACT_FILES makes
+  // it both allowed and REQUIRED, so a packaging change that stops staging it fails the payload check.
+  'extension/THIRD-PARTY-NOTICES.md',
   'extension/package.json',
   'extension/readme.md',
 ]);
@@ -275,6 +281,48 @@ function runExtractedEngine(engineRoot, executable) {
   if (!output.includes('Semanticus.Engine') || !output.includes('Usage:')) {
     throw new Error('Extracted engine started but did not return the expected help contract');
   }
+}
+
+/// Extract the SHIPPED engine payload out of a packaged .vsix and identify the artifact it came
+/// from, for a caller that wants to RUN that engine rather than merely assert the archive is
+/// well formed. Used by tools/release/packaged-engine-probe.mjs (gate T163 block 8), which needs
+/// the real Release binary out of process.
+///
+/// Deliberately reuses inspectArchive rather than opening the zip a second way: a second
+/// extraction implementation would be a second definition of "the shipped engine", and the two
+/// would drift. That also means every payload safety check (path traversal, size caps, the
+/// release-content scan) applies here exactly as it does to verifyVsix.
+///
+/// The digest is of the .vsix FILE, not of the extracted tree, because the .vsix is what ships
+/// and what CI uploads. `hostRunnable` is false when the target's binary cannot execute on this
+/// machine; a caller must not read a refusal from an engine that never ran.
+export async function extractPackagedEngine(vsixPath, target, engineRoot) {
+  const absolute = path.resolve(vsixPath);
+  if (!fs.existsSync(absolute)) throw new Error(`VSIX not found: ${absolute}`);
+  const info = targetInfo(target);
+  fs.mkdirSync(engineRoot, { recursive: true });
+  const inspected = await inspectArchive(absolute, target, engineRoot);
+  const exe = path.join(engineRoot, info.executable);
+  if (!fs.existsSync(exe)) throw new Error(`the .vsix carried no ${info.executable} under extension/engine/`);
+  if (process.platform !== 'win32') fs.chmodSync(exe, 0o755);
+  let version = '';
+  try { version = JSON.parse(inspected.packageText).version || ''; } catch { version = ''; }
+  return {
+    exe,
+    engineRoot,
+    version,
+    target,
+    vsixPath: absolute,
+    vsixSha256: sha256File(absolute),
+    vsixBytes: fs.statSync(absolute).size,
+    engineSha256: sha256File(exe),
+    engineBytes: fs.statSync(exe).size,
+    hostRunnable: info.platform === process.platform && info.arch === process.arch,
+  };
+}
+
+function sha256File(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
 export async function verifyVsix(vsixPath, target) {

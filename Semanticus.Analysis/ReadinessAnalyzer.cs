@@ -68,7 +68,9 @@ namespace Semanticus.Analysis
             var ruleErrors = new List<string>();
             var custom = CustomReadinessRuleSet.FromModel(model, ruleErrors);
             IEnumerable<ReadinessRule> composed = custom.Count == 0 ? _rules : _rules.Concat(custom);
-            if (live != null) composed = composed.Concat(ReadinessRuleSet.LiveRules(live));
+            // Construct the live catalog even offline for waiver reconciliation, but only evaluate it with supplied data.
+            var liveRules = ReadinessRuleSet.LiveRules(live ?? new ReadinessLiveStats());
+            if (live != null) composed = composed.Concat(liveRules);
             var rules = composed as IReadOnlyList<ReadinessRule> ?? composed.ToList();
             var empty = touchedRefs ?? EmptyRefs;   // the seeding scan passes null: memos are reset, so everything is fresh anyway
             var evals = rules.Select(r =>
@@ -141,6 +143,12 @@ namespace Semanticus.Analysis
             Cov("humanReadableMeasureNames", "NAME-MEASURE");
             Cov("fieldsWithSynonyms", "SYN-FIELD");
 
+            // Reconcile against known rule ids, not just this scan's evaluation list: lack of live data does not
+            // retire a live-only rule. Built-in and current custom rules still come from the loaded set, so deleted
+            // custom/unknown ids remain reportable without evaluating live rules or counting dormant waivers as active.
+            var knownIds = rules.Select(r => r.Id).Concat(liveRules.Select(r => r.Id));
+            var orphans = WaiverStore.Orphans(waivers, "air", knownIds).ToArray();
+
             return new Scorecard
             {
                 Overall = Math.Round(overall, 1),
@@ -153,6 +161,12 @@ namespace Semanticus.Analysis
                 SafeFixCount = findings.Count(f => !f.Waived && f.Fix == nameof(FixKind.SafeFix)),
                 WaivedCount = findings.Count(f => f.Waived),
                 RuleErrors = ruleErrors.Distinct().ToArray(),
+                // Named from the eval itself, so the id is the rule's real id rather than something scraped back out
+                // of a message string. These are exactly the rules the dormant reset zeroed.
+                UnevaluatedRules = evals.Where(x => x.ev.Errors.Count > 0).Select(x => x.rule.Id)
+                                        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                OrphanedWaivers = orphans,
+                OrphanedWaiverCount = orphans.Length,
             };
         }
 

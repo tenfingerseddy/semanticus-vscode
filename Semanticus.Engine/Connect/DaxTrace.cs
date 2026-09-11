@@ -28,6 +28,9 @@ namespace Semanticus.Engine
     public sealed class ServerTimings
     {
         public long TotalMs { get; set; }
+        /// <summary>Wall-clock wait on this machine, including the round trip. Distinct from <see cref="TotalMs"/>
+        /// which is server Duration when a trace is attached (and can be 0 ms for a cached query).</summary>
+        public long WallMs { get; set; }
         public long FeMs { get; set; }            // Formula Engine = Total - SE
         public long SeMs { get; set; }            // Storage Engine (sum of SE query durations)
         public long SeCpuMs { get; set; }
@@ -163,9 +166,10 @@ namespace Semanticus.Engine
                 return new ServerTimings
                 {
                     TotalMs = rs0.ElapsedMs,
+                    WallMs = rs0.ElapsedMs,
                     TraceAvailable = false,
                     RowCount = rs0.RowCount,
-                    Note = "Server timings unavailable (no trace) — wall-clock only. " + TraceErr(ex) + " " + IdDiag(live),
+                    Note = "Server timings unavailable (no trace): wall-clock only. " + TraceErr(ex) + " " + IdDiag(live),
                     Error = string.IsNullOrEmpty(rs0.Error) ? null : rs0.Error,
                 };
             }
@@ -190,8 +194,9 @@ namespace Semanticus.Engine
             }
             finally { Cleanup(server, trace, traceUp); }
 
+            var wallMs = (long)Math.Round(sw.Elapsed.TotalMilliseconds);
             if (!string.IsNullOrEmpty(rs.Error))
-                return new ServerTimings { Error = rs.Error, TraceAvailable = true };
+                return new ServerTimings { Error = rs.Error, TraceAvailable = true, WallMs = wallMs, TotalMs = wallMs };
 
             List<TraceRow> snap;
             lock (events) snap = events.ToList();
@@ -200,19 +205,20 @@ namespace Semanticus.Engine
             var se = snap.Where(r => r.Class == AS.TraceEventClass.VertiPaqSEQueryEnd).ToList();
             var cacheHits = snap.Count(r => r.Class == AS.TraceEventClass.VertiPaqSEQueryCacheMatch);
 
-            var total = qe?.DurationMs ?? sw.ElapsedMilliseconds;
+            var total = qe?.DurationMs ?? wallMs;
             var seMs = Math.Min(se.Sum(r => r.DurationMs), total); // sub-scans can sum past total; cap for sanity
             var seCpu = se.Sum(r => r.CpuMs);
 
             // No SE rows => either a genuine no-scan answer (cache/metadata) or the trace captured nothing. Attach
             // diagnostics (warm-up result + raw event count) so the cause is visible during the cloud bring-up.
             var note = se.Count > 0 ? null
-                : (qe != null ? "Answered with no storage-engine scan (cached or metadata-only) — Formula-Engine time only. " : "")
+                : (qe != null ? "Answered with no storage-engine scan (cached or metadata-only): Formula-Engine time only. " : "")
                   + TraceDiag(live, warmupMs, snap.Count, $"qe={(qe != null ? 1 : 0)} se=0 cache={cacheHits}");
 
             return new ServerTimings
             {
                 TotalMs = total,
+                WallMs = wallMs,
                 SeMs = seMs,
                 SeCpuMs = seCpu,
                 FeMs = Math.Max(0, total - seMs),
@@ -389,7 +395,7 @@ namespace Semanticus.Engine
                     ResultRowCount = rsf.RowCount,
                     ElapsedMs = rsf.ElapsedMs,
                     Error = string.IsNullOrEmpty(rsf.Error) ? null : rsf.Error,
-                    Note = "Trace unavailable — ran the query but could not capture EVALUATEANDLOG output. " + TraceErr(ex) + " " + IdDiag(live),
+                    Note = "Trace unavailable: ran the query but could not capture EVALUATEANDLOG output. " + TraceErr(ex) + " " + IdDiag(live),
                 };
             }
 
@@ -421,7 +427,7 @@ namespace Semanticus.Engine
                 ElapsedMs = rs.ElapsedMs,
                 Error = string.IsNullOrEmpty(rs.Error) ? null : rs.Error,
                 Note = entries.Length == 0
-                    ? "Query ran but no EVALUATEANDLOG output was captured — add EVALUATEANDLOG(<expr>, \"label\") around the sub-expressions you want to inspect. "
+                    ? "Query ran but no EVALUATEANDLOG output was captured: add EVALUATEANDLOG(<expr>, \"label\") around the sub-expressions you want to inspect. "
                       + TraceDiag(live, warmupMs, raw[0], $"log={snap.Count}")
                     : null,
             };

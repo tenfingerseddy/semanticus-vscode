@@ -441,7 +441,7 @@ namespace Semanticus.Tests
             var (e, sessions, ws, home) = await GateModelAsync();
             try
             {
-                var gate = await e.DeployGateAsync(null);
+                var gate = await e.DeployGateAsync(null, "human");
                 Assert.Null(gate.Interview);   // no saved questions ⇒ nothing added to the result
             }
             finally { Cleanup(sessions, ws, home); }
@@ -458,7 +458,7 @@ namespace Semanticus.Tests
                 await e.AddInterviewQuestionAsync("What were total sales in 2024?", "value",
                     "EVALUATE ROW(\"v\", [Total Sales])", null, null, null, null, "100", null, false, null, "user", "project", "human");
 
-                var adv = (await e.DeployGateAsync(null)).Interview;
+                var adv = (await e.DeployGateAsync(null, "human")).Interview;
                 Assert.NotNull(adv);
                 Assert.Empty(adv.Changes);                     // zero changed-deltas — nothing was asked before
                 Assert.Equal(1, adv.NeverAsked);               // …the first-ever grading is disclosed separately
@@ -475,7 +475,7 @@ namespace Semanticus.Tests
             try
             {
                 // The verdict BEFORE any pack exists is the baseline the advisory must never move.
-                var before = await e.DeployGateAsync(null);
+                var before = await e.DeployGateAsync(null, "human");
 
                 var vq = await e.AddInterviewQuestionAsync("What were total sales in 2024?", "value",
                     "EVALUATE ROW(\"v\", [Total Sales])", null, null, null, null, "100", null, false, null, "user", "project", "human");
@@ -486,7 +486,7 @@ namespace Semanticus.Tests
                 var file = Path.Combine(ws, ".semanticus", "interview", "questions.jsonl");
                 File.AppendAllText(file, "{\"op\":\"record-run\",\"id\":\"" + vq.Id + "\",\"when\":\"2026-07-01T00:00:00Z\",\"origin\":\"agent\",\"outcome\":\"Correct\",\"detail\":\"the answer 100 matches the trusted value.\"}\n");
 
-                var gate = await e.DeployGateAsync(null);
+                var gate = await e.DeployGateAsync(null, "human");
 
                 // ADVISORY: the verdict and blockers are byte-identical to the packless gate — it can only inform.
                 Assert.Equal(before.Pass, gate.Pass);

@@ -7,12 +7,17 @@ import { CustomRulesPanel } from './rulesauthor';
 
 interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; }
 interface BpaScorecard { ruleCount: number; violationCount: number; autoFixable: number; waivedCount: number; violations: BpaViolation[]; ruleErrors: string[]; }
+// What one press of "Fix all" could NOT clear. The engine verifies the result against a fresh scan, so this is
+// the press's honest remainder rather than a guess: the fix ran (or was skipped) and the finding is still here.
+interface BpaUnfixed { ruleId: string; ruleName: string; objectRef: string; objectName: string; reason: string; }
 
 export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}) {
   const [card, setCard] = useState<BpaScorecard | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [upsell, setUpsell] = useState<string | null>(null);   // a free click on Fix-all teaches, never errors
+  const [leftOver, setLeftOver] = useState<BpaUnfixed[]>([]);  // what the last press could not clear
+  const [waivedOpen, setWaivedOpen] = useState(false);
   const tier = useTier();
   const { state: work, keyOf, fix, ask } = useFixState('bpaFix', 'bpaGetFixPrompt');
   const timer = useRef<number | undefined>(undefined);
@@ -26,13 +31,22 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
     const off = onDidChange(() => { window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void scan(), 350); });
     return () => { off(); window.clearTimeout(timer.current); };
   }, []);
+  // The upsell is a refusal whose only cause is the plan you are on. Activating a licence restarts the engine
+  // and republishes the tier without remounting this tab, so the message used to sit there telling a Pro user
+  // that Fix all is a Pro feature. Clear it the moment the cause is gone (and the moment it never applied).
+  useEffect(() => { setUpsell(null); }, [tier]);
 
   const fixOne = (v: BpaViolation) => fix(v.ruleId, v.objectRef, () => void scan());
   const askClaude = (v: BpaViolation) => ask(v.ruleId, v.objectRef);
   async function fixAll() {
-    setBusy(true); setUpsell(null);
-    try { const r = await rpc<{ scorecard: BpaScorecard; applied: number }>('bpaFixAll'); if (r?.scorecard) setCard(r.scorecard); }
-    catch (e) {
+    // Clear both messages BEFORE the attempt: an old refusal (or an old error) must not survive a press that
+    // works. Only ever set them from what this press actually saw.
+    setBusy(true); setUpsell(null); setErr(null); setLeftOver([]);
+    try {
+      const r = await rpc<{ scorecard: BpaScorecard; applied: number; unfixed?: BpaUnfixed[] }>('bpaFixAll');
+      if (r?.scorecard) setCard(r.scorecard);
+      setLeftOver(r?.unfixed ?? []);
+    } catch (e) {
       // A free click on the bulk button gets the plain invitation, not a raw exception in a red banner.
       if (isEntitlementError(e)) setUpsell(`Each fix below is free. Apply them one at a time, as many as you like. Pro fixes all ${card?.autoFixable ?? 0} in one undoable step.`);
       else setErr(String((e as Error).message ?? e));
@@ -84,7 +98,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
             <div className="text-[15px] font-semibold">Best Practice Analyzer</div>
             <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
               {card.ruleCount} rules · {card.autoFixable} auto-fixable · the rest fixable by the AI Assistant
-              {card.waivedCount > 0 && <span> · <span style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} waived</span></span>}
+              {card.waivedCount > 0 && <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} waived</button></span>}
             </div>
             {card.ruleErrors.length > 0 && <div className="text-[11px] mt-1" style={{ color: 'var(--sem-bad)' }}>{card.ruleErrors.length} rule error(s)</div>}
           </div>
@@ -102,10 +116,29 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
 
       {err && <Banner color="var(--sem-bad)">{err}</Banner>}
       {upsell && <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>}
+      {leftOver.length > 0 && (
+        <Panel>
+          <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-warn)' }}>
+            {leftOver.length === 1 ? 'One finding could not be fixed' : `${leftOver.length} findings could not be fixed`}
+          </div>
+          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+            Fix all cleared the rest. These are still on the model, and each one says why it stayed. Fix them one at a time, or ask the AI Assistant.
+          </div>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {leftOver.map((u) => (
+              <li key={u.ruleId + '|' + u.objectRef} className="text-[12px]">
+                <span className="font-medium">{u.objectName}</span>
+                <span style={{ color: 'var(--sem-muted)' }}> · {u.ruleName} · </span>
+                <span>{u.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
       {card.violationCount === 0 && <Panel><div className="text-[13px]" style={{ color: 'var(--sem-good)' }}>No active best-practice violations. ✓{card.waivedCount > 0 ? ` (${card.waivedCount} waived)` : ''}</div></Panel>}
 
       {card.violationCount > 0 && <Panel><GroupedFindings rows={active} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} /></Panel>}
-      <WaivedList rows={waivedRows} onUnwaive={unwaive} />
+      <WaivedList rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
       <CustomRulesPanel kind="bpa" onChanged={() => void scan()} />
     </div>
   );

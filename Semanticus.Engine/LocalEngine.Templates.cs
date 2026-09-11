@@ -41,7 +41,7 @@ namespace Semanticus.Engine
             }
             foreach (var d in defs)
                 if (d.Error == null && !string.Equals(d.Kind, "template", StringComparison.Ordinal))
-                    d.Error = "this file lives in workflow-templates/ but is missing 'kind: template' — add it to make this a template, or move the file to workflows/ to make it a runnable workflow.";
+                    d.Error = "this file lives in workflow-templates/ but is missing 'kind: template'. Add it to make this a template, or move the file to workflows/ to make it a runnable workflow.";
             return defs;
         }
 
@@ -80,12 +80,12 @@ namespace Semanticus.Engine
         {
             name = (name ?? "").Trim();
             if (!KebabName.IsMatch(name))
-                throw new InvalidOperationException($"'{name}' is not a valid template name — kebab-case (e.g. 'metric-certification'); it becomes the filename.");
+                throw new InvalidOperationException($"'{name}' is not a valid template name: kebab-case (e.g. 'metric-certification'); it becomes the filename.");
             var def = WorkflowParser.Parse(markdown);
             if (def.Error != null)
-                throw new InvalidOperationException($"The template does not parse — nothing was written. {def.Error} Fix the reported error, then re-run save_workflow_template (or check_workflow to re-validate).");
+                throw new InvalidOperationException($"The template does not parse. Nothing was written. {def.Error} Fix the reported error, then re-run save_workflow_template (or check_workflow to re-validate).");
             if (!string.Equals(def.Kind, "template", StringComparison.Ordinal))
-                throw new InvalidOperationException("This is not a template — its frontmatter must declare 'kind: template'. A file without it is a runnable workflow; use save_workflow for that. Nothing was written.");
+                throw new InvalidOperationException("This is not a template: its frontmatter must declare 'kind: template'. A file without it is a runnable workflow; use save_workflow for that. Nothing was written.");
             if (!string.Equals(def.Name, name, StringComparison.Ordinal))
                 throw new InvalidOperationException($"frontmatter name '{def.Name}' must equal the template name '{name}' (it is the file identity). Nothing was written.");
 
@@ -93,14 +93,14 @@ namespace Semanticus.Engine
             var declared = def.Slots.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
             var undeclared = refs.Where(r => !declared.Contains(r)).OrderBy(r => r, StringComparer.Ordinal).ToArray();
             if (undeclared.Length > 0)
-                throw new InvalidOperationException($"The body references {string.Join(", ", undeclared.Select(r => "{{" + r + "}}"))} with no matching slot declaration — declare each in slots:, or fix the reference. Nothing was written.");
+                throw new InvalidOperationException($"The body references {string.Join(", ", undeclared.Select(r => "{{" + r + "}}"))} with no matching slot declaration. Declare each in slots:, or fix the reference. Nothing was written.");
             var noExample = def.Slots.Where(s => string.IsNullOrWhiteSpace(s.Example)).Select(s => s.Name).ToArray();
             if (noExample.Length > 0)
                 throw new InvalidOperationException($"Every slot needs an example: (the trial instantiation renders with it, and the Studio fill-form shows it). Missing on: {string.Join(", ", noExample)}. Nothing was written.");
 
             var (userDir, _) = TemplateDirs();
             if (userDir == null)
-                throw new InvalidOperationException("No place to store user templates — run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
+                throw new InvalidOperationException("No place to store user templates. Run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
             Directory.CreateDirectory(userDir);
             await Task.Run(() => File.WriteAllText(Path.Combine(userDir, name + ".md"), markdown));
             return await ListWorkflowTemplatesAsync();
@@ -117,7 +117,7 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(
                     File.Exists(Path.Combine(stockDir, trimmed + ".md"))
                         ? $"'{name}' is a stock template (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflow-templates."
-                        : $"User template '{name}' not found — list_workflow_templates shows the shelf, and only your own copies (under .semanticus/workflow-templates) are deletable.");
+                        : $"User template '{name}' not found: list_workflow_templates shows the shelf, and only your own copies (under .semanticus/workflow-templates) are deletable.");
             await Task.Run(() => File.Delete(file));
             return await ListWorkflowTemplatesAsync();
         }
@@ -138,9 +138,9 @@ namespace Semanticus.Engine
             // (a) newName kebab-case + no collision with an existing workflow.
             newName = (newName ?? "").Trim();
             if (!KebabName.IsMatch(newName))
-                throw new InvalidOperationException($"'{newName}' is not a valid workflow name — kebab-case (e.g. 'fy26-metric-cert'); it becomes the new workflow's filename.");
+                throw new InvalidOperationException($"'{newName}' is not a valid workflow name: kebab-case (e.g. 'fy26-metric-cert'); it becomes the new workflow's filename.");
             if (LoadWorkflowDefs().Any(d => string.Equals(d.Name, newName, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException($"A workflow named '{newName}' already exists — pick a different name (or delete_workflow to replace it). list_workflows shows the library.");
+                throw new InvalidOperationException($"A workflow named '{newName}' already exists. Pick a different name (or delete_workflow to replace it). list_workflows shows the library.");
 
             // (a) collect + type-check the slot values; an absent optional slot takes its default.
             var provided = ParseSlotValues(valuesJson);
@@ -152,7 +152,7 @@ namespace Semanticus.Engine
                 {
                     if (string.Equals(slot.Required, "required", StringComparison.Ordinal))
                         throw new InvalidOperationException(
-                            $"Required slot '{slot.Name}' has no value — add it to the values JSON. It asks: {slot.Question}"
+                            $"Required slot '{slot.Name}' has no value. Add it to the values JSON. It asks: {slot.Question}"
                             + (string.IsNullOrWhiteSpace(slot.Example) ? "" : $" (example: {slot.Example})"));
                     values[slot.Name] = slot.Default ?? "";   // optional absent → default (or empty)
                     continue;
@@ -175,7 +175,7 @@ namespace Semanticus.Engine
                             {
                                 Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
                                 Kind = "instantiate_workflow_template", Ok = true, Target = newName,
-                                Label = $"Slot '{slot.Name}' = '{v}' does not resolve to an object on the current model (warn — the instance's gates re-check at run time).",
+                                Label = $"Slot '{slot.Name}' = '{v}' does not resolve to an object on the current model (warn: the instance's gates re-check at run time).",
                             });
                         break;
                     default: break;   // text | verification — free-form
@@ -195,17 +195,20 @@ namespace Semanticus.Engine
             // (d) admission — the same dry-run an authored workflow gets; refuse on warns (or a parse fault).
             var renderedDef = WorkflowParser.Parse(rendered);
             if (renderedDef.Error != null)
-                throw new InvalidOperationException($"The rendered workflow does not parse — nothing was saved. {renderedDef.Error}");
+                throw new InvalidOperationException($"The rendered workflow does not parse. Nothing was saved. {renderedDef.Error}");
             var admission = await CheckWorkflowDefAsync(renderedDef);
             if (!admission.Ok)
             {
                 var why = admission.ParseError
                     ?? string.Join(" | ", admission.Findings.Where(f => string.Equals(f.Severity, "warn", StringComparison.Ordinal)).Select(f => f.Message));
-                throw new InvalidOperationException($"The rendered workflow is not admissible — nothing was saved. {why} (check_workflow('{templateName}') validates the template itself.)");
+                throw new InvalidOperationException($"The rendered workflow is not admissible. Nothing was saved. {why} (check_workflow('{templateName}') validates the template itself.)");
             }
 
             // (e) save through the workflow write path (parse-validates again + broadcasts the library).
-            return await SaveWorkflowAsync(newName, rendered, origin);
+            // The library broadcast is the full set; this result is the workflow just created so the caller
+            // does not have to hunt through the shelf.
+            var library = await SaveWorkflowAsync(newName, rendered, origin);
+            return library.Where(w => string.Equals(w.Name, newName, StringComparison.OrdinalIgnoreCase)).ToArray();
         }
 
         // ---- check_workflow for a TEMPLATE (§10.5) -----------------------------------------------
@@ -231,9 +234,9 @@ namespace Semanticus.Engine
                 if (!refs.Contains(s.Name))
                     findings.Add(new CheckFinding { Severity = "warn", Message = $"slot '{s.Name}' is declared but never referenced with {{{{{s.Name}}}}} in the body." });
                 if (string.IsNullOrWhiteSpace(s.Example))
-                    findings.Add(new CheckFinding { Severity = "warn", Message = $"slot '{s.Name}' has no example: — the trial instantiation (and the Studio fill-form) need one." });
+                    findings.Add(new CheckFinding { Severity = "warn", Message = $"slot '{s.Name}' has no example: the trial instantiation (and the Studio fill-form) need one." });
                 if (string.Equals(s.Required, "required", StringComparison.Ordinal) && !string.IsNullOrEmpty(s.Default))
-                    findings.Add(new CheckFinding { Severity = "info", Message = $"slot '{s.Name}' is required yet declares a default: — defaults apply only to optional slots, so it is ignored." });
+                    findings.Add(new CheckFinding { Severity = "info", Message = $"slot '{s.Name}' is required yet declares a default: defaults apply only to optional slots, so it is ignored." });
             }
 
             if (tmpl.Slots.Length > 0 && tmpl.Slots.All(s => !string.IsNullOrWhiteSpace(s.Example)))
@@ -252,7 +255,7 @@ namespace Semanticus.Engine
                 }
             }
             else if (tmpl.Slots.Length == 0)
-                findings.Add(new CheckFinding { Severity = "info", Message = "template declares no slots — it renders to a fixed workflow (nothing to fill in)." });
+                findings.Add(new CheckFinding { Severity = "info", Message = "template declares no slots: it renders to a fixed workflow (nothing to fill in)." });
 
             report.Findings = findings.ToArray();
             report.Ok = report.ParseError == null && !findings.Any(f => string.Equals(f.Severity, "warn", StringComparison.Ordinal));
@@ -291,7 +294,7 @@ namespace Semanticus.Engine
                 var oneDef = WorkflowParser.Parse(SubstituteSlots(templateMarkdown, one));
                 if (SkeletonOf(oneDef) != baseSkel) return (false, DescribeStructuralDiff(slot, baseDef, oneDef));
             }
-            return (false, "a slot value changes the workflow's enforced structure — slot values can change wording and values, never checks.");
+            return (false, "a slot value changes the workflow's enforced structure: slot values can change wording and values, never checks.");
         }
 
         /// <summary>The enforcement-relevant skeleton of a parsed def as a canonical string (prose excluded). Two
@@ -318,7 +321,7 @@ namespace Semanticus.Engine
 
         private static string DescribeStructuralDiff(string slot, WorkflowDef baseDef, WorkflowDef realDef)
         {
-            const string tail = " — slot values can change wording and values, never checks.";
+            const string tail = ". Slot values can change wording and values, never checks.";
             if (realDef.Error != null && baseDef.Error == null)
                 return $"the value for '{slot}' makes the rendered workflow no longer parse ({realDef.Error}){tail}";
             if (baseDef.Steps.Length != realDef.Steps.Length)

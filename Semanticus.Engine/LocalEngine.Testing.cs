@@ -60,7 +60,7 @@ namespace Semanticus.Engine
             }
 
             string token;
-            try { token = await EntraToken.AcquireSqlAsync(req.AuthMode, null, CancellationToken.None, req.TenantId).ConfigureAwait(false); }
+            try { token = await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 review.TestError = "Could not acquire a SQL token: " + ScrubSchemaError(ex.Message);
@@ -153,8 +153,8 @@ namespace Semanticus.Engine
 
             var live = _live;
             if (live == null)
-                return ReconcileRunResult.Fail("Not connected. Call connect_xmla or connect_local first, then re-run.",
-                    ReconcileStatus.InsufficientCoverage, next: "connect_xmla or connect_local");
+                return ReconcileRunResult.Fail(LiveConnectionNeeded,
+                    ReconcileStatus.InsufficientCoverage, next: "Connect a live model in Connections");
 
             var xmlaGate = GuardAgent(AgentCapability.QueryData, live.DataSource, live.Database, origin, isCommit: true,
                 summary: $"reconcile measure {probe.MeasureName}: read model rows from {(string.IsNullOrEmpty(live.Database) ? live.DataSource : live.Database + " on " + live.DataSource)}",
@@ -163,7 +163,7 @@ namespace Semanticus.Engine
                 return ReconcileRunResult.Fail(xmlaGate, ReconcileStatus.InputError, refused: true, approvalId: xmlaApprovalId);
 
             string token;
-            try { token = await EntraToken.AcquireSqlAsync(req.AuthMode, null, CancellationToken.None, req.TenantId).ConfigureAwait(false); }
+            try { token = await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) { return ReconcileRunResult.Fail("Could not acquire a SQL token: " + ScrubSchemaError(ex.Message), ReconcileStatus.InsufficientCoverage); }
 
             var maxRows = req.MaxRows <= 0 ? 100000 : req.MaxRows;

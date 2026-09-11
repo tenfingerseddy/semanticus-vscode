@@ -2,7 +2,17 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ConnectionProvider } from './connection';
+import { ConnectionsStandalone } from './connectionshub';
 import './styles.css';
+
+// The SAME bundle serves two hosts. When the host page sets window.__semanticusInitialView = 'connections' (the
+// dedicated "Manage connections" panel opened while Studio is closed), the bundle mounts ONLY the Connections hub —
+// one source of truth, no second bundle. Any other value mounts the full Studio.
+const flags = window as unknown as { __semanticusInitialView?: string; __semanticusInitialSection?: string };
+const initialView = flags.__semanticusInitialView;
+// The section the standalone hub should land on (Manage Connections -> Current setup). Only the known hub views apply.
+const sectionFlag = flags.__semanticusInitialSection;
+const initialSection = (['open', 'setup', 'accounts', 'history', 'add'] as const).find((v) => v === sectionFlag);
 
 class StudioErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -31,7 +41,7 @@ const el = document.getElementById('root');
 if (el) createRoot(el).render(
   <StudioErrorBoundary>
     <ConnectionProvider>
-      <App />
+      {initialView === 'connections' ? <ConnectionsStandalone initialSection={initialSection} /> : <App />}
     </ConnectionProvider>
   </StudioErrorBoundary>,
 );

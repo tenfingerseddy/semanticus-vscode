@@ -1,0 +1,629 @@
+{
+  "$comment": [
+    "THE MANIFEST OF BORROWED CODE. Every borrowed file that anyone has DECLARED lives here, exactly once.",
+    "This is the authoritative record; NOTICE and THIRD-PARTY-NOTICES.md are views of it and must agree.",
+    "WHAT THIS DOES NOT CLAIM: it is not proof that everything borrowed is declared. Nothing in this",
+    "repository can prove that. A file copied from a project we do not vendor, with its upstream",
+    "attribution removed, is invisible to every automated check we have. See the residual-risk section of",
+    "THIRD-PARTY-NOTICES.md, which lists the known gaps in full.",
+    "Scope: files that live in this tree. Donor code COMPILED IN PLACE from the external/TabularEditor",
+    "submodule has no path here (it is not our file); it is described in THIRD-PARTY-NOTICES.md prose.",
+    "Enforced by Semanticus.VSCode/test/attribution-and-license.test.mjs. Procedure for adding an entry:",
+    "the Borrowing code section at the top of THIRD-PARTY-NOTICES.md.",
+    "licenceVerified MUST be false unless someone actually read the upstream licence at the pinned",
+    "version and recorded how, in evidence. Believed permissive is not a record."
+  ],
+  "repositoryLicence": "Elastic License 2.0",
+  "entries": [
+    {
+      "path": "Semanticus.Core/Grammars/DAXLexer.g4",
+      "kind": "copy",
+      "upstream": "Tabular Editor 2",
+      "upstreamPath": "AntlrGrammars/DAXLexer.g4",
+      "url": "https://github.com/TabularEditor/TabularEditor",
+      "author": "Tabular Editor ApS",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "7029129aa3f45d35f987d8f6ac7e5a971f28771c",
+      "verifiedOn": "2026-07-29",
+      "evidence": "Read external/TabularEditor/LICENSE at the pinned submodule commit: MIT License, Copyright (c) 2025 Tabular Editor ApS. Provenance is byte-identity, not resemblance: before the attribution header was added, git hash-object on both paths returned 63d27cccf2ba9ac26a4e8b87418609614d471faa. The gate now re-proves this on every run by stripping the leading comment block and comparing the remaining body to the donor file, so the \"rules unmodified\" claim cannot silently stop being true.",
+      "header": true,
+      "notes": "Copied rather than compiled in place because Antlr4.CodeGenerator runs over a grammar inside Semanticus.Core's own project directory. Grammar rules unmodified; the attribution header is the only local change.",
+      "noticeSection": "Tabular Editor 2",
+      "upstreamEquivalence": "donor-body-identical",
+      "donorPath": "external/TabularEditor/AntlrGrammars/DAXLexer.g4",
+      "bodySha256": "6936161f01118df03f154e584592b1c468f380642350079254e136a6d7f731f8"
+    },
+    {
+      "path": "Semanticus.Core/Compat/SplitModelSerializer.LinuxPaths.cs",
+      "kind": "copy",
+      "upstream": "Tabular Editor 2",
+      "upstreamPath": "TOMWrapper/TOMWrapper/Serialization/SplitModelSerializer.cs",
+      "url": "https://github.com/TabularEditor/TabularEditor",
+      "author": "Tabular Editor ApS",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "7029129aa3f45d35f987d8f6ac7e5a971f28771c",
+      "verifiedOn": "2026-09-10",
+      "evidence": "Read external/TabularEditor/LICENSE at the pinned submodule commit: MIT License, Copyright (c) 2025 Tabular Editor ApS. Copied rather than compiled in place so Linux path joins can use Path.Combine without rewriting the pristine submodule. The only local change is those Path.Combine joins plus this attribution header.",
+      "header": true,
+      "notes": "Copied rather than compiled in place because the donor concatenates a Windows backslash into folder paths, which on Linux writes a file named S-TE\\database.json instead of a folder. Semanticus.Core excludes the donor file and compiles this copy.",
+      "noticeSection": "Tabular Editor 2",
+      "upstreamEquivalence": "modified-subset: Path.Combine replaces every backslash concatenation so a Tabular Editor folder model opens and saves on Linux. Class made public so the compare loader can combine database.json.",
+      "donorPath": "external/TabularEditor/TOMWrapper/TOMWrapper/Serialization/SplitModelSerializer.cs",
+      "bodySha256": "5d3ac88679aebd7b2fb52ae16b8b67c2c6693ecfb12ffd24651c6a0a07ccf2e6"
+    },
+    {
+      "path": "Semanticus.VSCode/webview/src/mstdlib.ts",
+      "kind": "copy",
+      "upstream": "microsoft/vscode-powerquery",
+      "upstreamPath": "server/src/library/standard/standard-enUs.json",
+      "url": "https://github.com/microsoft/vscode-powerquery",
+      "author": "Microsoft Corporation",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "6a43c83b7ab8adc6e03bdb82c647030ce2ed041f",
+      "verifiedOn": "2026-07-29",
+      "evidence": "Fetched https://raw.githubusercontent.com/microsoft/vscode-powerquery/6a43c83b7ab8adc6e03bdb82c647030ce2ed041f/LICENSE at the exact pinned commit: MIT License, \"Copyright (c) Microsoft Corporation. All rights reserved.\" Upstream is JSON and this file is a TypeScript module, so no donor-identical comparison is possible; the body hash is pinned instead, and any change to the data fails the gate until the licence is re-verified at the new upstream commit.",
+      "header": true,
+      "notes": "The 866-symbol M standard-library dataset, re-embedded as a JSON string module rather than a literal object graph.",
+      "noticeSection": "Power Query M standard-library symbols",
+      "upstreamEquivalence": "body-pinned",
+      "bodySha256": "41408ec0e50ad9502b3f172073f4b5b412339b6f6dfa37e65a15afc41ecd22dd"
+    },
+    {
+      "path": "Semanticus.Analysis/Rules/BPARules-PowerBI.json",
+      "kind": "copy",
+      "upstream": "microsoft/Analysis-Services",
+      "upstreamPath": "BestPracticeRules/BPARules.json",
+      "url": "https://github.com/microsoft/Analysis-Services",
+      "author": "Microsoft Corporation",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "50e8ce5028dd7046e73974ec69cb79af225e41b0",
+      "verifiedOn": "2026-09-11",
+      "evidence": "VERIFIED by reading the licence at the pinned commit, not by inference from the vendor's other repositories. Retrieved https://raw.githubusercontent.com/microsoft/Analysis-Services/50e8ce5028dd7046e73974ec69cb79af225e41b0/LICENSE (1066 bytes): it is the MIT licence, 'Copyright (c) 2016 Microsoft', and its full permission notice is quoted verbatim in Semanticus.Analysis/Rules/BPARules-PowerBI.PROVENANCE.md, checked byte-for-byte against the retrieved file. The borrowed source at that same commit, BestPracticeRules/BPARules.json, is 55920 bytes, sha256 ddb9cff4c2a0611a6467e2559d38319d9867381998066473ffa1e11c2d360392, and holds 71 rules; that hash and size were confirmed three times independently. All 69 of our non-SEM_ rule ids exist in that upstream file; the 2 upstream rules we omit, the 2 we scope-narrow, and the PERCENTAGE_FORMATTING FixExpression literal normalization are listed with reasons in the PROVENANCE file. Re-read the same LICENSE and upstream BPARules.json at that pin on 2026-08-30: 1066-byte MIT, Copyright (c) 2016 Microsoft, permission notice quoted verbatim and still byte-identical; upstream body still sha256 ddb9cff4c2a0611a6467e2559d38319d9867381998066473ffa1e11c2d360392. bodySha256 here is OUR file after the extra semicolon normalization, not a new upstream version. This entry replaces a TabularEditor/BestPracticeRules copy whose licence could not be verified at all; that corpus no longer ships, so the substitution resolves the exception rather than relabelling it. RE-VERIFIED on 2026-09-11 because OUR body changed in 974f28f6 (D-009): read https://raw.githubusercontent.com/microsoft/Analysis-Services/50e8ce5028dd7046e73974ec69cb79af225e41b0/LICENSE again, still the MIT licence, 'Copyright (c) 2016 Microsoft', permission notice still quoted verbatim in the PROVENANCE file. The version pin was NOT moved. Only the bodySha256 below was updated, with the licence re-read in the same sitting, because the alternative (editing our file and leaving the hash and the date alone) is how a stale claim turns into a false one.",
+      "header": true,
+      "doNotUpgradeWithout": "Re-reading the LICENSE file at the NEW pinned commit and re-hashing the upstream body. Do not move the version pin forward because a newer corpus has more rules: the pin is the point at which the licence was actually read, and bodySha256 here is the hash of OUR file, which is a modified subset, so it cannot detect an upstream relicence on its own. This entry is MIT on evidence, not on plausibility, which is what the previous TabularEditor/BestPracticeRules entry got wrong: that upstream published no licence at all (LICENSE and LICENSE.md both HTTP 404, GitHub API license: null) and was correctly recorded UNVERIFIED until it was replaced. Do not reintroduce that corpus.",
+      "noticeSection": "Best Practice Analyzer rules",
+      "shippedNoticeHeading": "Best Practice Analyzer rules (BPARules-PowerBI.json)",
+      "upstreamEquivalence": "modified-subset: 69 of the 71 upstream rules, 2 of those scope-narrowed, plus 5 Semanticus-authored SEM_ rules; documentation links stripped from 29 fields; PERCENTAGE_FORMATTING FixExpression literals normalized from the six-character \\u003B sequence to real semicolons; DATA_COLUMNS_MUST_HAVE_A_SOURCE_COLUMN gained a calculation-group guard in 974f28f6 because calculation-group columns are typed as data columns but are not loaded from a query (D-009). Every difference is enumerated in Semanticus.Analysis/Rules/BPARules-PowerBI.PROVENANCE.md, so bodySha256 pins OUR file and the upstream pin is verified by refetching the commit.",
+      "bodySha256": "c9f20221d35e1b597a094d626c67cd78f9f28eeb21c61dee86916639657f05c1"
+    },
+    {
+      "path": "Antlr4.Runtime",
+      "kind": "nuget",
+      "upstream": "tunnelvisionlabs/antlr4cs (ANTLR 4 C# target)",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/tunnelvisionlabs/antlr4cs",
+      "author": "Sam Harwell, Terence Parr",
+      "licence": "BSD-3-Clause",
+      "licenceVerified": true,
+      "version": "4.6.6",
+      "verifiedOn": "2026-08-18",
+      "evidence": "Read LICENSE.txt at git tag v4.6.6 of tunnelvisionlabs/antlr4cs, the source repository named on the Antlr4.Runtime 4.6.6 NuGet page: BSD 3-clause text, Copyright (c) 2013 Sam Harwell and Copyright (c) 2013 Terence Parr. The NuGet licence link on that package version points at the same file. Antlr4.CodeGenerator 4.6.6 is PrivateAssets=all and does not ship in the vsix.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "ANTLR runtime",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Dax.Vpax",
+      "kind": "nuget",
+      "upstream": "sql-bi/VertiPaq-Analyzer",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/sql-bi/VertiPaq-Analyzer",
+      "author": "SQLBI",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "1.12.1",
+      "verifiedOn": "2026-08-18",
+      "evidence": "NuGet records MIT on Dax.Vpax 1.12.1. Read LICENSE.md on sql-bi/VertiPaq-Analyzer, the repository named on that package page: MIT License, Copyright (c) 2019 SQLBI, with the full permission notice. A separate release-tag copy of LICENSE.md at 1.12.1 was not published as its own path; the project licence file and the NuGet licence field at the pinned package version agree.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Dax.Vpax",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Dax.Model.Extractor",
+      "kind": "nuget",
+      "upstream": "sql-bi/VertiPaq-Analyzer",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/sql-bi/VertiPaq-Analyzer",
+      "author": "SQLBI",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "1.12.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "NuGet records MIT on Dax.Model.Extractor 1.12.0. Read LICENSE.md on sql-bi/VertiPaq-Analyzer, the repository named on that package page: MIT License, Copyright (c) 2019 SQLBI, with the full permission notice. Same project licence as Dax.Vpax 1.12.1.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Dax.Vpax",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Newtonsoft.Json",
+      "kind": "nuget",
+      "upstream": "JamesNK/Newtonsoft.Json",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/JamesNK/Newtonsoft.Json",
+      "author": "James Newton-King",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "13.0.3",
+      "verifiedOn": "2026-08-18",
+      "evidence": "Read LICENSE.md at git tag 13.0.3 of JamesNK/Newtonsoft.Json: The MIT License (MIT), Copyright (c) 2007 James Newton-King, with the full permission notice.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Newtonsoft.Json",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "ModelContextProtocol",
+      "kind": "nuget",
+      "upstream": "modelcontextprotocol/csharp-sdk",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/modelcontextprotocol/csharp-sdk",
+      "author": "Model Context Protocol a Series of LF Projects, LLC",
+      "licence": "Apache-2.0",
+      "licenceVerified": true,
+      "version": "1.4.1",
+      "verifiedOn": "2026-08-18",
+      "evidence": "Read the shipped modelcontextprotocol.nuspec inside the cached 1.4.1 package: <license type=\"expression\">Apache-2.0</license>, copyright \"© Model Context Protocol a Series of LF Projects, LLC.\", and a repository commit of 2b7fd35fbe58dfb9f00eae8b3393e1a7361b5e01. Read the LICENSE file at that exact commit of modelcontextprotocol/csharp-sdk: the project is mid-transition from MIT to Apache-2.0, and contributions whose authors have not granted relicensing consent remain MIT, so a residual MIT subset sits inside this Apache-2.0 package at the pinned version. Both facts are recorded in the notice. No NOTICE file exists to reproduce under Apache-2.0 section 4(d): neither nupkg contains one and NOTICE, NOTICE.txt and NOTICE.md are all HTTP 404 at that commit. An earlier classification in the gate called this package MIT on nuget.org; that was wrong against the shipped nuspec, which is why it is now declared rather than classified away.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Model Context Protocol C# SDK",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "StreamJsonRpc",
+      "kind": "nuget",
+      "upstream": "microsoft/vs-streamjsonrpc",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/microsoft/vs-streamjsonrpc",
+      "author": "Microsoft Corporation",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "2.25.29",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped streamjsonrpc.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 332cc170a82fa424e0b4f902ab9f9a876e827f38. Read LICENSE at that commit: MIT License, Copyright (c) Microsoft Corporation, with the full permission notice, reproduced in the notice. StreamJsonRpc.dll was measured in a win-x64 self-contained publish of Semanticus.Engine, so it really ships. The previous classification exempted it because Microsoft publishes it and holds the reserved NuGet prefix; publisher identity is not a licence exemption, and MIT requires the permission notice to accompany copies.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "StreamJsonRpc",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Azure.Identity",
+      "kind": "nuget",
+      "upstream": "Azure/azure-sdk-for-net",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/Azure/azure-sdk-for-net",
+      "author": "Microsoft",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "1.13.1",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped azure.identity.nuspec declares <license type=\"expression\">MIT</license> and records repository commit fd0b3e70a336accb1bae2e2ffc45de52ae688710. The package ships no licence file of its own and sdk/identity/Azure.Identity/LICENSE.txt is HTTP 404 at that commit, so the licence was read from the repository-root LICENSE.txt at that commit: The MIT License (MIT), Copyright (c) 2015 Microsoft, reproduced in the notice. Azure.Identity.dll was measured in a win-x64 self-contained publish of Semanticus.Engine, so it really ships. The previous classification said only \"Microsoft Azure SDK\", which names a publisher rather than a licence ground.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Azure.Identity",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Microsoft.Data.SqlClient",
+      "kind": "nuget",
+      "upstream": "dotnet/sqlclient",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/sqlclient",
+      "author": ".NET Foundation",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "7.0.2",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped microsoft.data.sqlclient.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 8c70cec98444338ddb0b97be94c34fde93970241. The .nupkg contains no licence file, so LICENSE was read at that commit: MIT License, Copyright (c) .NET Foundation, reproduced verbatim in the notice including its four-space indent and its missing final full stop. Microsoft.Data.SqlClient.dll was measured in a win-x64 self-contained publish of Semanticus.Engine, so it really ships. The previous classification said \"Microsoft redistributable client library\", which is not a licence ground for an MIT package.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "Microsoft.Data.SqlClient",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Microsoft.Extensions.Hosting",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.1",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped microsoft.extensions.hosting.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 81cabf2857a01351e5ab578947c7403a5b128ad1. The package carries its own LICENSE.TXT inside the .nupkg, which is the authoritative licence for the pinned version and was read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors, with the full permission notice. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) across all five dotnet/runtime packages this repository ships, so one reproduction covers them. Microsoft.Extensions.Hosting.dll was measured in a win-x64 self-contained publish of Semanticus.Engine and is NOT supplied by the .NET 8 runtime pack, so the previous \"Microsoft shared-framework family\" classification was factually wrong as well as legally insufficient.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "System.CodeDom",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped system.codedom.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 5535e31a712343a63f5d7d796cd874e563e5ac14. The package carries its own LICENSE.TXT inside the .nupkg, which is the authoritative licence for the pinned version and was read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors, with the full permission notice. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) across all five dotnet/runtime packages this repository ships, so one reproduction covers them. System.CodeDom.dll was measured in a win-x64 self-contained publish of Semanticus.Engine and is NOT supplied by the .NET 8 runtime pack, so the previous \"Microsoft shared-framework family\" classification was factually wrong as well as legally insufficient.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "System.Data.OleDb",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped system.data.oledb.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 5535e31a712343a63f5d7d796cd874e563e5ac14. The package carries its own LICENSE.TXT inside the .nupkg, which is the authoritative licence for the pinned version and was read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors, with the full permission notice. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) across all five dotnet/runtime packages this repository ships, so one reproduction covers them. System.Data.OleDb.dll was measured in a win-x64 self-contained publish of Semanticus.Engine and is NOT supplied by the .NET 8 runtime pack, so the previous \"Microsoft shared-framework family\" classification was factually wrong as well as legally insufficient.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "System.Security.Permissions",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped system.security.permissions.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 5535e31a712343a63f5d7d796cd874e563e5ac14. The package carries its own LICENSE.TXT inside the .nupkg, which is the authoritative licence for the pinned version and was read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors, with the full permission notice. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) across all five dotnet/runtime packages this repository ships, so one reproduction covers them. System.Security.Permissions.dll was measured in a win-x64 self-contained publish of Semanticus.Engine and is NOT supplied by the .NET 8 runtime pack, so the previous \"Microsoft shared-framework family\" classification was factually wrong as well as legally insufficient.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "System.Management",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "The shipped system.management.nuspec declares <license type=\"expression\">MIT</license> and records repository commit 5535e31a712343a63f5d7d796cd874e563e5ac14. The package carries its own LICENSE.TXT inside the .nupkg, which is the authoritative licence for the pinned version and was read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors, with the full permission notice. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) across all five dotnet/runtime packages this repository ships, so one reproduction covers them. System.Management.dll was measured in a win-x64 self-contained publish of Semanticus.Engine and is NOT supplied by the .NET 8 runtime pack, so the previous \"Microsoft shared-framework family\" classification was factually wrong as well as legally insufficient.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "YamlDotNet",
+      "kind": "nuget",
+      "upstream": "aaubry/YamlDotNet",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/aaubry/YamlDotNet",
+      "author": "Antoine Aubry",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "18.1.0",
+      "verifiedOn": "2026-08-18",
+      "evidence": "Read yamldotnet.nuspec from the restored package at ~/.nuget/packages/yamldotnet/18.1.0 on 2026-08-18: it declares a licence expression of MIT and a copyright of Copyright (c) Antoine Aubry and contributors. That nuspec is the licence record shipped inside the exact version Semanticus.Engine pins, and the pin is an exact-version range so no other version can restore. The .nupkg carries no separate LICENSE file, so the MIT permission notice reproduced in THIRD-PARTY-NOTICES.md was taken from the upstream project LICENSE.txt at commit 748334a8fa7c227740018b284b71ad95cc6b7fc7, as that section records.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "YamlDotNet",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
+      "path": "Semanticus.VSCode/media/studio/studio.js",
+      "kind": "bundle",
+      "upstream": "the webview production dependency closure, bundled at build time",
+      "upstreamPath": "n/a (generated build output)",
+      "url": "https://github.com/microsoft/powerquery-parser",
+      "author": "multiple; see dependencyClosure and the notices section",
+      "licence": "multiple: 0BSD, Apache-2.0, BSD-3-Clause, ISC, MIT",
+      "licenceVerified": true,
+      "version": "generated from Semanticus.VSCode/webview/package-lock.json",
+      "verifiedOn": "2026-07-29",
+      "evidence": "Every package name, version and licence below is read from Semanticus.VSCode/webview/package-lock.json (non-dev entries). The gate compares that lockfile to this list in BOTH directions, so a new production dependency cannot enter the lockfile or the bundle without failing until it is declared here and in the notices. Licence holders for the non-MIT families were read from the installed packages: zrender BSD-3-Clause (Copyright (c) 2017, Baidu Inc.), d3-ease BSD-3-Clause (Copyright 2010-2021 Mike Bostock; Copyright 2001 Robert Penner), react MIT (Copyright (c) Meta Platforms, Inc. and affiliates), tslib 0BSD (Copyright (c) Microsoft Corporation), echarts Apache-2.0.",
+      "header": false,
+      "headerWaiverReason": "Generated build output. It carries esbuild/rollup extracted legal comments inline; the authoritative record is dependencyClosure below plus the lockfile.",
+      "noticeSection": "Webview bundled dependencies",
+      "scopeLimit": "This declares the production dependency CLOSURE the bundle is built from, taken from the lockfile. It does NOT prove which of those packages survived tree-shaking into the emitted file, and 8 of them are @types packages that emit no runtime code at all. Proving per-package presence in the emitted bundle is not attempted and is not claimed.",
+      "apacheNoticeRequired": [
+        "echarts"
+      ],
+      "dependencyClosure": [
+        {
+          "name": "@codemirror/autocomplete",
+          "version": "6.20.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "@codemirror/commands",
+          "version": "6.10.4",
+          "licence": "MIT"
+        },
+        {
+          "name": "@codemirror/language",
+          "version": "6.12.4",
+          "licence": "MIT"
+        },
+        {
+          "name": "@codemirror/lint",
+          "version": "6.9.7",
+          "licence": "MIT"
+        },
+        {
+          "name": "@codemirror/state",
+          "version": "6.7.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "@codemirror/view",
+          "version": "6.43.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "@dagrejs/dagre",
+          "version": "1.1.8",
+          "licence": "MIT"
+        },
+        {
+          "name": "@dagrejs/graphlib",
+          "version": "2.2.4",
+          "licence": "MIT"
+        },
+        {
+          "name": "@lezer/common",
+          "version": "1.5.2",
+          "licence": "MIT"
+        },
+        {
+          "name": "@lezer/highlight",
+          "version": "1.2.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "@lezer/lr",
+          "version": "1.4.10",
+          "licence": "MIT"
+        },
+        {
+          "name": "@marijn/find-cluster-break",
+          "version": "1.0.2",
+          "licence": "MIT"
+        },
+        {
+          "name": "@microsoft/powerquery-formatter",
+          "version": "1.0.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "@microsoft/powerquery-language-services",
+          "version": "1.0.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "@microsoft/powerquery-parser",
+          "version": "0.19.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "@tanstack/react-virtual",
+          "version": "3.14.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "@tanstack/virtual-core",
+          "version": "3.17.1",
+          "licence": "MIT"
+        },
+        {
+          "name": "@types/d3-color",
+          "version": "3.1.3",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/d3-drag",
+          "version": "3.0.7",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/d3-interpolate",
+          "version": "3.0.4",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/d3-selection",
+          "version": "3.0.11",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/d3-transition",
+          "version": "3.0.9",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/d3-zoom",
+          "version": "3.0.8",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/react",
+          "version": "19.2.17",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@types/react-dom",
+          "version": "19.2.3",
+          "licence": "MIT",
+          "typesOnly": true
+        },
+        {
+          "name": "@xyflow/react",
+          "version": "12.11.1",
+          "licence": "MIT"
+        },
+        {
+          "name": "@xyflow/system",
+          "version": "0.0.78",
+          "licence": "MIT"
+        },
+        {
+          "name": "classcat",
+          "version": "5.0.5",
+          "licence": "MIT"
+        },
+        {
+          "name": "crelt",
+          "version": "1.0.6",
+          "licence": "MIT"
+        },
+        {
+          "name": "csstype",
+          "version": "3.2.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "d3-color",
+          "version": "3.1.0",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-dispatch",
+          "version": "3.0.1",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-drag",
+          "version": "3.0.0",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-ease",
+          "version": "3.0.1",
+          "licence": "BSD-3-Clause"
+        },
+        {
+          "name": "d3-interpolate",
+          "version": "3.0.1",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-selection",
+          "version": "3.0.0",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-timer",
+          "version": "3.0.1",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-transition",
+          "version": "3.0.1",
+          "licence": "ISC"
+        },
+        {
+          "name": "d3-zoom",
+          "version": "3.0.0",
+          "licence": "ISC"
+        },
+        {
+          "name": "echarts",
+          "version": "6.1.0",
+          "licence": "Apache-2.0",
+          "shipsUpstreamNotice": true
+        },
+        {
+          "name": "grapheme-splitter",
+          "version": "1.0.4",
+          "licence": "MIT"
+        },
+        {
+          "name": "performance-now",
+          "version": "2.1.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "react",
+          "version": "19.2.7",
+          "licence": "MIT"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.2.7",
+          "licence": "MIT"
+        },
+        {
+          "name": "scheduler",
+          "version": "0.27.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "style-mod",
+          "version": "4.1.3",
+          "licence": "MIT"
+        },
+        {
+          "name": "tslib",
+          "version": "2.3.0",
+          "licence": "0BSD"
+        },
+        {
+          "name": "use-sync-external-store",
+          "version": "1.6.0",
+          "licence": "MIT"
+        },
+        {
+          "name": "vscode-languageserver-textdocument",
+          "version": "1.0.12",
+          "licence": "MIT"
+        },
+        {
+          "name": "vscode-languageserver-types",
+          "version": "3.17.5",
+          "licence": "MIT"
+        },
+        {
+          "name": "w3c-keyname",
+          "version": "2.2.8",
+          "licence": "MIT"
+        },
+        {
+          "name": "zrender",
+          "version": "6.1.0",
+          "licence": "BSD-3-Clause"
+        },
+        {
+          "name": "zustand",
+          "version": "4.5.7",
+          "licence": "MIT"
+        }
+      ],
+      "upstreamEquivalence": "lockfile-pinned"
+    }
+  ]
+}

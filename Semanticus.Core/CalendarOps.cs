@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using TabularEditor.TOMWrapper;
 using TabularEditor.TOMWrapper.Undo;
 using TOM = Microsoft.AnalysisServices.Tabular;
@@ -30,6 +31,15 @@ namespace TabularEditor.TOMWrapper.Utils
             foreach (var t in model.Tables)
                 if (Raw(t).Calendars.Count > 0) return true;
             return false;
+        }
+
+        /// <summary>Walk every calendar on every table. Used by the readiness rule that flags a Date
+        /// category mapped to a non-date column. Calendars stay raw TOM, so this is the public seam.</summary>
+        public static IEnumerable<(Table Table, TOM.Calendar Calendar)> Enumerate(Model model)
+        {
+            foreach (var t in model.Tables)
+                foreach (var cal in Raw(t).Calendars)
+                    yield return (t, cal);
         }
 
         /// <summary>Mutate a table's raw-TOM calendar metadata as ONE undoable step. The mutation must be

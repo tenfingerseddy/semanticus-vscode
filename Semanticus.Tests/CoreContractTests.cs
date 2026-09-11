@@ -85,5 +85,22 @@ namespace Semanticus.Tests
             Assert.Equal(measureDax, survivor!.Expression);
             Assert.Contains("[Del_DepCol]", survivor.Expression);
         }
+
+        [Fact]
+        public async Task Multi_object_delete_undoes_in_one_step()
+        {
+            var table = (await _engine.ListMeasuresAsync()).First().Table;
+            var a = await _engine.CreateMeasureAsync("table:" + table, "Del_Batch_A", "1", "human");
+            var b = await _engine.CreateMeasureAsync("table:" + table, "Del_Batch_B", "2", "human");
+
+            var del = await _engine.DeleteObjectsAsync(new[] { a, b }, "human");
+            Assert.True(del.Changed);
+            Assert.DoesNotContain(await _engine.ListMeasuresAsync(), m => m.Name == "Del_Batch_A" || m.Name == "Del_Batch_B");
+
+            await _engine.UndoAsync("human");
+            var names = (await _engine.ListMeasuresAsync()).Select(m => m.Name).ToHashSet();
+            Assert.Contains("Del_Batch_A", names);
+            Assert.Contains("Del_Batch_B", names);
+        }
     }
 }

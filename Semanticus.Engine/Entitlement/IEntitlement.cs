@@ -47,7 +47,7 @@ namespace Semanticus.Engine.Entitlement
             if (isPro) return;
             throw new EntitlementException(
                 $"{feature} is a Semanticus Pro feature. {freeAlternative} " +
-                "Unlock Pro with a license (set SEMANTICUS_LICENSE, or ~/.semanticus/license).");
+                "Unlock Pro from Pro Plans and Support.");
         }
     }
 }

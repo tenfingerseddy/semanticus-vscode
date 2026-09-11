@@ -125,6 +125,30 @@ namespace Semanticus.Analysis
             return null;
         }
 
+        /// <summary>Reconcile the stored waivers for <paramref name="system"/> against the rule ids actually LOADED,
+        /// and return the ORPHANS: records whose rule id matches no live rule. Replacing a rule corpus renames ids
+        /// wholesale, so this is the ordinary way a waiver goes stale. An orphan can never match a finding (nothing
+        /// carries its rule id), so it suppresses nothing and is not an active waiver — but it is still the user's
+        /// recorded decision, so it is reported as its OWN state rather than dropped, migrated, or read as protection.
+        /// Matching is on the rule id only: an orphan's object ref may or may not still resolve, and that is a
+        /// different question from "does this rule exist".</summary>
+        public static List<WaiverRecord> Orphans(IEnumerable<WaiverRecord> recs, string system, IEnumerable<string> loadedRuleIds)
+        {
+            var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (loadedRuleIds != null) foreach (var id in loadedRuleIds) if (!string.IsNullOrWhiteSpace(id)) live.Add(id.Trim());
+            var orphans = new List<WaiverRecord>();
+            if (recs == null) return orphans;
+            foreach (var r in recs)
+            {
+                // Normalize/Load already dropped null records and blank rule ids, but Orphans is public and callable on
+                // a raw list — guard rather than assume. A blank id is not reportable as a named orphan.
+                if (r == null || string.IsNullOrWhiteSpace(r.RuleId)) continue;
+                if (!string.Equals(r.System, system, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!live.Contains(r.RuleId.Trim())) orphans.Add(r);
+            }
+            return orphans;
+        }
+
         /// <summary>Add a waiver, replacing any existing record with the same (system, ruleId, ref) key — idempotent.</summary>
         public static void Add(List<WaiverRecord> recs, WaiverRecord rec)
         {

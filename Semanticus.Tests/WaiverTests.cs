@@ -64,6 +64,32 @@ namespace Semanticus.Tests
             }
         }
 
+        // D-130: a rule-wide waiver must COUNT in the category (waived > 0) rather than vanish from it.
+        // Formatting is the UAT category; FMT-SUMMARIZE is the built-in that fires there.
+        [Fact]
+        public async Task Rule_level_formatting_waiver_is_counted_not_vanished()
+        {
+            var (engine, _) = await OpenAwAsync(pro: true);
+            using (engine)
+            {
+                var before = await engine.AiReadinessScanAsync();
+                var fmtBefore = before.Categories.First(c => c.Category == "Formatting");
+                var fmtFindings = before.Findings.Where(f => f.Category == "Formatting" && !f.Waived).ToArray();
+                Assert.True(fmtFindings.Length > 0, "AdventureWorks must have Formatting findings to waive");
+
+                var ruleId = fmtFindings[0].RuleId;
+                var waivedOfRule = fmtFindings.Count(f => f.RuleId == ruleId);
+                await engine.WaiveFindingAsync("air", ruleId, "*", "house standard for this model", "human");
+
+                var after = await engine.AiReadinessScanAsync();
+                var fmt = after.Categories.First(c => c.Category == "Formatting");
+                Assert.True(fmt.Waived >= waivedOfRule, $"Formatting.Waived was {fmt.Waived}, expected at least {waivedOfRule}");
+                Assert.Equal(fmtBefore.Violations - waivedOfRule, fmt.Violations);
+                Assert.True(after.Findings.Where(f => f.RuleId == ruleId).All(f => f.Waived));
+                Assert.True(after.WaivedCount >= waivedOfRule);
+            }
+        }
+
         // ---- the honesty guarantee: a waiver does NOT lift a hard gate ---------------------------------------------
 
         [Fact]

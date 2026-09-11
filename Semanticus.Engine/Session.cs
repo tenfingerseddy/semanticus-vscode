@@ -71,7 +71,15 @@ namespace Semanticus.Engine
         // transiently in memory — the engine already mints+injects these tokens; nothing is persisted to disk.
         private readonly object _authLock = new object();
         private Azure.Core.TokenCredential _liveCredential;
-        private string _liveCredentialKey;          // "mode|tenant" the credential was built for
+        private string _liveCredentialKey;          // the LiveAuthKey (family|tenant|homeAccountId, or mode|tenant when no stable identity is known) this credential was built for
+        // TWO slots, not one (T163). The human slot above may be PROMPT-CAPABLE; this one never is. With a single
+        // slot an agent op inherited whatever the human's open had left there, so a stale refresh token could pop a
+        // browser on the user's machine with no human present. Separate slots also mean selecting either never
+        // EVICTS the other, so neither driver forces the other to re-authenticate. The cached ACCESS TOKEN stays
+        // shared (a token is not prompt-capable), so an agent still rides a human's warm token in the common case;
+        // only credential-level renewal is split.
+        private Azure.Core.TokenCredential _agentCredential;
+        private string _agentCredentialKey;          // same LiveAuthKey shape as the human slot above
         private Azure.Core.AccessToken _liveToken;  // last acquired token (value type; default = none, .Token == null)
         private string _liveTokenKey;
 
@@ -102,29 +110,41 @@ namespace Semanticus.Engine
             }
         }
 
-        /// <summary>Get the cached credential for <paramref name="key"/>, building (and caching) it once if absent
+        /// <summary>Get the cached credential for <paramref name="key"/> (a LocalEngine.LiveAuthKey: family + tenant +
+        /// home-account id, or mode + tenant where no stable identity is known), building (and caching) it once if absent
         /// or if the identity changed. Reusing the instance is what makes interactive renew silently. THROWS
         /// ObjectDisposedException on a disposed session — a dead session must not manufacture live credentials
         /// at all (an uncached build would have ambiguous ownership: no caller could know to dispose it). The
         /// throw only surfaces in the narrow stale-session race, where refusing is exactly right.</summary>
-        public Azure.Core.TokenCredential GetOrBuildLiveCredential(string key, Func<Azure.Core.TokenCredential> build)
+        public Azure.Core.TokenCredential GetOrBuildLiveCredential(string key, bool nonInteractive, Func<Azure.Core.TokenCredential> build)
         {
             lock (_authLock)
             {
                 if (System.Threading.Volatile.Read(ref _retired) != 0)
                     throw new ObjectDisposedException(nameof(Session), "This model session was replaced; re-run the operation.");
+                if (nonInteractive)
+                {
+                    if (_agentCredential == null || _agentCredentialKey != key) { _agentCredential = build(); _agentCredentialKey = key; }
+                    return _agentCredential;
+                }
                 if (_liveCredential == null || _liveCredentialKey != key) { _liveCredential = build(); _liveCredentialKey = key; }
                 return _liveCredential;
             }
         }
 
-        // Test-observable only: whether a live credential is currently retained (the exception-safe-clear pin).
-        internal bool HasLiveCredentialForTest { get { lock (_authLock) return _liveCredential != null; } }
+        // Test-observable only: whether ANY live credential is currently retained (the exception-safe-clear pin) —
+        // both slots, so the pin can't pass while the other one is still rooted.
+        internal bool HasLiveCredentialForTest { get { lock (_authLock) return _liveCredential != null || _agentCredential != null; } }
+
+        // Test-observable only: the credential currently held in ONE slot, so the open-time seeding of BOTH slots can
+        // be asserted directly (same pinned identity, opposite prompt-capability).
+        internal Azure.Core.TokenCredential PeekLiveCredentialForTest(bool nonInteractive)
+        { lock (_authLock) return nonInteractive ? _agentCredential : _liveCredential; }
 
         /// <summary>Seed the credential acquired during open so the FIRST deploy/refresh reuses that exact
         /// instance (the one that already prompted) instead of building a fresh, blank-cache one. On a disposed
         /// session the offered credential is disposed immediately, never retained.</summary>
-        public void SeedLiveCredential(string key, Azure.Core.TokenCredential cred)
+        public void SeedLiveCredential(string key, bool nonInteractive, Azure.Core.TokenCredential cred)
         {
             lock (_authLock)
             {
@@ -133,7 +153,8 @@ namespace Semanticus.Engine
                     try { (cred as IDisposable)?.Dispose(); } catch { }   // dead session: dispose the offer, retain nothing
                     return;
                 }
-                _liveCredential = cred; _liveCredentialKey = key;
+                if (nonInteractive) { _agentCredential = cred; _agentCredentialKey = key; }
+                else { _liveCredential = cred; _liveCredentialKey = key; }
             }
         }
 
@@ -377,12 +398,20 @@ namespace Semanticus.Engine
                 ? RehearseAsync(dry, label, work, cascadeSink)
                 : TrackAsync(origin, label, () =>
                 {
+                    var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
                     _model.BeginUpdate(label);
                     // RetryPendingCascades runs INSIDE the batch (before EndUpdate) so retried LSDL writes join
                     // the same undo step as the renames that queued them. On a work throw the rollback reverts
-                    // the renames themselves, so the pendings are moot — just cleared.
+                    // the renames themselves, so the pendings are moot — just cleared. RestoreRedo puts back the
+                    // redo stack TE2 cleared when the first action of this now-refused batch was recorded.
                     try { work(Model); RetryPendingCascades(cascadeSink); _model.EndUpdate(); }
-                    catch { _pendingCascades.Clear(); _model.EndUpdate(undoable: true, rollback: true); throw; }
+                    catch
+                    {
+                        _pendingCascades.Clear();
+                        try { _model.EndUpdate(undoable: true, rollback: true); }
+                        finally { (_model.Undo as IRedoPreserve)?.RestoreRedo(redo); }
+                        throw;
+                    }
                 }));
         }
 
@@ -396,6 +425,7 @@ namespace Semanticus.Engine
             Dispatcher.RunAsync(() =>
             {
                 _pending = new List<ChangeDelta>();   // the same ObjectChanged collector the real path uses
+                var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
                 try
                 {
                     _model.BeginUpdate(label);
@@ -410,7 +440,11 @@ namespace Semanticus.Engine
                     dry.Deltas.AddRange(mutationDeltas);
                     dry.MutationLabels.Add(label);
                 }
-                finally { _pending = null; }
+                finally
+                {
+                    (_model.Undo as IRedoPreserve)?.RestoreRedo(redo);
+                    _pending = null;
+                }
                 return Revision;
             });
 
@@ -425,6 +459,14 @@ namespace Semanticus.Engine
             // A checkpoint-resetting save persisted everything, audit records included. A non-resetting save
             // (deploy_live's temp serialization) keeps the bit — the LOCAL file still hasn't been written.
             if (resetCheckpoint) _auditDirty = false;
+        }
+
+        /// <summary>Mark the in-memory model clean after a temp-tree save has been swapped onto the real path.
+        /// Must not run until that swap succeeds, or a failed save would hide unsaved edits.</summary>
+        public void MarkSavedToDisk()
+        {
+            _model.Undo.SetCheckpoint();
+            _auditDirty = false;
         }
 
         /// <summary>Rename via the FormulaFixup contract seam (<see cref="IRenameService"/>): rewrites every DAX /
@@ -444,10 +486,22 @@ namespace Semanticus.Engine
             var changed = _model.Renamer.Rename(obj, newName);
             if (changed)
             {
+                if (obj is Table table) RenameMatchingDefaultPartition(table, oldName, newName);
                 LsdlSynonyms.CascadeRename(obj, oldName, out var warning);
                 if (warning != null) _pendingCascades.Add((obj, oldName));
             }
             return changed;
+        }
+
+        // A calculated table's default partition is named after the table. Rename keeps that match so a
+        // later save does not leave the old name on disk (D-063). Custom-named extra partitions stay put.
+        private static void RenameMatchingDefaultPartition(Table table, string oldName, string newName)
+        {
+            var match = table.Partitions.FirstOrDefault(p => string.Equals(p.Name, oldName, StringComparison.Ordinal));
+            if (match == null) return;
+            if (table.Partitions.Any(p => !ReferenceEquals(p, match) && string.Equals(p.Name, newName, StringComparison.Ordinal)))
+                return;
+            match.Name = newName;
         }
 
         // Renames whose LSDL cascade a culture refused MID-batch, keyed by the identity the cascade rewrites.
@@ -601,15 +655,21 @@ namespace Semanticus.Engine
                 // into a local), then dispose the capture OUTSIDE the lock in its own swallow — disposing before
                 // nulling would exit on a throwing credential Dispose with _liveCredential still set, and since
                 // later Dispose calls retry only the dispatcher stage, that credential would be retained forever.
-                IDisposable liveCred;
+                IDisposable liveCred, agentCred;
                 lock (_authLock)
                 {
                     _liveToken = default; _liveTokenKey = null;
                     liveCred = _liveCredential as IDisposable;   // most Azure.Identity credentials aren't IDisposable — null here
                     _liveCredential = null; _liveCredentialKey = null;
+                    agentCred = _agentCredential as IDisposable;
+                    _agentCredential = null; _agentCredentialKey = null;
                 }
+                // Each slot disposes in its OWN swallow: a throwing human credential must not leave the agent one
+                // rooted for the process lifetime (the same exception-safety the single-slot version already had).
                 try { liveCred?.Dispose(); }
                 catch (Exception ex) { try { Console.Error.WriteLine("[session] disposing the live credential during dispose failed (the fields are already cleared): " + ex.Message); } catch { } }
+                try { agentCred?.Dispose(); }
+                catch (Exception ex) { try { Console.Error.WriteLine("[session] disposing the agent live credential during dispose failed (the fields are already cleared): " + ex.Message); } catch { } }
             }
             finally { DisposeDispatcherStage(); }   // ALWAYS attempted, whatever an earlier stage did
         }

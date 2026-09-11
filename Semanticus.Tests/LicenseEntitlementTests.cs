@@ -5,9 +5,8 @@ using Xunit;
 namespace Semanticus.Tests
 {
     /// <summary>The offline license evaluator — the Pro gate's source of truth. Tests the PURE <see cref="LicenseEntitlement.Evaluate"/>
-    /// (env-independent, deterministic) so entitlement can't silently drift. Delivery is via the engine's --license arg /
-    /// env / ~/.semanticus/license file; the reliable path is --license (an attaching MCP proxy's env is ignored — the
-    /// gate follows the OWNER engine — and Claude Code's env passthrough is unreliable).</summary>
+    /// (env-independent, deterministic) so entitlement can't silently drift. Delivery is via the owner's stdin
+    /// (--license-stdin), then env, then the user license file. An attaching MCP proxy inherits the owner's gate.</summary>
     public sealed class LicenseEntitlementTests
     {
         private static readonly DateTimeOffset Now = new DateTimeOffset(2026, 7, 2, 0, 0, 0, TimeSpan.Zero);

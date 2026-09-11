@@ -36,7 +36,7 @@ namespace Semanticus.Engine
         private static void RequireHuman(string origin)
         {
             if (!string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Only a human can change the agent policy — an agent cannot rewrite the matrix that gates it. This must come from the UI.");
+                throw new InvalidOperationException("Only a human can change the agent policy: an agent cannot rewrite the matrix that gates it. This must come from the UI.");
         }
 
         private static void RequirePro(bool isPro)
@@ -65,7 +65,7 @@ namespace Semanticus.Engine
             if (!Enum.TryParse<AgentCapability>(capability, ignoreCase: true, out var cap))
                 throw new ArgumentException($"Unknown capability '{capability}'.");
             if (!AgentPolicy.TryParseAction(action, out _))   // explicit allow|ask|deny — never numeric "0"
-                throw new ArgumentException($"Unknown action '{action}' — use allow, ask, or deny.");
+                throw new ArgumentException($"Unknown action '{action}': use allow, ask, or deny.");
             var lbl = AgentPolicy.NormalizeLabel(label);
 
             return HomeFile.Mutate<AgentPolicy, AgentPolicy>(Path_(), Get, cur =>

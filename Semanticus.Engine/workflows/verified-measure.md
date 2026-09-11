@@ -3,7 +3,7 @@ name: verified-measure
 title: Author a hard DAX measure, reconciled against the requirement at every grain
 description: "Requirement-anchored verified authoring: pin conventions only from the requirement's own words, lock expected values from raw rows before authoring, reconcile one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicate disagreements cell-by-cell, and never let a speed pick or an invented convention overwrite a correct answer."
 whenToUse: "A measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves."
-version: 6
+version: 7
 strictness: hard
 triggers: [create_measure, update_measure]
 ---
@@ -17,6 +17,11 @@ per-dimension rule decides which subtotal can silently lie.
 Record the model facts that constrain authoring (facts, never conventions): fact-table date span
 vs calendar span; fact grain; direction, cardinality and active-flag of every relationship the
 measure will traverse; marked-and-contiguous date table when time-intel is involved.
+
+Calendars may extend past the data. Record the last fact date separately from the last calendar
+date. A future-period guard blanks a period only when the WHOLE period is beyond the data edge,
+which means FirstDate > LastData. Endpoint touch is still a period with data and must never be
+blanked merely because LastDate reaches or passes the edge.
 
 Then build the CONTEXT LEDGER. Enumerate the degenerate contexts (grand total; each bare
 single-column subtotal at the metric's grain; single member; first and last period with data; a
@@ -32,12 +37,11 @@ enumerated context appears EXACTLY ONCE in the ledger, as either:
   context, and no gate may fail on one.
 
 A published pattern (a future-date guard, a blank-suppression) is correct ONLY when a PINNED entry
-asks for it. The ledger also decides what Step 6 may enforce, by one rule: a gate shape is OPEN if
-ANY ledger context within it is OPEN (the engine excludes whole shapes; at an OPEN cell two
-legitimate formulations can naturally differ, so a mixed shape must not stay enforced). Know the
-honesty consequence up front: the certificate is FULL only when every evaluated shape is pinned,
-zero ledger contexts are OPEN, and zero verdicts are INCONCLUSIVE; any of those makes it PARTIAL,
-naming the observations (Step 6). Nothing is silently absorbed into "verified".
+asks for it. Step 2 records the enforced surface before a candidate exists by mapping every grid
+grain to exactly one of PINNED or OPEN. An OPEN grain may legitimately disagree, but Step 6 never
+silently absorbs that disagreement. It must become clean or be countersigned with both values.
+Know the honesty consequence up front: open grains or countersigns make the certificate PARTIAL,
+and skipping a hard gate makes it OVERRIDDEN. Nothing is silently absorbed into "verified".
 
 ```yaml gate
 inputs:
@@ -61,14 +65,52 @@ inputs:
 
 ## Step 2: Lock the expected values before any candidate exists
 
-Test-first: choose two or three DISCRIMINATING contexts and compute the expected value at each
-OUTSIDE DAX. Do NOT ask DAX to produce the answer you are trying to prove. Instead `run_dax` a
-small GROUPED row extract at the anchor context (a plain SUMMARIZECOLUMNS or GROUPBY over
-row-level columns, filtered to that context, returning a handful of rows), then compute the
-expected value from those rows with your OWN arithmetic (mental, a calculator, or Python), using
-no CALCULATE, no time-intel, and no measure references. Record each context, the exact extract
-query, and the expected value it yields. Keep the extract small: a grouped subtotal at the
-metric's grain, never a scan that materializes the whole fact table.
+Test-first: declare `equivalenceGrid` and the requirement-silent `openGrains` NOW, before a
+candidate exists. The grid is a comma-separated list of qualified display columns. Open grains
+use only the canonical ids `grand_total`, `axis:<column>`, and `cross`. The engine refuses any
+later submission that shrinks or renames what an earlier accepted submission declared; additions
+are recorded as receipted superset revisions. Once Step 2 passes, both are fixed for the run.
+
+For EVERY grain type of the grid, supply exactly one discriminating anchor unless that grain is
+listed in `openGrains`: grand total, each bare single-axis grain, and the full cross. Compute each
+expected value OUTSIDE DAX. Do NOT ask DAX to produce the answer you are trying to prove. Instead
+`run_dax` a small GROUPED row extract at the anchor context, then apply your OWN arithmetic using
+no CALCULATE, no time-intel, and no measure references. Keep each extract small: a grouped
+subtotal at the metric's grain, never a scan that materializes the whole fact table.
+
+Use these recipes. A grand-total anchor has an empty context. An axis anchor has one real member
+of that axis in its context and no other context keys. A cross anchor has one real member for
+every grid column and no other keys. For example, a two-column grid needs evidence shaped like:
+
+```json
+[
+  {"context": {}, "expect": 1000},
+  {"context": {"'Product'[Subcategory]": "Laptops"}, "expect": 218},
+  {"context": {"'Date'[Year]": 2025}, "expect": 460},
+  {"context": {"'Product'[Subcategory]": "Laptops", "'Date'[Year]": 2025}, "expect": 90}
+]
+```
+
+Add `axis` when the value depends on the visible sibling set. Ranks, shares of visible, and
+anything using ALLSELECTED need visual semantics. In this share-of-parent example, a raw grouped
+extract returned Laptops = 218 and the visible parent total = 1000. Outside-DAX arithmetic gave
+218 / 1000 = 0.218, so the shaped anchor is:
+
+```json
+{"context":{"'Product'[Subcategory]":"Laptops"},"axis":["'Product'[Subcategory]"],"expect":0.218}
+```
+
+The axis entries are the visible grouping columns. Other context entries are slicers. Use a
+shaped anchor whenever siblings are load-bearing. If a flat anchor collapses that context, the
+engine's failure hint compares flat and visual semantics and prints a copy-paste shaped skeleton.
+
+When the grid contains a date axis, one anchor must sit on a bare-period grain whose window
+crosses the last-data boundary. This pins the guard direction against a calendar that extends
+past facts: blank only when FirstDate > LastData, never when the period merely touches the edge.
+
+The candidate may later compose existing model measures, but those dependencies are not witness
+evidence. If you plan to reuse a measure, add an anchor at a grain where its semantics matter and
+treat the composed value as UNVERIFIED until that anchor pins it.
 
 Strengthen the anchor when the world offers one; both are OPTIONAL and their absence never
 blocks. (a) If a source SQL endpoint is connected (and query permission allows), recompute one or
@@ -82,12 +124,11 @@ reconciling against the source of truth when one exists, and reconciling three i
 when none does.
 
 Name the tempting naive wrong form for this metric and the context SHAPE where it diverges from
-correct (almost never a fully-crossed leaf: wrong-denominator, collapsed-context and
-over-broad-ALL forms match at every leaf and diverge only where a dimension is absent, at the
-bare subtotal or the grand total). THE DIVERGING SHAPE MUST BE A PINNED LEDGER ENTRY and one of
-your locked contexts: if the requirement (or a clarify answer) does not pin behaviour at the one
-shape that separates right from wrong, this workflow cannot certify the measure. Say so, raise it
-with the user if present, or complete with the PARTIAL certificate Step 6 defines.
+correct. This is almost never a fully-crossed leaf. Wrong-denominator, collapsed-context and
+over-broad-ALL forms match at leaves and diverge where a dimension is absent, at a bare subtotal
+or the grand total. The diverging grain must already be either anchored or declared open. A
+requirement-silent grain is honest PARTIAL evidence; it may not be opened later merely because a
+candidate disagreed there.
 
 These locked values are the adjudication bench for every later disagreement. If later raw-row
 arithmetic proves a locked expectation itself wrong, do not silently rewrite it. Submit the
@@ -95,7 +136,9 @@ corrected anchor set only through a later declared `expectedValues` revision inp
 EXPECTATION REVISION RECEIPT inside every changed anchor object: `originalExpect` equal to the
 currently locked value, `correctedExpect` equal to its new `expect`, and `extractQuery` containing
 the small row-returning grouped or raw-row DAX extract that convicted the old value. Keep the
-context set unchanged. Outside the JSON fence, show the arithmetic applied to that extract. The
+context key set unchanged. A receipted flat anchor may add an axis drawn from those keys when the
+visual form is load-bearing. A shaped anchor may never lose or change its axis. Outside the JSON
+fence, show the arithmetic applied to that extract. The
 engine executes every changed anchor's `extractQuery`, requires at least one live row, and records
 the result hash with the revision delta. A failed, empty, scalar-constant, or missing extract is
 refused. Use Step 3 when the candidate check finds the defect, or Step 7 when it is found later.
@@ -105,25 +148,38 @@ battery. A revision without that receipt is a free re-pin and is forbidden.
 ```yaml gate
 inputs:
   - name: expectedValues
-    question: "Two or three locked anchors as one fenced JSON array of {context, expect} objects (including the diverging shape, which must be PINNED, and one ordinary leaf). Outside the JSON fence, include each small GROUPED raw-row extract and the OUTSIDE-DAX arithmetic that produced its expected value (no CALCULATE or measure refs)."
+    question: "The locked anchors as one fenced JSON array of {context, optional axis, expect} objects. Cover each non-open grain type of equivalenceGrid: grand total, every bare axis, and cross. Include the diverging grain and one ordinary leaf. Outside the JSON fence, include each small GROUPED raw-row extract and the OUTSIDE-DAX arithmetic that produced its expected value, with no CALCULATE or measure refs."
     type: text
     required: required
+  - name: equivalenceGrid
+    question: "Machine field: the comma-separated qualified display columns that define the proof lattice, for example 'Product'[Category],'Product'[Subcategory]. The grid must list every display column the anchors exercise."
+    type: text
+    required: required
+  - name: openGrains
+    question: "Machine field: the requirement-silent grains, as a comma-separated list of canonical shape ids (grand_total | cross | axis:<column>) and nothing else. Decline only when every grain is anchored. This partition is declared before authoring and cannot later shrink."
+    type: text
+    required: answer-or-decline
   - name: externalAnchors
     question: "OPTIONAL stronger anchors: source-SQL recomputation of a locked value (query + result; a mismatch indicts the model, halt and surface it) and/or a user-stated reference number with its source. Decline when neither is available; absence never blocks."
     type: text
     required: answer-or-decline
   - name: naiveForm
-    question: "The tempting naive wrong form; the diverging shape; the PINNED ledger entry that pins behaviour there."
+    question: "The tempting naive wrong form; the diverging grain; and whether that grain is anchored from a PINNED ledger entry or declared requirement-silent in openGrains."
     type: text
     required: required
+verify:
+  - kind: anchor_coverage
+    anchors: expectedValues
 ```
 
 ## Step 3: Author ONE canonical candidate
 
 Draft a SINGLE production candidate: the clearest correct expression for the Step-1
-specification, composed from verified building-block measures where they exist; VAR/RETURN
-structure; prefer filtering columns over tables (a table filter only where the pattern genuinely
-requires one); no needless context transitions. Prefer the canonical idiom (DATESYTD, DATEADD,
+specification. It MAY compose model measures, but reuse is not proof. Treat every reused
+measure's semantics as UNVERIFIED until a Step-2 anchor pins the composed value at a grain where
+those semantics matter. Use VAR/RETURN structure; prefer filtering columns over tables (a table
+filter only where the pattern genuinely requires one); no needless context transitions. Prefer
+the canonical idiom (DATESYTD, DATEADD,
 PARALLELPERIOD, LASTNONBLANKVALUE, KEEPFILTERS, REMOVEFILTERS+VALUES, TREATAS); its semantics
 are documented and proven. A hand-rolled date-arithmetic or FILTER-over-ALL reconstruction of a
 standard idiom is a red flag in the CANDIDATE (that style belongs to the witness, where
@@ -161,6 +217,12 @@ the record BEFORE any comparison runs. It implements ONLY the Step-1 ledger (PIN
 pinned, OPEN contexts as whatever the simple computation naturally yields), avoiding every idiom
 the candidate uses so it cannot share the candidate's blind spot.
 
+The witness contains ZERO bare measure references. The engine token-scans every `witnessDax`
+submission because each such input declares `daxPurity: no-bare-measures`; a reference such as
+`[Sales PY]` is refused before the step is accepted. Rebuild every dependency from qualified base
+columns. If the candidate composes a model measure, the witness independently rebuilds that
+measure's intended semantics from the requirement text and raw columns.
+
 Independence comes from AVOIDING THE CANDIDATE'S IDIOMS, never from being slow. A witness that
 scans the whole fact table is not more independent, it is only slower, and on a large fact it
 will not return before the gate's ceiling, so it proves nothing. Build the witness SARGable:
@@ -180,9 +242,10 @@ that convicted it.
 ```yaml gate
 inputs:
   - name: witnessDax
-    question: "The raw-row witness, verbatim: SARGable (plain column filters, date ranges as predicates, grouped extracts), no bare FILTER over ALL of the fact table, no candidate idioms, implementing ONLY the ledger (PINNED pinned, OPEN natural)."
+    question: "The raw-row witness, verbatim: ZERO bare measure references; rebuild every dependency from qualified base columns; SARGable plain column filters, date ranges as predicates, grouped extracts; no bare FILTER over ALL of the fact table; no candidate idioms; implement only the ledger. The engine refuses bare refs."
     type: text
     required: required
+    daxPurity: no-bare-measures
   - name: witnessTiming
     question: "The one witness query you timed (context + elapsed). It must be under roughly 2 seconds; if it was slower, rebuild the witness SARGable and re-time before submitting."
     type: text
@@ -224,35 +287,35 @@ inputs:
     type: text
     required: required
   - name: witnessDax
-    question: "The CURRENT witness expression, verbatim: restate the Step-4 witness when unchanged, or the revised SARGable expression when an adjudication convicted it (the engine records a revision receipt on any change)."
+    question: "The CURRENT witness expression, verbatim: restate the Step-4 witness when unchanged, or the revised SARGable raw-column expression when an adjudication convicted it. It must still contain zero bare measure references; the engine records a revision receipt on any change."
     type: text
     required: required
+    daxPurity: no-bare-measures
   - name: adjudications
     question: "For each disagreement: the raw-row extract, the arithmetic verdict (which side convicted, or INCONCLUSIVE: changed neither, certificate capped at PARTIAL), any witness revision with before/after expressions, and confirmation the FULL battery was re-run after every change (decline if no disagreements)."
     type: text
     required: answer-or-decline
 ```
 
-## Step 6: HARD gate. Equality where the bugs live, on PINNED shapes only
+## Step 6: HARD gate. Prove every grain not declared requirement-silent
 
-The engine proves candidate-vs-witness equality over the grid axes you name, evaluating the full
-cross, each bare single-axis subtotal, and the grand total. Set `equivalenceGrid` to the metric's
-natural grain axes so the Step-2 diverging shape (PINNED, by Step 2's rule) is among the
-evaluated shapes: the wrong-denominator class agrees on every fully-crossed leaf and diverges
-exactly at the bare subtotal, so leaving the diverging axis out un-arms the gate.
+The engine proves candidate-vs-witness equality over the Step-2 locked `equivalenceGrid`,
+evaluating the full cross, every bare single-axis subtotal, and the grand total. The
+`openGrains` partition was locked before authoring. It cannot be changed here after evidence
+reveals where the expressions disagree.
 
-Partition the evaluated shapes with `openShapes`, a machine-read field carrying canonical shape
-ids and nothing else, by one rule: a gate shape is OPEN if ANY ledger context within it is OPEN
-(the engine excludes whole shapes; at an OPEN cell two legitimate formulations can naturally
-differ, so a mixed shape must not stay enforced). An OPEN shape is excluded from enforcement: a
-mismatch there is REPORTED into the evidence trail, never a gate failure. The gate passes ONLY on
-a positive equivalence result with rows actually compared on the PINNED shapes; a skipped,
-offline, or zero-coverage verify is NOT a pass, and proceeding without the proof is an explicit
-`skip_workflow_step` with a reason, on the record. THE CERTIFICATE IS HONEST: it is FULL only
-when every evaluated shape is pinned, zero ledger contexts are OPEN, and zero verdicts are
-INCONCLUSIVE; any of those makes it PARTIAL, naming the observations. On a reported mismatch:
-adjudicate per Step 5 (never auto-rewrite), fix only a convicted side, re-run the battery,
-re-submit.
+Every anchored grain must return positive comparison evidence and match. A skipped, offline, or
+zero-coverage verify is not a pass. Proceeding without proof requires `skip_workflow_step` with a
+reason, and the engine states the consequence before accepting it: this run's certificate becomes
+OVERRIDDEN.
+
+A mismatch on a requirement-silent open grain is no longer merely reported. It blocks as
+`unavailable` with the exact cell coordinate and both candidate and witness values. There are two
+exits. Exit A: fix the candidate or witness only after Step-5 adjudication, re-run the full
+battery, and re-prove the grid clean. Exit B: answer `countersign` with the exact disputed cell set
+copied from the blocking message plus one verbatim `stated` interpretation sentence explaining
+why the requirement leaves it open. A missing or extra cell is refused. Accepted countersigns
+print on the certificate as UNVERIFIED with both values and the stated sentence.
 
 Witness-repair window: if THIS gate proves the witness itself broken or too slow (a timeout, or
 an equality failure that adjudication convicts the witness on, not the candidate), submit a
@@ -263,30 +326,33 @@ witness is the one this gate re-proves against. A correct candidate is still nev
 match a witness. When the witness stands, restate the Step-5 expression verbatim. Never decline
 this input: a decline is a later run answer and would hide the witness that the gate must prove.
 
+The `certificate` answer is a CLAIM, not the verdict. Claim FULL, PARTIAL, or OVERRIDDEN and name
+any honest downgrade. The engine computes its own level from the locked coverage, countersigns,
+active disputes, anchor receipts, and hard-step skips. The weaker of the claim and computed level
+is final, so the claim may downgrade but never inflate the run.
+
 ```yaml gate
 strictness: hard
 ops: [update_measure]
 inputs:
-  - name: equivalenceGrid
-    question: "The comma-separated natural-grain axes for the equality proof, chosen so the Step-2 diverging shape is among the evaluated shapes (e.g. 'Product'[Category],'Product'[Subcategory])."
-    type: text
-    required: required
-  - name: openShapes
-    question: "Machine field: the evaluated shapes that are OPEN, as a comma-separated list of canonical shape ids (grand_total | cross | axis:<column>) and NOTHING else. A shape is OPEN if ANY ledger context within it is OPEN. Decline only when every evaluated shape is pinned."
-    type: text
-    required: answer-or-decline
   - name: witnessDax
-    question: "The CURRENT witness expression. Restate the Step-5 witness verbatim when unchanged. Revise it ONLY to fix a witness THIS gate proved broken or too slow, never to move a correct candidate. A revision must be SARGable with no bare FILTER over ALL of the fact table; the engine records a revision receipt. This input may not be declined."
+    question: "The CURRENT witness expression. Restate the Step-5 witness verbatim when unchanged. Revise it only to fix a witness this gate proved broken or too slow, never to move a correct candidate. It must remain SARGable, rebuild from qualified base columns, and contain zero bare measure references. The engine records a revision receipt. This input may not be declined."
     type: text
     required: required
+    daxPurity: no-bare-measures
+  - name: countersign
+    question: "Machine exit: only after an open-mismatch block, copy the exact disputed cells array and provide one verbatim stated interpretation sentence. Leave unanswered when there is no current dispute. A decline is not a countersign."
+    type: text
+    required: optional
   - name: certificate
-    question: "The certificate level: FULL (every evaluated shape pinned and proven, no OPEN ledger contexts, no INCONCLUSIVE) or PARTIAL (name every unproven cell/observation)."
+    question: "Your certificate CLAIM: FULL, PARTIAL, or OVERRIDDEN, with any honest downgrade named. The engine computes the evidence-backed ceiling and the weaker level wins."
     type: text
     required: required
 verify:
   - kind: dax_equivalence
     probe: witnessDax
-    openShapesFrom: openShapes
+    openShapesFrom: openGrains
+    openMismatch: countersign
 ```
 
 ## Step 7: Performance against the model floor, then finalize for production
@@ -316,8 +382,9 @@ reading as INVALID (the formula-engine result cache serves identical query text,
 fastest), cross-checking sub-ms readings against a full-drain `run_dax` wall clock. Apply a
 winner with `update_measure` ONLY after it matches the current locked expected values; the gate
 below re-proves it against the witness under the SAME open-shape partition as Step 6, inherited
-from the Step-6 `openShapes` answer (a completed step cannot be re-answered, so the partition
-cannot be restated here), and you re-run the battery's pinned contexts.
+from the locked Step-2 `openGrains` answer, and you re-run the battery's anchored contexts. If a
+performance rewrite creates a new open-grain disagreement, use this step's `countersign` input
+only after the blocking message prints the exact current set.
 
 If raw arithmetic after Step 3 convicted an anchor, submit the corrected set through this step's
 `expectedValues` input with the same per-changed-anchor `originalExpect`, `correctedExpect`, and
@@ -329,7 +396,11 @@ always checks that current set, even when the performance rewrite is declined.
 Then FINALIZE for production regardless of the perf path: the measure carries its real production
 name (not a working alias), a format string fit for the metric, a description stating what it
 returns and the conventions PINNED in Step 1, and a display folder if the model uses them. An
-OPEN-context observation worth the next author's attention belongs in the description.
+OPEN-context observation worth the next author's attention belongs in the description. Finalize
+consumes the engine-computed certificate, not the Step-6 claim alone. The terminal record prints
+the grid, anchored/open coverage map, open grains, countersigned cells with both values and stated
+sentences, anchor and form-repair counts, and skipped steps with reasons. Skipping any hard gate
+makes the certificate OVERRIDDEN.
 
 ```yaml gate
 strictness: hard
@@ -347,11 +418,16 @@ inputs:
     question: "The production name, format string, description (including PINNED conventions), and display folder applied to the measure."
     type: text
     required: required
+  - name: countersign
+    question: "Machine exit: only after this step reports new open-grain disputes, copy the exact disputed cells array and provide one verbatim stated interpretation sentence. Leave unanswered otherwise. A decline is not a countersign."
+    type: text
+    required: optional
 verify:
   - kind: expected_values
     anchors: expectedValues
   - kind: dax_equivalence
     when: inputs.perfPass.answered
     probe: witnessDax
-    openShapesFrom: openShapes
+    openShapesFrom: openGrains
+    openMismatch: countersign
 ```

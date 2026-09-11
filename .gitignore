@@ -24,6 +24,7 @@ _session-recovery.md
 
 # Local MCP server config — holds the SEMANTICUS_DEV_PRO dev-license flag + machine-absolute paths; never commit
 .mcp.json
+.codex/
 
 # Stray .daxpkg blobs saved during manual DaxLib testing (tests use in-memory bytes)
 daxpkg.bin

@@ -99,7 +99,9 @@ namespace Semanticus.Tests
                 var before = (await e.ListWorkflowsAsync()).Length;
                 var lib = await e.InstantiateWorkflowTemplateAsync("metric-certification", "fy26-metric-cert", GoodCertValues, "human");
 
-                Assert.Contains(lib, w => w.Name == "fy26-metric-cert" && w.Error == null);
+                var created = Assert.Single(lib);
+                Assert.Equal("fy26-metric-cert", created.Name);
+                Assert.Null(created.Error);
                 Assert.Equal(before + 1, (await e.ListWorkflowsAsync()).Length);   // exactly one new workflow
 
                 var def = await e.GetWorkflowAsync("fy26-metric-cert");

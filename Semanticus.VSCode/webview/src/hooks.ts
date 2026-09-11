@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { rpc, copyText, loadState, saveState } from './bridge';
+import { rpc, copyText, loadState, saveState, onDidChange } from './bridge';
 
 /**
  * A draggable, persisted panel size. Returns the current size (px) and a pointer-down handler to attach to a
@@ -40,6 +40,17 @@ export function usePersistedState<T>(key: string, initial: T) {
 type FixState = 'fixing' | 'copied' | 'done';
 interface FixPrompt { prompt: string }
 
+/** Drop stale "fixed" ticks. Undo, redo, or any other model change can restore the row; the tick must not stick (D-078). */
+export function dropDoneFixState(state: Record<string, FixState>): Record<string, FixState> {
+  let changed = false;
+  const next: Record<string, FixState> = {};
+  for (const [k, v] of Object.entries(state)) {
+    if (v === 'done') { changed = true; continue; }
+    next[k] = v;
+  }
+  return changed ? next : state;
+}
+
 /**
  * The per-finding fix / ask-Claude state machine shared by the AI-Readiness findings list and the
  * BPA tab — identical except for the two RPC method names. `fix` applies a deterministic safe fix;
@@ -47,6 +58,7 @@ interface FixPrompt { prompt: string }
  */
 export function useFixState(fixMethod: string, promptMethod: string) {
   const [state, setState] = useState<Record<string, FixState>>({});
+  useEffect(() => onDidChange(() => setState((s) => dropDoneFixState(s))), []);
   const keyOf = (ruleId: string, objectRef: string) => `${ruleId}::${objectRef}`;
 
   async function fix(ruleId: string, objectRef: string, afterFix?: () => void) {

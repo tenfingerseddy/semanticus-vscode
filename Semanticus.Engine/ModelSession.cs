@@ -66,6 +66,14 @@ namespace Semanticus.Engine
         void SetCheckpoint();
     }
 
+    /// <summary>Vendored TE2 clears redo as soon as a batch records its first action, even when that batch later
+    /// rolls back. Capture/restore lets a refused mutation put the previous redo back (D-113).</summary>
+    internal interface IRedoPreserve
+    {
+        object CaptureRedo();
+        void RestoreRedo(object snapshot);
+    }
+
     /// <summary>
     /// The single contract point for "rename an object and rewrite every DAX / RLS-filter reference to it"
     /// (FormulaFixup). It is deliberately one named seam because rename is the riskiest invariant in the engine:
@@ -110,6 +118,7 @@ namespace Semanticus.Engine
         {
             var h = new TabularModelHandler(path);
             h.Settings.AutoFixup = true; // rename -> auto-rewrite all DAX references (the real FormulaFixup/ANTLR layer)
+            h.Settings.UsePowerQueryPartitionsByDefault = true;   // Fabric/M-first; same as Create. New Table must not invent a provider source (D-050).
             return new Te2ModelSession(h);
         }
 
@@ -144,8 +153,10 @@ namespace Semanticus.Engine
         }
 
         /// <summary>1:1 over TE2's <c>UndoManager</c> — the one timeline both doors share.</summary>
-        private sealed class Te2UndoLog : IUndoLog
+        private sealed class Te2UndoLog : IUndoLog, IRedoPreserve
         {
+            private static readonly System.Reflection.FieldInfo RedoStackField =
+                typeof(UndoManager).GetField("_RedoStack", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             private readonly UndoManager _u;
             public Te2UndoLog(UndoManager u) => _u = u;
             public bool CanUndo => _u.CanUndo;
@@ -154,6 +165,25 @@ namespace Semanticus.Engine
             public void Undo() => _u.Undo();
             public void Redo() => _u.Redo();
             public void SetCheckpoint() => _u.SetCheckpoint();
+
+            public object CaptureRedo()
+            {
+                var stack = RedoStackField?.GetValue(_u);
+                if (stack == null) return System.Array.Empty<object>();
+                return stack.GetType().GetMethod("ToArray").Invoke(stack, null);
+            }
+
+            public void RestoreRedo(object snapshot)
+            {
+                if (snapshot == null || RedoStackField == null) return;
+                var stack = RedoStackField.GetValue(_u);
+                if (stack == null) return;
+                stack.GetType().GetMethod("Clear").Invoke(stack, null);
+                var items = (System.Array)snapshot;
+                var push = stack.GetType().GetMethod("Push");
+                for (var i = items.Length - 1; i >= 0; i--)
+                    push.Invoke(stack, new[] { items.GetValue(i) });
+            }
         }
 
         /// <summary>The TE2 rename: setting the wrapper's <c>Name</c> triggers AutoFixup (enabled at build) which

@@ -1,8 +1,15 @@
-import puppeteer from 'puppeteer-core';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-function findBrowser(){ const r=join(homedir(),'.cache','puppeteer','chrome-headless-shell'); for(const v of readdirSync(r)){const e=join(r,v,'chrome-headless-shell-win64','chrome-headless-shell.exe'); if(existsSync(e))return e;} throw new Error('no chromium'); }
+import { findBrowser, requireSupportedNode } from './browser.mjs';
+import { readFileSync } from 'node:fs';
+
+// THE FLOOR CHECK RUNS BEFORE PUPPETEER IS LOADED, AND THE ORDER IS THE WHOLE POINT. This used to be a
+// static `import puppeteer from 'puppeteer-core'`, which the runtime resolves, parses and evaluates before
+// one line of this file runs. `requireSupportedNode()` therefore could not fire on the Node versions it
+// exists for: on Node 20 the run died inside puppeteer with the opaque error the guard was written to
+// replace, and the guard's message was never reached. A dynamic import after the check is what makes the
+// check reachable. `browser.mjs` imports no puppeteer, so nothing can reorder this again by accident.
+requireSupportedNode();
+const puppeteer = (await import('puppeteer-core')).default;
+
 const svg = readFileSync(process.argv[2],'utf8');
 const out = process.argv[3];
 const size = Number(process.argv[4]||128);

@@ -174,6 +174,7 @@ namespace Semanticus.Tests
             // depend on the isKnownMutation fallback to label the property grid's write ops.
             Assert.Equal(AgentCapability.EditLocal, CapabilityMap.For("set_property"));
             Assert.Equal(AgentCapability.EditLocal, CapabilityMap.For("set_properties"));
+            Assert.Equal(AgentCapability.EditLocal, CapabilityMap.For("delete_objects"));
         }
 
         // ---- the store: human-only, Pro-to-configure, kill-switch free ----
@@ -354,6 +355,37 @@ namespace Semanticus.Tests
             File.WriteAllText(path, node.ToJsonString());
 
             Assert.False(ApprovalLedger.TryConsume(AgentCapability.DeployLive, "prod", "intent-X"));
+        }
+
+        // ---- the preset cards must describe the matrix they sit above --------------------------------
+
+        private static string RepoRoot()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Semanticus.sln"))) dir = dir.Parent;
+            Assert.True(dir != null, "could not find Semanticus.sln above " + AppContext.BaseDirectory);
+            return dir!.FullName;
+        }
+
+        [Fact]
+        public void The_locked_card_states_the_refusal_the_matrix_actually_produces()
+        {
+            // D-213. The card read "Maximum separation; asks even locally", which describes the local and dev
+            // cells only. On uat and prod the matrix refuses a live write outright, so someone who picked Locked
+            // expecting to be asked would meet a refusal no card had warned them about. The copy was the wrong
+            // half, so the copy is what the test pins, against the matrix itself rather than against a string.
+            var p = AgentPolicyPresets.Build("locked");
+            Assert.Equal(GateOutcome.Deny, AgentPolicyGuard.Decide(AgentCapability.DeployLive, "prod", "agent", isCommit: true, p).Outcome);
+            Assert.Equal(GateOutcome.Ask, AgentPolicyGuard.Decide(AgentCapability.DeployLive, "local", "agent", isCommit: true, p).Outcome);
+
+            var src = File.ReadAllText(Path.Combine(RepoRoot(), "Semanticus.VSCode", "webview", "src", "permissions.tsx"));
+            var desc = System.Text.RegularExpressions.Regex.Match(src, @"id:\s*'locked'[^}]*desc:\s*'([^']*)'").Groups[1].Value;
+            Assert.False(string.IsNullOrWhiteSpace(desc), "the locked preset card should carry a one line consequence");
+
+            // One line cannot hold the whole nine-row matrix, so it has to hold the strictest thing Locked does.
+            Assert.Matches("(?i)refus|denied|closed|blocked", desc);
+            Assert.Matches("(?i)ask", desc);            // and it keeps the part it already had right
+            Assert.DoesNotContain("—", desc);
         }
     }
 }

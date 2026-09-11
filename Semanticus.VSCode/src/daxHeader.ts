@@ -137,7 +137,12 @@ export function checkDaxHeader(ref: string, line: string): DaxHeaderCheck {
     if (!kw) return { ok: false, reason: 'This object has no name header.' };
     const label = kindLabel(kind);
     const parsed = parseDaxHeader(line);
-    if (!parsed) return { ok: false, reason: `Line 1 must stay the name header (${buildDaxHeader(ref)}). Restore it, then Save.` };
+    if (!parsed) {
+        if (headerThenBody(line)) {
+            return { ok: false, reason: 'Line 1 is the name. Move the formula to line 2, then Save.' };
+        }
+        return { ok: false, reason: `Line 1 must stay the name header (${buildDaxHeader(ref)}). Restore it, then Save.` };
+    }
     if (parsed.keyword !== kw) return { ok: false, reason: `Line 1 must start with ${kw} for this ${label} (found ${parsed.keyword}). Fix line 1, then Save.` };
     const scoped = kind === 'measure' || kind === 'column' || kind === 'calcitem';
     if (scoped) {
@@ -150,6 +155,14 @@ export function checkDaxHeader(ref: string, line: string): DaxHeaderCheck {
     }
     if (!parsed.name) return { ok: false, reason: `Give the ${label} a name in line 1 before Save.` };
     return { ok: true, name: parsed.name };
+}
+
+/** Line 1 looks like a name header with the formula still after the '='. */
+function headerThenBody(line: string): boolean {
+    const eq = line.indexOf('=');
+    if (eq < 0) return false;
+    if (line.slice(eq + 1).trim().length === 0) return false;
+    return parseDaxHeader(line.slice(0, eq + 1)) !== null;
 }
 
 export type DaxSaveDecision =
@@ -193,7 +206,8 @@ export function guardModelMatch(uriModelKey: string | undefined, liveModelKey: s
 /**
  * Decide how to save a DAX document from its URI-borne identity (never its content). Pure, so the reload / model-swap
  * decisions are unit-testable without a VS Code host.
- *   NOT a header uri                          -> body (a tree-opened editor; line 1 is NEVER parsed as a header)
+ *   NOT a header uri, identity missing/mismatch -> reject (a tree-opened editor must not write into another model)
+ *   NOT a header uri, identity matches          -> body (line 1 is NEVER parsed as a header)
  *   header uri, identity missing (uri or live) -> reject (a header uri must always carry identity; absent = corrupt)
  *   header uri, different owning model         -> reject (a header doc from another model must not touch this one)
  *   header uri, same model, line 1 invalid     -> reject (never silently drop a malformed / deleted / wrong-kind header)
@@ -201,7 +215,14 @@ export function guardModelMatch(uriModelKey: string | undefined, liveModelKey: s
  *   header uri, same model, line 1 valid       -> header (rename the object if the name changed, then set the body)
  */
 export function decideDaxSave(ref: string, header: string, body: string, id: DaxHeaderIdentity): DaxSaveDecision {
-    if (!id.isHeaderUri) return { kind: 'body' };
+    // Tree-opened (body) editors also carry a model token on the uri. Without this gate, Ctrl+S on a tab
+    // left open from another model writes that tab's DAX into the same-named object on the model that is
+    // open now. Header docs already refused this; body docs must refuse it too.
+    if (!id.isHeaderUri) {
+        const bodyMatch = guardModelMatch(id.uriModelKey, id.modelKey);
+        if (!bodyMatch.ok) return { kind: 'reject', reason: bodyMatch.reason };
+        return { kind: 'body' };
+    }
     // CRITICAL 1 -- fail CLOSED on identity. A header uri must ALWAYS carry its owning-model token, and Save must know the
     // LIVE model's token; a missing token on either side is CORRUPT and never falls open to a body/line-1-only save that
     // could touch the wrong model (e.g. the live key was compared against a cached global that never refreshed after an
@@ -336,6 +357,37 @@ export function identityToken(key: string): string {
     return createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32);   // 128-bit prefix for over-long keys
 }
 
+/** Decode the object ref from a DAX virtual-document path (already percent-decoded, trailing .dax stripped). */
+export function refFromDaxPath(path: string): string {
+    let p = path.startsWith('/') ? path.slice(1) : path;
+    if (p.endsWith('.dax')) p = p.slice(0, -4);
+    return p;
+}
+
+export interface OpenDaxTab { path: string; query?: string; href: string }
+
+/**
+ * If a DAX tab for this ref is already open on the LIVE model, return its href so the host focuses it instead of
+ * minting a second editor (header vs body used to be two different uris for one measure). Stale tabs from another
+ * model are ignored so a tree click after a swap opens a fresh editor for the model that is open now.
+ */
+export function pickOpenDaxHref(open: OpenDaxTab[], ref: string, liveModelKey?: string): string | undefined {
+    const matches = open.filter((u) => refFromDaxPath(u.path) === ref);
+    const pool = liveModelKey
+        ? matches.filter((u) => new URLSearchParams(u.query ?? '').get('mk') === liveModelKey)
+        : matches;
+    if (pool.length === 0) return undefined;
+    const header = pool.find((u) => new URLSearchParams(u.query ?? '').get('hdr') === '1');
+    return (header ?? pool[0]).href;
+}
+
+/** Close a DAX tab after a model swap when it has no token or its token is not the live model. */
+export function shouldCloseDaxTab(uriModelKey: string | undefined, liveModelKey: string | undefined, isSwap: boolean): boolean {
+    if (!isSwap) return false;
+    if (!uriModelKey) return true;
+    return uriModelKey !== liveModelKey;
+}
+
 /** Split a header-doc into its first line (header) and the DAX body below it. */
 export function splitDaxHeader(text: string): { header: string; body: string; headerLen: number } {
     const nl = text.indexOf('\n');
@@ -361,4 +413,10 @@ export function uniqueName(base: string, existingLower: Set<string>, sep = ' '):
         const candidate = `${base}${sep}${i}`;
         if (!existingLower.has(candidate.toLowerCase())) return candidate;
     }
+}
+
+/** Ctrl+S on a DAX tab applies the buffer only when it differs from the last shown text. An unmodified buffer is a no-op (D-044). */
+export function shouldApplyDaxBuffer(lastShown: string | undefined, next: string): boolean {
+    if (lastShown === undefined) return true;
+    return lastShown !== next;
 }

@@ -3,7 +3,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Semanticus.Engine;
+using TabularEditor.TOMWrapper.Utils;
 using Xunit;
+using TOM = Microsoft.AnalysisServices.Tabular;
 
 namespace Semanticus.Tests
 {
@@ -48,7 +50,8 @@ namespace Semanticus.Tests
 
             var list = await engine.ListCalendarsAsync(null);
             Assert.False(list.CalendarsSupported);   // the read stays tolerant — it reports, never throws
-            Assert.Contains("set_compatibility_level", list.Note);
+            Assert.Contains("1701", list.Note);
+            Assert.DoesNotContain("set_compatibility_level", list.Note);
         }
 
         [Fact]
@@ -281,6 +284,32 @@ namespace Semanticus.Tests
             Assert.Contains("timeRelated", badUnit.Message);
         }
 
+        [Fact]
+        public async Task Template_refusals_and_notes_use_plain_words_not_parameter_or_op_names()
+        {
+            using var engine = await FreshModelAsync();
+            await engine.CreateTableAsync("Facts", "human");
+            var noDate = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.DefineCalendarFromTemplateAsync("gregorian", "Facts", null, 7, null, null, null, "human"));
+            Assert.Contains("no date column", noDate.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("dateColumn", noDate.Message);
+            Assert.DoesNotContain("tableName", noDate.Message);
+
+            await AddDateTableAsync(engine);
+            var first = await engine.DefineCalendarFromTemplateAsync("gregorian", "Dim Date", "Date", 7, null, null, null, "human");
+            Assert.DoesNotContain("save_model", first.Note);
+            var dup = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.DefineCalendarFromTemplateAsync("gregorian", "Dim Date", "Date", 7, null, null, null, "human"));
+            Assert.DoesNotContain("calendarName", dup.Message);
+            Assert.DoesNotContain("delete_calendar", dup.Message);
+            Assert.Contains("already has a calendar", dup.Message);
+
+            var month = await Assert.ThrowsAsync<ArgumentException>(() =>
+                engine.DefineCalendarFromTemplateAsync("fiscal", "Dim Date", "Date", 0, null, null, null, "human"));
+            Assert.DoesNotContain("fiscalStartMonth", month.Message);
+            Assert.Contains("1 to 12", month.Message);
+        }
+
         // ---- Readiness advisory (CAL-TI-NO-CALENDAR) + grounding (slice 2) ---------------------------
         // The advisory is presence design: dormant unless {CL>=1701, >=1 classic-TI measure, no calendars}; the
         // grounding must expose the model's calendars so an agent authors calendar-aware DAX instead of classic forms.
@@ -358,6 +387,95 @@ namespace Semanticus.Tests
             Assert.Contains("Fiscal", line);
             Assert.Contains("Date→Date", line);
             Assert.Contains("Year→Year", line);
+        }
+
+        // D-022: mapping a string column onto the Date category must refuse, and the existing Date mapping must stay.
+        [Fact]
+        public async Task Mapping_a_string_column_to_date_is_refused_and_keeps_the_existing_primary()
+        {
+            using var engine = await FreshModelAsync();
+            await AddDateTableAsync(engine);
+            await engine.CreateColumnAsync("table:Dim Date", "MonthName", "String", "MonthName", "agent");
+            await engine.DefineCalendarAsync("Dim Date", "ISO", new[]
+            {
+                new CalendarMappingSpec { Column = "Date", TimeUnit = "Date" },
+            }, null, "agent");
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.TagCalendarColumnAsync("Dim Date", "ISO", "MonthName", "Date", associated: false, remove: false, "agent"));
+            Assert.Contains("MonthName", ex.Message);
+            Assert.Contains("cannot be the date column", ex.Message);
+            Assert.DoesNotContain("tag_calendar_column", ex.Message);
+
+            var cal = Assert.Single((await engine.ListCalendarsAsync("Dim Date")).Calendars);
+            Assert.Equal("Date", Assert.Single(cal.Groups, g => g.TimeUnit == "Date").PrimaryColumn);
+        }
+
+        [Fact]
+        public async Task Define_calendar_refuses_a_wrong_typed_date_mapping_before_the_calendar_exists()
+        {
+            using var engine = await FreshModelAsync();
+            await AddDateTableAsync(engine);
+            await engine.CreateColumnAsync("table:Dim Date", "MonthName", "String", "MonthName", "agent");
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.DefineCalendarAsync("Dim Date", "ISO", new[]
+                {
+                    new CalendarMappingSpec { Column = "MonthName", TimeUnit = "Date" },
+                }, null, "agent"));
+            Assert.Contains("MonthName", ex.Message);
+            Assert.Empty((await engine.ListCalendarsAsync(null)).Calendars);
+        }
+
+        // D-077: a calendar whose Date category is pointed at a non-date column is a readiness finding.
+        [Fact]
+        public async Task Calendar_mapping_readiness_fires_when_date_is_mapped_to_a_string_column()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.CreateModelAsync("CalTest", 1701);
+            await AddDateTableAsync(engine);
+            await engine.CreateColumnAsync("table:Dim Date", "MonthName", "String", "MonthName", "agent");
+
+            // Plant a broken mapping the product path now refuses: Date category on a string column.
+            await sessions.Current.MutateAsync("agent", "plant broken calendar mapping", m =>
+            {
+                var t = m.Tables["Dim Date"];
+                CalendarOps.Mutate(m, t, tom =>
+                {
+                    var cal = new TOM.Calendar { Name = "ISO", LineageTag = Guid.NewGuid().ToString() };
+                    cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Date)
+                    {
+                        PrimaryColumn = tom.Columns["MonthName"],
+                    });
+                    tom.Calendars.Add(cal);
+                });
+            });
+
+            var f = Assert.Single((await engine.AiReadinessScanAsync()).Findings, x => x.RuleId == "CAL-MAPPING");
+            Assert.Contains("MonthName", f.Message);
+            Assert.Contains("ISO", f.Message);
+            Assert.DoesNotContain("tag_calendar_column", f.DisplayMessage ?? "");
+        }
+
+        [Fact]
+        public async Task Calendar_mapping_readiness_is_dormant_when_the_date_column_is_datetime()
+        {
+            using var engine = await FreshModelAsync();
+            await AddDateTableAsync(engine);
+            await engine.DefineCalendarAsync("Dim Date", "Gregorian", new[]
+            {
+                new CalendarMappingSpec { Column = "Date", TimeUnit = "Date" },
+            }, null, "agent");
+            Assert.DoesNotContain((await engine.AiReadinessScanAsync()).Findings, f => f.RuleId == "CAL-MAPPING");
+        }
+
+        [Fact]
+        public async Task Calendar_mapping_readiness_is_dormant_when_the_model_has_no_calendars()
+        {
+            using var engine = await FreshModelAsync();
+            await AddDateTableAsync(engine);
+            Assert.DoesNotContain((await engine.AiReadinessScanAsync()).Findings, f => f.RuleId == "CAL-MAPPING");
         }
     }
 }

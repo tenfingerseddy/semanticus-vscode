@@ -46,7 +46,7 @@ namespace Semanticus.Engine
             }
             catch (Exception ex)
             {
-                return (false, "Refresh failed — nothing was committed: " + Scrub(ex.Message));
+                return (false, "Refresh failed. Nothing was committed: " + Scrub(ex.Message));
             }
         }
 

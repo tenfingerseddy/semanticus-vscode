@@ -31,7 +31,7 @@ namespace Semanticus.Engine
             try { return await next().ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not McpProtocolException)
             {
-                var msg = FabricRest.Scrub(Root(ex).Message);
+                var msg = PlainFrameworkError(FabricRest.Scrub(Root(ex).Message));
                 if (string.IsNullOrWhiteSpace(msg)) msg = ex.GetType().Name;   // never regress to an empty error
                 var content = new List<ContentBlock> { new TextContentBlock { Text = $"{toolName ?? "tool"} failed: {msg}" } };
                 // A call that committed then threw carries its drained health on the exception's Data (set by
@@ -70,6 +70,69 @@ namespace Semanticus.Engine
                 ex = inner;
             }
             return ex;
+        }
+
+        /// <summary>Turn .NET binder jargon ("arguments dictionary is missing... (Parameter 'arguments')") and
+        /// System.Text.Json type-mismatch text into a short instruction. Other messages pass through after the
+        /// Parameter suffix is dropped.</summary>
+        internal static string PlainFrameworkError(string msg)
+        {
+            if (string.IsNullOrWhiteSpace(msg)) return msg;
+
+            // A wrong-shaped argument (JOURNEY-09). System.Text.Json says which .NET type it wanted and nothing
+            // else: no argument name, and "$ | LineNumber: 0 | BytePositionInLine: 4" coordinates a person cannot
+            // use. Measured on the wire 2026-09-11 (submit_workflow_step with callGate:true, instantiate_workflow_
+            // template with valuesJson:{}, optimize_measure with verifyGroupBy:"x"); the binder exception carries no
+            // parameter name, so the plain form names the SHAPE and points at the description instead of guessing
+            // an argument. Never claim which argument it was — we cannot know it from here.
+            const string wrongType = "The JSON value could not be converted to ";
+            var wrong = msg.IndexOf(wrongType, StringComparison.Ordinal);
+            if (wrong >= 0)
+            {
+                var rest = msg.Substring(wrong + wrongType.Length);
+                var cut = rest.IndexOf(". Path:", StringComparison.Ordinal);   // "System.String. Path: $ | LineNumber: 0"
+                var typeName = (cut >= 0 ? rest.Substring(0, cut) : rest).Trim();
+                return "One of the arguments had the wrong kind of value. This action wants "
+                    + PlainArgumentShape(typeName)
+                    + ", but it was sent something else. Check each argument against the action's description, then call again.";
+            }
+
+            const string missing = "missing a value for the required parameter '";
+            var start = msg.IndexOf(missing, StringComparison.OrdinalIgnoreCase);
+            if (start >= 0)
+            {
+                var nameStart = start + missing.Length;
+                var nameEnd = msg.IndexOf("'", nameStart, StringComparison.Ordinal);
+                var name = nameEnd > nameStart ? msg.Substring(nameStart, nameEnd - nameStart) : "this argument";
+                // The binder only reaches this branch for an argument the tool's own schema marks required, so it
+                // has no default to fall back on. Saying "or omit it to use the default" here told the caller to do
+                // the one thing the schema forbids (D-206/D-207, UX-03). Name the argument and stop there.
+                return "This action needs '" + name + "'. Check the description and pass that argument with the call.";
+            }
+
+            var param = msg.LastIndexOf(" (Parameter '", StringComparison.Ordinal);
+            return param >= 0 ? msg.Substring(0, param) : msg;
+        }
+
+        /// <summary>The .NET type a failed argument wanted, in the words a person reads. Unknown shapes stay vague
+        /// on purpose: a wrong guess here would be a second untrue refusal on top of the first.</summary>
+        private static string PlainArgumentShape(string dotnetType)
+        {
+            if (string.IsNullOrEmpty(dotnetType)) return "a different kind of value";
+            if (dotnetType.EndsWith("[]", StringComparison.Ordinal))
+                return "a list of " + PlainArgumentShape(dotnetType.Substring(0, dotnetType.Length - 2)) + " values";
+            switch (dotnetType)
+            {
+                case "System.String": return "text";
+                case "System.Boolean": return "true or false";
+                case "System.Int16":
+                case "System.Int32":
+                case "System.Int64":
+                case "System.Decimal":
+                case "System.Double":
+                case "System.Single": return "a number";
+                default: return "a different kind of value";
+            }
         }
     }
 }

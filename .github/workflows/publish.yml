@@ -1,7 +1,7 @@
-name: Publish
+name: Package and verify release
 
-# DORMANT until release: this only fires on a v* tag (none exists yet) or a manual dispatch, and it needs
-# a registered Marketplace publisher + the VSCE_PAT secret (see RELEASE-CHECKLIST.md). Until then it never runs.
+# Marketplace publication is a manual portal step completed before the release tag. This workflow creates
+# and verifies the five release packages; it never publishes them (see RELEASE-CHECKLIST.md).
 on:
   push:
     tags: ['v*']
@@ -45,6 +45,8 @@ jobs:
       - name: Install extension dependencies from the lockfile
         working-directory: Semanticus.VSCode
         run: npm ci --no-fund --no-audit
+      # scripts/package.mjs runs build:webview and compile before vsce, so the
+      # VSIX is packed from generated bundles that are no longer in git.
       - name: Package, extract, and execute the production VSIX engine
         working-directory: Semanticus.VSCode
         run: npm run package -- ${{ matrix.target }}
@@ -59,7 +61,7 @@ jobs:
             Semanticus.VSCode/dist/semanticus-${{ matrix.target }}-*.evidence.json
           if-no-files-found: error
 
-  publish:
+  verify:
     needs: package
     runs-on: windows-latest
     steps:
@@ -67,9 +69,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install the pinned Marketplace publisher
-        working-directory: Semanticus.VSCode
-        run: npm ci --no-fund --no-audit
       - uses: actions/download-artifact@v4
         with:
           pattern: semanticus-*-vsix
@@ -77,27 +76,3 @@ jobs:
           merge-multiple: true
       - name: Require five matching-host execution records and matching SHA-256 digests
         run: node Semanticus.VSCode/scripts/verify-vsix-matrix.mjs Semanticus.VSCode/dist
-      - name: 'Guard: require the publisher secret'
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:VSCE_PAT)) {
-            Write-Error 'VSCE_PAT secret is not set. Register the Marketplace publisher and add the PAT described in RELEASE-CHECKLIST.md.'
-            exit 1
-          }
-      - name: Publish the verified VSIX to the VS Marketplace
-        working-directory: Semanticus.VSCode
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          $expectedTargets = @('win32-x64', 'win32-arm64', 'linux-x64', 'darwin-x64', 'darwin-arm64')
-          $packages = @(Get-ChildItem -LiteralPath dist -Filter 'semanticus-*.vsix' -File)
-          foreach ($target in $expectedTargets) {
-            $matching = @($packages | Where-Object Name -like "semanticus-$target-*.vsix")
-            if ($matching.Count -ne 1) {
-              Write-Error "Expected exactly one verified $target VSIX, found $($matching.Count)."
-              exit 1
-            }
-            node node_modules/@vscode/vsce/vsce publish --packagePath "$($matching[0].FullName)"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }

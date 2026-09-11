@@ -17,17 +17,25 @@ namespace Semanticus.Tests
     {
         private readonly string _root;
         private readonly string _safeRoot;
+        private readonly string _prevCacheName;
 
         public ConnectionAccountHistoryTests(RestoreRootFixture fixture)
         {
             _safeRoot = fixture.Root;
             _root = Path.Combine(Path.GetTempPath(), "sem-conn-acct-hist-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             ConnectionRegistry.RootOverride = _root;
+            // Isolate the record/auth dir too: the barrier seams now do a DURABLE seq-advance for a silent winner (round-3),
+            // which writes a record envelope — this keeps that off the real user's auth dir.
+            EntraToken.PersistDirOverride = Path.Combine(_root, "auth");
+            _prevCacheName = EntraToken.TokenCacheNameOverride;
+            EntraToken.TokenCacheNameOverride = "semanticus-acct-hist-" + Guid.NewGuid().ToString("N").Substring(0, 8);
         }
 
         public void Dispose()
         {
             ConnectionRegistry.RootOverride = _safeRoot;
+            EntraToken.PersistDirOverride = null;
+            EntraToken.TokenCacheNameOverride = _prevCacheName;
             try { Directory.Delete(_root, true); } catch { }
         }
 
@@ -499,7 +507,6 @@ namespace Semanticus.Tests
             // from SEPARATE disk reads. Process A pins Alice; process B commits Bob between A's reads; A then opened as the
             // PINNED Alice but a later disk read reported Bob — the wrong-live-account defect. The read-once fix loads the
             // record EXACTLY once, so the reported account is the identity the credential was actually built with.
-            if (!OperatingSystem.IsWindows()) return;   // the encrypted persistent MSAL record is Windows-only (PersistenceSupported)
             var tenant = Guid.NewGuid().ToString();      // a unique slot: the real auth dir can never collide with a user's record
             var path = EntraToken.RecordPathForTests("interactive", tenant);
             Assert.NotNull(path);
@@ -527,7 +534,6 @@ namespace Semanticus.Tests
             // pointer — which a sibling process could have moved to Bob AFTER our read. The Alice-authenticated open's failure
             // was then blamed on Bob. The fix reads prepared?.Account (captured-else-pinned: the identity the credential was
             // ACTUALLY built with), so the failure names Alice — the account in play — even though disk now says Bob.
-            if (!OperatingSystem.IsWindows()) return;   // BuildCredentialAsync's encrypted MSAL record read is Windows-only (PersistenceSupported)
             var tenant = Guid.NewGuid().ToString();      // a unique slot: the real auth dir can never collide with a user's record
             var path = EntraToken.RecordPathForTests("interactive", tenant);
             Assert.NotNull(path);
@@ -562,7 +568,6 @@ namespace Semanticus.Tests
             // RecordJson was null — MSAL's lenient Deserialize handed back a BLANK pseudo-record that BuildCredentialAsync
             // then PINNED as the credential's identity. The exact snapshot BuildCredentialAsync pins for a reservation-only
             // envelope (a claim minted before any record committed) must be NO record, forcing an honest capture instead.
-            if (!OperatingSystem.IsWindows()) return;   // BuildCredentialAsync's record read is Windows-only (PersistenceSupported)
             var tenant = Guid.NewGuid().ToString();
             var path = EntraToken.RecordPathForTests("interactive", tenant);
             Assert.NotNull(path);
@@ -970,6 +975,26 @@ namespace Semanticus.Tests
             Assert.False(ctx.Reference.Available);   // no reference bound → the drawer's Reference card reads "Not set"
             var cleared = await engine.ClearReferenceBindingAsync();
             Assert.False(cleared.Reference.Available);
+        }
+
+        [Fact]
+        public void Legacy_history_rows_are_scrubbed_on_every_display_read()
+        {
+            Directory.CreateDirectory(_root);
+            var secret = "LEG" + Guid.NewGuid().ToString("N");
+            var dirty = "[{\"id\":\"legacy\",\"kind\":\"connect\",\"endpoint\":\"Data Source=powerbi://x/legacy;" + PwdKey() + secret + "\",\"database\":\"Sales\",\"ok\":true,\"whenUtc\":\"2026-01-01T00:00:00Z\"}]";
+            var path = Path.Combine(_root, "connection-history.json");
+            File.WriteAllText(path, dirty);
+
+            var listed = ConnectionHistory.List();
+            var ev = Assert.Single(listed);
+            Assert.Equal("powerbi://x/legacy", ev.Endpoint);
+            Assert.Equal("Sales", ev.Database);
+            Assert.DoesNotContain(secret, ev.Endpoint ?? "");
+            Assert.DoesNotContain(secret, ev.Database ?? "");
+            Assert.DoesNotContain(secret, ev.Detail ?? "");
+            // Projection only: the on-disk legacy row is not rewritten by a read.
+            Assert.Contains(secret, File.ReadAllText(path));
         }
 
         [Fact]

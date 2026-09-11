@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc, onDidChange, onProgress, revealInTree, pickReportPaths, type OperationProgress } from './bridge';
 import { useConnection } from './connection';
-import { KIND_GLYPH, KIND_COLOR, useFillHeight, type LineageResult } from './lineagetypes';
+import { KIND_GLYPH, KIND_COLOR, KIND_LABEL, useFillHeight, type LineageResult } from './lineagetypes';
 import { LineageGraphView } from './lineagegraph';
 import { LineageTreeView } from './lineagetree';
 import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
@@ -47,7 +47,17 @@ interface LineageTabState {
   setMode: React.Dispatch<React.SetStateAction<LineageMode>>;
   analysis: ReportAnalysisResult | null;
   localReportPaths: string[] | null;
-  onAnalyzed: (analysis: ReportAnalysisResult | null, localPaths: string[] | null) => void;
+  reportsStale: boolean;
+  // Report-analysis lifecycle. Safety does NOT depend on the analysis being perfectly fresh: report-used fields are
+  // excluded from "safe" (report-aware list), and EVERY safe removal re-verifies at apply (removeSafeObjects skips
+  // anything that gained a dependency). This lifecycle is only about showing the LATEST verdicts: each analysis claims
+  // a token at start; a model edit or a newer analysis bumps the generation, so a slow result whose token is stale is
+  // DISCARDED rather than overwriting a newer view. A model edit sets a soft `reportsStale` hint (prompt to
+  // re-analyze), never a block.
+  beginAnalyze: (localPaths?: string[] | null) => number;
+  applyAnalysis: (analysis: ReportAnalysisResult | null, localPaths: string[] | null, token: number) => void;
+  abandonAnalyze: (token: number) => void;
+  clearAnalysis: () => void;
   ws: string;
   setWs: React.Dispatch<React.SetStateAction<string>>;
   tenant: string;
@@ -72,8 +82,6 @@ interface LineageTabState {
   setPbirPath: React.Dispatch<React.SetStateAction<string>>;
   pickedPaths: string[];
   setPickedPaths: React.Dispatch<React.SetStateAction<string[]>>;
-  lastLocalPaths: string[] | null;
-  setLastLocalPaths: React.Dispatch<React.SetStateAction<string[] | null>>;
   busy: ReportsBusy;
   setBusy: React.Dispatch<React.SetStateAction<ReportsBusy>>;
   cloudProgress: OperationProgress | null;
@@ -123,10 +131,11 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
   const [consent, setConsent] = useState(false);
   const [pbirPath, setPbirPath] = useState('');
   const [pickedPaths, setPickedPaths] = useState<string[]>([]);
-  const [lastLocalPaths, setLastLocalPaths] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<ReportsBusy>(null);
   const [cloudProgress, setCloudProgress] = useState<OperationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A model edit landed after the report analysis: a soft "re-analyze" hint (removal stays safe, it is re-checked at apply).
+  const [reportsStale, setReportsStale] = useState(false);
 
   // These gates belong to the holder too: recreating them with ReportsPane would sever runId progress correlation and
   // let an old async completion bypass an invalidation after the user left the tab.
@@ -135,15 +144,61 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
   const activeCloudRunId = useRef<string | null>(null);
   const prevIdentity = useRef<string | undefined>(undefined);
   const tenantOwner = useRef<'auto' | 'user' | null>(null);
+  // Monotonic generation so a slow in-flight (re-)analysis can't clobber a newer analysis (or un-stale a fresh edit):
+  // bumped on every model edit AND every manual analyze; a result applies only if its claimed token is still current.
+  // Distinct from cloudGen/localGen on purpose — those own flow identity (busy/error/runId); this owns result freshness.
+  const reanalyzeGen = useRef(0);
+  // Mirror of the analysis state for the stable onDidChange closure below: a model edit invalidates a loaded analysis.
+  const analysisRef = useRef<{ has: boolean }>({ has: false });
+  analysisRef.current = { has: !!analysis };
+  // The LOCAL paths of the NEWEST analyze request that has not failed (null for a cloud request). The model-edit
+  // re-run below targets THIS, not the displayed analysis's paths — so a replacement request interrupted mid-flight
+  // still lands (including a first-ever one with nothing displayed yet), instead of silently resurrecting the old scope.
+  const requestedLocalPaths = useRef<string[] | null>(null);
+  const staleTimer = useRef<number | undefined>(undefined);
 
-  const onAnalyzed = (next: ReportAnalysisResult | null, localPaths: string[] | null) => {
-    setAnalysis(next); setLocalReportPaths(localPaths);
+  const beginAnalyze = (localPaths: string[] | null = null) => { requestedLocalPaths.current = localPaths; return ++reanalyzeGen.current; };
+  const applyAnalysis = (next: ReportAnalysisResult | null, localPaths: string[] | null, token: number) => {
+    if (token !== reanalyzeGen.current) return;
+    setAnalysis(next); setLocalReportPaths(localPaths); setReportsStale(false);
   };
+  // The owning request errored: drop its pending intent so a failed path is not silently retried on the next model
+  // edit. Token-guarded — a request already superseded (by a newer analyze OR a model edit) must not clear the
+  // newer intent (for an edit-orphaned request, the kept intent is exactly what the debounced re-run delivers).
+  const abandonAnalyze = (token: number) => { if (token === reanalyzeGen.current) requestedLocalPaths.current = null; };
+  const clearAnalysis = () => { reanalyzeGen.current++; requestedLocalPaths.current = null; setAnalysis(null); setLocalReportPaths(null); setReportsStale(false); };
+
+  // A model edit invalidates ANY in-flight analysis (including a first-ever one, when has=false), so bump the
+  // generation UNCONDITIONALLY — a slow result whose token is no longer current is discarded (keeps the view on the
+  // latest verdicts). A loaded analysis gets the soft `stale` hint; a LOCAL request is then re-run in place (offline,
+  // cheap, debounced), while a CLOUD one stays stale until the user re-runs it (a fresh one needs a sign-in). This
+  // lives in the holder, not LineageView, so an edit made while Lineage is hidden still invalidates correctly.
+  useEffect(() => {
+    const off = onDidChange(() => {
+      reanalyzeGen.current++;
+      if (analysisRef.current.has) setReportsStale(true);
+      window.clearTimeout(staleTimer.current);
+      staleTimer.current = window.setTimeout(() => {
+        const req = requestedLocalPaths.current;
+        if (req && req.length) {
+          const token = ++reanalyzeGen.current;
+          rpc<ReportAnalysisResult>('analyzeReports', req)
+            .then((r) => applyAnalysis(r, req, token))
+            .catch(() => { /* leave it stale (already set); the next Analyze refreshes it */ });
+        }
+      }, 350);
+    });
+    return () => { off(); window.clearTimeout(staleTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keep the progress listener alive while Lineage is not the selected Studio tab. Correlation remains exact: only
   // analyze_cloud_reports events carrying the holder's current runId can advance the visible progress snapshot.
+  // Monotone per run: the engine publishes per COMPLETED report from a parallel fan-out, so two simultaneous
+  // completions can deliver done=2 before done=1 — a lower count for the same run is dropped, never shown.
   useEffect(() => onProgress((p) => {
-    if (p.opKey === 'analyze_cloud_reports' && p.runId === activeCloudRunId.current) setCloudProgress(p);
+    if (p.opKey === 'analyze_cloud_reports' && p.runId === activeCloudRunId.current)
+      setCloudProgress((cur) => (cur && cur.runId === p.runId && p.done < cur.done ? cur : p));
   }), []);
 
   // Preserve ReportsPane's original model-identity invalidation above the tab switch. A same-session endpoint/database
@@ -160,7 +215,7 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
       setBusy(null);
       setCloudProgress(null);
       setWorkspaces(null); setWs(''); setWsError(null); setLoadedWs('');
-      setReports(null); setSel(new Set()); setConsent(false); setError(null); onAnalyzed(null, null);
+      setReports(null); setSel(new Set()); setConsent(false); setError(null); clearAnalysis();
     }
     const next = nextTenantValue(tenant, tenantOwner.current, session.currentTenant || '', modelSwitched);
     tenantOwner.current = next.owner;
@@ -170,10 +225,10 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
 
   return (
     <LineageTabStateContext.Provider value={{
-      mode, setMode, analysis, localReportPaths, onAnalyzed,
+      mode, setMode, analysis, localReportPaths, reportsStale, beginAnalyze, applyAnalysis, abandonAnalyze, clearAnalysis,
       ws, setWs, tenant, setTenant, authMode, setAuthMode, workspaces, setWorkspaces, wsError, setWsError,
       manualWs, setManualWs, reports, setReports, loadedWs, setLoadedWs, sel, setSel, consent, setConsent,
-      pbirPath, setPbirPath, pickedPaths, setPickedPaths, lastLocalPaths, setLastLocalPaths,
+      pbirPath, setPbirPath, pickedPaths, setPickedPaths,
       busy, setBusy, cloudProgress, setCloudProgress, error, setError,
       gates: { cloudGen, localGen, activeCloudRunId, tenantOwner },
     }}>
@@ -227,7 +282,7 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
   onOpenTests?: () => void;
   onOpenWorkflow?: (name: string) => void;
 } = {}) {
-  const { mode, setMode, analysis: reportAnalysis, localReportPaths, onAnalyzed } = useLineageTabState();
+  const { mode, setMode, analysis: reportAnalysis, localReportPaths, reportsStale } = useLineageTabState();
   // Open on the TREE: it's bounded (fan-out capped) so it renders instantly, whereas the whole-model force graph is the
   // heavy view. Users switch to Graph when they want the free-form explore.
   const [graph, setGraph] = useState<LineageResult | null>(null);
@@ -278,10 +333,23 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
   // stay model-only (impactOf / unused are engine model-only).
   const fullGraph = useMemo(() => augmentGraphWithReports(graph, reportAnalysis), [graph, reportAnalysis]);
   const reportsMerged = fullGraph !== graph;
+  // The "Safe to remove" pane is REPORT-AWARE only when a loaded analysis actually READ a report (reportsRead>0 — an
+  // all-unreadable result is model-only data the engine returns as a courtesy, and must NOT be labelled protective).
+  // When such an analysis exists we show ITS list (report-used fields excluded from "safe"), never a silent revert to
+  // a model-only list where a report-used field reappears as "safe". A model edit marks the list stale — a SOFT
+  // re-analyze hint, not a block: every "safe" delete re-verifies at apply (removeSafeObjects), so a stale view can
+  // prompt, never endanger. Only with no usable analysis do we show model-only.
+  const hasUsableAnalysis = !!reportAnalysis && reportAnalysis.reportsRead > 0;
+  const unusedView = hasUsableAnalysis ? reportAnalysis!.unused : unused;
+  const unusedScope: 'model-only' | 'report-aware' = hasUsableAnalysis ? 'report-aware' : 'model-only';
+  const unusedStale = hasUsableAnalysis && reportsStale;
   const err = mode === 'reports' ? null : (mode === 'graph' || mode === 'tree') ? graphErr : (graphErr ?? (mode === 'impact' ? impactErr : unusedErr));
-  // The model-only caveat is about the offline views; once the report layer is merged into Graph/Tree (fullGraph drops
-  // it) — or in the Published-reports tab — it no longer applies.
-  const caveat = mode === 'reports' ? null : ((mode === 'graph' || mode === 'tree') ? fullGraph?.caveat : (graph?.caveat ?? impact?.caveat ?? unused?.caveat));
+  // Caveat = the honesty note for the list actually shown. Graph/Tree carry the merged-graph note; the unused pane
+  // carries the caveat of whichever list (model-only or report-aware) it is rendering.
+  const caveat = mode === 'reports' ? null
+    : (mode === 'graph' || mode === 'tree') ? fullGraph?.caveat
+    : mode === 'impact' ? (graph?.caveat ?? impact?.caveat)
+    : unusedView?.caveat;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -306,7 +374,7 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
           </div>
           <div className="text-right text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>
             {fullGraph && <div className="tnum">{fullGraph.nodes.length} nodes · {fullGraph.edges.length} edges{reportsMerged ? ' · +reports' : ''}</div>}
-            {mode === 'unused' && unused && <div className="tnum mt-0.5">{unused.safeCount} safe · {unused.usedByUnusedOnlyCount} dead-only{unused.cautionCount ? ` · ${unused.cautionCount} caution` : ''}</div>}
+            {mode === 'unused' && unusedView && <div className="tnum mt-0.5">{unusedView.safeCount} safe · {unusedView.usedByUnusedOnlyCount} dead-only{unusedView.cautionCount ? ` · ${unusedView.cautionCount} caution` : ''}</div>}
           </div>
         </div>
       </Panel>
@@ -317,12 +385,18 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onOpenWorkflow
       {mode === 'graph'
         ? <LineageGraphView graph={fullGraph} onOpenImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
         : mode === 'tree'
-        ? <LineageTreeView graph={fullGraph} unusedItems={unused?.items} onOpenImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
+        // The tree's safe-to-remove dots carry the SAME verdict basis as the Safe-to-remove pane (report-aware when a
+        // usable analysis is loaded) — a report-only field must not wear a green "safe" dot in one view and not the other.
+        ? <LineageTreeView graph={fullGraph} unusedItems={unusedView?.items} onOpenImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
         : mode === 'impact'
           ? <ImpactPane graph={graph} root={root} impact={impact} onPick={loadImpact} reportPaths={localReportPaths ?? undefined}
               onOpenPlan={onOpenPlan} onOpenTests={onOpenTests} onOpenWorkflow={onOpenWorkflow} />
           : mode === 'unused'
-            ? <UnusedPane unused={unused} onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
+            ? <UnusedPane unused={unusedView}
+                scope={unusedScope}
+                stale={unusedStale}
+                reportPaths={hasUsableAnalysis ? (localReportPaths ?? undefined) : undefined}
+                onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />
             : <ReportsPane onImpact={(r) => { setMode('impact'); void loadImpact(r); }} />}
     </div>
   );
@@ -522,19 +596,42 @@ function ImpactPane({ graph, root, impact, onPick, reportPaths, onOpenPlan, onOp
 // Detect stays free; every row also gets a free per-item Delete (one at a time, undoable). The header's
 // "Remove all N safe to remove" is the Pro sweep: the engine recomputes and re-verifies each item at apply
 // time, deletes the still-safe set as one undoable step, and reports what it removed vs skipped (and why).
-// `reportPaths` (local PBIR analysis only) makes the engine's at-apply re-check report-aware too; `onSwept`
-// lets the reports pane refresh its snapshot after a delete.
-function UnusedPane({ unused, onImpact, reportPaths, onSwept }: { unused: UnusedResult | null; onImpact: (ref: string) => void; reportPaths?: string[]; onSwept?: () => void }) {
+// `reportPaths` (local PBIR analysis only) makes the engine's at-apply re-check report-aware too. `scope` labels which
+// verdict basis the list carries (model-only vs report-aware). `stale` = a model edit landed since the analysis, so the
+// shown verdicts may be out of date: a SOFT hint prompting a re-analyze, NOT a block — removal stays safe because every
+// "safe" delete re-verifies at apply (removeSafeObjects). A delete/sweep refresh is owned by the PARENT holder
+// (model/didChange re-runs a local analysis in place / marks a cloud one stale).
+function UnusedPane({ unused, onImpact, reportPaths, scope, stale }: { unused: UnusedResult | null; onImpact: (ref: string) => void; reportPaths?: string[]; scope?: 'model-only' | 'report-aware'; stale?: boolean }) {
   const [q, setQ] = useState('');
+  const [kind, setKind] = useState('all');   // item-type facet: scope the candidate list to one kind (measures, columns, …)
   const tier = useTier();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [upsell, setUpsell] = useState<string | null>(null);
   const [sweep, setSweep] = useState<RemoveSafeReport | null>(null);
+  const [confirmSweep, setConfirmSweep] = useState(false);
+  const [confirmItem, setConfirmItem] = useState<UnusedItem | null>(null);
+  // If a text search empties the selected kind, drop the stored selection back to All so it does not silently
+  // re-apply when the search is cleared. effKind (below) already keeps the CURRENT render correct; this resets the
+  // remembered intent to match. Runs before the early return to keep hook order stable.
+  useEffect(() => {
+    if (kind === 'all' || !unused) return;
+    const n = q.trim().toLowerCase();
+    const present = unused.items.some((i) => i.kind === kind && (!n || (i.table + ' ' + i.name).toLowerCase().includes(n)));
+    if (!present) setKind('all');
+  }, [kind, q, unused]);
   if (!unused) return <Panel><Empty>Scanning the model…</Empty></Panel>;
 
+  // Two independent filters over the same list: a free-text needle and an item-KIND facet. Facet counts are taken
+  // over the text-filtered set (each chip shows how many match the current search), and a selected kind that the
+  // text search has emptied falls back to "all" so the view never strands on an invisible facet.
   const needle = q.trim().toLowerCase();
-  const items = needle ? unused.items.filter((i) => (i.table + ' ' + i.name).toLowerCase().includes(needle)) : unused.items;
+  const textItems = needle ? unused.items.filter((i) => (i.table + ' ' + i.name).toLowerCase().includes(needle)) : unused.items;
+  const kindCounts = new Map<string, number>();
+  for (const i of textItems) kindCounts.set(i.kind, (kindCounts.get(i.kind) ?? 0) + 1);
+  const kinds = [...kindCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const effKind = kind !== 'all' && kindCounts.has(kind) ? kind : 'all';
+  const items = effKind === 'all' ? textItems : textItems.filter((i) => i.kind === effKind);
   const safe = items.filter((i) => i.verdict === 'safe');
   const dead = items.filter((i) => i.verdict === 'usedByUnusedOnly');
   const caution = items.filter((i) => i.verdict === 'caution');
@@ -543,12 +640,11 @@ function UnusedPane({ unused, onImpact, reportPaths, onSwept }: { unused: Unused
   async function removeAll() {
     const refs = allSafe.map((i) => i.ref);
     if (refs.length === 0) return;
-    if (!window.confirm(`This removes ${refs.length} item${refs.length === 1 ? '' : 's'} that nothing depends on. You can undo it.`)) return;
-    setBusy(true); setErr(null); setUpsell(null); setSweep(null);
+    if (!confirmSweep) { setConfirmSweep(true); setConfirmItem(null); return; }
+    setBusy(true); setErr(null); setUpsell(null); setSweep(null); setConfirmSweep(false);
     try {
       const r = await rpc<RemoveSafeReport>('removeSafeObjects', refs, reportPaths ?? null);
       setSweep(r);
-      onSwept?.();
     } catch (e) {
       // A free click on the bulk sweep gets the plain invitation, not a raw exception in a red banner.
       if (isEntitlementError(e)) setUpsell(`Each item can be deleted one at a time free, right here on each row. Pro removes all ${refs.length} verified-safe items in one undoable step.`);
@@ -557,22 +653,32 @@ function UnusedPane({ unused, onImpact, reportPaths, onSwept }: { unused: Unused
   }
 
   async function deleteOne(item: UnusedItem) {
-    const why = item.verdict === 'safe'
-      ? 'Nothing in the model depends on it.'
-      : item.verdict === 'usedByUnusedOnly'
-        ? 'Only unused objects reference it; their formulas will error after this.'
-        : 'Something references it that could not be checked offline.';
-    if (!window.confirm(`Delete '${item.name}'? ${why} You can undo this.`)) return;
+    if (confirmItem?.ref !== item.ref) { setConfirmItem(item); setConfirmSweep(false); return; }
+    setConfirmItem(null);
+    if (item.verdict === 'safe') {
+      // A "safe" delete goes through the single-item sweep (free): the engine RE-VERIFIES at apply — model + local
+      // reports — and SKIPS the item if a new dependent appeared since the scan, instead of a raw unchecked delete.
+      // This closes the scan-to-click window (a fresh model referencer, or a stale-ish local snapshot).
+      setErr(null); setSweep(null);
+      try { setSweep(await rpc<RemoveSafeReport>('removeSafeObjects', [item.ref], reportPaths ?? null)); setUpsell(null); }
+      catch (e) { setErr(String((e as Error).message ?? e)); }
+      return;
+    }
     setErr(null); setSweep(null);
     // A successful free delete also clears a lingering upsell — the user took the free path it was pointing at.
-    try { await rpc('deleteObject', item.ref); setUpsell(null); onSwept?.(); }
+    try { await rpc('deleteObject', item.ref); setUpsell(null); }
     catch (e) { setErr(String((e as Error).message ?? e)); }
   }
+  const confirmWhy = confirmItem == null ? ''
+    : confirmItem.verdict === 'safe' ? 'Nothing in the model depends on it. It is re-checked at apply; if something now uses it, it is skipped, not deleted. You can undo this.'
+    : confirmItem.verdict === 'usedByUnusedOnly' ? 'Only unused objects reference it; their formulas will error after this. You can undo this.'
+    : 'Something references it that could not be checked offline. You can undo this.';
 
   return (
     <Panel>
       <div className="flex items-center gap-2 flex-wrap">
         <SectionTitle>Removal candidates <span style={{ color: 'var(--sem-muted)' }}>({unused.items.length})</span></SectionTitle>
+        {scope && <ScopeBadge scope={scope} />}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter…" spellCheck={false}
           className="ml-auto text-[12px] px-2 py-1 rounded-md outline-none w-56" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
         {allSafe.length > 0 && (
@@ -589,8 +695,35 @@ function UnusedPane({ unused, onImpact, reportPaths, onSwept }: { unused: Unused
         )}
       </div>
 
+      {kinds.length > 1 && (
+        <div className="mt-2 flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] mr-0.5" style={{ color: 'var(--sem-muted)' }}>Type</span>
+          <FacetChip active={effKind === 'all'} onClick={() => setKind('all')} kind={null} count={textItems.length} />
+          {kinds.map(([k, n]) => <FacetChip key={k} active={effKind === k} onClick={() => setKind(k)} kind={k} count={n} />)}
+        </div>
+      )}
+
+      {stale && <div className="mt-2"><Banner color="var(--sem-warn)">The model changed since this analysis ran, so these verdicts may be out of date. Re-analyze the reports for an accurate view. Removals are re-checked at apply, so anything that gained a dependency is skipped, not deleted.</Banner></div>}
       {err && <div className="mt-2"><Banner color="var(--sem-bad)">{err}</Banner></div>}
       {upsell && <div className="mt-2"><UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice></div>}
+      {confirmSweep && (
+        <div className="mt-2"><Banner color="var(--sem-warn)">
+          <div>This removes {allSafe.length} item{allSafe.length === 1 ? '' : 's'} that nothing depends on. You can undo it.</div>
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={() => void removeAll()} disabled={busy} className="text-[11px] px-2 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{busy ? 'Removing…' : 'Remove them'}</button>
+            <button onClick={() => setConfirmSweep(false)} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Keep them</button>
+          </div>
+        </Banner></div>
+      )}
+      {confirmItem && (
+        <div className="mt-2"><Banner color="var(--sem-warn)">
+          <div>Delete '{confirmItem.name}'? {confirmWhy}</div>
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={() => void deleteOne(confirmItem)} className="text-[11px] px-2 py-1 rounded-md font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Delete</button>
+            <button onClick={() => setConfirmItem(null)} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Keep it</button>
+          </div>
+        </Banner></div>
+      )}
       {sweep && (
         <div className="mt-2">
           <Banner color={sweep.count > 0 ? 'var(--sem-good)' : 'var(--sem-warn)'}>
@@ -656,6 +789,34 @@ function UnusedRow({ item, onImpact, onDelete }: { item: UnusedItem; onImpact: (
   );
 }
 
+// A facet chip for the Removal-candidates type filter. Shares the graph view's kind vocabulary (KIND_GLYPH/KIND_COLOR/
+// KIND_LABEL) so the two lineage surfaces read as one system; `kind=null` is the "All" chip. Shows the count under the
+// current text search and highlights when it is the active scope. NOTE the interaction model differs from the graph's
+// chips (single-select "show one" here vs the graph's multi-select "hide" toggles) - a focus gesture for a work list.
+function FacetChip({ active, onClick, kind, count }: { active: boolean; onClick: () => void; kind: string | null; count: number }) {
+  return (
+    <button onClick={onClick} className="text-[11px] px-2 py-0.5 rounded-md font-medium inline-flex items-center gap-1 transition-[background-color] duration-100"
+      style={{ background: active ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: active ? 'var(--sem-on-accent)' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      {kind && <span style={{ color: active ? 'var(--sem-on-accent)' : (KIND_COLOR[kind] ?? 'var(--sem-muted)') }}>{KIND_GLYPH[kind] ?? '•'}</span>}
+      {kind ? (KIND_LABEL[kind] ?? prettyKind(kind)) : 'All'} <span style={{ opacity: 0.65 }}>{count}</span>
+    </button>
+  );
+}
+
+// Labels the basis of the Removal-candidates verdicts: report-aware (a loaded report analysis excludes report-used
+// fields from "safe") vs model-only (published-report usage is NOT considered — a report-only field can look unused).
+function ScopeBadge({ scope }: { scope: 'model-only' | 'report-aware' }) {
+  const reportAware = scope === 'report-aware';
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" title={reportAware
+      ? 'Report usage is included: a field used only by an analyzed report is excluded from "safe".'
+      : 'Model-only: published-report usage is NOT included. Analyze reports (Published reports tab) to include it.'}
+      style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: reportAware ? 'var(--sem-good)' : 'var(--sem-muted)' }}>
+      {reportAware ? 'Report-aware' : 'Model-only'}
+    </span>
+  );
+}
+
 // ---- Published-reports mode (cloud, Phase 3) --------------------------------------------------
 // Discover the published reports in a Fabric/Power BI workspace (non-admin list, carries datasetId), then run the
 // report-aware safe-to-remove over their cloud PBIR via getDefinition. LAZY (no call until a button) to avoid a
@@ -715,9 +876,10 @@ function nextTenantValue(current: string, owner: 'auto' | 'user' | null, auto: s
 function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
   const { session } = useConnection();   // the open model's live identity — used to default the workspace + tenant
   const {
-    analysis, onAnalyzed, ws, setWs, tenant, setTenant, authMode, setAuthMode, workspaces, setWorkspaces,
+    analysis, localReportPaths, reportsStale, beginAnalyze, applyAnalysis, abandonAnalyze, clearAnalysis,
+    ws, setWs, tenant, setTenant, authMode, setAuthMode, workspaces, setWorkspaces,
     wsError, setWsError, manualWs, setManualWs, reports, setReports, loadedWs, setLoadedWs, sel, setSel,
-    consent, setConsent, pbirPath, setPbirPath, pickedPaths, setPickedPaths, lastLocalPaths, setLastLocalPaths,
+    consent, setConsent, pbirPath, setPbirPath, pickedPaths, setPickedPaths,
     busy, setBusy, cloudProgress, setCloudProgress, error, setError, gates,
   } = useLineageTabState();
   const { cloudGen, localGen, activeCloudRunId, tenantOwner } = gates;
@@ -737,7 +899,7 @@ function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
   // Editing the workspace (or auth) after a Load must invalidate the on-screen reports — else Analyze would target a
   // DIFFERENT workspace with the previous one's report ids. Also drops a stale consent so each workspace is re-consented,
   // and orphans any in-flight cloud call (its commit is for the previous selection).
-  function resetDiscovery() { cloudGen.current++; activeCloudRunId.current = null; clearCloudBusy(); setCloudProgress(null); setReports(null); setSel(new Set()); onAnalyzed(null, null); setConsent(false); setError(null); }
+  function resetDiscovery() { cloudGen.current++; activeCloudRunId.current = null; clearCloudBusy(); setCloudProgress(null); setReports(null); setSel(new Set()); clearAnalysis(); setConsent(false); setError(null); }
   // Auth/tenant identity changed ⇒ any listed workspaces belong to the OLD identity. Drop them so the picker re-lists
   // for the new one rather than offering a wrong-tenant list. A MANUALLY typed GUID survives (the list is stale, the
   // GUID is not); a picker selection is cleared with the list it came from.
@@ -767,7 +929,7 @@ function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
     const id = ws.trim();
     if (!id) { setError('Choose a workspace first.'); return; }
     const gen = ++cloudGen.current;
-    setBusy('load'); setError(null); onAnalyzed(null, null); setReports(null); setSel(new Set()); setConsent(false);
+    setBusy('load'); setError(null); clearAnalysis(); setReports(null); setSel(new Set()); setConsent(false);
     try {
       const list = await rpc<CloudReport[]>('listReports', id, authMode, tenant.trim() || null);
       if (gen !== cloudGen.current) return;
@@ -778,16 +940,19 @@ function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
   async function analyze() {
     // Send the explicit PBIR id set so an empty selection ("analyze all PBIR") never pulls paginated/RDL reports, and
     // pass the live `consent` (not a literal) so the engine call is driven by the same flag the button is gated on.
+    // Do NOT clear the current analysis first — that would drop the report-aware view mid-request; the freshness
+    // token guards the new result in (and a model edit mid-flight orphans it).
     const ids = sel.size > 0 ? [...sel] : (reports ?? []).filter(PBIR_CAPABLE).map((r) => r.id);
     const gen = ++cloudGen.current;
+    const token = beginAnalyze();
     const runId = crypto.randomUUID();
     activeCloudRunId.current = runId;
-    setBusy('analyze'); setCloudProgress(null); setError(null); onAnalyzed(null, null);
+    setBusy('analyze'); setCloudProgress(null); setError(null);
     try {
       const res = await rpc<ReportAnalysisResult>('analyzeCloudReports', loadedWs, ids, consent, authMode, tenant.trim() || null, runId);
       if (gen !== cloudGen.current) return;
-      onAnalyzed(res, null); setLastLocalPaths(null);
-    } catch (e) { if (gen === cloudGen.current) setError(String((e as Error).message ?? e)); }
+      applyAnalysis(res, null, token);
+    } catch (e) { abandonAnalyze(token); if (gen === cloudGen.current) setError(String((e as Error).message ?? e)); }
     finally {
       if (gen === cloudGen.current) {
         if (activeCloudRunId.current === runId) activeCloudRunId.current = null;
@@ -811,21 +976,17 @@ function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
     const paths = mergeReportPaths(pickedPaths, pbirPath);
     if (!paths.length) { setError('Pick a local report folder (or enter a path) first.'); return; }
     const gen = ++localGen.current;
-    setBusy('analyzeLocal'); setError(null); onAnalyzed(null, null);
+    const token = beginAnalyze(paths);
+    setBusy('analyzeLocal'); setError(null);
     try {
       const res = await rpc<ReportAnalysisResult>('analyzeReports', paths);
       if (gen !== localGen.current) return;   // the model was switched mid-analysis — this snapshot is the old model's
-      onAnalyzed(res, paths); setLastLocalPaths(paths);
-    } catch (e) { if (gen === localGen.current) setError(String((e as Error).message ?? e)); }
+      applyAnalysis(res, paths, token);
+    } catch (e) { abandonAnalyze(token); if (gen === localGen.current) setError(String((e as Error).message ?? e)); }
     finally { if (gen === localGen.current) setBusy(null); }
   }
-  // After a delete/sweep from the pane below, this snapshot is stale — re-run the (cheap, offline) local analysis.
-  // Cloud analyses are not auto re-fetched (auth round-trip); the model change still refreshes the offline panes.
-  async function refreshAfterSweep() {
-    if (!lastLocalPaths) return;
-    try { onAnalyzed(await rpc<ReportAnalysisResult>('analyzeReports', lastLocalPaths), lastLocalPaths); }
-    catch { /* the removal already succeeded; the snapshot refreshes on the next Analyze */ }
-  }
+  // A delete/sweep from the pane below is refreshed by the PARENT holder: model/didChange re-runs a LOCAL analysis in
+  // place and marks a CLOUD one stale (a soft re-analyze hint). No local re-run plumbing needed here.
   function toggle(id: string) { setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
 
   return (
@@ -998,8 +1159,9 @@ function ReportsPane({ onImpact }: { onImpact: (ref: string) => void }) {
             </div>
           </Panel>
           {analysis.caveat && <Banner color="var(--sem-warn)">{analysis.caveat}</Banner>}
-          <UnusedPane unused={analysis.unused} onImpact={onImpact} reportPaths={lastLocalPaths ?? undefined}
-            onSwept={lastLocalPaths ? () => void refreshAfterSweep() : undefined} />
+          <UnusedPane unused={analysis.unused} onImpact={onImpact}
+            scope={analysis.reportsRead > 0 ? 'report-aware' : 'model-only'} stale={analysis.reportsRead > 0 && reportsStale}
+            reportPaths={localReportPaths ?? undefined} />
         </>
       )}
     </div>

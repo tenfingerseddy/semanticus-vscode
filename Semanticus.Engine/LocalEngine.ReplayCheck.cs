@@ -43,7 +43,7 @@ namespace Semanticus.Engine
             {
                 report.ReplaySkipped = true;
                 report.Admissible = false;
-                report.Note = "NOT admissible — the file does not parse; fix it before a replay. " + check.ParseError;
+                report.Note = "NOT admissible: the file does not parse; fix it before a replay. " + check.ParseError;
                 return report;
             }
 
@@ -82,8 +82,8 @@ namespace Semanticus.Engine
             //    executed, so they never dock admissibility — they are surfaced for the reviewer, nothing more.
             report.Admissible = report.ParseError == null && report.RehearsedFailed == 0;
             report.Note = report.Admissible
-                ? "Admissible — parses clean and every op the exemplar can drive would succeed (rehearsed then rolled back; nothing changed). Denied/unbindable ops and DAX probes are surfaced, not executed. Verdict rule: parse-clean AND no rehearsed op reported wouldSucceed=false."
-                : $"NOT admissible — {report.RehearsedFailed} rehearsed op(s) would fail (see the rows). Verdict rule: parse-clean AND no rehearsed op reported wouldSucceed=false.";
+                ? "Admissible: parses clean and every op the exemplar can drive would succeed (rehearsed then rolled back; nothing changed). Denied/unbindable ops and DAX probes are surfaced, not executed. Verdict rule: parse-clean AND no rehearsed op reported wouldSucceed=false."
+                : $"NOT admissible: {report.RehearsedFailed} rehearsed op(s) would fail (see the rows). Verdict rule: parse-clean AND no rehearsed op reported wouldSucceed=false.";
             return report;
         }
 
@@ -98,7 +98,7 @@ namespace Semanticus.Engine
             if (!OpSurface.Methods.TryGetValue(op, out var method))
             {
                 row.Outcome = "skipped-denied";
-                row.Detail = $"'{op}' is not a known op (get_op_catalog lists the real surface) — cannot rehearse.";
+                row.Detail = $"'{op}' is not a known op (get_op_catalog lists the real surface). Cannot rehearse.";
                 report.SkippedDenied++;
                 return row;
             }
@@ -116,7 +116,7 @@ namespace Semanticus.Engine
             if (missing != null)
             {
                 row.Outcome = "skipped-unbindable";
-                row.Detail = $"required parameter '{missing}' has no matching exemplar answer — add an input named '{missing}' to the exemplar run (or answer it) so replay can drive this op.";
+                row.Detail = $"required parameter '{missing}' has no matching exemplar answer. Add an input named '{missing}' to the exemplar run (or answer it) so replay can drive this op.";
                 report.SkippedUnbindable++;
                 return row;
             }
@@ -130,8 +130,8 @@ namespace Semanticus.Engine
                 row.WouldSucceed = dr.WouldSucceed;
                 row.DeltaCount = dr.Deltas?.Length ?? 0;
                 row.Detail = dr.WouldSucceed
-                    ? $"would succeed — {row.DeltaCount} would-be delta(s); nothing changed (rolled back)."
-                    : "would FAIL — " + dr.Error;
+                    ? $"would succeed: {row.DeltaCount} would-be delta(s); nothing changed (rolled back)."
+                    : "would FAIL: " + dr.Error;
                 if (!dr.WouldSucceed) report.RehearsedFailed++;
             }
             catch (Exception ex)
@@ -139,7 +139,7 @@ namespace Semanticus.Engine
                 // A bind/type mismatch surfaced by the shared binder (rare — gate answers are strings): honest as a
                 // rehearsal that cannot succeed (the exemplar arg can't drive this op's typed parameter).
                 row.WouldSucceed = false;
-                row.Detail = "could not rehearse — " + ex.Message;
+                row.Detail = "could not rehearse: " + ex.Message;
                 report.RehearsedFailed++;
             }
             return row;
@@ -163,8 +163,8 @@ namespace Semanticus.Engine
             if (!probeAnswered || target == null)
             {
                 row.Detail = !probeAnswered
-                    ? $"not replayable — the probe input '{v.Probe}' has no exemplar answer to compare against."
-                    : "not replayable — no objectRef-typed input has an exemplar answer naming the target object.";
+                    ? $"not replayable: the probe input '{v.Probe}' has no exemplar answer to compare against."
+                    : "not replayable: no objectRef-typed input has an exemplar answer naming the target object.";
                 return row;
             }
 
@@ -175,8 +175,8 @@ namespace Semanticus.Engine
             if (!resolves)
             {
                 row.Detail = context.Session == null
-                    ? $"not replayable now — no model open, so '{target}' can't be resolved (open the model, then replay)."
-                    : $"not replayable — '{target}' does not resolve to an existing object on the current model.";
+                    ? $"not replayable now: no model open, so '{target}' can't be resolved (open the model, then replay)."
+                    : $"not replayable: '{target}' does not resolve to an existing object on the current model.";
                 return row;
             }
 
@@ -184,8 +184,8 @@ namespace Semanticus.Engine
             // connection); mirror WorkflowDaxProbeAsync's honest offline-skip and point at the real-evidence path.
             row.Outcome = "replayable";
             row.Detail = context.Live == null
-                ? $"replayable: needs a live/attached session — probe '{v.Probe}' + target '{target}' resolve, but offline now, so the DAX was NOT executed (open_live/open_local, then start_workflow for real evidence)."
-                : $"replayable — probe '{v.Probe}' + target '{target}' resolve and a live session is attached; replay does not execute live DAX itself (run start_workflow for real evidence).";
+                ? $"replayable: needs a live/attached session. Probe '{v.Probe}' + target '{target}' resolve, but offline now, so the DAX was NOT executed (open_live/open_local, then start_workflow for real evidence)."
+                : $"replayable: probe '{v.Probe}' + target '{target}' resolve and a live session is attached; replay does not execute live DAX itself (run start_workflow for real evidence).";
             return row;
         }
 
@@ -199,7 +199,7 @@ namespace Semanticus.Engine
             skipNote = null;
             if (def.Provenance == null || !def.Provenance.TryGetValue("exemplar_answers", out var json) || string.IsNullOrWhiteSpace(json))
             {
-                skipNote = "Replay SKIPPED: no exemplar block — /distill-workflow embeds one when distilling from a run; replay needs example args. "
+                skipNote = "Replay SKIPPED: no exemplar block. /distill-workflow embeds one when distilling from a run; replay needs example args. "
                     + "Add `exemplar_answers: {\"inputName\":\"answer\", ...}` (one-line JSON of the exemplar run's gate answers) to the frontmatter.";
                 return null;
             }
@@ -216,7 +216,7 @@ namespace Semanticus.Engine
                     map[p.Name] = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : p.Value.GetRawText();
                 if (map.Count == 0)
                 {
-                    skipNote = "Replay SKIPPED: `exemplar_answers` is an empty object — no example args to drive any op.";
+                    skipNote = "Replay SKIPPED: `exemplar_answers` is an empty object. No example args to drive any op.";
                     return null;
                 }
                 return map;

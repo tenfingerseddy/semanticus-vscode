@@ -98,8 +98,9 @@ namespace Semanticus.Engine
             if (body == "_Add what people and the AI Assistant should know._") body = string.Empty;
             var addition = suggestion.Markdown?.Trim();
             if (string.IsNullOrWhiteSpace(addition)) throw new InvalidOperationException("The Primer suggestion is blank.");
-            var replacement = marker + "\n\n" + (body.Length == 0 ? addition : body + "\n\n" + addition) + "\n";
-            return normalized.Substring(0, start) + replacement + normalized.Substring(next).TrimStart('\n') + (next == normalized.Length ? "" : "\n");
+            var replacement = marker + "\n\n" + (body.Length == 0 ? addition : body + "\n\n" + addition) + "\n\n";
+            var tail = next == normalized.Length ? "" : normalized.Substring(next).TrimStart('\n');
+            return (normalized.Substring(0, start) + replacement + tail).TrimEnd('\n') + "\n";
         }
     }
 }

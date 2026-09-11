@@ -7,7 +7,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const app = readFileSync(resolve(root, 'webview', 'src', 'App.tsx'), 'utf8');
 const deploy = readFileSync(resolve(root, 'webview', 'src', 'deploy.tsx'), 'utf8');
 const context = readFileSync(resolve(root, 'webview', 'src', 'contextbar.tsx'), 'utf8');
-const connections = readFileSync(resolve(root, 'webview', 'src', 'connectionsdrawer.tsx'), 'utf8');
+// The Connections manager is now the hub (connectionshub.tsx), which REPLACED the drawer; the capability copy below
+// must survive the move (drawer → hub), so this reads the hub as the single manager surface.
+const connections = readFileSync(resolve(root, 'webview', 'src', 'connectionshub.tsx'), 'utf8');
 const connection = readFileSync(resolve(root, 'webview', 'src', 'connection.tsx'), 'utf8');
 const dataAgent = readFileSync(resolve(root, 'webview', 'src', 'dataagent.tsx'), 'utf8');
 const spec = readFileSync(resolve(root, 'webview', 'src', 'spec.tsx'), 'utf8');
@@ -40,8 +42,9 @@ assert.match(app, /TAB_TO_GROUP\.compare = 'ship'/, 'legacy Compare routes must 
 assert.match(app, /if \(t === 'compare'\) t = 'deploy'/, 'legacy Compare routes must redirect into Deploy');
 assert.match(app, /TAB_TO_GROUP\.dataagent = 'ship'/, 'legacy Data Agent routes must still resolve inside Ship');
 assert.doesNotMatch(app, /<CompareView seed=/, 'App must not retain a second top-level comparison surface');
-assert.match(deploy, /<CompareView seed=\{reviewSeed\} embedded \/>/, 'Deploy must own the shared review and write path');
-assert.match(deploy, /Unknown state stays explicit/, 'the state header must disclose unknowns');
+assert.match(deploy, /<CompareView key=\{session\?\.sessionId \?\? 'none'\} seed=\{reviewSeed\} embedded \/>/, 'Deploy must own the shared review and write path, remounted on model switch');
+assert.match(deploy, /deployHeaderState/, 'the state header must resolve through the shared Publish copy helper');
+assert.match(deploy, /data-testid="publish-button"/, 'Deploy must expose a Publish control');
 assert.match(deploy, /rpc<ConnectionRecord\[]>\('listConnections'\)/, 'Deploy must read the shared target registry');
 assert.match(deploy, /rpc<RestorePointRecord\[]>\('listRestorePoints'/, 'rollback must read engine-owned restore points');
 assert.match(deploy, /rpc<RollbackResult>\('rollbackPush', restoreId, false/, 'rollback must preview before writing');
@@ -56,13 +59,14 @@ assert.match(context, /Review changes →/, 'the ambient context link must use t
 assert.match(context, />Editing</);
 assert.match(context, />Tests</);
 assert.match(context, />Publish to</);
-assert.match(connections, /Use for tests and queries[\s\S]*changes only where results come from/);
-assert.match(connections, /Open live[\s\S]*does not create local files/);
-assert.match(connections, /Work locally[\s\S]*keeps testing and final publishing as separate choices/);
+// The Connections hub verbs note uses the ratified outcome taxonomy (T164), not the retired "Use for tests" phrasing.
+assert.match(connections, /Query this model[\s\S]*The model you are editing stays open/);
+assert.match(connections, /Open live[\s\S]*No local files are created/);
+assert.match(connections, /Work locally[\s\S]*Publishing remains a separate choice/);
 assert.match(connections, /Existing files remain user-owned, including files already in source control/);
-assert.match(connections, /setPublishDestination[\s\S]*Set as publish destination/, 'existing local and repository models must be able to link an explicit publish target');
+assert.match(connections, /setPublishDestination[\s\S]*Set as publish destination/, 'existing local and repository models must be able to link an explicit publish target (now a Current setup role)');
 assert.match(extension, /sendRequest<ModelConnectionRecord\[]>\('listConnections'\)/, 'the native picker must use the same engine registry as Studio');
-assert.match(extension, /Create a new model[\s\S]*sendRequest<OpenResult>\('createModel'[\s\S]*navigateStudio\(extCtx, 'spec'\)/, 'the new-model entry must create one session then hand off to Model Spec');
+assert.match(extension, /Create a new model[\s\S]*(?:confirmAndSendOpen<OpenResult>|sendRequest<OpenResult>)\([\s\S]*'createModel'[\s\S]*navigateStudio\(extCtx, 'spec'\)/, 'the new-model entry must create one session then hand off to Model Spec');
 assert.match(extension, /pickSpecFile[\s\S]*showSaveDialog[\s\S]*showOpenDialog/, 'saved specs must have native open and save paths');
 assert.match(spec, /New model wizard[\s\S]*Start from scratch[\s\S]*Draft from a SQL source[\s\S]*Open a saved Model Spec/, 'the wizard must explain every supported starting point');
 assert.match(spec, /setSpec[\s\S]*loadSpec[\s\S]*saveSpec/, 'wizard and file actions must converge on the shared engine spec');

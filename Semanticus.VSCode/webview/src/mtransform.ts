@@ -41,6 +41,19 @@ export function letShape(m: string): LetShape | null {
       if (c === '/' && s[i + 1] === '*') { i += 2; while (i < n && !(s[i] === '*' && s[i + 1] === '/')) i++; i += 2; return true; }
       return false;
     };
+    // Comments on the `let` line sit in the first binding's segment. Skip them (and spaces) so they
+    // never become the step name (D-027).
+    const skipCommentOrSpace = (buf: string, from: number, limit: number): number => {
+      let j = from;
+      while (j < limit) {
+        const c = buf[j];
+        if (/\s/.test(c)) { j++; continue; }
+        if (c === '/' && buf[j + 1] === '/') { while (j < limit && buf[j] !== '\n') j++; continue; }
+        if (c === '/' && buf[j + 1] === '*') { j += 2; while (j < limit && !(buf[j] === '*' && buf[j + 1] === '/')) j++; j += 2; continue; }
+        break;
+      }
+      return j;
+    };
     // find the first top-level `let`
     let letPos = -1, d0 = 0;
     while (i < n) {
@@ -71,19 +84,40 @@ export function letShape(m: string): LetShape | null {
           while (k < raw.length) { if (raw[k] === '"') { if (raw[k + 1] === '"') k += 2; else { k++; break; } } else k++; }
           j = k; continue;
         }
+        if (c === '/' && (raw[j + 1] === '/' || raw[j + 1] === '*')) { j = skipCommentOrSpace(raw, j, raw.length); continue; }
         if ('([{'.includes(c)) d++; else if (')]}'.includes(c)) d--;
         else if (d === 0 && c === '=' && raw[j + 1] !== '=' && raw[j + 1] !== '>' && raw[j - 1] !== '<' && raw[j - 1] !== '>') { eq = j; break; }
         j++;
       }
       if (eq <= 0) { segStart = -1; return; }
-      const nameRaw = raw.slice(0, eq).trim();
+      let nameAt = skipCommentOrSpace(raw, 0, eq);
+      if (nameAt >= eq) { segStart = -1; return; }
+      let name: string;
+      if (raw[nameAt] === '#' && raw[nameAt + 1] === '"') {
+        let k = nameAt + 2;
+        while (k < eq) { if (raw[k] === '"') { if (raw[k + 1] === '"') k += 2; else { k++; break; } } else k++; }
+        name = raw.slice(nameAt + 2, k - 1).replace(/""/g, '"');
+      } else if (isIdentStart(raw[nameAt])) {
+        let k = nameAt; while (k < eq && isIdentChar(raw[k])) k++;
+        name = raw.slice(nameAt, k);
+      } else { segStart = -1; return; }
       const expr = raw.slice(eq + 1).trim();
-      if (!nameRaw) { segStart = -1; return; }
-      const name = nameRaw.startsWith('#"') ? nameRaw.slice(2, -1).replace(/""/g, '"') : nameRaw;
-      // trim span to the non-whitespace extent
+      if (!name) { segStart = -1; return; }
+      // trim span to the non-whitespace extent; skip a trailing comment so an inserted comma is live code
       let a = segStart; while (a < segEnd && /\s/.test(s[a])) a++;
-      let b = segEnd; while (b > a && /\s/.test(s[b - 1])) b--;
-      steps.push({ name, expr, start: a, end: b });
+      let b = segStart, last = a;
+      while (b < segEnd) {
+        const c = s[b];
+        if (c === '"' || (c === '#' && s[b + 1] === '"')) {
+          const q = c === '#' ? b + 2 : b + 1; let k = q;
+          while (k < segEnd) { if (s[k] === '"') { if (s[k + 1] === '"') k += 2; else { k++; break; } } else k++; }
+          b = k; last = b; continue;
+        }
+        if (c === '/' && (s[b + 1] === '/' || s[b + 1] === '*')) { b = skipCommentOrSpace(s, b, segEnd); continue; }
+        if (!/\s/.test(c)) last = b + 1;
+        b++;
+      }
+      steps.push({ name, expr, start: a, end: last });
       segStart = -1;
     };
 

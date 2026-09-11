@@ -47,6 +47,10 @@ namespace Semanticus.Tests
                 Assert.Equal(measures.Length, correctness.Checked);
                 Assert.Equal(measures.Length, correctness.NotVerifiable);
                 Assert.True(run.Health.CoveragePct < 100.0);
+                Assert.Contains("Offline", run.Note);
+                Assert.DoesNotContain("connect_xmla", run.Note);
+                Assert.DoesNotContain("connect_local", run.Note);
+                Assert.Contains("Connections", run.Note);
             }
             finally
             {

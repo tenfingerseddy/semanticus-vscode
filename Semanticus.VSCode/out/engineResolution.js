@@ -38,6 +38,7 @@ exports.engineOwnerMatches = engineOwnerMatches;
 exports.decideEngineOwner = decideEngineOwner;
 exports.shouldAutoHealMcpEntry = shouldAutoHealMcpEntry;
 const path = __importStar(require("path"));
+const licenseDelivery_1 = require("./licenseDelivery");
 /// Keep the F5 override inside the Extension Development Host. A Marketplace install is a verified pair of
 /// extension + bundled engine; silently substituting a global debug DLL makes its displayed version meaningless.
 function resolveEngineCandidate(input) {
@@ -115,6 +116,8 @@ function shouldAutoHealMcpEntry(prior, desired, platform) {
     const newWorkspace = normalizedWorkspaceFromArgs(desired.args, platform);
     if (oldWorkspace !== newWorkspace)
         return false;
-    return normalizedOwnerPath(prior.command, platform) !== normalizedOwnerPath(desired.command, platform);
+    const commandChanged = normalizedOwnerPath(prior.command, platform) !== normalizedOwnerPath(desired.command, platform);
+    const licenseStripped = (0, licenseDelivery_1.argsContainLicenseToken)(prior.args) && !(0, licenseDelivery_1.argsContainLicenseToken)(desired.args);
+    return commandChanged || licenseStripped;
 }
 //# sourceMappingURL=engineResolution.js.map

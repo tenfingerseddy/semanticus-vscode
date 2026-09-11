@@ -295,7 +295,7 @@ namespace Semanticus.Engine.Lineage
             else if (deep != null && HasUnclassifiableReferencer(deep))
             {
                 verdict = "caution";
-                reason = "Referenced by an object whose live-ness can't be determined offline (e.g. a partition data-coverage expression) — verify before removing.";
+                reason = "Referenced by an object whose live-ness can't be determined offline (e.g. a partition data-coverage expression). Verify before removing.";
             }
             else { verdict = "usedByUnusedOnly"; reason = "Referenced only by objects that are themselves unused (hidden/dead)."; }
 
@@ -318,7 +318,8 @@ namespace Semanticus.Engine.Lineage
         {
             var reports = new List<ReportUsage>();
             var allUsed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int read = 0, unreadable = 0, totalUnresolved = 0;
+            var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int read = 0, unreadable = 0, totalUnresolved = 0, totalSkipped = 0;
 
             foreach (var (path, error, pr) in parsed)
             {
@@ -327,13 +328,15 @@ namespace Semanticus.Engine.Lineage
                 foreach (var f in pr.Fields)
                 {
                     if (f.IsExtension) { if (!string.IsNullOrEmpty(f.Property)) ext.Add(f.Property); continue; }
-                    var modelRef = Reconcile(m, f);
-                    if (modelRef != null) resolved.Add(modelRef);   // a name miss just means the report uses a field not in THIS model — ignore
+                    foreach (var modelRef in ReconcileAll(m, f))
+                        resolved.Add(modelRef);   // a name miss just means the report uses a field not in THIS model — ignore
                 }
                 bool ok = pr.DefinitionFound && error == null;
                 if (ok) read++; else unreadable++;
                 foreach (var r in resolved) allUsed.Add(r);
                 totalUnresolved += pr.Unresolved;
+                foreach (var n in pr.UnresolvedNames) unresolvedNames.Add(n);
+                totalSkipped += pr.SkippedParts;
 
                 // Page+visual drill-down: group the page/visual-stamped occurrences (those that carry a page) and
                 // reconcile each visual's distinct model refs. A visual that references no model field is dropped.
@@ -347,8 +350,7 @@ namespace Semanticus.Engine.Lineage
                     {
                         if (f.VisualType != null) vtype = f.VisualType;
                         if (f.IsExtension) continue;
-                        var mr = Reconcile(m, f);
-                        if (mr != null) vrefs.Add(mr);
+                        foreach (var mr in ReconcileAll(m, f)) vrefs.Add(mr);
                     }
                     if (vrefs.Count == 0) continue;
                     visuals.Add(new ReportVisualUsage
@@ -375,14 +377,20 @@ namespace Semanticus.Engine.Lineage
             // open model (read > 0 yet allUsed empty) — almost always the wrong model is open, so the "usage" the
             // caveat claims is illusory. In either case a would-be "safe" item must NOT assert safe.
             bool nothingMatched = read > 0 && allUsed.Count == 0;
-            bool coverageIncomplete = read > 0 && (unreadable > 0 || nothingMatched);
+            // Coverage is incomplete when some reports couldn't be read at all (unreadable), when NONE of the read
+            // fields matched the open model (nothingMatched = wrong model), OR when a read report had PARTS we couldn't
+            // parse/read (totalSkipped) — a field used only in a skipped part is invisible, so "safe" would overstate.
+            // (Unresolved refs do NOT blanket-demote — measured near-zero on well-formed PBIR — but they are REAL
+            // usages we couldn't place, so the NAME-matching would-be-safe items are demoted individually below.)
+            bool coverageIncomplete = read > 0 && (unreadable > 0 || nothingMatched || totalSkipped > 0);
 
             var caveat = read == 0
                 ? "No readable PBIR report definition was found. (Legacy .pbix / PBIRLegacy / paginated reports are not parsed.) The safe-to-remove list below is MODEL-ONLY."
                 : $"Includes field usage from {read} report(s)"
                   + (unreadable > 0 ? $"; {unreadable} report(s) could not be read (paginated/RDL, blocked by a sensitivity label, or unreadable)" : "")
+                  + (totalSkipped > 0 ? $"; {totalSkipped} report part(s) could not be parsed" : "")
                   + (totalUnresolved > 0 ? $"; {totalUnresolved} report reference(s) could not be attributed (verify 'safe' items)" : "")
-                  + (nothingMatched ? "; but NONE of their fields matched the open model — likely the wrong model is open, so the list below is effectively model-only" : "")
+                  + (nothingMatched ? "; but NONE of their fields matched the open model (likely the wrong model is open), so the list below is effectively model-only" : "")
                   + ". A field used only by a report NOT included here can still appear as unused.";
 
             var unused = Unused(m, read == 0 ? null : allUsed, caveat);
@@ -390,8 +398,14 @@ namespace Semanticus.Engine.Lineage
             // doors act on) must never overstate safe just because the prose caveat warns. usedByUnusedOnly/caution stay.
             if (coverageIncomplete)
                 unused = DemoteSafeToCaution(unused, nothingMatched
-                    ? "Report coverage is incomplete — no report field matched the open model (likely the wrong model is open), so a report may use this. Verify before removing."
-                    : "Report coverage is incomplete — a report whose definition could not be read may use this. Verify before removing.");
+                    ? "Report coverage is incomplete: no report field matched the open model (likely the wrong model is open), so a report may use this. Verify before removing."
+                    : "Report coverage is incomplete: a report definition could not be fully read or parsed, so a report may use this. Verify before removing.");
+            // The unresolved RESIDUE: a reference whose table we could not place still carries a parseable NAME. A
+            // would-be-safe item with that name may be the very field the report uses (a filter card, a formatting
+            // measure), so it must not assert "safe" — demote the name-matches only, a scalpel where the blanket
+            // demote above would erase "safe" from the product.
+            if (read > 0 && unresolvedNames.Count > 0)
+                unused = DemoteUnresolvedNameMatchesToCaution(unused, unresolvedNames);
 
             return new ReportAnalysisResult
             {
@@ -412,18 +426,52 @@ namespace Semanticus.Engine.Lineage
         {
             foreach (var i in r.Items)
                 if (i.Verdict == "safe") { i.Verdict = "caution"; i.Reason = reason; }
-            return new UnusedResult
-            {
-                Items = r.Items,
-                SafeCount = r.Items.Count(i => i.Verdict == "safe"),
-                UsedByUnusedOnlyCount = r.Items.Count(i => i.Verdict == "usedByUnusedOnly"),
-                CautionCount = r.Items.Count(i => i.Verdict == "caution"),
-                Caveat = r.Caveat,
-            };
+            return Recount(r);
         }
+
+        // The targeted variant: only would-be-safe items whose NAME matches an unresolved report reference demote —
+        // the reference is a real usage whose table we couldn't place, and this item may be its target.
+        private static UnusedResult DemoteUnresolvedNameMatchesToCaution(UnusedResult r, ISet<string> unresolvedNames)
+        {
+            foreach (var i in r.Items)
+                if (i.Verdict == "safe" && i.Name != null && unresolvedNames.Contains(i.Name))
+                {
+                    i.Verdict = "caution";
+                    i.Reason = $"A report references something named '{i.Name}' that could not be fully attributed, and it may be this object. Verify before removing.";
+                }
+            return Recount(r);
+        }
+
+        private static UnusedResult Recount(UnusedResult r) => new UnusedResult
+        {
+            Items = r.Items,
+            SafeCount = r.Items.Count(i => i.Verdict == "safe"),
+            UsedByUnusedOnlyCount = r.Items.Count(i => i.Verdict == "usedByUnusedOnly"),
+            CautionCount = r.Items.Count(i => i.Verdict == "caution"),
+            Caveat = r.Caveat,
+        };
 
         // Map a parsed (Entity, Property, kind) reference to a model object ref BY NAME (TOM is the source of truth —
         // the report layer has no LineageTag). Returns null when no model object matches (a different/renamed field).
+        // A report reference resolves to 0..n model objects: a column/measure to at most one; a HIERARCHY to each of
+        // its levels' columns. The report names only hierarchy (+ level) — which columns that binds is a MODEL fact,
+        // so it resolves here; ALL level columns are protected (deleting any of them alters or errors every visual
+        // bound to the hierarchy). Level columns are also structurally protected in Unused(), so the value here is
+        // the usage attribution both doors read (visuals drill-down, impact, the report layer on the graph).
+        private static IEnumerable<string> ReconcileAll(Model m, ReportDefinitionReader.FieldRef f)
+        {
+            if (f.Kind == "hierarchy")
+            {
+                if (string.IsNullOrEmpty(f.Entity) || string.IsNullOrEmpty(f.Property) || !m.Tables.Contains(f.Entity)) yield break;
+                var h = m.Tables[f.Entity].Hierarchies.FirstOrDefault(x => string.Equals(x.Name, f.Property, StringComparison.OrdinalIgnoreCase));
+                if (h == null) yield break;   // a name miss (hierarchy not in THIS model) — same posture as a field miss
+                foreach (var lvl in h.Levels) if (lvl.Column != null) yield return ObjectRefs.For(lvl.Column);
+                yield break;
+            }
+            var one = Reconcile(m, f);
+            if (one != null) yield return one;
+        }
+
         private static string Reconcile(Model m, ReportDefinitionReader.FieldRef f)
         {
             if (string.IsNullOrEmpty(f.Property)) return null;

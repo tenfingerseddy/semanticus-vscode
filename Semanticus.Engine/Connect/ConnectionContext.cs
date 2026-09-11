@@ -42,6 +42,36 @@ namespace Semanticus.Engine
         public string TenantId { get; set; }
     }
 
+    /// <summary>One prerequisite an ADVANCED sign-in mode needs (e.g. service-principal's client id) — PRESENCE + NAME
+    /// only, never a secret VALUE. <see cref="EnvNames"/> lists every accepted env-var name (aliases) for this one
+    /// requirement; <see cref="Present"/> is true when ANY of them is set (or, for a Tenant requirement, when the
+    /// caller separately supplied a tenant id). A UI reads this to say which name(s) are still missing.</summary>
+    public sealed class AuthPrereqRequirement
+    {
+        public string Label { get; set; }
+        public string[] EnvNames { get; set; }
+        public bool Present { get; set; }
+    }
+
+    /// <summary>Read-only PREVIEW of whether an ADVANCED sign-in mode can actually authenticate on this machine, so a
+    /// picker can warn BEFORE a connect attempt instead of failing after one. PRESENCE + NAMES ONLY — NEVER a secret
+    /// value — and the probe itself NEVER triggers an interactive prompt or a network sign-in (local reads, plus at
+    /// most a local <c>az account show</c> for the azcli mode). For serviceprincipal, <see cref="Ready"/> is true when
+    /// every <see cref="Requirements"/> entry is Present; for azcli it instead reflects whether a signed-in CLI session
+    /// was detected (<see cref="CliAccount"/>/<see cref="CliTenant"/> then name it). <see cref="Detail"/> carries an
+    /// honest, actionable note when NOT ready (e.g. "Run az login"). <see cref="KeyVaultSupported"/> is always false
+    /// today — there is no Key Vault-backed credential source yet.</summary>
+    public sealed class AuthPrerequisites
+    {
+        public string Mode { get; set; }
+        public bool Ready { get; set; }
+        public AuthPrereqRequirement[] Requirements { get; set; } = System.Array.Empty<AuthPrereqRequirement>();
+        public string CliAccount { get; set; }
+        public string CliTenant { get; set; }
+        public string Detail { get; set; }
+        public bool KeyVaultSupported { get; set; }   // always false today
+    }
+
     /// <summary>
     /// Engine-owned explanation of the two identities a user may deliberately have in play. Relationship is one of
     /// none | editingOnly | queryingOnly | sameInstance | workingCopyAndPublished |
@@ -146,7 +176,12 @@ namespace Semanticus.Engine
             publish = ConnectionRegistry.Find(editingRecord?.PublishConnectionId) ?? publish;
             if (publish == null && string.Equals(editingRecord?.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
                 publish = editingRecord;
-            if (publish == null || !string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
+            // The origin guard at :174 keeps a loopback EDITING origin out, but both later routes can still SELECT a
+            // legacy loopback row that is already on disk — the explicit publish id at :176, and the kind-only
+            // fallback at :177-178. Judge the record that was actually selected, after both routes, so a legacy row
+            // stays inert without being migrated or rewritten.
+            if (publish == null || !string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase)
+                || LiveDeploy.IsLocalEndpoint(publish.Endpoint))
                 return new ConnectionContextModel { Available = false };
             return FromRecord(publish, new ConnectionContextModel
             {

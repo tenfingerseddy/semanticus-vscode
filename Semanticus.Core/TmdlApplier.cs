@@ -53,7 +53,7 @@ namespace TabularEditor.TOMWrapper.Utils
                     // — and guard the wrapper rebuild so a Reinit throw can't MASK both underlying failures.
                     System.Exception reinitEx = null;
                     try { model.Reinit(); } catch (System.Exception rx) { reinitEx = rx; }
-                    var msg = $"apply_tmdl failed: {applyEx.Message}; ROLLBACK ALSO FAILED: {rollbackEx.Message} — the in-memory model may be partially modified; re-open it from disk before editing further.";
+                    var msg = $"apply_tmdl failed: {applyEx.Message}; ROLLBACK ALSO FAILED: {rollbackEx.Message}. The in-memory model may be partially modified; re-open it from disk before editing further.";
                     throw reinitEx == null
                         ? new System.AggregateException(msg, applyEx, rollbackEx)
                         : new System.AggregateException(msg + $" (the wrapper rebuild also failed: {reinitEx.Message})", applyEx, rollbackEx, reinitEx);
@@ -64,7 +64,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 catch (System.Exception reinitEx)
                 {
                     throw new System.AggregateException(
-                        $"apply_tmdl failed: {applyEx.Message}; the rollback restored the object, but the wrapper failed to rebuild: {reinitEx.Message} — re-open the model from disk before editing further.",
+                        $"apply_tmdl failed: {applyEx.Message}; the rollback restored the object, but the wrapper failed to rebuild: {reinitEx.Message}. Re-open the model from disk before editing further.",
                         applyEx, reinitEx);
                 }
                 throw;

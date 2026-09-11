@@ -55,6 +55,40 @@ verify:
 ```
 ";
 
+        // The distillable run-view hint fires only when EVERY result reads "passed" (WorkflowRunner.BuildView
+        // around line 2466), and under the badge vocabulary (WorkflowRunner.ConcludeSubmittedStep) a step that
+        // ran no check reads "done", never "passed". The shape that can fire is therefore one where every step
+        // carries a check that passed, which is what this definition gives step-1 as well as step-2. `Md` above
+        // keeps its input-only step-1 for the two negative cases below, which depend on exactly that shape.
+        private const string MdAllChecked = @"---
+name: distill-test-checked
+title: Distill test checked
+version: 1
+strictness: hard
+---
+
+## Step 1: Capture the target
+
+```yaml gate
+inputs:
+  - name: target
+    question: ""The object being acted on.""
+    type: objectRef
+    required: required
+verify:
+  - kind: bpa_clean
+    scope: model
+```
+
+## Step 2: Verify
+
+```yaml gate
+verify:
+  - kind: bpa_clean
+    scope: model
+```
+";
+
         private static WorkflowDef Def() { var d = WorkflowParser.Parse(Md); Assert.Null(d.Error); return d; }
         private static AnswerValue Answer(string v) => new AnswerValue { Value = v };
         private static readonly WorkflowVerifyExecutor Passing =
@@ -65,12 +99,15 @@ verify:
         [Fact]
         public async Task Run_view_distillable_on_completed_run_with_all_passed_and_real_verify()
         {
-            var run = new WorkflowRunStore().Start(Def(), null);
+            var def = WorkflowParser.Parse(MdAllChecked);
+            Assert.Null(def.Error);
+            var run = new WorkflowRunStore().Start(def, null);
             await WorkflowRunner.SubmitStepAsync(run, "step-1",
-                new Dictionary<string, AnswerValue> { ["target"] = Answer("measure:Facts/Sales") }, null);
+                new Dictionary<string, AnswerValue> { ["target"] = Answer("measure:Facts/Sales") }, Passing);
             await WorkflowRunner.SubmitStepAsync(run, "step-2", null, Passing);
 
             Assert.Equal("completed", run.Status);
+            Assert.All(run.Results, r => Assert.Equal("passed", r.Status));   // every row really did pass a check
             var view = WorkflowRunner.BuildView(run);
             Assert.True(view.Distillable);
             Assert.False(string.IsNullOrEmpty(view.DistillableWhy));
@@ -99,7 +136,7 @@ verify:
             await WorkflowRunner.SubmitStepAsync(run, "step-2", null, OfflineSkip);   // hard gate passes on skip, but no evidence
 
             Assert.Equal("completed", run.Status);
-            Assert.All(run.Results, r => Assert.Equal("passed", r.Status));
+            Assert.All(run.Results, r => Assert.Equal("done", r.Status));   // no passing check anywhere: proof-free rows
             var view = WorkflowRunner.BuildView(run);
             Assert.False(view.Distillable);                 // all-skipped verifies are not real evidence
             Assert.Null(view.DistillableWhy);

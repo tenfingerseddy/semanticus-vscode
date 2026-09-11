@@ -19,7 +19,7 @@ namespace Semanticus.Engine
     /// </summary>
     public sealed partial class LocalEngine
     {
-        public async Task<SourceSchema> GetSourceSchemaAsync(string tableRef, string authMode, string tenantId)
+        public async Task<SourceSchema> GetSourceSchemaAsync(string tableRef, string authMode, string tenantId, string origin = "human")
         {
             var s = _sessions.Require();
 
@@ -27,7 +27,7 @@ namespace Semanticus.Engine
             var probe = await s.ReadAsync(m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    return new SourceSchema { TableRef = tableRef, Reachable = false, Error = $"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables." };
+                    return new SourceSchema { TableRef = tableRef, Reachable = false, Error = $"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables." };
 
                 var res = new SourceSchema { Table = t.Name, TableRef = ObjectRefs.For(t) };
                 string server = null, database = null, schema = null, item = null;
@@ -66,7 +66,7 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(probe.Server) || string.IsNullOrWhiteSpace(probe.Database) || string.IsNullOrWhiteSpace(probe.Entity))
             {
                 probe.Reachable = false;
-                probe.Error = "source unreachable — can't refresh schema: this table has no SQL/Fabric source query the engine can probe " +
+                probe.Error = "source unreachable: can't refresh schema: this table has no SQL/Fabric source query the engine can probe " +
                     "(an offline snapshot, a non-SQL source, or a native-query partition). Update Schema needs a Sql.Database(...) table-navigation source.";
                 return probe;
             }
@@ -75,9 +75,9 @@ namespace Semanticus.Engine
             // Reachable=false with a scrubbed message rather than throwing across the door.
             try
             {
-                var token = await EntraToken.AcquireSqlAsync(authMode, null, CancellationToken.None, tenantId).ConfigureAwait(false);
+                var token = await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
                 var schema = await FabricSqlSchema.ReadAsync(probe.Server, probe.Database, token, CancellationToken.None).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(schema.Error)) { probe.Reachable = false; probe.Error = "source unreachable — " + schema.Error; return probe; }
+                if (!string.IsNullOrEmpty(schema.Error)) { probe.Reachable = false; probe.Error = "source unreachable: " + schema.Error; return probe; }
 
                 var match = schema.Tables.FirstOrDefault(x =>
                                 (string.IsNullOrEmpty(probe.SchemaName) || string.Equals(x.Schema, probe.SchemaName, StringComparison.OrdinalIgnoreCase))
@@ -86,7 +86,7 @@ namespace Semanticus.Engine
                 if (match == null)
                 {
                     probe.Reachable = false;
-                    probe.Error = $"source unreachable — table '{(string.IsNullOrEmpty(probe.SchemaName) ? "" : probe.SchemaName + ".")}{probe.Entity}' was not found at {probe.Server}/{probe.Database}.";
+                    probe.Error = $"source unreachable: table '{(string.IsNullOrEmpty(probe.SchemaName) ? "" : probe.SchemaName + ".")}{probe.Entity}' was not found at {probe.Server}/{probe.Database}.";
                     return probe;
                 }
 
@@ -99,18 +99,18 @@ namespace Semanticus.Engine
             catch (Exception ex)
             {
                 probe.Reachable = false;
-                probe.Error = "source unreachable — " + ScrubSchemaError(ex.Message);
+                probe.Error = "source unreachable: " + ScrubSchemaError(ex.Message);
                 return probe;
             }
         }
 
-        public async Task<SchemaDiff> DiffSchemaAsync(string tableRef, SourceColumn[] sourceColumns, string authMode, string tenantId)
+        public async Task<SchemaDiff> DiffSchemaAsync(string tableRef, SourceColumn[] sourceColumns, string authMode, string tenantId, string origin = "human")
         {
             var s = _sessions.Require();
             var view = await s.ReadAsync(m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    return (Name: (string)null, Ref: tableRef, Cols: (ColumnRow[])null, Error: $"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    return (Name: (string)null, Ref: tableRef, Cols: (ColumnRow[])null, Error: $"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
                 var rows = BuildColumnRows(m).Where(r => string.Equals(r.Table, t.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
                 return (Name: t.Name, Ref: ObjectRefs.For(t), Cols: rows, Error: (string)null);
             });
@@ -120,7 +120,7 @@ namespace Semanticus.Engine
             if (sourceColumns != null && sourceColumns.Length > 0)
                 return SchemaSync.Diff(view.Ref, view.Name, view.Cols, sourceColumns, "supplied");
 
-            var src = await GetSourceSchemaAsync(tableRef, authMode, tenantId);
+            var src = await GetSourceSchemaAsync(tableRef, authMode, tenantId, origin);
             if (!src.Reachable) return new SchemaDiff { Table = view.Name, TableRef = view.Ref, Reachable = false, Error = src.Error };
             return SchemaSync.Diff(view.Ref, view.Name, view.Cols, src.Columns, src.Method ?? "fabric-sql");
         }
@@ -138,7 +138,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"update schema {tableRef}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t))
-                    throw new InvalidOperationException($"{tableRef} is not a table — pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
+                    throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
 
                 Column Find(string name) => t.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 
@@ -175,7 +175,7 @@ namespace Semanticus.Engine
                     {
                         var c = Find(i.Column);
                         if (c == null) { skipped.Add($"{i.Column}: not found in the model"); continue; }
-                        if (c is CalculatedColumn) { skipped.Add($"{i.Column}: calculated column — remove it explicitly, not via schema sync"); continue; }
+                        if (c is CalculatedColumn) { skipped.Add($"{i.Column}: calculated column. Remove it explicitly, not via schema sync"); continue; }
                         c.Delete(); removed++; applied.Add($"remove {i.Column}");
                     }
                     catch (Exception ex) { skipped.Add($"{i.Column}: {ex.Message}"); }

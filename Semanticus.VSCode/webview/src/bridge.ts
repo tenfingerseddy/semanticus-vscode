@@ -77,6 +77,13 @@ export function onSpecChange(fn: (v: unknown) => void): () => void {
 export type LayoutNode = { ref?: string; name: string; lineageTag?: string; x: number; y: number; width?: number; height?: number };
 export type LayoutData = { tables: LayoutNode[] };
 export type LayoutChange = { origin: string; tables: LayoutNode[] };
+export type WorkflowPositions = Record<string, { x: number; y: number }>;
+export type WorkflowLayout = { name: string; revision: string; positions: WorkflowPositions };
+const workflowLayoutListeners = new Set<(layout: WorkflowLayout) => void>();
+export function onWorkflowLayoutChange(fn: (layout: WorkflowLayout) => void): () => void {
+  workflowLayoutListeners.add(fn);
+  return () => { workflowLayoutListeners.delete(fn); };
+}
 const layoutListeners = new Set<(v: LayoutChange) => void>();
 export function onLayoutChange(fn: (v: LayoutChange) => void): () => void {
   layoutListeners.add(fn);
@@ -131,10 +138,11 @@ export function onNavigate(fn: (m: NavigateMessage) => void): () => void {
   return () => { navigateListeners.delete(fn); };
 }
 
-// The host asks the webview to open the Connections manager (drawer) — e.g. "Manage connections" in the native
-// tree picker. Host→webview, so both doors open the SAME component.
-const openConnectionsListeners = new Set<() => void>();
-export function onOpenConnections(fn: () => void): () => void {
+// The host asks the webview to open the Connections hub — e.g. the tree "Open Model" / "Manage Connections", or the
+// quick pick's "Add published model". Host→webview, so both doors open the SAME component. An optional section names
+// the hub view to land on (open / setup / accounts / history / add).
+const openConnectionsListeners = new Set<(section?: string) => void>();
+export function onOpenConnections(fn: (section?: string) => void): () => void {
   openConnectionsListeners.add(fn);
   return () => { openConnectionsListeners.delete(fn); };
 }
@@ -148,6 +156,15 @@ const connectionChangeListeners = new Set<() => void>();
 export function onConnectionChange(fn: () => void): () => void {
   connectionChangeListeners.add(fn);
   return () => { connectionChangeListeners.delete(fn); };
+}
+// Announce a registry change made through THIS webview's own door. The drawer's "Add a published model" runs
+// connect_xmla, which the engine remembers but does NOT surface as model/activity — so the host's 'connectionChanged'
+// relay never fires for it, and a mounted sibling (the Compare picker; the hub next) would go stale until a remount.
+// Firing the SAME listeners locally keeps ONE signal every connection consumer already subscribes to, rather than a
+// compare-local reload or a drawer-close proxy. Host-relayed changes (either door's remember/label/forget, which DO
+// emit activity) still arrive via the 'connectionChanged' message handled below — the two paths never overlap.
+export function announceConnectionChange(): void {
+  connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
 }
 
 // Resolvers for in-flight requestDropTables() calls (host hands back the Model-tree drag stash on drop).
@@ -200,6 +217,8 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'layoutDidChange') {
     const v = msg.payload as LayoutChange;
     layoutListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'workflowLayoutDidChange') {
+    workflowLayoutListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'workflowDidChange') {
     workflowRunListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'workflowLibraryDidChange') {
@@ -211,7 +230,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'openConnections') {
-    openConnectionsListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
+    openConnectionsListeners.forEach((l) => { try { l(msg.section); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'connectionChanged') {
     connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnected') {
@@ -301,6 +320,12 @@ export function focusModelTree(): void {
   vscode.postMessage({ type: 'focusModelTree' });
 }
 
+// Hand a workbench command to the host (D-149). Webview keydowns never reach VS Code's keybinding
+// service on their own; the host allow-lists the few chords we forward (save, undo, redo, palette).
+export function runHostCommand(command: string): void {
+  vscode.postMessage({ type: 'runCommand', command });
+}
+
 // Tell the host the Studio webview has mounted and its message listeners are live, so the host can flush a
 // navigation it queued while opening the panel (e.g. a tree "Preview data" that opened Studio cold). Webview→host.
 export function signalReady(): void {
@@ -336,6 +361,13 @@ export function pickSpecFile(mode: 'open' | 'save', suggestedName = 'model.spec.
 
 export function openLocalModel(): void {
   vscode.postMessage({ type: 'openLocalModel' });
+}
+
+// The standalone Connections hub (a dedicated webview panel when Studio is closed) asks the host to dispose its own
+// panel from the hub's close button. Webview→host: only the host owns the panel lifecycle. A no-op in the Studio
+// overlay (that path calls closeConnections() instead), so the message is safe to post from either host.
+export function closeConnectionsPanel(): void {
+  vscode.postMessage({ type: 'closePanel' });
 }
 
 // Native folder selection is owned by the extension host: local report analysis targets real folders on disk
@@ -381,6 +413,10 @@ export function openExternal(url: string): void {
 // the HTTPS guard; the sandboxed webview never owns or duplicates a checkout/customer-portal address.
 export function manageLicense(): void {
   vscode.postMessage({ type: 'manageLicense' });
+}
+
+export function showLicense(): void {
+  vscode.postMessage({ type: 'showLicense' });
 }
 
 // Ask the host which tables are being dragged from the Model tree (set at drag-start in handleDrag). A native tree

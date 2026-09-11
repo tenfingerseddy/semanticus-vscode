@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { revealInTree, copyText } from './bridge';
 
 // A normalized finding/violation row shared by the AI-Readiness and BPA views.
@@ -10,7 +10,30 @@ export interface FindingRow {
 }
 
 const sevColor = (s: number) => (s >= 3 ? 'var(--sem-bad)' : s === 2 ? 'var(--sem-warn)' : 'var(--sem-muted)');
-const sevLabel = (s: number) => (s >= 3 ? 'Error' : s === 2 ? 'Warning' : 'Info');
+// Severity is SPOKEN, not only coloured. This mark used to be a 6px dot whose one non-colour channel was a
+// title tooltip: a screenshot, a screen reader and a red/green colour-blind reader all lose a tooltip, so the
+// level was carried by hue alone. The badge keeps the colour and states the level in words.
+const sevLabel = (s: number) => (s >= 5 ? 'Critical' : s >= 3 ? 'Error' : s === 2 ? 'Warning' : 'Info');
+function SevBadge({ severity }: { severity: number }) {
+  const c = sevColor(severity);
+  return (
+    <span className="text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded shrink-0"
+      style={{ color: c, border: '1px solid color-mix(in srgb, ' + c + ' 45%, transparent)' }}>{sevLabel(severity)}</span>
+  );
+}
+
+// The severity filter. Buckets are "at least" for the top one because the two finding systems number severity
+// differently (BPA 1..3, AI-Readiness Info/Medium/High/Critical = 1/2/3/5); a strict equality filter would drop
+// every Critical finding from the Errors chip.
+type SevFilter = 'all' | 'error' | 'warning' | 'info';
+const SEV_BUCKETS: { key: SevFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'error', label: 'Errors' },
+  { key: 'warning', label: 'Warnings' },
+  { key: 'info', label: 'Info' },
+];
+const inBucket = (s: number, f: SevFilter) =>
+  f === 'all' || (f === 'error' ? s >= 3 : f === 'warning' ? s === 2 : s <= 1);
 
 interface RuleGroup { ruleId: string; ruleName: string; category: string; severity: number; items: FindingRow[]; }
 interface CatGroup { category: string; count: number; rules: RuleGroup[]; }
@@ -43,22 +66,61 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
     new URLSearchParams(location.search).get('expand') === 'all'
       ? new Set(rows.map((r) => r.category + '/' + r.ruleId)) : new Set());
   const [menu, setMenu] = useState<Menu>(null);
+  const [sev, setSev] = useState<SevFilter>('all');
 
   const toggle = (set: Set<string>, key: string, setter: (s: Set<string>) => void) => {
     const next = new Set(set); next.has(key) ? next.delete(key) : next.add(key); setter(next);
   };
 
-  let groups = group(rows);
+  // Counts are read off the UNFILTERED rows, so a chip always says how many findings that bucket holds and a
+  // filter can never read as "there are none of those" when there are (the old list had no filter at all).
+  const sevCounts = useMemo(() => ({
+    all: rows.length,
+    error: rows.filter((r) => inBucket(r.severity, 'error')).length,
+    warning: rows.filter((r) => inBucket(r.severity, 'warning')).length,
+    info: rows.filter((r) => inBucket(r.severity, 'info')).length,
+  }), [rows]);
+  const shown = useMemo(() => rows.filter((r) => inBucket(r.severity, sev)), [rows, sev]);
+
+  let groups = group(shown);
   // Optional fixed category order (the Storage tab wants Can remove → Worth reviewing → Behavior cleanup,
   // an actionability order, not the count order group() defaults to). Unlisted categories keep count order, last.
   if (categoryOrder) {
     const idx = (c: string) => { const i = categoryOrder.indexOf(c); return i < 0 ? categoryOrder.length : i; };
     groups = [...groups].sort((a, b) => idx(a.category) - idx(b.category));
   }
-  if (groups.length === 0) return <div className="text-[12px] py-3" style={{ color: 'var(--sem-good)' }}>Nothing to show.</div>;
+  const bar = (
+    <div className="flex items-center gap-1 flex-wrap pb-0.5" role="group" aria-label="Filter findings by severity">
+      {SEV_BUCKETS.map((b) => {
+        const n = sevCounts[b.key];
+        const on = sev === b.key;
+        return (
+          <button key={b.key} type="button" aria-pressed={on} disabled={n === 0}
+            title={b.key === 'all' ? 'Show every finding' : `Show only ${b.label.toLowerCase()} findings`}
+            onClick={() => setSev(b.key)}
+            className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-colors disabled:opacity-40"
+            style={on
+              ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
+              : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+            {b.label} <span className="opacity-70 tnum">{n}</span>
+          </button>
+        );
+      })}
+      {sev !== 'all' && (
+        <span className="text-[11px] ml-1" style={{ color: 'var(--sem-muted)' }}>
+          showing {shown.length} of {rows.length}
+        </span>
+      )}
+    </div>
+  );
+
+  if (rows.length === 0) return <div className="text-[12px] py-3" style={{ color: 'var(--sem-good)' }}>Nothing to show.</div>;
+  if (groups.length === 0) return <div className="flex flex-col gap-1.5">{bar}
+    <div className="text-[12px] py-2" style={{ color: 'var(--sem-muted)' }}>No findings at this severity. Pick another filter above.</div></div>;
 
   return (
     <div className="flex flex-col gap-1.5" onScroll={() => setMenu(null)}>
+      {bar}
       {groups.map((cat) => {
         const catCollapsed = collapsedCats.has(cat.category);
         return (
@@ -74,7 +136,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
                 <div key={rk}>
                   <Row onClick={() => toggle(openRules, rk, setOpenRules)} className="text-[12px] pl-3">
                     <Twist open={open} />
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: sevColor(g.severity) }} title={sevLabel(g.severity)} />
+                    <SevBadge severity={g.severity} />
                     <span className="font-medium truncate">{g.ruleName}</span>
                     <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>({g.items.length})</span>
                     {renderRuleActions && <span className="ml-auto shrink-0" onClick={(e) => e.stopPropagation()}>{renderRuleActions(g.ruleId, g.category)}</span>}
@@ -160,15 +222,18 @@ export function WaiveControl({ waived, reason, label = 'Waive', title, onWaive, 
 
 /// The "Waived (accepted)" section — every finding consciously accepted, with its reason + an un-waive action. Always
 /// shown (collapsed) so the score is never silently inflated: the accepted findings stay visible and auditable.
-export function WaivedList({ rows, onUnwaive }: { rows: FindingRow[]; onUnwaive: (r: FindingRow) => void }) {
-  const [open, setOpen] = useState(false);
+/// The header "N waived" count is a real control that opens this list (D-079); pass open/onOpenChange to drive it.
+export function WaivedList({ rows, onUnwaive, open, onOpenChange }: { rows: FindingRow[]; onUnwaive: (r: FindingRow) => void; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+  const [internal, setInternal] = useState(false);
+  const isOpen = open ?? internal;
+  const setOpen = (next: boolean) => { onOpenChange ? onOpenChange(next) : setInternal(next); };
   if (rows.length === 0) return null;
   return (
-    <div className="rounded-xl border p-3" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-      <Row onClick={() => setOpen((o) => !o)} className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>
-        <Twist open={open} />⊘ Waived (accepted)<span className="ml-1 opacity-70">({rows.length})</span>
+    <div id="waived-findings" className="rounded-xl border p-3" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+      <Row onClick={() => setOpen(!isOpen)} className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>
+        <Twist open={isOpen} />⊘ Waived (accepted)<span className="ml-1 opacity-70">({rows.length})</span>
       </Row>
-      {open && (
+      {isOpen && (
         <div className="mt-1 flex flex-col gap-1">
           {rows.map((r, i) => (
             <div key={r.objectRef + r.ruleId + i} className="flex items-start gap-2.5 py-1 pl-6 pr-1" style={{ opacity: 0.8 }}

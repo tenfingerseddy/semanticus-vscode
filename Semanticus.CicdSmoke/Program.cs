@@ -19,7 +19,9 @@ namespace Semanticus.CicdSmoke
     /// covered two ways: a MOCKED-HTTP section (pagination/LRO/error-parse/scrub, always-on) AND a READ-ONLY LIVE
     /// section gated on a configured service principal (FABRIC_CLIENT/SECRET/TENANT) — it runs against the real tenant
     /// in CI when the SP secrets are set, and skips (offline-green) otherwise. No live writes are ever performed.
-    /// Exit code 0 = all checks passed.
+    /// Exit 0 = every check passed, or live Fabric is UNAVAILABLE and every other check passed.
+    /// Exit 1 = a check failed, including a live lane that ran and disagreed.
+    /// Exit 2 = an unhandled crash outside the live-lane classifier.
     /// </summary>
     internal static class Program
     {
@@ -144,14 +146,14 @@ namespace Semanticus.CicdSmoke
                         var diffStill = await engine.CompareModelsAsync(new ModelRef { Kind = "file", Path = modDir }, new ModelRef { Kind = "file", Path = baseDir });
                         Check("apply_diff (dry-run): the target file is unchanged", diffStill.Items.Any(i => i.Ref == updRef && i.Action == "Update"));
 
-                        var ap = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = modDir }, new ModelRef { Kind = "file", Path = baseDir }, new[] { updRef }, true, "agent");
+                        var ap = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = modDir }, new ModelRef { Kind = "file", Path = baseDir }, new[] { updRef }, true, "agent", overrideReason: null, confirmToken: prev.ConfirmToken);
                         Check("apply_diff: merged ONLY the selected measure into the target file, with no failures",
                             ap.Applied && ap.Count == 1 && ap.AppliedRefs.Contains(updRef) && (ap.FailedRefs == null || ap.FailedRefs.Length == 0) && string.IsNullOrEmpty(ap.Error));
                         var after = await engine.CompareModelsAsync(new ModelRef { Kind = "file", Path = modDir }, new ModelRef { Kind = "file", Path = baseDir });
                         Check("apply_diff: the merged measure now matches (gone from the diff); the unselected new measure is still pending",
                             !after.Items.Any(i => i.Ref == updRef) && after.Items.Any(i => i.Name == "Smoke New Measure" && i.Action == "Create"));
 
-                        var gate = await engine.DeployGateAsync(null);
+                        var gate = await engine.DeployGateAsync(null, "human");
                         Check("deploy_gate: returns a readiness grade, BPA counts, and a pass/block decision",
                             !string.IsNullOrEmpty(gate.Grade) && gate.Note != null);
                         Console.WriteLine($"[i] deploy gate: grade {gate.Grade}, BPA {gate.BpaViolations} ({gate.BpaBlocking} blocking), pass={gate.Pass}");
@@ -195,7 +197,8 @@ namespace Semanticus.CicdSmoke
                             rdiff.Items.Any(i => i.ObjectType == "Role" && i.Name == "Smoke Analyst" && i.Action == "Create" && i.MatchedByName));
 
                         var relRef = relItems[0].Ref;
-                        var rap = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = relMod }, new ModelRef { Kind = "file", Path = relBase }, new[] { relRef }, true, "agent");
+                        var relPrev = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = relMod }, new ModelRef { Kind = "file", Path = relBase }, new[] { relRef }, false, "agent");
+                        var rap = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = relMod }, new ModelRef { Kind = "file", Path = relBase }, new[] { relRef }, true, "agent", overrideReason: null, confirmToken: relPrev.ConfirmToken);
                         Check("apply_diff: the relationship merges into the target by endpoint signature (no failures)",
                             rap.Applied && rap.AppliedRefs.Contains(relRef) && (rap.FailedRefs == null || rap.FailedRefs.Length == 0) && string.IsNullOrEmpty(rap.Error));
                         var rafter = await engine.CompareModelsAsync(new ModelRef { Kind = "file", Path = relMod }, new ModelRef { Kind = "file", Path = relBase });
@@ -362,7 +365,7 @@ namespace Semanticus.CicdSmoke
                         var before = (await engine.ListMeasuresAsync()).Select(x => x.Name).ToHashSet();
                         Check("apply_diff (session, dry-run): the open model is unchanged", before.Contains("Stale Probe") && !before.Contains("Merge Probe"));
 
-                        var map = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = mSrc }, new ModelRef { Kind = "session" }, new[] { mergeRef, staleRef }, true, "agent");
+                        var map = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = mSrc }, new ModelRef { Kind = "session" }, new[] { mergeRef, staleRef }, true, "agent", overrideReason: null, confirmToken: mprev.ConfirmToken);
                         Check("apply_diff (session): merges the selected changes into the open model (no failures)",
                             map.Applied && map.Count == 2 && (map.FailedRefs == null || map.FailedRefs.Length == 0));
                         var after = (await engine.ListMeasuresAsync()).Select(x => x.Name).ToHashSet();
@@ -453,15 +456,105 @@ namespace Semanticus.CicdSmoke
                     using (var http = new HttpClient(errHandler) { BaseAddress = new Uri(FabricRest.BaseUrl) })
                     {
                         string err = null;
+                        Exception caughtForbidden = null;
                         try { await FabricRest.GetAllPagesAsync<DeploymentPipeline>(http, "deploymentPipelines", CancellationToken.None); }
-                        catch (Exception ex) { err = ex.Message; }
+                        catch (Exception ex) { err = ex.Message; caughtForbidden = ex; }
                         Check("fabric error: a 403 surfaces the stable errorCode + a role hint", err != null && err.Contains("403") && err.Contains("InsufficientPrivileges") && err.Contains("role"));
+                        Check("fabric error: a 403 keeps typed status 403 through inner wrapping", FabricRest.FindHttp(caughtForbidden) != null && FabricRest.FindHttp(caughtForbidden).Status == 403);
                     }
+
+                    // 3b) Canned 401 / 403 through GetAllPagesAsync keep typed status; raw secret bodies are scrubbed.
+                    const string planted = "planted-secret-T199-do-not-print";
+                    var jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.aaa";
+                    Exception caught401 = null;
+                    var unauthHandler = new ScriptedHandler(new Func<HttpRequestMessage, HttpResponseMessage>[]
+                    {
+                        _ => Json(HttpStatusCode.Unauthorized, "{\"errorCode\":\"Unauthorized\",\"message\":\"Bearer " + jwt + " " + planted + "\"}"),
+                    });
+                    using (var http = new HttpClient(unauthHandler) { BaseAddress = new Uri(FabricRest.BaseUrl) })
+                    {
+                        try { await FabricRest.GetAllPagesAsync<FabricWorkspace>(http, "workspaces", CancellationToken.None); }
+                        catch (Exception ex) { caught401 = ex; }
+                    }
+                    var typed401 = FabricRest.FindHttp(caught401);
+                    Check("fabric error: a 401 is a typed Fabric HTTP exception with status 401", typed401 != null && typed401.Status == 401);
+                    Check("fabric error: a 401 raw body is scrubbed of bearer tokens and JWTs", caught401 != null && !caught401.ToString().Contains(jwt) && caught401.ToString().Contains("Bearer ***"));
+                    Check("live classify: typed 401 is UNAVAILABLE and never prints the planted secret", ClassifyLiveFabric(caught401) == "unavailable" && LiveExceptionLine(caught401) == LiveAuthUnavailableText && !LiveExceptionLine(caught401).Contains(planted));
+                    Exception caught403Live = null;
+                    var forbiddenHandler = new ScriptedHandler(new Func<HttpRequestMessage, HttpResponseMessage>[]
+                    {
+                        _ => Json(HttpStatusCode.Forbidden, "{\"errorCode\":\"InsufficientPrivileges\",\"message\":\"The caller lacks permission.\"}"),
+                    });
+                    using (var http = new HttpClient(forbiddenHandler) { BaseAddress = new Uri(FabricRest.BaseUrl) })
+                    {
+                        try { await FabricRest.GetAllPagesAsync<DeploymentPipeline>(http, "deploymentPipelines", CancellationToken.None); }
+                        catch (Exception ex) { caught403Live = ex; }
+                    }
+                    var typed403 = FabricRest.FindHttp(caught403Live);
+                    Check("fabric error: canned 403 through GetAllPagesAsync keeps typed status 403", typed403 != null && typed403.Status == 403);
+                    Check("live classify: typed 403 is disagreement, not UNAVAILABLE", ClassifyLiveFabric(caught403Live) == "disagreement" && LiveExceptionLine(caught403Live) == LiveDisagreementText);
+
+                    Exception caughtEmpty = null;
+                    var emptyObj = new ScriptedHandler(new Func<HttpRequestMessage, HttpResponseMessage>[] { _ => Json(HttpStatusCode.OK, "{}") });
+                    using (var http = new HttpClient(emptyObj) { BaseAddress = new Uri(FabricRest.BaseUrl) })
+                    {
+                        try { await FabricRest.GetAllPagesAsync<FabricWorkspace>(http, "workspaces", CancellationToken.None); }
+                        catch (Exception ex) { caughtEmpty = ex; }
+                    }
+                    Check("fabric pagination: HTTP 200 empty object disagrees (no typed status)", caughtEmpty != null && FabricRest.FindHttp(caughtEmpty) == null && ClassifyLiveFabric(caughtEmpty) == "disagreement");
+                    Check("live assertion: a parsed workspace list is success even when empty; null is not Length >= 0", LiveWorkspacesParsed(Array.Empty<FabricWorkspace>()) && !LiveWorkspacesParsed(null));
+
+                    // 3c) Live-lane classifier: exact Azure types and typed 401 only. Never XmlaAuthHint.IsAuthFailure.
+                    var directAuth = AzureIdentityException("AuthenticationFailedException", planted);
+                    var wrappedAuth = new InvalidOperationException("acquire failed", AzureIdentityException("AuthenticationFailedException", planted));
+                    var directCred = AzureIdentityException("CredentialUnavailableException", planted);
+                    var wrappedCred = new InvalidOperationException("acquire failed", AzureIdentityException("CredentialUnavailableException", planted));
+                    var wrapped401 = new InvalidOperationException("door", new InvalidOperationException("inner", new FabricRest.FabricHttpException(401, "Fabric REST 401 " + planted)));
+                    var message401 = new InvalidOperationException("Fabric REST 401: unauthorized " + planted);
+                    var missingPrereq = new InvalidOperationException("serviceprincipal auth needs a client id + secret + tenant. " + planted);
+                    var unknown = new Exception("something else " + planted);
+                    var impostorAuth = AzureIdentityImpostor(AzureAuthFailedName);
+                    Check("live classify: direct AuthenticationFailedException is UNAVAILABLE", ClassifyLiveFabric(directAuth) == "unavailable");
+                    Check("live classify: wrapped AuthenticationFailedException is UNAVAILABLE", ClassifyLiveFabric(wrappedAuth) == "unavailable");
+                    Check("live classify: direct CredentialUnavailableException is UNAVAILABLE", ClassifyLiveFabric(directCred) == "unavailable");
+                    Check("live classify: wrapped CredentialUnavailableException is UNAVAILABLE", ClassifyLiveFabric(wrappedCred) == "unavailable");
+                    Check("live classify: wrapped typed 401 is UNAVAILABLE", ClassifyLiveFabric(wrapped401) == "unavailable");
+                    Check("live classify: message-only 401 is disagreement", ClassifyLiveFabric(message401) == "disagreement");
+                    Check("live classify: missing-prerequisite InvalidOperationException is disagreement", ClassifyLiveFabric(missingPrereq) == "disagreement");
+                    Check("live classify: unknown errors are disagreement", ClassifyLiveFabric(unknown) == "disagreement");
+                    Check("live classify: same FullName from an impostor assembly is disagreement", ClassifyLiveFabric(impostorAuth) == "disagreement");
+                    Check("live classify: UNAVAILABLE and disagreement lines never carry the planted secret",
+                        !LiveExceptionLine(directAuth).Contains(planted) && !LiveExceptionLine(wrappedAuth).Contains(planted)
+                        && !LiveExceptionLine(directCred).Contains(planted) && !LiveExceptionLine(wrappedCred).Contains(planted)
+                        && !LiveExceptionLine(wrapped401).Contains(planted) && !LiveExceptionLine(message401).Contains(planted)
+                        && !LiveExceptionLine(missingPrereq).Contains(planted) && !LiveExceptionLine(unknown).Contains(planted)
+                        && LiveExceptionLine(directAuth) == LiveAuthUnavailableText && LiveExceptionLine(message401) == LiveDisagreementText);
+
+                    var afterDisagree = ApplyLiveOutcome("success", 0, "disagreement");
+                    var disagreeThenAuth = ApplyLiveOutcome(afterDisagree.Kind, afterDisagree.ExtraFailures, "unavailable");
+                    Check("live classify: disagreement then auth stays disagreement and adds exactly one failure",
+                        disagreeThenAuth.Kind == "disagreement" && disagreeThenAuth.ExtraFailures == 1);
+                    var authOnly = ApplyLiveOutcome("success", 0, "unavailable");
+                    Check("live classify: auth unavailable adds no failure", authOnly.Kind == "unavailable" && authOnly.ExtraFailures == 0);
+
+                    var passUna = FinalCicdSummary(0, "unavailable");
+                    Check("live summary: missing config / auth UNAVAILABLE headlines UNAVAILABLE, never contains PASS, exit 0",
+                        passUna.Summary == "==== CICD SMOKE: UNAVAILABLE ====" && passUna.Exit == 0
+                        && !passUna.Summary.Contains("PASS"));
+                    var priorFail = FinalCicdSummary(1, "unavailable");
+                    Check("live summary: prior offline failure plus auth UNAVAILABLE exits 1 and stays unavailable",
+                        priorFail.Exit == 1 && priorFail.Summary.Contains("1 CHECK(S) FAILED") && priorFail.Summary.Contains("live Fabric UNAVAILABLE"));
+                    var liveDisagree = FinalCicdSummary(1, "disagreement");
+                    Check("live summary: disagreement adds one failure and exits 1 without an UNAVAILABLE qualifier",
+                        liveDisagree.Exit == 1 && liveDisagree.Summary == "==== CICD SMOKE: 1 CHECK(S) FAILED ====");
+                    var liveOk = FinalCicdSummary(0, "success");
+                    Check("live summary: success with no failures is a bare PASS and exit 0",
+                        liveOk.Exit == 0 && liveOk.Summary == "==== CICD SMOKE: PASS ====");
 
                     // 4) Scrub — a Bearer token in an error message never crosses the door.
                     var scrubbed = FabricRest.ParseError("{\"message\":\"request failed: Authorization: Bearer eyJ0eXASECRET123.abc\"}", 500);
                     Check("fabric scrub: a Bearer token is redacted from surfaced errors", !scrubbed.Contains("eyJ0eXASECRET123") && scrubbed.Contains("Bearer ***"));
-                    Console.WriteLine("[i] fabric REST: pagination + LRO + error-parse + scrub verified against a mocked handler (no live tenant)");
+                    Console.WriteLine("[i] fabric REST: pagination + LRO + error-parse + scrub + live-lane classifier verified against a mocked handler (no live tenant)");
                 }
 
                 // ---- DEPLOY (write lane): the gate matrix (pure) + the POST/202/poll mechanics + history (mocked) ----
@@ -744,15 +837,16 @@ namespace Semanticus.CicdSmoke
                 // so offline CI skips it and stays green; CI WITH the service principal secrets verifies the live Fabric
                 // auth + read surface end-to-end against the real tenant. STRICTLY read-only — no deploy_stage / git_commit
                 // / git_update / cicd_publish (those are confirm+SEMANTICUS_LIVE_WRITES_OK gated and never run here).
+                var liveKind = "unavailable";
                 if (!HasServicePrincipal())
-                    Console.WriteLine("[i] live Fabric: no service principal env (FABRIC_CLIENT/SECRET/TENANT) — skipping live verification (offline-green).");
+                    Console.WriteLine("[i] " + LiveMissingConfigText);
                 else
                 {
                     try
                     {
                         Console.WriteLine("[i] live Fabric: service principal detected — verifying the READ-ONLY Fabric REST surface against the tenant…");
                         var ws = await engine.ListWorkspacesAsync("serviceprincipal", null);
-                        Check("live Fabric: list_workspaces returns over the wire (SP authenticated; request + pagination + parse OK)", ws != null && ws.Length >= 0);
+                        Check("live Fabric: list_workspaces returns over the wire (SP authenticated; request + pagination + parse OK)", LiveWorkspacesParsed(ws));
                         var pipes = await engine.ListDeploymentPipelinesAsync("serviceprincipal", null);
                         Check("live Fabric: list_deployment_pipelines returns over the wire", pipes != null);
                         if (pipes != null && pipes.Length > 0)
@@ -768,14 +862,22 @@ namespace Semanticus.CicdSmoke
                                 Check("live Fabric: preview_deploy is door-safe live (returns a DTO; a Fabric 4xx lands on .Error, never thrown)", prev != null);
                             }
                         }
+                        liveKind = "success";
                         Console.WriteLine("[i] live Fabric: read-only surface verified against the tenant (no writes performed).");
                     }
-                    catch (Exception ex) { Check("live Fabric: read-only verification completed without an unhandled error — " + ex.Message.Split('\n')[0], false); }
+                    catch (Exception ex)
+                    {
+                        liveKind = ClassifyLiveFabric(ex);
+                        Console.WriteLine("[i] " + LiveExceptionLine(ex));
+                        if (liveKind == "disagreement")
+                            Check("live Fabric: the live lane ran and disagreed", false);
+                    }
                 }
 
                 Console.WriteLine();
-                if (_failures == 0) { Console.WriteLine("==== CICD SMOKE: PASS ===="); return 0; }
-                Console.WriteLine($"==== CICD SMOKE: {_failures} CHECK(S) FAILED ===="); return 1;
+                var done = FinalCicdSummary(_failures, liveKind);
+                Console.WriteLine(done.Summary);
+                return done.Exit;
             }
             catch (Exception ex)
             {
@@ -784,6 +886,68 @@ namespace Semanticus.CicdSmoke
                 return 2;
             }
             finally { try { sessions.Dispose(); } catch { } }
+        }
+
+        private const string LiveAuthUnavailableText = "live Fabric: UNAVAILABLE. The service principal could not authenticate. This is not a failed check.";
+        private const string LiveMissingConfigText = "live Fabric: UNAVAILABLE. No service principal is configured. This is not a failed check.";
+        private const string LiveDisagreementText = "live Fabric: the live lane ran and disagreed. This is a failed check.";
+        private const string AzureAuthFailedName = "Azure.Identity.AuthenticationFailedException";
+        private const string AzureCredUnavailableName = "Azure.Identity.CredentialUnavailableException";
+
+        private static bool LiveWorkspacesParsed(FabricWorkspace[] ws) => ws != null;
+
+        private static bool IsUnavailableLiveException(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is Azure.Identity.AuthenticationFailedException or Azure.Identity.CredentialUnavailableException) return true;
+                if (e is FabricRest.FabricHttpException http && http.Status == 401) return true;
+            }
+            return false;
+        }
+
+        private static string ClassifyLiveFabric(Exception ex)
+            => IsUnavailableLiveException(ex) ? "unavailable" : "disagreement";
+
+        private static string LiveExceptionLine(Exception ex)
+            => ClassifyLiveFabric(ex) == "unavailable" ? LiveAuthUnavailableText : LiveDisagreementText;
+
+        private static (string Kind, int ExtraFailures) ApplyLiveOutcome(string currentKind, int extraFailures, string incoming)
+        {
+            if (currentKind == "disagreement") return (currentKind, extraFailures);
+            if (incoming == "unavailable") return ("unavailable", extraFailures);
+            if (incoming == "disagreement") return ("disagreement", extraFailures + 1);
+            return (incoming, extraFailures);
+        }
+
+        private static (string Summary, int Exit) FinalCicdSummary(int failures, string liveKind)
+        {
+            // A skipped live gate is never a PASS. Exit 0 still means every executed check passed.
+            if (failures == 0 && liveKind == "unavailable")
+                return ("==== CICD SMOKE: UNAVAILABLE ====", 0);
+            var qual = liveKind == "unavailable" ? " (live Fabric UNAVAILABLE)" : "";
+            if (failures == 0) return ("==== CICD SMOKE: PASS" + qual + " ====", 0);
+            return ("==== CICD SMOKE: " + failures + " CHECK(S) FAILED" + qual + " ====", 1);
+        }
+
+        private static Exception AzureIdentityException(string typeName, string message)
+        {
+            var asm = System.Reflection.Assembly.Load("Azure.Identity");
+            var t = asm.GetType("Azure.Identity." + typeName, throwOnError: true);
+            return (Exception)Activator.CreateInstance(t, message);
+        }
+
+        private static Exception AzureIdentityImpostor(string fullName)
+        {
+            var assembly = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+                new System.Reflection.AssemblyName("AzureIdentityImpostor." + Guid.NewGuid().ToString("N")),
+                System.Reflection.Emit.AssemblyBuilderAccess.Run);
+            var type = assembly.DefineDynamicModule("main").DefineType(
+                fullName,
+                System.Reflection.TypeAttributes.Public,
+                typeof(Exception));
+            type.DefineDefaultConstructor(System.Reflection.MethodAttributes.Public);
+            return (Exception)Activator.CreateInstance(type.CreateType());
         }
 
         private static void Check(string label, bool ok)

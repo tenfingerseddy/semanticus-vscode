@@ -77,7 +77,7 @@
          EXCLUDE only TabularCommonActions.cs (stubbed in Compat\Shims.cs, exactly as BPALib does).
          Events.cs is deliberately INCLUDED (the real change-event firehose). -->
     <Compile Include="$(TE2)\TOMWrapper\TOMWrapper\**\*.cs"
-             Exclude="$(TE2)\TOMWrapper\TOMWrapper\TabularCommonActions.cs" />
+             Exclude="$(TE2)\TOMWrapper\TOMWrapper\TabularCommonActions.cs;$(TE2)\TOMWrapper\TOMWrapper\Serialization\SplitModelSerializer.cs" />
 
     <!-- Undo framework -->
     <Compile Include="$(TE2)\TOMWrapper\UndoFramework\**\*.cs" />

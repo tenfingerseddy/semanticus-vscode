@@ -186,7 +186,7 @@ verify:
             var ok = new Dictionary<string, AnswerValue> { ["verificationValue"] = Decline("user has no known-good figure yet"), ["expectedGrain"] = Answer("day") };
             await WorkflowRunner.SubmitStepAsync(run, "step-1", ok, null);
             var rec = run.Results[0];
-            Assert.Equal("passed", rec.Status);
+            Assert.Equal("done", rec.Status);
             Assert.True(rec.Answers["verificationValue"].Declined);
             Assert.Equal("user has no known-good figure yet", rec.Answers["verificationValue"].DeclineReason);
             Assert.Equal(1, run.StepIndex);
@@ -239,25 +239,29 @@ verify:
             var run = await RunToStep3(warnDef);                       // frontmatter default: warn
             WorkflowVerifyExecutor failing = (spec, step, r, a) => Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "failed", Detail = "boom" });
             await WorkflowRunner.SubmitStepAsync(run, "step-3", null, failing);
-            Assert.Equal("passed", run.Results[2].Status);             // warn: recorded, not blocking
+            Assert.Equal("failed", run.Results[2].Status);             // warn: recorded, run still advances
+            Assert.Equal("completed", run.Status);
             Assert.Contains("warn gate", run.Results[2].Note);
             Assert.Contains("boom", run.Results[2].Note);
 
             // settings override "off": the gate is skipped AND recorded as such — and inputs are not demanded
             var offRun = new WorkflowRunStore().Start(warnDef, "off");
             await WorkflowRunner.SubmitStepAsync(offRun, "step-1", null, failing);
-            Assert.Equal("passed", offRun.Results[0].Status);
+            Assert.Equal("skipped", offRun.Results[0].Status);
             Assert.Contains("strictness off", offRun.Results[0].Note);
             Assert.Empty(offRun.Results[0].VerifyResults);
         }
 
         [Fact]
-        public async Task Offline_verify_comes_back_skipped_never_silently_passed()
+        public async Task Offline_verify_blocks_a_hard_gate()
         {
             var run = await RunToStep3(Def());
-            WorkflowVerifyExecutor offline = (spec, step, r, a) => Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "skipped", Detail = "offline — no live connection" });
-            await WorkflowRunner.SubmitStepAsync(run, "step-3", null, offline);
-            Assert.All(run.Results[2].VerifyResults, v => Assert.Equal("skipped", v.Status));
+            WorkflowVerifyExecutor offline = (spec, step, r, a) => Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "unavailable", Detail = "offline: no live connection" });
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => WorkflowRunner.SubmitStepAsync(run, "step-3", null, offline));
+            Assert.Contains("hard gate", ex.Message);
+            Assert.Equal("failed", run.Results[2].Status);
+            Assert.All(run.Results[2].VerifyResults, v => Assert.Equal("unavailable", v.Status));
             Assert.Contains("offline", run.Results[2].VerifyResults[0].Detail);
         }
 

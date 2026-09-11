@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using TabularEditor.TOMWrapper;
 using TabularEditor.TOMWrapper.Linguistics;
 using TabularEditor.TOMWrapper.Utils;   // CalendarOps: the raw-TOM calendar-presence seam (Calendars aren't wrapped)
+using TOM = Microsoft.AnalysisServices.Tabular;
 
 namespace Semanticus.Analysis
 {
@@ -490,9 +491,14 @@ namespace Semanticus.Analysis
         private static bool BindingMatches(JsonElement entity, TabularNamedObject obj)
         {
             JsonElement binding;
+            // Every TryGetProperty is guarded by an Object kind check first: JsonElement.TryGetProperty THROWS
+            // InvalidOperationException on a non-object, so valid JSON carrying Definition:null (or a string, or an
+            // array) would escape the JsonException catch and fail the whole scan instead of leaving the rule dormant.
+            if (entity.ValueKind != JsonValueKind.Object) return false;
             if (!entity.TryGetProperty("Binding", out binding))
             {
                 if (!entity.TryGetProperty("Definition", out var definition)
+                    || definition.ValueKind != JsonValueKind.Object
                     || !definition.TryGetProperty("Binding", out binding)) return false;
             }
             if (binding.ValueKind != JsonValueKind.Object
@@ -542,6 +548,206 @@ namespace Semanticus.Analysis
         // Auto date/time footprint: a hidden PBI-generated local/template date table. GUID suffix REQUIRED on the name
         // form so a user table literally named "DateTableTemplate" is NOT flagged (only the engine-generated tokens).
         private static readonly Regex AutoDateTableName = new Regex(@"^(LocalDateTable|DateTableTemplate)_[0-9a-fA-F-]{36}$", RegexOptions.Compiled);
+
+
+        // ---- completion batch 7 helpers -----------------------------------------------------------------
+        // The documented per-expression DAX limit for DAX query Copilot (learn.microsoft.com/en-us/dax/dax-copilot),
+        // which is also the 5,000-character item in the design spec's scale-ceiling row (docs/ai-readiness-plan.md 2.G).
+        private const int DaxExpressionCeiling = 5000;
+
+        // How many orphan bindings SYN-ENTITY-ORPHAN names in one culture's aggregate finding. The aggregate is
+        // only honest if the reader can see what a single waiver would cover, so this is generous rather than the
+        // 4-item preview the per-object rules use, and the message states the residual count when it caps.
+        private const int OrphanBindingsListed = 12;
+
+        // "<Table> Name" / "<Table>Name" / "<Table> Description": the conventional label-column shapes MS's naming
+        // guidance says should just carry the table's own name. Exact forms only - no stemming, no inference.
+        // ORDERED by how strongly each shape reads as THE label, because DIM-PRIMARY-NAME now has to name one
+        // specific column as its rename target (see TableLabelRank).
+        private static readonly string[] TableLabelSuffixes = { " Name", "Name", " Title", " Description" };
+
+        private static bool IsTableLabelName(string tableName, string columnName) => TableLabelRank(tableName, columnName) >= 0;
+
+        /// <summary>Index of the label shape <paramref name="columnName"/> matches in <see cref="TableLabelSuffixes"/>,
+        /// or -1 for no match. Lower = more strongly the table's label column. DIM-PRIMARY-NAME renames a specific
+        /// column, so when a dimension carries several label-shaped columns ("Product Name" AND "Product Description")
+        /// the target has to be chosen the same way on every scan, not by table column order.</summary>
+        private static int TableLabelRank(string tableName, string columnName)
+        {
+            if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return -1;
+            for (var i = 0; i < TableLabelSuffixes.Length; i++)
+                if (string.Equals(columnName, tableName + TableLabelSuffixes[i], StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
+        }
+
+        /// <summary>Every LSDL entity that carries a resolvable-shaped Binding, as (table, property-or-null). Entities
+        /// with no binding (phrasing-only or a freshly seeded empty schema) are not bindings and are skipped.</summary>
+        private static List<(string Table, string Property)> BoundEntities(Culture culture)
+        {
+            var result = new List<(string, string)>();
+            if (culture?.ContentType != ContentType.Json || string.IsNullOrWhiteSpace(culture.Content)) return result;
+            try
+            {
+                using var doc = JsonDocument.Parse(culture.Content);
+                if (!doc.RootElement.TryGetProperty("Entities", out var entities) || entities.ValueKind != JsonValueKind.Object)
+                    return result;
+                foreach (var candidate in entities.EnumerateObject())
+                {
+                    if (candidate.Value.ValueKind != JsonValueKind.Object) continue;
+                    if (!TryReadBinding(candidate.Value, out var table, out var property)) continue;
+                    result.Add((table, property));
+                }
+            }
+            catch (JsonException)
+            {
+                // Same contract as SYN-COLLIDE: malformed content is owned by the fail-loud Prep-for-AI advisory,
+                // and a rule with no trustworthy population must stay dormant rather than guess.
+            }
+            return result;
+        }
+
+        /// <summary>The Binding of an LSDL entity, accepting both the flat and Definition-wrapped shapes that
+        /// <see cref="BindingMatches"/> already handles.</summary>
+        private static bool TryReadBinding(JsonElement entity, out string table, out string property)
+        {
+            table = null; property = null;
+            JsonElement binding;
+            // Every TryGetProperty is guarded by an Object kind check first: JsonElement.TryGetProperty THROWS
+            // InvalidOperationException on a non-object, so valid JSON carrying Definition:null (or a string, or an
+            // array) would escape the JsonException catch and fail the whole scan instead of leaving the rule dormant.
+            if (entity.ValueKind != JsonValueKind.Object) return false;
+            if (!entity.TryGetProperty("Binding", out binding))
+            {
+                if (!entity.TryGetProperty("Definition", out var definition)
+                    || definition.ValueKind != JsonValueKind.Object
+                    || !definition.TryGetProperty("Binding", out binding)) return false;
+            }
+            if (binding.ValueKind != JsonValueKind.Object
+                || !binding.TryGetProperty("ConceptualEntity", out var tableNode)
+                || tableNode.ValueKind != JsonValueKind.String) return false;
+            table = tableNode.GetString();
+            if (binding.TryGetProperty("ConceptualProperty", out var propertyNode) && propertyNode.ValueKind == JsonValueKind.String)
+                property = propertyNode.GetString();
+            return !string.IsNullOrEmpty(table);
+        }
+
+        /// <summary>Does an LSDL binding still name a live model object? Matches EVERY object (hidden and RowNumber
+        /// included) so hiding a field is never mistaken for deleting it.</summary>
+        private static bool BindingResolves(Model m, string table, string property)
+        {
+            var target = m.Tables.FirstOrDefault(t => string.Equals(t.Name, table, StringComparison.OrdinalIgnoreCase));
+            if (target == null) return false;
+            if (property == null) return true;
+            return target.Columns.Any(c => string.Equals(c.Name, property, StringComparison.OrdinalIgnoreCase))
+                || target.Measures.Any(x => string.Equals(x.Name, property, StringComparison.OrdinalIgnoreCase))
+                || target.Hierarchies.Any(h => string.Equals(h.Name, property, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>The model objects an LSDL entity marks Visibility:Hidden, i.e. EXCLUDED from the AI data schema.
+        /// Resolved through the entity Binding (the authoritative anchor; the entity KEY is only a slug label).</summary>
+        private static HashSet<TabularNamedObject> ExcludedFromAiSchema(Model m, Culture culture)
+        {
+            var excluded = new HashSet<TabularNamedObject>();
+            if (culture?.ContentType != ContentType.Json || string.IsNullOrWhiteSpace(culture.Content)) return excluded;
+            try
+            {
+                using var doc = JsonDocument.Parse(culture.Content);
+                if (!doc.RootElement.TryGetProperty("Entities", out var entities) || entities.ValueKind != JsonValueKind.Object)
+                    return excluded;
+                foreach (var candidate in entities.EnumerateObject())
+                {
+                    if (candidate.Value.ValueKind != JsonValueKind.Object) continue;
+                    if (!(candidate.Value.TryGetProperty("Visibility", out var v) && v.ValueKind == JsonValueKind.Object
+                        && v.TryGetProperty("Value", out var vv) && vv.ValueKind == JsonValueKind.String
+                        && vv.GetString() == "Hidden")) continue;
+                    if (!TryReadBinding(candidate.Value, out var table, out var property)) continue;
+                    var target = m.Tables.FirstOrDefault(t => string.Equals(t.Name, table, StringComparison.OrdinalIgnoreCase));
+                    if (target == null) continue;
+                    if (property == null) { excluded.Add(target); continue; }
+                    TabularNamedObject field = target.Columns.FirstOrDefault(c => string.Equals(c.Name, property, StringComparison.OrdinalIgnoreCase));
+                    field ??= target.Measures.FirstOrDefault(x => string.Equals(x.Name, property, StringComparison.OrdinalIgnoreCase));
+                    if (field != null) excluded.Add(field);
+                }
+            }
+            catch (JsonException) { /* dormant on malformed content - never guess a schema */ }
+            return excluded;
+        }
+
+        /// <summary>EFFECTIVE AI-data-schema membership: an object is out of the schema when the curated schema
+        /// excludes the object itself OR the table that holds it. set_ai_data_schema accepts a TABLE ref and writes a
+        /// single table entity, so a field-only test reads a whole excluded table as still included.</summary>
+        private static bool IsExcludedFromAiSchema(HashSet<TabularNamedObject> excluded, TabularNamedObject obj)
+        {
+            if (excluded.Contains(obj)) return true;
+            var table = obj switch { Measure me => me.Table, Column c => c.Table, _ => null };
+            return table != null && excluded.Contains(table);
+        }
+
+        /// <summary>Is the object part of the model's visible surface? (A hidden dependency is intentionally out of
+        /// the analytical surface, so its AI-schema exclusion is automatic rather than a curation mistake.)</summary>
+        private static bool IsVisibleInModel(TabularNamedObject obj) => obj switch
+        {
+            Measure me => !me.IsHidden && !(me.Table?.IsHidden ?? false),
+            Column c => !c.IsHidden && c.Type != ColumnType.RowNumber && !(c.Table?.IsHidden ?? false),
+            Table t => !t.IsHidden,
+            _ => false,
+        };
+
+        private static string DependencyLabel(TabularNamedObject obj) => obj switch
+        {
+            Measure me => $"[{me.Name}]",
+            Column c => $"'{c.Table?.Name}'[{c.Name}]",
+            _ => obj.Name,
+        };
+
+        private static Table FindTable(Model m, string name) =>
+            m.Tables.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>The model objects a measure's DAX references, resolved through the shared DAX token scanner (so a
+        /// name inside a comment or a string literal can never register as a dependency). A bracketed [Name] with no
+        /// table qualifier resolves to a measure of that name, else to a column on the measure's own table - the same
+        /// precedence the DAX engine applies.</summary>
+        private static IEnumerable<TabularNamedObject> ResolveDaxReferences(Model m, Measure measure)
+        {
+            if (string.IsNullOrWhiteSpace(measure?.Expression)) yield break;
+            var toks = DaxScan.Tokenize(measure.Expression);
+            // VAR names, so a variable used as a table qualifier (SUMX(t, t[Col])) is never read as a model table.
+            var varNames = new HashSet<string>(DaxScan.VarDecls(toks).Select(v => v.Name), StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < toks.Count; i++)
+            {
+                var tok = toks[i];
+                if (tok.Kind != DaxScan.Kind.Name || tok.Delim != '[' || string.IsNullOrEmpty(tok.Inner)) continue;
+                var prev = i > 0 ? toks[i - 1] : null;
+                Table qualifier = null;
+                if (prev != null && prev.Kind == DaxScan.Kind.Name && prev.Delim == '\'')
+                {
+                    // A 'quoted' name is unambiguously a table reference, so an unresolvable one names nothing here.
+                    qualifier = FindTable(m, prev.Inner);
+                    if (qualifier == null) continue;
+                }
+                else if (prev != null && prev.Kind == DaxScan.Kind.Word)
+                {
+                    // A preceding Word qualifies only when it NAMES A TABLE. DAX keywords occupy exactly the same
+                    // position - "VAR x = 1 RETURN [Measure]" - and reading RETURN as a qualifier resolved no table
+                    // and silently DROPPED a real dependency instead of resolving the bare reference. A Word declared
+                    // as a VAR in this expression is a variable, not a table, so its [column] is not a model object.
+                    if (varNames.Contains(prev.Text)) continue;
+                    qualifier = FindTable(m, prev.Text);
+                }
+
+                if (qualifier != null)
+                {
+                    TabularNamedObject hit = qualifier.Columns.FirstOrDefault(c => string.Equals(c.Name, tok.Inner, StringComparison.OrdinalIgnoreCase));
+                    hit ??= qualifier.Measures.FirstOrDefault(x => string.Equals(x.Name, tok.Inner, StringComparison.OrdinalIgnoreCase));
+                    if (hit != null && !ReferenceEquals(hit, measure)) yield return hit;
+                    continue;
+                }
+
+                TabularNamedObject bare = m.AllMeasures.FirstOrDefault(x => string.Equals(x.Name, tok.Inner, StringComparison.OrdinalIgnoreCase));
+                bare ??= measure.Table?.Columns.FirstOrDefault(c => string.Equals(c.Name, tok.Inner, StringComparison.OrdinalIgnoreCase));
+                if (bare != null && !ReferenceEquals(bare, measure)) yield return bare;
+            }
+        }
 
         // Every scorable DAX-bearing object: measures + calculated columns + calc-group items, skipping empty
         // expressions. Mixed object types (a measure, a CalculatedColumn, a CalculationItem) is why the BestPractice
@@ -1208,6 +1414,29 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
+            // A calendar whose Date category is pointed at a non-date column is broken time intelligence.
+            // Presence design: dormant when the model has no calendars (Applicable=0). One finding per bad mapping.
+            rules.Add(new ModelRule("CAL-MAPPING", "Calendar date column is not a date", ReadinessCategory.Relationships, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation { Applicable = 0 };
+                    foreach (var (table, cal) in CalendarOps.Enumerate(m))
+                    {
+                        foreach (var g in cal.CalendarColumnGroups.OfType<TOM.TimeUnitColumnAssociation>())
+                        {
+                            if (g.TimeUnit != TOM.TimeUnit.Date) continue;
+                            ev.Applicable++;
+                            var col = g.PrimaryColumn;
+                            if (col == null) continue;
+                            if (col.DataType == TOM.DataType.DateTime) continue;
+                            ev.Violations.Add(rule.NewFinding(table, cal.Name,
+                                $"Calendar '{cal.Name}' on '{table.Name}' maps '{col.Name}' ({col.DataType}) as its date column. Map a date or date/time column instead",
+                                ReadinessCopy.Op("tag_calendar_column"), "."));
+                        }
+                    }
+                    return ev;
+                }));
+
             // ---- Copilot scale limits (hard gate) -----------------------------------------------
             rules.Add(new ModelRule("LIMIT-SCALE", "Exceeds Copilot scale ceiling", ReadinessCategory.CopilotLimits, Severity.Critical, RuleKind.Deterministic, FixKind.None,
                 (m, rule) =>
@@ -1839,6 +2068,188 @@ namespace Semanticus.Analysis
                     var ev = new RuleEvaluation { Applicable = footprint ? 1 : 0 };
                     if (footprint)
                         ev.Violations.Add(rule.NewFinding(m, m.Name, "Auto date/time is enabled (hidden per-column local date tables detected); turn it off, delete the hidden local date tables, and use one marked date table so Copilot/Q&A and time-intelligence DAX have a single, clean date table."));
+                    return ev;
+                }));
+
+            // ================= Next-release completion batch 7 ==================================
+            // Five deterministic rows folded in from the Microsoft semantic-model-authoring provenance backlog
+            // (docs/archive/ms-fabric-skills-research.md) plus the one Copilot scale ceiling the design spec
+            // (docs/ai-readiness-plan.md section 2.G) names that LIMIT-SCALE never implemented. Every rule is
+            // model-visible and deterministic; none writes, and none introduces a new public operation.
+
+            // MS: "AI Data Schema must include the dependents of every selected measure." An INCLUDED measure whose
+            // DAX reads an EXCLUDED object leaves the data agent holding half a definition. Scope is deliberately
+            // narrow so the finding is always a real curation mistake: only dependents that are VISIBLE in the model
+            // yet excluded count. Power BI auto-excludes model-hidden fields by writing Visibility:Hidden, so a
+            // hidden key dependency is the normal shape, not a defect. Dormant unless a CURATED schema exists
+            // (a linguistic schema that excludes at least one thing) and the new Copilot Tooling Format is absent
+            // (there the LSDL exclusion set is not the authoritative schema - see DAC-COPILOT-TOOLING-FORMAT).
+            rules.Add(new ModelRule("AISCHEMA-DEP-MISSING", "AI data schema omits a dependency of an included measure", ReadinessCategory.DataAgentConfig, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();
+                    var cfg = PrepForAiReader.Read(m);
+                    if (!cfg.HasLinguisticSchema || cfg.CopilotToolingFormatPresent || cfg.AiSchemaExcludedFields == 0) return ev;
+                    var culture = PrepForAiReader.SelectLinguisticCulture(m, out _);
+                    var excluded = ExcludedFromAiSchema(m, culture);
+                    if (excluded.Count == 0) return ev;
+
+                    // Effective membership, not the measure's own two flags: a measure on a model-hidden table is off
+                    // the analytical surface, and a measure on an AI-excluded table is not in the schema either, so
+                    // neither is "included" and neither can earn a missing-dependency finding.
+                    var included = m.AllMeasures.Where(x => IsVisibleInModel(x) && !IsExcludedFromAiSchema(excluded, x)).ToList();
+                    ev.Applicable = included.Count;
+                    foreach (var me in included)
+                    {
+                        var missing = ResolveDaxReferences(m, me)
+                            // Only a VISIBLE dependent that was curated out is a mistake; a model-hidden one is auto-excluded.
+                            // Curated out counts the same whether the field or its whole table carries the exclusion.
+                            .Where(dep => IsVisibleInModel(dep) && IsExcludedFromAiSchema(excluded, dep))
+                            .Select(DependencyLabel)
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(x => x, StringComparer.Ordinal)
+                            .ToList();
+                        if (missing.Count == 0) continue;
+                        ev.Violations.Add(rule.NewFinding(me, me.Name,
+                            $"Measure [{me.Name}] is in the AI data schema but {missing.Count} object(s) it depends on are excluded from it ({string.Join(", ", missing.Take(4))}{(missing.Count > 4 ? ", …" : "")}); the data agent sees the measure without its definition. Include the dependents", ReadinessCopy.Op("set_ai_data_schema"), " or exclude the measure too."));
+                    }
+                    return ev;
+                }));
+
+            // A linguistic (LSDL) entity binds to a model object by name. A rename or delete outside the linguistic
+            // writer leaves the binding pointing at nothing: the entity keeps consuming one of the 1,000 Q&A index
+            // slots (LIMIT-QNA-INDEX) and its synonyms ground no field. Deterministic and self-checking - resolution
+            // reuses the SAME binding shape the shipped synonym rules use, and matches against EVERY model object
+            // (hidden and RowNumber included), so hiding a column can never read as deleting it. Dormant without a
+            // JSON linguistic schema that actually carries bindings.
+            //
+            // The finding is deliberately ONE PER CULTURE, and the population is CULTURES to match. An orphan binding
+            // has, by definition, no model object to point a finding at, so every finding here can only carry the
+            // CULTURE's object ref - and finding identity IS waiver identity (WaiverStore.Match keys on
+            // system + ruleId + objectRef). Filing one finding per orphan therefore produced N findings sharing ONE
+            // identity, so accepting a single reviewed orphan silently waived every other orphan in that culture; and a
+            // per-binding Applicable made the coverage ratio disagree with the finding count as well. Aggregating loses
+            // nothing because the message ENUMERATES the orphan bindings: one reviewable decision per culture, over the
+            // exact list it covers. The list is capped so a pathological schema cannot produce an unreadable message,
+            // and a capped message states the residual count rather than trailing off, so the total is never hidden.
+            rules.Add(new ModelRule("SYN-ENTITY-ORPHAN", "Linguistic entity binds to an object that no longer exists", ReadinessCategory.Synonyms, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();
+                    foreach (var culture in m.Cultures.Where(c => c.ContentType == ContentType.Json && !string.IsNullOrWhiteSpace(c.Content)))
+                    {
+                        var bound = BoundEntities(culture);
+                        if (bound.Count == 0) continue;   // a schema carrying no bindings has nothing to resolve
+                        ev.Applicable++;
+                        var orphans = bound
+                            .Where(b => !BindingResolves(m, b.Table, b.Property))
+                            .Select(b => b.Property == null ? $"table '{b.Table}'" : $"'{b.Table}'[{b.Property}]")
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(x => x, StringComparer.Ordinal)
+                            .ToList();
+                        if (orphans.Count == 0) continue;
+                        var listed = string.Join(", ", orphans.Take(OrphanBindingsListed));
+                        if (orphans.Count > OrphanBindingsListed) listed += $", and {orphans.Count - OrphanBindingsListed} more";
+                        ev.Violations.Add(rule.NewFinding(culture, culture.Name,
+                            $"The Q&A linguistic schema for culture '{culture.Name}' still binds {orphans.Count} entit{(orphans.Count == 1 ? "y" : "ies")} to objects that no longer exist in this model: {listed}. Each dangling entry grounds nothing and still occupies a Q&A index slot; remove it or repoint it at the renamed object."));
+                    }
+                    return ev;
+                }));
+
+            // The design spec's Copilot scale ceiling (section 2.G) lists a 5,000-character DAX limit alongside the
+            // object counts LIMIT-SCALE already enforces; the expression ceiling was never implemented. Scope and
+            // wording follow the Microsoft source (learn.microsoft.com/en-us/dax/dax-copilot): the limit is DAX query
+            // Copilot's, and past it Copilot MAY be unavailable or work from reduced metadata, so the message says may,
+            // not will. Presence
+            // design, matching the rest of the ceiling family (LIMIT-QNA-INDEX / SCALE-QNA-INDEX): Applicable counts
+            // only breaching expressions, so a clean model stays dormant and CopilotLimits is never inflated. NOT
+            // wired into the LIMIT-SCALE hard gate - changing what caps a grade is a product decision, not a batch one.
+            rules.Add(new ModelRule("LIMIT-DAX-LENGTH", "DAX expression exceeds the documented 5,000-character Copilot limit", ReadinessCategory.CopilotLimits, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();   // presence design: dormant until a ceiling is actually breached
+                    foreach (var (obj, name, expr) in DaxObjects(m))
+                    {
+                        if (expr.Length <= DaxExpressionCeiling) continue;
+                        ev.Applicable++;
+                        ev.Violations.Add(rule.NewFinding(obj, name,
+                            $"The DAX for '{name}' is {expr.Length:N0} characters, past the {DaxExpressionCeiling:N0}-character limit Microsoft documents for DAX query Copilot; past it Copilot may be unavailable for the query or may work from reduced model metadata. Split the logic into named intermediate measures."));
+                    }
+                    return ev;
+                }));
+
+            // Hierarchies are grounded objects in their own right - the ruleset already checks their NAMES
+            // (NAME-HIERARCHY) and their drill shape (REL-HIERARCHY-SINGLE-LEVEL), but never their description, so a
+            // visible "Calendar" or "Geography" drill path reached Copilot with no stated meaning. Same shape as
+            // DESC-TABLE / DESC-COLUMN: population = visible hierarchies on visible business tables, dormant on a
+            // model that defines none. FixKind.Proposal, NOT AiContent: the shipped description writer accepts
+            // measures/tables/columns/perspectives only, so promising an agent-applyable content fix here would be a
+            // fix affordance the engine cannot honour. Detection is the honest half; the writer is separate work.
+            rules.Add(new ModelRule("DESC-HIERARCHY", "Visible hierarchy has no description", ReadinessCategory.Descriptions, Severity.Medium, RuleKind.LlmGenerate, FixKind.Proposal,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();
+                    foreach (var t in m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)))
+                        foreach (var h in t.Hierarchies.Where(h => !h.IsHidden))
+                        {
+                            ev.Applicable++;
+                            if (string.IsNullOrWhiteSpace(h.Description))
+                                ev.Violations.Add(rule.NewFinding(h, h.Name,
+                                    $"Hierarchy '{t.Name}'[{h.Name}] has no description; Copilot and Q&A ground drill paths on the description, so say what the levels mean and when to use them."));
+                        }
+                    return ev;
+                }));
+
+            // MS naming conventions: the column that identifies a dimension row should carry the table's own name
+            // ("Product" in table Product), so "list the products" resolves to one field instead of guessing between
+            // the table and a "Product Name" column. Tight population: a table that is ONLY ever the one side of a
+            // MANY-TO-ONE relationship (the same deterministic graph slice REL-SNOWFLAKE uses, so no fact/dimension
+            // guesswork) AND that exposes a visible text column literally named "<Table> Name" / "<Table>Name".
+            //
+            // The cardinality test is what makes "dimension" mean anything here, and it was missing: without it ANY
+            // relationship's To-side table qualified, so a one-to-one pairing (two halves of one entity, neither a
+            // dimension of the other) and a many-to-many bridge each moved the Naming score through a rule whose whole
+            // premise is the fact-to-dimension star. REL-SNOWFLAKE always filtered on Many->One; this now reads the
+            // identical slice, as its own comment already claimed.
+            //
+            // Info severity, AiContent - the rename is the assistant's to author, and rename safety stays with the
+            // rename path. The finding therefore targets the LABEL COLUMN, not the table: the fix renames that column,
+            // MapAiContent carries the finding's own ObjectRef into the rename plan item, and a finding pointing at the
+            // table aimed the advertised fix at an object the fix never touches.
+            rules.Add(new ModelRule("DIM-PRIMARY-NAME", "Dimension label column does not carry the table name", ReadinessCategory.Naming, Severity.Info, RuleKind.Deterministic, FixKind.AiContent,
+                (m, rule) =>
+                {
+                    var manyToOne = m.Relationships.OfType<SingleColumnRelationship>()
+                        .Where(r => r.FromCardinality == RelationshipEndCardinality.Many
+                            && r.ToCardinality == RelationshipEndCardinality.One
+                            && r.FromTable != null && r.ToTable != null).ToList();
+                    var asFact = manyToOne.Select(r => r.FromTable).ToHashSet();
+                    var dimensions = manyToOne.Select(r => r.ToTable).Distinct()
+                        .Where(t => t != null && !t.IsHidden && !(t is CalculationGroupTable) && !asFact.Contains(t));
+
+                    var ev = new RuleEvaluation();
+                    foreach (var t in dimensions)
+                    {
+                        // The population is the dimensions that actually carry a label column named after the table
+                        // ("Product", "Product Name", "Product Description"). A dimension whose text columns are all
+                        // attributes (Color, Size) is not evaluated at all, so this can never pass a table it did not
+                        // look at, and a clean dimension is one whose label IS the bare table name.
+                        var candidates = t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber
+                            && c.DataType == DataType.String
+                            && (string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase) || IsTableLabelName(t.Name, c.Name)))
+                            .ToList();
+                        if (candidates.Count == 0) continue;
+                        ev.Applicable++;
+                        if (candidates.Any(c => string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase))) continue;
+                        // ONE deterministic rename target: the strongest label shape, ordinal name as the tie-break, so
+                        // the finding - and the plan item built from its ObjectRef - never depends on column order.
+                        var label = candidates
+                            .OrderBy(c => TableLabelRank(t.Name, c.Name))
+                            .ThenBy(c => c.Name, StringComparer.Ordinal)
+                            .First();
+                        ev.Violations.Add(rule.NewFinding(label, label.Name,
+                            $"Dimension '{t.Name}' identifies its rows with '{label.Name}' and has no field named '{t.Name}'; natural-language questions like \"list the {t.Name}\" then have to guess between the table and the column. Rename the label column to '{t.Name}'."));
+                    }
                     return ev;
                 }));
 

@@ -1,0 +1,8 @@
+git merge-base --is-ancestor origin/main HEAD
+git log --merges origin/main..HEAD
+pwsh -File tools/coverage-oracle.ps1 -Check
+dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~DaxLabResultPaneTests"
+dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~WorkflowRunPlanTests|FullyQualifiedName~WorkflowRunFrameTests|FullyQualifiedName~WorkflowV2SilentDropTests|FullyQualifiedName~WorkflowVerifyEnforcementTests"
+cd Semanticus.VSCode && npm test
+dotnet test Semanticus.Tests/Semanticus.Tests.csproj --filter FullyQualifiedName~DaxWriteValidationTests
+dotnet test Semanticus.Tests/Semanticus.Tests.csproj --filter FullyQualifiedName~ModelCompareTests

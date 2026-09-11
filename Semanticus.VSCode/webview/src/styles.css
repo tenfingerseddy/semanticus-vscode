@@ -90,6 +90,22 @@ body {
 }
 .sem-flash { animation: sem-flash-kf 1.1s ease-out 1; }
 
+/* Studio header overflow (D-164): when a second editor group narrows the panel, Primer / Workflows / Edits
+   collapse into a More button instead of vanishing behind a thin scrollbar. */
+.studio-chrome {
+  container-type: inline-size;
+  container-name: studio-chrome;
+  min-width: 0;
+  overflow: visible;
+}
+.studio-more { display: none; }
+@container studio-chrome (max-width: 1100px) {
+  .studio-title { display: none; }
+  .studio-groups { display: none; }
+  .studio-standalone { display: none !important; }
+  .studio-more { display: inline-flex; }
+}
+
 /* Tab-bar busy affordance: a subtle monochrome ring that spins while a converted surface (Lineage / DAX Lab /
    Storage) has an op running on ANOTHER tab. Self-defined so it never depends on a utility-class animation. */
 @keyframes sem-spin-kf { to { transform: rotate(360deg); } }
@@ -127,3 +143,8 @@ body {
    key emoji (and class pairs with it) — override those two so the popup carries no colorful pictograph. */
 .cm-completionIcon-keyword::after { content: 'K' !important; }
 .cm-completionIcon-class::after { content: 'C' !important; }
+
+/* Workflow Boxes (read-only file view). Overflow is owned here so the new view wraps at narrow widths
+   without changing Outline. */
+.sem-wf-boxes { min-width: 0; max-width: 100%; overflow-x: hidden; overflow-wrap: anywhere; word-break: break-word; }
+.sem-wf-boxes .tnum, .sem-wf-boxes code { overflow-wrap: anywhere; }

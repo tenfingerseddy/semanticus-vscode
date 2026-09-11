@@ -92,7 +92,9 @@ namespace Semanticus.Engine
                 }
                 lock (Gate)
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(file));
+                    var dir = Path.GetDirectoryName(file);
+                    Directory.CreateDirectory(dir);
+                    LayoutStore.EnsureRuntimeIgnore(dir);
                     File.AppendAllText(file, line + "\n", new UTF8Encoding(false));
                 }
                 return true;
@@ -218,7 +220,7 @@ namespace Semanticus.Engine
                 result,
             };
             ExperienceStore.AppendLine(FileFor(s), Envelope(e.Result),
-                Envelope("(payload dropped — exceeded the per-line cap)"));
+                Envelope("(payload dropped: exceeded the per-line cap)"));
         }
     }
 }

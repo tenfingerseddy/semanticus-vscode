@@ -317,7 +317,7 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
       : docColumns),
     [sample, docColumns],
   );
-  const profileColumnsKey = useMemo(() => columns.map((c) => `${c.name}\u0000${c.type ?? ''}`).join('\u0001'), [columns]);
+  const profileColumnsKey = useMemo(() => JSON.stringify(columns.map((c) => [c.name, c.type ?? ''])), [columns]);
   const profileColumnsKeyRef = useRef(profileColumnsKey);
   useEffect(() => {
     if (profileColumnsKeyRef.current === profileColumnsKey) return;

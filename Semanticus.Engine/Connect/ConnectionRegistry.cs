@@ -322,12 +322,37 @@ namespace Semanticus.Engine
             // inference, which is the one thing this file exists to prevent.
             if (all.Count > MaxRecords)
             {
-                var keep = all.Take(MaxRecords).ToList();
                 var linkedPublishIds = all.Where(r => !string.IsNullOrWhiteSpace(r.PublishConnectionId))
                     .Select(r => r.PublishConnectionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                keep.AddRange(all.Skip(MaxRecords).Where(r => !IsUnlabelled(r) || !string.IsNullOrEmpty(r.WorkingFolder)
-                    || linkedPublishIds.Contains(r.Id)));
-                all = keep;
+
+                bool IsProtected(ModelConnectionRecord r) =>
+                    !IsUnlabelled(r) || !string.IsNullOrEmpty(r.WorkingFolder) || linkedPublishIds.Contains(r.Id);
+
+                // Incidental local history (a .bim/.pbip the user opened, a Power BI Desktop instance the discoverer
+                // saw) is the cheapest to re-derive, so retire it before a real published model (D-173): opening 40
+                // local files must never evict a remembered published model (V2/Contoso). A real remote source (xmla)
+                // still loses to another remote only by recency, which keeps
+                // Retention_evicts_the_least_recently_used_unlabelled_target true.
+                bool IsIncidentalLocal(ModelConnectionRecord r) =>
+                    string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(r.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase);
+
+                // Split protected (always kept) from the rest, then fill the remaining budget with real remote models
+                // ahead of incidental local rows, newest-first within each class. Protected records can exceed
+                // MaxRecords — never evict a labelled target just because the user labelled many of them.
+                var indexed = all.Select((r, i) => (Record: r, Index: i)).ToList();
+                var protectedRecords = indexed.Where(t => IsProtected(t.Record)).ToList();
+                var budget = MaxRecords - protectedRecords.Count;
+                var keptRest = budget > 0
+                    ? indexed.Where(t => !IsProtected(t.Record))
+                             .OrderBy(t => IsIncidentalLocal(t.Record) ? 2 : 1)
+                             .ThenBy(t => t.Index)
+                             .Take(budget)
+                             .ToList()
+                    : new List<(ModelConnectionRecord Record, int Index)>();
+
+                // Keep the surviving list in recency order (newest first) so List() still reads sensibly.
+                all = protectedRecords.Concat(keptRest).OrderBy(t => t.Index).Select(t => t.Record).ToList();
             }
 
             // Serialization-boundary scrub (CRITICAL 1): redact any secret material from EVERY string field of every

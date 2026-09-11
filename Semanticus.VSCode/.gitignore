@@ -1,5 +1,13 @@
 # Per-platform packaging outputs (built by scripts/package.mjs, never committed):
 #   engine/ = a transient self-contained engine publish, staged into the vsix then cleaned
 #   dist/   = the produced .vsix files
+#   THIRD-PARTY-NOTICES.md = a copy staged from the repository root so it ships inside the vsix, then cleaned
 engine/
 dist/
+THIRD-PARTY-NOTICES.md
+
+# Generated bundles (built by npm run build / build:webview, never committed):
+media/studio/studio.js
+media/studio/studio-mcode.js
+out/extension.js
+out/extension.js.map

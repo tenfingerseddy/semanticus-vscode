@@ -53,6 +53,14 @@ namespace Semanticus.Engine
         public string Dax { get; set; }
         public string FormatString { get; set; }
         public string DisplayFolder { get; set; }
+        public string Description { get; set; }
+        // Input alias: agents often send "expression" for the formula. Never written back.
+        [System.Text.Json.Serialization.JsonPropertyName("expression")]
+        public string Expression
+        {
+            get => null;
+            set { if (string.IsNullOrWhiteSpace(Dax) && !string.IsNullOrWhiteSpace(value)) Dax = value; }
+        }
     }
 
     public sealed class SpecSource

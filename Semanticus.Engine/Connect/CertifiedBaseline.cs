@@ -77,7 +77,7 @@ namespace Semanticus.Engine
         public string ShapeChangeNote(CertifiedContext now)
             => !string.IsNullOrEmpty(Fingerprint) && now != null && !string.IsNullOrEmpty(now.Fingerprint)
                && !string.Equals(Fingerprint, now.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                ? "NOTE: the model changed shape since certification (fingerprint differs) — expected after edits; each figure is still checked by its own identity, so this does not block the check."
+                ? "NOTE: the model changed shape since certification (fingerprint differs): expected after edits; each figure is still checked by its own identity, so this does not block the check."
                 : null;
     }
 
@@ -196,7 +196,7 @@ namespace Semanticus.Engine
                     // P1-C: NEVER overwrite a corrupt store. Preserve it aside (propagating any failure so we ABORT
                     // rather than clobber recoverable certifications for other labels), then REFUSE loudly.
                     PreserveCorruptAside(file);   // throws on failure → Upsert aborts, original untouched
-                    return new CertifiedUpsertResult { Refused = "the certified store (.semanticus/certified-baselines.json) was unreadable and has been preserved aside as a '.corrupt-*' sibling — nothing was certified. Investigate that file, then re-run the capture to certify against a fresh store." };
+                    return new CertifiedUpsertResult { Refused = "the certified store (.semanticus/certified-baselines.json) was unreadable and has been preserved aside as a '.corrupt-*' sibling: nothing was certified. Investigate that file, then re-run the capture to certify against a fresh store." };
                 }
                 label = (label ?? "").Trim();
                 var entries = (newEntries ?? Enumerable.Empty<CertifiedEntry>()).ToList();
@@ -206,9 +206,9 @@ namespace Semanticus.Engine
                 {
                     var cdiff = bl.Context?.DiffFrom(context);
                     if (cdiff != null)
-                        return new CertifiedUpsertResult { Refused = $"'{label}' was certified on a different model: {cdiff}. A certified baseline is bound to the model and context it was captured on — use a new label for this model." };
+                        return new CertifiedUpsertResult { Refused = $"'{label}' was certified on a different model: {cdiff}. A certified baseline is bound to the model and context it was captured on: use a new label for this model." };
                     if (!HashMatches(bl))
-                        return new CertifiedUpsertResult { Refused = $"the certified baseline '{label}' on disk has been modified since capture (hash mismatch) — refusing to extend a tampered record. Investigate .semanticus/certified-baselines.json." };
+                        return new CertifiedUpsertResult { Refused = $"the certified baseline '{label}' on disk has been modified since capture (hash mismatch): refusing to extend a tampered record. Investigate .semanticus/certified-baselines.json." };
                     foreach (var e in entries)
                         if (bl.Entries.Any(x => SameFigure(x, e)))
                             return new CertifiedUpsertResult { Refused = $"'{e.Ref}' is already certified under '{label}' at that context (a certification is immutable, so it cannot be silently overwritten). To re-certify, use a new label with a revision, e.g. \"{label} r2\"." };

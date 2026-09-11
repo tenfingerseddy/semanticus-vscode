@@ -74,7 +74,10 @@ const PRESETS: { id: string; name: string; desc: string }[] = [
   { id: 'standard', name: 'Standard', desc: 'Asks before touching UAT or production.' },
   { id: 'cautious', name: 'Cautious', desc: 'Asks for anything beyond local.' },
   { id: 'client', name: 'Client', desc: 'Production is a wall; no data preview off UAT or production.' },
-  { id: 'locked', name: 'Locked', desc: 'Maximum separation; asks even locally.' },
+  // Locked's two distinguishing cells are "refused" on uat/prod and "asks" on local/dev (AgentPolicy.cs), so the
+  // line has to lead with the refusal. It used to say "asks even locally" alone, which read as "it always asks"
+  // and left the reader unprepared for a hard refusal on a published model (D-213).
+  { id: 'locked', name: 'Locked', desc: 'Writes to published models are refused. Even local writes ask first.' },
 ];
 
 // The matrix rows, in reading order. `cap` is the engine capability (shown only in a tooltip); `kind` decides how a

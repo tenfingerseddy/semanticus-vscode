@@ -63,12 +63,14 @@ namespace Semanticus.Engine
             var paneIdentity = OpenModelIdentity();
             if (string.IsNullOrWhiteSpace(paneIdentity)) return (null, null);
             var sidecar = disk ? LayoutStore.DirFor(anchor) : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
-            var identity = disk
+            // Folder key stays repository-relative (file:name) so a clone still finds committed evidence.
+            // The identity string is the pane identity shared with tests, interview and vitals.
+            var folderKey = disk
                 ? Directory.Exists(Path.GetFullPath(anchor)) ? "model" : "file:" + Path.GetFileName(anchor).ToLowerInvariant()
                 : paneIdentity;
-            if (sidecar == null) return (identity, null);
-            var safe = new string(identity.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '-').ToArray());
-            return (identity, Path.Combine(sidecar, "evidence", safe));
+            if (sidecar == null) return (paneIdentity, null);
+            var safe = new string(folderKey.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '-').ToArray());
+            return (paneIdentity, Path.Combine(sidecar, "evidence", safe));
         }
 
         public async Task<EvidenceLibrary> ListEvidenceAsync()

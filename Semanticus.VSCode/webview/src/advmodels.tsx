@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { rpc, onDidChange } from './bridge';
 import { DaxField } from './daxeditor';
+import { inferFormatMode } from './formatMode';
 import { ObjectBrowser, useBrowserData, type BrowserNode } from './objectbrowser';
 
 // ===================================================================================================
@@ -14,8 +15,8 @@ import { ObjectBrowser, useBrowserData, type BrowserNode } from './objectbrowser
 
 interface PerspectiveInfo { ref: string; name: string; description?: string; members: string[]; }
 interface MeasureRow { ref: string; name: string; table: string; }
-interface ColumnRow { ref: string; name: string; table: string; isHidden?: boolean; }
-type TableModel = { name: string; ref: string; columns: ColumnRow[]; measures: MeasureRow[]; };
+interface ColumnRow { ref: string; name: string; table: string; isHidden?: boolean; dataType?: string; }
+type TableModel = { name: string; ref: string; columns: ColumnRow[]; measures: MeasureRow[]; isCalculationGroup?: boolean };
 interface CalcItemInfo { ref: string; name: string; ordinal: number; expression: string; formatStringExpression?: string; }
 interface CalcGroupInfo { ref: string; name: string; precedence: number; items: CalcItemInfo[]; }
 interface DaxLibPackage { id: string; version: string; description?: string; authors?: string[]; tags?: string[]; downloads?: number; projectUrl?: string; }
@@ -75,15 +76,21 @@ function useModelObjects(): { tables: TableModel[]; err: string | null; reload: 
   const [err, setErr] = useState<string | null>(null);
   const reload = useMemo(() => async () => {
     try {
-      const [cols, meas] = await Promise.all([rpc<ColumnRow[]>('listColumns'), rpc<MeasureRow[]>('listMeasures')]);
+      const [cols, meas, objs] = await Promise.all([
+        rpc<ColumnRow[]>('listColumns'),
+        rpc<MeasureRow[]>('listMeasures'),
+        rpc<{ tables: { name: string; isCalculationGroup?: boolean }[] }>('getModelObjects').catch(() => ({ tables: [] as { name: string; isCalculationGroup?: boolean }[] })),
+      ]);
+      const calc = new Set((objs?.tables ?? []).filter((t) => t.isCalculationGroup).map((t) => t.name));
       const by = new Map<string, TableModel>();
       const tbl = (name: string) => {
         let t = by.get(name);
-        if (!t) { t = { name, ref: 'table:' + name, columns: [], measures: [] }; by.set(name, t); }
+        if (!t) { t = { name, ref: 'table:' + name, columns: [], measures: [], isCalculationGroup: calc.has(name) }; by.set(name, t); }
         return t;
       };
       for (const c of cols ?? []) tbl(c.table).columns.push(c);
       for (const m of meas ?? []) tbl(m.table).measures.push(m);
+      for (const n of calc) tbl(n);
       setTables([...by.values()].sort((a, b) => a.name.localeCompare(b.name)));
       setErr(null);
     } catch (e) { setErr(String((e as Error).message ?? e)); }
@@ -95,11 +102,10 @@ function useModelObjects(): { tables: TableModel[]; err: string | null; reload: 
 // ===================================================================================================
 // Perspectives — the objects × perspectives include/exclude matrix.
 // ===================================================================================================
-// The object×perspective membership matrix — rebuilt for large models (Issue 2). Three root causes, three fixes:
-// (1) OPTIMISTIC toggle: the check flips in local state instantly + set_perspective_member fires in the background
-//     (no blocking rpc + full refetch per click); an error reverts + reconciles from the server.
-// (2) FOREIGN-ONLY reload: my own optimistic edits already updated local state, so their didChange echo is skipped;
-//     only an agent edit (always foreign) or a second client's edit triggers a debounced reload.
+// The object×perspective membership matrix — rebuilt for large models (Issue 2). Two performance fixes, one honesty fix:
+// (1) OPTIMISTIC toggle: the check flips in local state instantly; the op fires in the background; success reloads
+//     so a table cascade shows every child tick and the header counts member objects, not ticked rows.
+// (2) didChange always reloads (debounced): undo and an agent edit must redraw, never skip the echo.
 // (3) VIRTUALIZED + MEMOIZED: the <table> becomes a virtualized row list (constant DOM) with a React.memo'd cell,
 //     so a toggle re-renders exactly one cell — not tens of thousands.
 const P_ROW_H = 30, P_LABEL_W = 260, P_COL_W = 96;
@@ -129,7 +135,6 @@ function PerspectivesPanel() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [query, setQuery] = useState('');
-  const pendingSelf = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -139,9 +144,8 @@ function PerspectivesPanel() {
   }, []);
   useEffect(() => {
     void loadPersp();
-    const off = onDidChange((n) => {
-      // Skip my own optimistic echo; reload on a foreign change (agent, or a second human client).
-      if (n.origin !== 'agent' && pendingSelf.current > 0) { pendingSelf.current--; return; }
+    const off = onDidChange(() => {
+      // Always reload: including a table cascades to its fields, and undo must redraw the ticks and the count.
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => { void loadPersp(); }, 350);
     });
@@ -158,12 +162,12 @@ function PerspectivesPanel() {
   const toggle = useCallback((pRef: string, objRef: string, include: boolean) => {
     setPersp((cur) => cur?.map((p) => p.ref !== pRef ? p
       : { ...p, members: include ? [...new Set([...p.members, objRef])] : p.members.filter((m) => m !== objRef) }) ?? cur);
-    pendingSelf.current++;
-    void rpc('setPerspectiveMember', pRef, objRef, include).catch((e) => {
-      pendingSelf.current = Math.max(0, pendingSelf.current - 1);
-      setErr(String((e as Error).message ?? e));
-      void loadPersp();   // reconcile the failed cell from the truth
-    });
+    void rpc('setPerspectiveMember', pRef, objRef, include)
+      .then(() => loadPersp())   // server membership includes the table cascade, so ticks and the count stay honest
+      .catch((e) => {
+        setErr(String((e as Error).message ?? e));
+        void loadPersp();
+      });
   }, [loadPersp]);
 
   const createPerspective = () => {
@@ -334,8 +338,8 @@ function FieldParamsPanel() {
     setBusy(true); setMsg(null);
     try {
       const items = picked.map((p) => ({ objectRef: p.ref, label: p.label.trim() || p.name }));
-      const ref = await rpc<string>('createFieldParameter', n, items);
-      setMsg({ ok: true, text: `Created ${ref} with ${picked.length} field${picked.length === 1 ? '' : 's'}.` });
+      await rpc<string>('createFieldParameter', n, items);
+      setMsg({ ok: true, text: `Created table ${n} with ${picked.length} field${picked.length === 1 ? '' : 's'}.` });
       setName(''); setPicked([]);
     } catch (e) { setMsg({ ok: false, text: String((e as Error).message ?? e) }); }
     finally { setBusy(false); }
@@ -482,6 +486,7 @@ function CalcGroupsPanel() {
 
 function CalcGroupCard({ group, reload, onError }: { group: CalcGroupInfo; reload: () => void; onError: (e: unknown) => void }) {
   const [prec, setPrec] = useState(String(group.precedence));
+  useEffect(() => { setPrec(String(group.precedence)); }, [group.precedence]);
   const [adding, setAdding] = useState(false);
   const [iName, setIName] = useState('');
   const [iExpr, setIExpr] = useState('CALCULATE ( SELECTEDMEASURE () )');
@@ -594,8 +599,9 @@ function CalcItemRow({ item, reload, onError }: { item: CalcItemInfo; reload: ()
 // set_calc_item_format_string op either way — the difference is only whether the value is a quoted literal.
 function FormatStringControl({ value, onSave, inline }: { value: string; onSave: (raw: string) => void; inline?: boolean }) {
   const literal = /^\s*"(.*)"\s*$/.exec(value);
-  const [mode, setMode] = useState<'static' | 'dynamic'>(value && !literal ? 'dynamic' : 'static');
+  const [mode, setMode] = useState<'static' | 'dynamic'>(() => inferFormatMode(value));
   const [dyn, setDyn] = useState(value);
+  useEffect(() => { setMode(inferFormatMode(value)); setDyn(value); }, [value]);
   const staticVal = literal ? literal[1] : '';
   const isPreset = FORMAT_PRESETS.some((p) => p.value === staticVal);
 
@@ -641,6 +647,8 @@ const TIME_UNITS = [
 ];
 const TIME_RELATED = 'time-related';   // UI label for the untagged bucket (engine wants timeUnit=null)
 const calendarUnitLabel = (unit: string) => unit.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+const calendarMappingAllowed = (col: ColumnRow, unit: string) =>
+  unit !== 'Date' || /date|time/i.test(col.dataType ?? '');
 const TEMPLATES: { id: string; label: string; hint: string }[] = [
   { id: 'gregorian', label: 'Gregorian', hint: 'Year / Quarter / Month / Day' },
   { id: 'fiscal', label: 'Fiscal', hint: 'FY starting a chosen month' },
@@ -823,10 +831,13 @@ function CalendarCard({ cal, columns, setMsg, onDone }: { cal: CalendarInfo; col
   const [col, setCol] = useState('');
   const [unit, setUnit] = useState('Date');
   const [assoc, setAssoc] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fail = (e: unknown) => setMsg({ ok: false, text: String((e as Error).message ?? e) });
 
   const units = cal.groups.filter((g) => g.timeUnit != null);
   const bucket = cal.groups.find((g) => g.timeUnit == null);
+  const mappingOptions = columns.filter((c) => unit === TIME_RELATED || calendarMappingAllowed(c, unit));
 
   const tag = (column: string, timeUnit: string | null, associated: boolean, remove: boolean) => {
     setMsg(null);
@@ -835,13 +846,22 @@ function CalendarCard({ cal, columns, setMsg, onDone }: { cal: CalendarInfo; col
   };
   const addMapping = () => {
     const c = col.trim(); if (!c) return;
-    tag(c, unit === TIME_RELATED ? null : unit, assoc, false);
+    const row = columns.find((x) => x.name === c);
+    const category = unit === TIME_RELATED ? null : unit;
+    if (category && row && !calendarMappingAllowed(row, category)) {
+      setMsg({ ok: false, text: `Cannot map '${c}' (${row.dataType || 'unknown type'}) as the date column. Pick a date or date/time column.` });
+      return;
+    }
+    tag(c, category, assoc, false);
     setCol(''); setAssoc(false); setAdding(false);
   };
   const del = () => {
-    if (!window.confirm(`Delete calendar '${cal.name}' from ${cal.table}? The columns themselves are kept.`)) return;
-    setMsg(null);
-    void rpc('deleteCalendar', cal.table, cal.name).then(() => { onDone(); }).catch(fail);
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setMsg(null); setDeleting(true);
+    void rpc('deleteCalendar', cal.table, cal.name)
+      .then(() => { setConfirmDelete(false); onDone(); })
+      .catch(fail)
+      .finally(() => setDeleting(false));
   };
 
   return (
@@ -852,14 +872,25 @@ function CalendarCard({ cal, columns, setMsg, onDone }: { cal: CalendarInfo; col
         {cal.description && <span className="text-[11px] truncate" style={{ color: 'var(--sem-muted)' }}>· {cal.description}</span>}
         <div className="ml-auto flex items-center gap-1.5">
           {!adding && <MiniButton onClick={() => setAdding(true)}>+ Mapping</MiniButton>}
-          <MiniButton onClick={del}>Delete calendar</MiniButton>
+          {!confirmDelete && <MiniButton onClick={del}>Delete calendar</MiniButton>}
         </div>
       </div>
 
+      {confirmDelete && (
+        <div className="mb-2 rounded-lg p-2.5" role="alert" style={{ background: 'var(--sem-bg)', border: '1px solid var(--sem-warn)' }}>
+          <div className="text-[12px] font-semibold" style={{ color: 'var(--sem-warn)' }}>Delete calendar '{cal.name}' from {cal.table}?</div>
+          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>The columns themselves are kept. You can undo this.</div>
+          <div className="flex items-center gap-2 mt-2">
+            <MiniButton disabled={deleting} onClick={del}>{deleting ? 'Deleting…' : 'Delete calendar'}</MiniButton>
+            <MiniButton disabled={deleting} onClick={() => setConfirmDelete(false)}>Keep this calendar</MiniButton>
+          </div>
+        </div>
+      )}
+
       {adding && (
         <div className="flex items-center gap-2 flex-wrap mb-2 p-2 rounded" style={{ background: 'var(--sem-bg)', border: '1px solid var(--sem-border)' }}>
-          <Select value={col} onChange={setCol} placeholder="column…" options={columns.map((c) => ({ value: c.name, label: c.name }))} />
-          <Select value={unit} onChange={setUnit} compact options={[{ value: TIME_RELATED, label: 'time-related columns' }, ...TIME_UNITS.map((u) => ({ value: u, label: calendarUnitLabel(u) }))]} />
+          <Select value={col} onChange={setCol} placeholder="column…" options={mappingOptions.map((c) => ({ value: c.name, label: c.name }))} />
+          <Select value={unit} onChange={(v) => { setUnit(v); setCol(''); }} compact options={[{ value: TIME_RELATED, label: 'time-related columns' }, ...TIME_UNITS.map((u) => ({ value: u, label: calendarUnitLabel(u) }))]} />
           <label className="text-[11px] flex items-center gap-1.5" style={{ color: 'var(--sem-muted)' }}>
             <Check checked={assoc} onChange={() => setAssoc((v) => !v)} /> associated
           </label>
@@ -1010,6 +1041,31 @@ interface RoleInfo { name: string; description?: string; modelPermission: string
 const MODEL_PERMS = ['None', 'Read', 'ReadRefresh', 'Refresh', 'Administrator'];
 const OLS_PERMS = ['Default', 'Read', 'None'];
 
+function isRoleMemberIdentity(name: string): boolean {
+  const s = name.trim();
+  if (!s || s.length > 256) return false;
+  if (/[!?*<>|"\n\r\t]/.test(s)) return false;
+  if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)) return true;
+  const at = s.indexOf('@');
+  if (at > 0 && at < s.length - 1 && s.indexOf('@', at + 1) < 0 && s.indexOf(' ') < 0) return s.indexOf('.', at + 1) > at + 1;
+  const slash = s.indexOf('\\');
+  if (slash > 0 && slash < s.length - 1 && s.indexOf('\\', slash + 1) < 0) return s.indexOf(' ') < 0;
+  return /[A-Za-z0-9]/.test(s);
+}
+
+function roleLossLines(role: RoleInfo): string[] {
+  const lines: string[] = [];
+  for (const f of role.tableFilters ?? []) lines.push(`row filter on ${f.table}`);
+  for (const o of role.objectPermissions ?? []) {
+    if (o.metadataPermission) lines.push(`table visibility on ${o.table}`);
+    for (const c of o.columns ?? []) lines.push(`column visibility on ${o.table}[${c.column}]`);
+  }
+  const n = (role.members ?? []).length;
+  if (n === 1) lines.push('1 member');
+  else if (n > 1) lines.push(`${n} members`);
+  return lines;
+}
+
 function RlsOlsPanel() {
   const { tables } = useModelObjects();
   const [roles, setRoles] = useState<RoleInfo[] | null>(null);
@@ -1017,6 +1073,7 @@ function RlsOlsPanel() {
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [confirmDel, setConfirmDel] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const fail = (e: unknown) => setErr(String((e as Error).message ?? e));
 
@@ -1029,12 +1086,16 @@ function RlsOlsPanel() {
     const off = onDidChange(() => { window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void load(), 350); });
     return () => { off(); window.clearTimeout(timer.current); };
   }, []);
+  useEffect(() => { setConfirmDel(false); }, [sel]);
 
   const createRole = () => {
     const n = newName.trim(); if (!n) return;
     void rpc('createRole', n, 'Read').then(() => { setNewName(''); setCreating(false); setSel(n); return load(); }).catch(fail);
   };
-  const deleteRole = (name: string) => void rpc('deleteRole', name).then(load).catch(fail);
+  const deleteRole = (name: string) => {
+    setConfirmDel(false);
+    void rpc('deleteRole', name).then(load).catch(fail);
+  };
 
   if (!roles) return <Panel><div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>{err ?? 'Loading roles…'}</div></Panel>;
   const role = roles.find((r) => r.name === sel) ?? null;
@@ -1042,19 +1103,19 @@ function RlsOlsPanel() {
   return (
     <div className="flex flex-col gap-4">
       {err && <Banner color="var(--sem-bad)">{err}</Banner>}
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(15rem,18rem)_1fr] gap-4">
         {/* roles rail */}
         <Panel>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-2 min-w-0">
             <SectionTitle>Roles</SectionTitle>
-            <div className="ml-auto">{creating ? null : <MiniButton onClick={() => setCreating(true)}>+ Role</MiniButton>}</div>
+            <div className="ml-auto shrink-0">{creating ? null : <MiniButton onClick={() => setCreating(true)}>+ Role</MiniButton>}</div>
           </div>
           {creating && (
-            <div className="flex items-center gap-1 mb-2">
+            <div className="flex items-center gap-1 mb-2 min-w-0">
               <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="role name…"
                 onKeyDown={(e) => { if (e.key === 'Enter') createRole(); else if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
-                className="text-[12px] px-2 py-1 rounded outline-none flex-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-              <MiniButton disabled={!newName.trim()} onClick={createRole}>Add</MiniButton>
+                className="text-[12px] px-2 py-1 rounded outline-none flex-1 min-w-0" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+              <span className="shrink-0"><MiniButton disabled={!newName.trim()} onClick={createRole}>Add</MiniButton></span>
             </div>
           )}
           {roles.length === 0 ? <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No roles yet.</div> : (
@@ -1081,8 +1142,22 @@ function RlsOlsPanel() {
                   <Select value={role.modelPermission} onChange={(v) => void rpc('setRolePermission', role.name, v).then(load).catch(fail)}
                     compact options={MODEL_PERMS.map((p) => ({ value: p, label: p }))} />
                 </label>
-                <div className="ml-auto"><MiniButton onClick={() => deleteRole(role.name)}>Delete role</MiniButton></div>
+                <div className="ml-auto shrink-0">{confirmDel ? null : <MiniButton onClick={() => setConfirmDel(true)}>Delete role</MiniButton>}</div>
               </div>
+              {confirmDel && (
+                <div className="mt-3 rounded-lg p-3" role="alert" style={{ background: 'var(--sem-bg)', border: '1px solid var(--sem-warn)' }}>
+                  <div className="text-[12px] font-semibold" style={{ color: 'var(--sem-warn)' }}>Delete the role {role.name}?</div>
+                  <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+                    {roleLossLines(role).length
+                      ? 'This also removes: ' + roleLossLines(role).join(', ') + '. You can undo this.'
+                      : 'You can undo this.'}
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <MiniButton onClick={() => deleteRole(role.name)}>Delete role</MiniButton>
+                    <MiniButton onClick={() => setConfirmDel(false)}>Cancel</MiniButton>
+                  </div>
+                </div>
+              )}
               <Members role={role} reload={load} onError={fail} />
             </Panel>
 
@@ -1107,20 +1182,36 @@ function RlsOlsPanel() {
 
 function Members({ role, reload, onError }: { role: RoleInfo; reload: () => void; onError: (e: unknown) => void }) {
   const [name, setName] = useState('');
-  const add = () => { const n = name.trim(); if (!n) return; void rpc('setRoleMember', role.name, n, true).then(() => { setName(''); reload(); }).catch(onError); };
+  const [hint, setHint] = useState<string | null>(null);
+  const add = () => {
+    const n = name.trim(); if (!n) return;
+    if (!isRoleMemberIdentity(n)) {
+      setHint('That is not a user or group name. Use an email like person@company.com, a group name, or an object id.');
+      return;
+    }
+    if ((role.members ?? []).some((m) => m.toLowerCase() === n.toLowerCase())) {
+      setHint('That member is already on this role.');
+      return;
+    }
+    setHint(null);
+    void rpc('setRoleMember', role.name, n, true).then(() => { setName(''); reload(); }).catch(onError);
+  };
   const remove = (m: string) => void rpc('setRoleMember', role.name, m, false).then(reload).catch(onError);
   return (
-    <div className="flex items-center gap-2 mt-2 flex-wrap">
-      <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>members</span>
-      {(role.members ?? []).map((m) => (
-        <span key={m} className="text-[11px] flex items-center gap-1 px-2 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)' }}>
-          {m}<button onClick={() => remove(m)} style={{ color: 'var(--sem-muted)' }}>✕</button>
-        </span>
-      ))}
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="add member (UPN / group)…"
-        onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-        className="text-[11px] px-1.5 py-0.5 rounded outline-none" style={{ width: 180, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-      <MiniButton disabled={!name.trim()} onClick={add}>Add</MiniButton>
+    <div className="mt-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>members</span>
+        {(role.members ?? []).map((m) => (
+          <span key={m} className="text-[11px] flex items-center gap-1 px-2 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)' }}>
+            {m}<button onClick={() => remove(m)} style={{ color: 'var(--sem-muted)' }}>✕</button>
+          </span>
+        ))}
+        <input value={name} onChange={(e) => { setName(e.target.value); setHint(null); }} placeholder="add member (email / group)…"
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+          className="text-[11px] px-1.5 py-0.5 rounded outline-none" style={{ width: 180, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+        <MiniButton disabled={!name.trim()} onClick={add}>Add</MiniButton>
+      </div>
+      {hint && <div className="text-[11px] mt-1" style={{ color: 'var(--sem-warn)' }}>{hint}</div>}
     </div>
   );
 }
@@ -1131,6 +1222,7 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
   const colPerms = role.objectPermissions?.find((o) => o.table === table.name)?.columns ?? [];
   const [filter, setFilter] = useState(serverFilter);
   const [valid, setValid] = useState(true);
+  const [issues, setIssues] = useState(0);
   const last = useRef(serverFilter);
   const [open, setOpen] = useState(false);
   const [builder, setBuilder] = useState(false);
@@ -1139,8 +1231,9 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
   useEffect(() => { setFilter((cur) => (cur === last.current ? serverFilter : cur)); last.current = serverFilter; }, [serverFilter]);
   const dirty = filter !== serverFilter;
   const hasFilter = serverFilter.trim().length > 0;
+  const filterOk = valid && issues === 0;
 
-  const saveFilter = () => { if (dirty && valid) void rpc('setTablePermission', role.name, table.ref, filter).then(reload).catch(onError); };
+  const saveFilter = () => { if (dirty && filterOk) void rpc('setTablePermission', role.name, table.ref, filter).then(reload).catch(onError); };
   const setTblOls = (v: string) => void rpc('setTableObjectPermission', role.name, table.ref, v).then(reload).catch(onError);
   const setColOls = (colRef: string, v: string) => void rpc('setColumnObjectPermission', role.name, colRef, v).then(reload).catch(onError);
   const colOlsOf = (name: string) => colPerms.find((c) => c.column === name)?.metadataPermission ?? 'Default';
@@ -1159,10 +1252,14 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
         </button>
         <div className="ml-auto flex items-center gap-1.5">
           <MiniButton onClick={() => setBuilder((b) => !b)}>Build a rule ▾</MiniButton>
-          <label className="text-[10px] flex items-center gap-1" style={{ color: 'var(--sem-muted)' }}>
-            OLS
-            <Select value={tableOls} onChange={setTblOls} compact options={OLS_PERMS.map((p) => ({ value: p, label: p }))} />
-          </label>
+          {table.isCalculationGroup ? (
+            <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Visibility settings are not used on a calculation group</span>
+          ) : (
+            <label className="text-[10px] flex items-center gap-1" style={{ color: 'var(--sem-muted)' }}>
+              OLS
+              <Select value={tableOls} onChange={setTblOls} compact options={OLS_PERMS.map((p) => ({ value: p, label: p }))} />
+            </label>
+          )}
         </div>
       </div>
 
@@ -1180,14 +1277,14 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
       <div className="mt-2">
         <DaxField value={filter} onChange={setFilter} scope="rls" table={table.name} minHeight={52}
           placeholder="row filter DAX, e.g. [Region] = USERPRINCIPALNAME()  (blank = all rows)"
-          onValidity={(v) => setValid(v)} ariaLabel={`Row filter for ${table.name}`} askContext={`an RLS row-filter for the '${table.name}' table`} />
+          onValidity={(v, n) => { setValid(v); setIssues(n); }} ariaLabel={`Row filter for ${table.name}`} askContext={`an RLS row-filter for the '${table.name}' table`} />
         <div className="mt-1 flex items-center gap-2">
-          <MiniButton disabled={!dirty || !valid} onClick={saveFilter}>{dirty ? (valid ? 'Save filter' : 'Fix errors') : 'Saved'}</MiniButton>
+          <MiniButton disabled={!dirty || !filterOk} onClick={saveFilter}>{dirty ? (filterOk ? 'Save filter' : 'Fix errors') : 'Saved'}</MiniButton>
           {dirty && <button onClick={() => setFilter(serverFilter)} className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>revert</button>}
         </div>
       </div>
 
-      {open && (
+      {open && !table.isCalculationGroup && (
         <div className="mt-2 pl-6 flex flex-col gap-1">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>column visibility (OLS)</span>

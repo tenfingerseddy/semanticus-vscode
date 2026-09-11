@@ -63,7 +63,7 @@ namespace Semanticus.Engine
                     }).ToArray(),
                     Count = 0,
                     Verification = verification,
-                    Note = "None of the supplied report files could be read — nothing was removed. Fix the paths (a PBIR " +
+                    Note = "None of the supplied report files could be read: nothing was removed. Fix the paths (a PBIR " +
                            "'<Report>.Report' folder, its 'definition' folder, a .pbip file, or a project root; legacy .pbix " +
                            "is not parsed), or omit reportPaths for a model-only sweep.",
                 };
@@ -101,7 +101,7 @@ namespace Semanticus.Engine
                     Revision = s.Revision, Skipped = skipped.ToArray(), Count = 0,
                     Verification = verification, Caveat = caveat,
                     Note = requested.Count > 0
-                        ? "Nothing removed: no requested item is currently verified safe — each skipped entry says why. Re-run unused_objects for a fresh scan."
+                        ? "Nothing removed: no requested item is currently verified safe. Each skipped entry says why. Re-run unused_objects for a fresh scan."
                         : "Nothing to remove: the model has no verified-safe items right now.",
                 };
 
@@ -167,7 +167,7 @@ namespace Semanticus.Engine
                 {
                     SessionId = s.Id, Revision = rev, Origin = origin, Op = "remove_safe_objects",
                     Verdict = "batch",
-                    Summary = $"{removed.Count} verified-safe object(s) removed, {skipped.Count} skipped — each re-verified {verification} at apply time",
+                    Summary = $"{removed.Count} verified-safe object(s) removed, {skipped.Count} skipped: each re-verified {verification} at apply time",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new
                     {
                         removed = removed.Take(200).Select(r => r.Ref).ToArray(),
