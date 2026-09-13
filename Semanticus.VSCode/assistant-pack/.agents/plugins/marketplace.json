@@ -1,0 +1,20 @@
+{
+  "name": "semanticus",
+  "interface": {
+    "displayName": "Semanticus"
+  },
+  "plugins": [
+    {
+      "name": "semanticus",
+      "source": {
+        "source": "local",
+        "path": "./plugins/semanticus"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

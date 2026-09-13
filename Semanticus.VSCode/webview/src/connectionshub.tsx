@@ -785,7 +785,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
             micro={activeQuery ? 'This model already answers your tests and queries.' : 'Run queries and tests against this model. The model you are editing stays open.'}
             onClick={() => { if (stale) openAccountChoice(r, 'query'); else void queryWith(r); }} />
           <OutcomeButton label="Work locally" disabled={busyId != null} busy={busyId === 'work:' + r.id}
-            micro="Create or reopen a durable local copy. Publishing remains a separate choice."
+            micro="Work on a saved copy on this computer. Publish separately when you want to update the live model."
             onClick={() => void beginWork(r)} />
         </div>
       </div>
@@ -848,7 +848,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       <section className="flex flex-col px-5 py-4 min-[900px]:h-full">
         <div className="mb-3 flex items-start gap-3">
           <div className="min-w-0"><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Open a model</h2>
-            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Start a new model or reopen a remembered one. Saved endpoints are reused automatically.</p></div>
+            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Open a saved model, connect to a published model or start a new one. Your recent connections are remembered.</p></div>
           <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search models" className="ml-auto h-8 w-[210px] shrink-0 rounded-[5px] border px-2.5 text-[11px]" style={inputStyle} />
         </div>
 
@@ -867,7 +867,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           <h3 className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>Open a new model</h3>
           <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-4">
             <QuickCard glyph={'▱'} title="Local file or project" body="Open a BIM, TMDL, or Power BI project from disk." onClick={() => openLocalModel()} />
-            <QuickCard glyph="+" title="Published model" body="Add an XMLA endpoint once and remember it." onClick={() => openAddView()} />
+            <QuickCard glyph="+" title="Published model" body="Connect to a published Power BI or Fabric model." onClick={() => openAddView()} />
             <QuickCard glyph={'▣'} title="Running desktop model" body="Discover a running local model and query it." onClick={() => void connectRunningLocal()} />
             <QuickCard glyph="+" title="Create blank model" body="Name a new model and build it with AI Assistant." onClick={openCreate} />
           </div>
@@ -909,7 +909,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       <section className="px-5 py-4">
         <div className="flex items-start gap-3 mb-3">
           <div><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Current setup</h2>
-            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Each role is explicit. Changing a connection never publishes by itself.</p></div>
+            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Choose which model to edit, which one to test and where to publish. Changing these choices does not publish anything.</p></div>
           <button className={`${BTN} ml-auto`} onClick={() => setView('open')} style={inputStyle}>Choose a model</button>
         </div>
         <div className="grid grid-cols-2 gap-2 max-[760px]:grid-cols-1">
@@ -920,7 +920,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {/* Publish + reference are Current-setup roles, not ways to open, so they own their assignment here (they left
               the Open view entirely). Choosing a destination only links it; publishing stays a separate reviewed action. */}
           <RoleCard n={3} label="Publish to" value={roleValue(publishing, 'Not linked')}
-            detail={publishing?.available ? 'Publishing requires a separate review and confirmation.' : 'Choose an XMLA destination when you are ready to publish'} missing={!publishing?.available}
+            detail={publishing?.available ? 'Publishing requires a separate review and confirmation.' : 'Choose the live model you want to publish to'} missing={!publishing?.available}
             control={<label className="block text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>Set as publish destination
               <select value={publishing?.connectionId || ''} disabled={busyId != null} onChange={(e) => { const t = xmlaRecords.find((x) => x.id === e.target.value); if (t) void setPublish(t); }} className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px] font-normal" style={inputStyle}>
                 <option value="">Choose a published destination</option>
@@ -939,7 +939,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         <div className="mt-3 rounded-lg border p-3 text-[10px] leading-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
           <div><b style={{ color: 'var(--sem-fg)' }}>Open live</b> Edit and query the published model directly. No local files are created.</div>
           <div className="mt-1"><b style={{ color: 'var(--sem-fg)' }}>Query this model</b> Run queries and tests against this model. The model you are editing stays open.</div>
-          <div className="mt-1"><b style={{ color: 'var(--sem-fg)' }}>Work locally</b> Create or reopen a durable local copy. Publishing remains a separate choice.</div>
+          <div className="mt-1"><b style={{ color: 'var(--sem-fg)' }}>Work locally</b> Work on a saved copy on this computer. Publish separately when you want to update the live model.</div>
         </div>
       </section>
     );
@@ -1094,11 +1094,11 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       <section className="px-5 py-4">
         <button className={BTN_QUIET} style={{ color: 'var(--sem-accent)' }} onClick={() => setView('open')}>{'‹'} Back to models</button>
         <h2 className="mt-1 text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Add a published model</h2>
-        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Enter the location once. The saved model stays available when you switch accounts. This is the only place an endpoint is typed.</p>
+        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Enter the address of the workspace containing your model. Semanticus remembers it so you can reopen the model without entering the address again.</p>
         <form className="mt-3 max-w-[560px] rounded-lg border p-3 grid gap-2.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onSubmit={(e) => { e.preventDefault(); void addAndConnect(); }}>
           <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>XMLA endpoint
             <input data-testid="hub-endpoint-input" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="powerbi://api.powerbi.com/v1.0/myorg/Workspace" autoComplete="off" className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} />
-            <span className="text-[9px] font-normal" style={{ color: 'var(--sem-muted)' }}>The workspace endpoint from Power BI or Fabric.</span></label>
+            <span className="text-[9px] font-normal" style={{ color: 'var(--sem-muted)' }}>Paste the workspace connection address (XMLA endpoint) from the workspace settings in Power BI or Fabric.</span></label>
           <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Model name
             <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="Optional if the workspace has one model" autoComplete="off" className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} /></label>
           <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Sign-in
@@ -1135,7 +1135,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       <section className="px-5 py-4">
         <button className={BTN_QUIET} style={{ color: 'var(--sem-accent)' }} onClick={() => { setWork(null); setView('open'); }}>{'‹'} Back to models</button>
         <h2 className="mt-1 text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Work locally from {src ? nameOf(src) : 'this model'}</h2>
-        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Local files are the editable source. A running model is still required to execute tests and queries.</p>
+        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Edit the model files on this computer. To run queries and tests, also choose a live model with data.</p>
         {work && (
           <div className="mt-3 max-w-[640px] rounded-lg border p-3" style={{ borderColor: 'var(--sem-accent)', background: 'var(--sem-surface)' }}>
             <div className="grid grid-cols-2 gap-3 max-[600px]:grid-cols-1">
@@ -1177,7 +1177,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     <div ref={panelRef} tabIndex={-1} className="flex h-full min-h-0 w-full flex-col outline-none" style={{ background: 'var(--sem-bg)', color: 'var(--sem-fg)' }}>
       <header className="flex min-h-[52px] items-center gap-2.5 border-b px-4 py-2" style={{ borderColor: 'var(--sem-border)' }}>
         <div className="min-w-0"><h1 className="text-[15px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Connections</h1>
-          <p className="text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>One place to open models, assign roles, and manage sign-ins.</p></div>
+          <p className="text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Open a model, choose where tests run and manage your saved accounts.</p></div>
         <button className="ml-auto flex h-8 items-center gap-2 rounded-[5px] border px-1.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onClick={() => setView('accounts')} title="Manage the current account">
           <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} aria-hidden>{initials(signedInAccount)}</span>
           <span className="min-w-0 text-left"><span className="block text-[10px] font-semibold truncate max-w-[140px]" style={{ color: 'var(--sem-fg)' }}>{signedInAccount || 'Account unknown'}</span>

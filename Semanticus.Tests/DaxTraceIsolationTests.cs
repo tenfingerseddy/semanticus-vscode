@@ -8,6 +8,65 @@ namespace Semanticus.Tests
 {
     public sealed class DaxTraceIsolationTests
     {
+        private sealed class QueryCredential : Azure.Core.TokenCredential
+        {
+            public int Calls;
+            public bool Fail;
+            public override Azure.Core.AccessToken GetToken(Azure.Core.TokenRequestContext context, CancellationToken ct)
+            {
+                Interlocked.Increment(ref Calls);
+                if (Fail) throw new Azure.Identity.AuthenticationFailedException("Silent authentication unavailable");
+                return new Azure.Core.AccessToken("renewed-query-account", DateTimeOffset.UtcNow.AddHours(1));
+            }
+            public override ValueTask<Azure.Core.AccessToken> GetTokenAsync(Azure.Core.TokenRequestContext context, CancellationToken ct)
+                => ValueTask.FromResult(GetToken(context, ct));
+        }
+
+        [Fact]
+        public async Task Query_and_profile_lanes_renew_their_own_expiring_identity_before_work()
+        {
+            using var live = LiveConnection.ForTest("xmla", "query-target", "query-model", _ => new ResultSet());
+            var credential = new QueryCredential();
+            live.ConfigureAuthentication(new Azure.Core.AccessToken("old-query-account", DateTimeOffset.UtcNow.AddMinutes(1)), credential);
+
+            var callsAtProfileStart = await live.RunExclusiveAsync(() => Task.FromResult(credential.Calls));
+            Assert.Equal(1, callsAtProfileStart);
+            await live.ExecuteAsync("EVALUATE { 1 }", 1, 30);
+            Assert.Equal(1, credential.Calls);
+        }
+
+        [Fact]
+        public async Task Fresh_query_token_needs_no_authentication_round_trip()
+        {
+            using var live = LiveConnection.ForTest("xmla", "query-target", "query-model", _ => new ResultSet());
+            var credential = new QueryCredential();
+            live.ConfigureAuthentication(new Azure.Core.AccessToken("valid-query-account", DateTimeOffset.UtcNow.AddHours(1)), credential);
+            await live.ExecuteAsync("EVALUATE { 1 }", 1, 30);
+            Assert.Equal(0, credential.Calls);
+        }
+
+        [Fact]
+        public async Task Failed_early_renewal_keeps_a_valid_query_token_usable()
+        {
+            using var live = LiveConnection.ForTest("xmla", "query-target", "query-model", _ => new ResultSet());
+            live.ConfigureAuthentication(new Azure.Core.AccessToken("valid-query-account", DateTimeOffset.UtcNow.AddMinutes(1)), new QueryCredential { Fail = true });
+            var result = await live.ExecuteAsync("EVALUATE { 1 }", 1, 30);
+            Assert.False(result.AuthFailed);
+            Assert.Null(result.Error);
+        }
+
+        [Fact]
+        public async Task Failed_expired_renewal_returns_the_sign_in_result_without_running_a_query()
+        {
+            var queryCalls = 0;
+            using var live = LiveConnection.ForTest("xmla", "query-target", "query-model", _ => { queryCalls++; return new ResultSet(); });
+            live.ConfigureAuthentication(new Azure.Core.AccessToken("expired-query-account", DateTimeOffset.UtcNow.AddSeconds(2)), new QueryCredential { Fail = true });
+            await Task.Delay(2200);
+            var result = await live.ExecuteAsync("EVALUATE { 1 }", 1, 30);
+            Assert.True(result.AuthFailed);
+            Assert.Equal(0, queryCalls);
+        }
+
         [Fact]
         public async Task TraceOperationsOnOneConnectionAreSerialized()
         {

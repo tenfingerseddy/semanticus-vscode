@@ -2,7 +2,7 @@
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
   "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your AI Assistant co-edits the same live model.",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -47,6 +47,15 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "chatSkills": [
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-optimize-dax/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-ai-ready/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-interview-model/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-model-pr/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-distill-workflow/SKILL.md" },
+      { "path": "./assistant-pack/plugins/semanticus/skills/semanticus-curate-knowledge/SKILL.md" }
+    ],
     "languages": [
       {
         "id": "dax",
@@ -230,6 +239,7 @@
       { "command": "semanticus.amRlsOls", "title": "Manage Roles (RLS / OLS)…", "category": "Semanticus" },
       { "command": "semanticus.amDaxLib", "title": "Browse DaxLib / UDFs…", "category": "Semanticus" },
       { "command": "semanticus.connectClaudeCode", "title": "Connect AI Assistant", "category": "Semanticus", "icon": "$(plug)" },
+      { "command": "semanticus.installAssistantSkills", "title": "Install or Update Assistant Skills", "category": "Semanticus" },
       { "command": "semanticus.activateLicense", "title": "Activate License", "category": "Semanticus", "icon": "$(key)" },
       { "command": "semanticus.showLicense", "title": "Show License", "category": "Semanticus", "icon": "$(info)" },
       { "command": "semanticus.manageLicense", "title": "Pro Plans and Support", "category": "Semanticus", "icon": "$(link-external)" },
@@ -451,7 +461,10 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "check:lockfile": "node test/lockfile-drift.test.mjs",
     "build:webview": "cd webview && npm ci --no-fund --no-audit && npm run build && node ../test/source-byte-hygiene.test.mjs",
-    "build": "npm run build:webview && npm run compile",
+    "build": "npm run skills:check && npm run build:webview && npm run compile",
+    "skills:build": "node scripts/assistant-pack.mjs",
+    "skills:check": "node scripts/assistant-pack.mjs --check",
+    "skills:package": "node scripts/assistant-pack.mjs --zip",
     "package": "node scripts/package.mjs",
     "package:win": "node scripts/package.mjs win32-x64"
   },
@@ -465,6 +478,7 @@
     "@vscode/vsce": "^3.2.1",
     "tldts": "^7.4.8",
     "typescript": "^5.4.5",
-    "yauzl": "3.4.0"
+    "yauzl": "3.4.0",
+    "yazl": "2.5.1"
   }
 }

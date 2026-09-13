@@ -1,6 +1,6 @@
 name: Package and verify release
 
-# Marketplace publication is a manual portal step completed before the release tag. This workflow creates
+# Marketplace publication is a manual portal step using the finished packages. This workflow creates
 # and verifies the five release packages; it never publishes them (see RELEASE-CHECKLIST.md).
 on:
   push:
@@ -76,3 +76,14 @@ jobs:
           merge-multiple: true
       - name: Require five matching-host execution records and matching SHA-256 digests
         run: node Semanticus.VSCode/scripts/verify-vsix-matrix.mjs Semanticus.VSCode/dist
+      - name: Install packaging dependencies
+        working-directory: Semanticus.VSCode
+        run: npm ci --no-fund --no-audit
+      - name: Package the shared assistant skills download
+        working-directory: Semanticus.VSCode
+        run: npm run skills:package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semanticus-assistant-skills
+          path: Semanticus.VSCode/dist/semanticus-assistant-skills-*.zip
+          if-no-files-found: error

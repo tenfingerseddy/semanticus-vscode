@@ -9,6 +9,45 @@ All notable changes to Semanticus are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-09-13
+
+### Easier to learn
+
+- Every Studio page has a visible purpose and expandable getting-started steps. The Help button opens
+  complete page instructions, task search and a plain-language glossary. Search, Tests, Evidence and
+  Permissions now have their own guides.
+- Clearer connection, test, workflow, model-planning and performance messages explain what to enter,
+  what each action does and how to interpret the result. The BPA tab is now labelled Best practices.
+
+
+### Added: assistant skills included with every installer
+
+Seven customer skills cover getting started, DAX optimisation, AI readiness, model interviews,
+reviewed Change Plans, reusable workflows and model knowledge. Copilot can discover them directly
+from the extension on VS Code versions that support contributed skills. **Install or Update
+Assistant Skills** installs user skills for Claude Code or Codex and preserves customised files.
+Connect AI Assistant offers the same action after writing the MCP connection file.
+
+A versioned ZIP provides the same content as Claude Code and Codex plugins, plus portable skill
+folders for other compatible assistants. All packages are generated from one maintained source.
+The guides reflect current authentication, editable and query model separation, and the limits
+of DAX equivalence checks. Core orientation remains available through MCP without skills.
+
+### Fixed: persistent query authentication and demo workbench controls
+
+Live XMLA queries now renew their own account's access token silently before expiry and
+use ADOMD's token-renewal callback. Trace connections use the renewed token too. Renewal
+keeps the existing query target and session, including when the editable model is local
+or uses a different account. A failed early renewal leaves a still-valid token usable.
+
+DAX Lab Verify can select context fields across tables independently of the visual, and
+changing those fields marks earlier evidence stale. Visual Debug automatically wraps
+measure expressions in EVALUATEANDLOG. Profile separates query time from trace setup and
+does not present missing storage-engine scans as proof of formula-engine-only work.
+
+Model Spec can return to its starting choices and resume an unsaved draft. Workflow
+Governance has an explicit project-profile selector and reports profile-loading errors.
+
 ## [1.1.2] - 2026-09-12
 
 Post-fix UAT release, including the merged save, publish, workflow Submit, licence,

@@ -338,7 +338,7 @@ export function DiffView({ diff, leftLabel, rightLabel, selected, onSelectedChan
   const visible = onlyDiffs ? changed : diff.items;
 
   const MODES: { id: DiffMode; label: string; hint: string }[] = [
-    { id: 'review', label: 'Review', hint: 'PR-style cards you can select and merge' },
+    { id: 'review', label: 'Review', hint: 'Review each difference and choose which changes to apply' },
     { id: 'side', label: 'Side by side', hint: 'Word-level before/after for one object' },
   ];
 

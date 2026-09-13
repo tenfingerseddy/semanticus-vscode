@@ -70,10 +70,10 @@ function useMountedRef() {
 
 // The five named presets, strictness ascending — one plain-English line each (the engine's gradient made legible).
 const PRESETS: { id: string; name: string; desc: string }[] = [
-  { id: 'open', name: 'Open', desc: 'No friction, even production.' },
+  { id: 'open', name: 'Open', desc: 'Allows the listed actions in every environment.' },
   { id: 'standard', name: 'Standard', desc: 'Asks before touching UAT or production.' },
   { id: 'cautious', name: 'Cautious', desc: 'Asks for anything beyond local.' },
-  { id: 'client', name: 'Client', desc: 'Production is a wall; no data preview off UAT or production.' },
+  { id: 'client', name: 'Client', desc: 'Blocks production changes and reading rows from UAT or production.' },
   // Locked's two distinguishing cells are "refused" on uat/prod and "asks" on local/dev (AgentPolicy.cs), so the
   // line has to lead with the refusal. It used to say "asks even locally" alone, which read as "it always asks"
   // and left the reader unprepared for a hard refusal on a published model (D-213).
@@ -89,7 +89,7 @@ const ROWS: RowDef[] = [
   { cap: 'QueryData', title: 'Preview data', sub: 'Show rows of source data: table previews, measure pivots, and row-returning DAX queries. Calculation checks can still show the category labels they group by.', kind: 'gated' },
   { cap: 'EditLocal', title: 'Edit the working model', sub: 'Never touches a live target.', kind: 'localAllow' },
   { cap: 'DeployFile', title: 'Write model files', sub: 'Never touches a live target.', kind: 'localAllow' },
-  { cap: 'DeployLive', title: 'Deploy to a published model', sub: 'Push metadata changes to a live model.', kind: 'gated' },
+  { cap: 'DeployLive', title: 'Deploy to a published model', sub: 'Publish changes to the design of a live model.', kind: 'gated' },
   { cap: 'DeployDelete', title: 'Delete from a published model', sub: 'Remove an object from a live model. Irreversible.', kind: 'gated' },
   { cap: 'Rollback', title: 'Roll back a published model', sub: 'Restore a live model to an earlier checkpoint.', kind: 'gated' },
   { cap: 'Refresh', title: 'Refresh live data', sub: 'Refresh a partition on the live model.', kind: 'gated' },
@@ -235,8 +235,7 @@ function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, on
       {policy && isUnreadable && (
         <div className="mt-3">
           <Banner color="var(--sem-warn)">
-            Your saved permission settings couldn’t be read, so the assistant is on safe fail-closed defaults:
-            every live action is denied until you repair it. Pick a preset below to reset.
+            Your saved permission settings could not be read. Live actions are blocked until the settings are restored. Choose a preset below to reset them.
           </Banner>
         </div>
       )}
@@ -293,7 +292,7 @@ function GuardrailSwitch({ enabled, disabled, onToggle }: { enabled: boolean; di
       <div className="flex items-center gap-2">
         <span className="text-[12px] font-medium">Agent guardrail</span>
         <button role="switch" aria-checked={enabled} disabled={disabled} onClick={() => onToggle(!enabled)}
-          title={enabled ? 'On: the assistant is being gated. Click to turn off.' : 'Off: the assistant is not being gated. Click to turn on.'}
+          title={enabled ? 'On: these permission checks apply to the assistant. Click to turn off.' : 'Off: these permission checks are disabled. Click to turn on.'}
           className="relative rounded-full transition-colors disabled:opacity-60" style={{ width: 40, height: 22,
             background: enabled ? 'var(--sem-accent)' : 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
           <span className="absolute rounded-full transition-all" style={{ width: 16, height: 16, top: 2,
@@ -671,8 +670,7 @@ function TargetsPanel() {
     <Panel>
       <SectionTitle>Targets</SectionTitle>
       <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        Label each connection so the guardrail knows what it is. An unlabelled target is treated as production.
-        Labelling is free: it is the declaration the assistant’s permissions are gated on.
+        Label each connection as local, development, testing (UAT) or production. The label chooses which permissions apply. Connections without a label use the production settings. Adding a label is free.
       </div>
       {conns === null && err ? (
         <div className="mt-2 flex items-start gap-2">

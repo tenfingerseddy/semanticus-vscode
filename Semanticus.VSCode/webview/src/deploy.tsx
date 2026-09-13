@@ -436,7 +436,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
           preview={restorePreview} result={restoreResult} error={restoreErr} busy={restoreBusy}
           onPreview={previewRollback} onConfirm={confirmRollback} onReload={loadRestorePoints} />}
         {mode === 'advanced' && <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-          <div className="text-[11px] mb-2" style={{ color: 'var(--sem-muted)' }}>Less-common release and consumption tools stay available without competing with Publish, Roll back or Promote.</div>
+          <div className="text-[11px] mb-2" style={{ color: 'var(--sem-muted)' }}>Connect source control, sync a Fabric workspace, set up automated delivery or publish a Data Agent.</div>
           <div className="flex items-center gap-2 flex-wrap">
             <ModeBtn active={advancedView === 'delivery'} onClick={() => setAdvancedView('delivery')}>Delivery tools</ModeBtn>
             <ModeBtn active={advancedView === 'dataagent'} onClick={() => setAdvancedView('dataagent')}>Data Agent</ModeBtn>
@@ -495,7 +495,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
       </Panel>}
 
       {/* ── DEPLOYMENT PIPELINE (Fabric — read-only discovery this phase) ───────────── */}
-      {mode === 'promote' && <Panel title="Promote" sub="move a model between governed stages">
+      {mode === 'promote' && <Panel title="Promote" sub="Move a model between development, test and production stages.">
         {pipeErr && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{pipeErr}</div>}
         {pipelines === null ? (
           <>
@@ -800,12 +800,12 @@ function RollbackPanel({ points, selectedId, onSelect, preview, result, error, b
     <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-[13px] font-semibold">Roll back</span>
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>preview the live target against a pre-push snapshot, then confirm</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Choose a saved version and review the changes before restoring it.</span>
       </div>
       {error && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{error}</div>}
       {points.length === 0 ? (
         <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-          No restore points are available for this target. A committed push writes one before changing published metadata.
+          No restore points are saved for this destination yet. Publishing saves one before changing the live model design.
           <button onClick={onReload} className="underline ml-1" disabled={busy === 'load'}>Refresh</button>
         </div>
       ) : (

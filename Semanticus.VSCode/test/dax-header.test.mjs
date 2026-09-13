@@ -576,7 +576,7 @@ test('the help WHERE index folds the zero-dialog creates but keeps hierarchy + d
     // 'Create a hierarchy' and 'Set a description or display folder' are honest RESTORATIONS (real tasks with a real
     // home) — folding them into the DAX-editor claim would have been false. The "index shrank" metric is measured across
     // the whole tree program, not this PR, so net task-coverage is unchanged. No deletion.
-    assert.equal(count, 39, 'the index is 39 entries (2 honest restorations kept; see MEDIUM 5 adjudication above)');
+    assert.equal(count, 55, '39 existing task entries plus 8 getting-started tasks and 8 term explanations');
     assert.doesNotMatch(block, /q: 'Create a measure',/, 'the standalone "Create a measure" entry is gone (one gesture, self-evident)');
     assert.match(block, /Create a measure, calculated column, calculated table, calculation item, or function/, 'a single create entry covers the five zero-dialog kinds');
     // MEDIUM 6: hierarchy creation (NOT zero-dialog) keeps its own honest entry rather than being folded into the

@@ -9,3 +9,6 @@
 # on every commit. That failure looks like the hook being broken rather than the register being checked, and
 # a hook that errors for an unrelated reason is worse than no hook: people delete it.
 .githooks/* text eol=lf
+
+# The assistant pack records content hashes, so its installed bytes must match on every platform.
+Semanticus.VSCode/assistant-pack/** text eol=lf

@@ -41,7 +41,7 @@ const webRoot = resolve(__dir, '..', '..');          // Semanticus.VSCode/ (so /
 const STUDIO_TABS = [
   'Diagram', 'Search', 'Lineage', 'Data', 'Storage',
   'Model Spec', 'Advanced Modelling', 'M Code', 'DAX Lab', 'Change Plan',
-  'AI Readiness', 'BPA',
+  'AI Readiness', 'Best practices',
   'Tests', 'Evidence',
   'Deploy', 'Permissions', 'Docs',
   'Primer', 'Workflows', 'Edit History',

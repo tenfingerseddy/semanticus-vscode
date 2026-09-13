@@ -18,8 +18,8 @@ assert.ok(aiReady >= 0 && hardMeasure > aiReady, 'AI-ready and hard-measure must
 assert.ok(monthEnd > hardMeasure, 'Month-end close must remain available below the two hero jobs');
 assert.match(scenarios, /SCENARIOS\.filter\(\(s\) => s\.hero\)/, 'the picker must render an explicit hero tier first');
 assert.match(scenarios, /s\.kind === 'template' && !s\.hero/, 'hero templates must not be duplicated in the depth tier');
-assert.match(scenarios, /lock the expected values[\s\S]*author one candidate[\s\S]*independent raw-row witness/i,
-  'the featured card must describe the requirement-anchored witness workflow, not the old oracle flow');
+assert.match(scenarios, /Define the business rule[\s\S]*trusted answers from source rows[\s\S]*test it against those answers/i,
+  'the featured card explains that independent source answers are established before testing the calculation');
 for (const [name, text] of [['featured template', template], ['executable workflow', canonical]]) {
   assert.match(text, /## Step 1: Fix the specification[\s\S]*## Step 2: Lock the expected values/,
     `${name} must use the requirement-first, test-first spine`);

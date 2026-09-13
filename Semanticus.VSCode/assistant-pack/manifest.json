@@ -1,0 +1,40 @@
+{
+  "version": "1.1.3",
+  "skills": [
+    {
+      "name": "semanticus",
+      "path": "plugins/semanticus/skills/semanticus/SKILL.md",
+      "sha256": "f7415b75f8893a5585dc7b1b265fcc2075e535ef4608a754ddf3cc31ce6e1f3c"
+    },
+    {
+      "name": "semanticus-optimize-dax",
+      "path": "plugins/semanticus/skills/semanticus-optimize-dax/SKILL.md",
+      "sha256": "da75f65f3056a1d533c6bf1a40e56f7a53ab886df87a02767c77430a06938510"
+    },
+    {
+      "name": "semanticus-ai-ready",
+      "path": "plugins/semanticus/skills/semanticus-ai-ready/SKILL.md",
+      "sha256": "ec11b6f1b896d7171d1852339bb808342d0f189072ee8195892196a5cc8481d5"
+    },
+    {
+      "name": "semanticus-interview-model",
+      "path": "plugins/semanticus/skills/semanticus-interview-model/SKILL.md",
+      "sha256": "42af459e82cde0660ed1612f816262a3f0d46dcdb7f6024ea10db3e36a5e42c7"
+    },
+    {
+      "name": "semanticus-model-pr",
+      "path": "plugins/semanticus/skills/semanticus-model-pr/SKILL.md",
+      "sha256": "9cb18b6b9589868a2a1b09631a5736db7049974ddaa4249b2c7d1db208f27d60"
+    },
+    {
+      "name": "semanticus-distill-workflow",
+      "path": "plugins/semanticus/skills/semanticus-distill-workflow/SKILL.md",
+      "sha256": "d7328553bb21fcb17e0b78af0e289a6590621b7417e98da2e0d045079b39def6"
+    },
+    {
+      "name": "semanticus-curate-knowledge",
+      "path": "plugins/semanticus/skills/semanticus-curate-knowledge/SKILL.md",
+      "sha256": "f32820e93e6a5548830bb925fa15624962f6052848ebb093f76e1aa2142b82fc"
+    }
+  ]
+}

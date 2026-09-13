@@ -27,7 +27,7 @@ const publicDocs = [
 
 for (const [name, text] of publicDocs) {
   assert.doesNotMatch(text, /\u2014/u, `${name} contains an em dash`);
-  assert.doesNotMatch(text, /\b(?:Claude|Anthropic)\b/iu, `${name} names a provider instead of AI Assistant`);
+  assert.doesNotMatch(text, /(?:Claude|Anthropic)-powered/iu, `${name} implies Semanticus provides AI inference`);
   assert.doesNotMatch(text, /(?:Not supported in 1\.0|Source and CI coverage only)/iu,
     `${name} retains a pre-1.0.1 platform claim`);
 }
@@ -44,15 +44,15 @@ assert.match(changelog, /## \[1\.0\.1\] - 2026-07-14/u);
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');
 assert.equal(packageJson.version, packageLock.version, 'package.json and package-lock.json versions differ');
 assert.equal(packageJson.version, packageLock.packages[''].version, 'root package-lock entry has a different version');
-assert.equal(packageJson.version, '1.1.2', 'release package version is not 1.1.2');
+assert.equal(packageJson.version, '1.1.3', 'release package version is not 1.1.3');
 assert.match(checklist, new RegExp(`package\\.json.*${packageJson.publisher}`, 'su'),
   'release checklist does not name the package publisher awaiting human ownership verification');
 assert.doesNotMatch(checklist, /replace `?"publisher": "kane"`?/u,
   'release checklist still asks for an obsolete publisher replacement');
 assert.doesNotMatch(checklist, /VSCE_PAT/u,
   'the manual Marketplace route must not ask for an unused publication secret');
-assert.match(checklist, /Marketplace portal upload[\s\S]*before[\s\S]*Tag the release/iu,
-  'the checklist must upload through the portal before creating the release tag');
+assert.match(checklist, /Marketplace portal upload[\s\S]*after the packages pass verification/iu,
+  'manual publication must use the finished verified packages');
 assert.match(checklist, /publish\.yml[\s\S]*packages and verifies[\s\S]*does not publish/iu,
   'the checklist must state that the tag workflow never publishes');
 
@@ -61,8 +61,8 @@ assert.match(checklist, /publish\.yml[\s\S]*packages and verifies[\s\S]*does not
 test('private Marketplace acceptance procedure', { skip: !privateTree && 'private procedure excluded from this source snapshot' }, () => {
 assert.doesNotMatch(acceptance, /VSCE_PAT/u,
   'the RC acceptance procedure still requires a secret the manual portal route never uses');
-assert.match(acceptance, /portal upload[\s\S]{0,400}?before[\s\S]{0,400}?tag/iu,
-  'the RC acceptance procedure must place the manual portal upload before the release tag');
+assert.match(acceptance, /portal upload of the verified packages/iu,
+  'the RC acceptance procedure must require the verified packages for manual publication');
 assert.match(acceptance, /publish\.yml[\s\S]{0,200}?packages and verifies[\s\S]{0,200}?does not publish/iu,
   'the RC acceptance procedure must state that the tag workflow never publishes');
 });

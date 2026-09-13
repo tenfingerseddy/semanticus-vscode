@@ -18,7 +18,7 @@ assert.match(tests, /rpc<EvidenceArtifactW>\('getEvidence', openEvidence\.id\)/,
 assert.match(tests, /rpc<EvidenceSaveResultW>\('saveEvidence', 'tests'/, 'Test reports must save through the shared engine operation');
 assert.match(workflows, /rpc<EvidenceSaveResultW>\('saveEvidence', 'workflow'/, 'Workflow reports must save through the shared engine operation');
 assert.match(dialog, /Save with model/, 'the shared report dialog must name the durable action plainly');
-assert.match(dialog, /export alone writes nothing/, 'the dialog must distinguish a local export from model-scoped evidence');
+assert.match(dialog, /Save the report and its data beside this model\. Export saves a separate copy/, 'the dialog must distinguish a local export from model-scoped evidence');
 assert.match(app, /tab === 'evidence'[\s\S]*<EvidenceView/, 'the Evidence peer must render the shared model library');
 
 console.log('evidence library UI contract tests passed');

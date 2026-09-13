@@ -23,6 +23,7 @@ import {
     type ResolvedEngine,
 } from './engineResolution';
 import { canUseOsKeychain, mcpLaunchArgs, ownerServeArgs, ownerStdinPayload } from './licenseDelivery';
+import { installAssistantSkills } from './assistantSkills';
 import { normFolder, folderParts, folderRef, parentFolderPath, leafFolderName, groupFolderLevel } from './folders';
 import { migrateLegacyXmlaEntries, type LegacyRecentXmla } from './legacyXmlaMigration';
 import { getUiChallenge, RpcHandshakeRejectedError, rpcRolePreamble, waitForRpcHandshake } from './rpcAuth';
@@ -359,6 +360,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('semanticus.amDaxLib', () => navigateStudio(context, 'advmodels', 'area:daxlib')),
         // Ship-gater: wire the user's own Claude Code (a separate product that reads only its OWN .mcp.json) to this engine.
         vscode.commands.registerCommand('semanticus.connectClaudeCode', () => connectClaudeCodeCmd()),
+        vscode.commands.registerCommand('semanticus.installAssistantSkills', () => installAssistantSkillsCmd()),
         vscode.commands.registerCommand('semanticus.setReferenceModel', () => setReferenceModelCmd()),
         vscode.commands.registerCommand('semanticus.refreshReferenceModel', () => loadReferenceModel()),
         vscode.commands.registerCommand('semanticus.clearReferenceModel', () => clearReferenceModel()),
@@ -4113,8 +4115,31 @@ async function connectClaudeCodeCmd(): Promise<void> {
     const pick = await vscode.window.showInformationMessage(
         'Wrote the connection file for the AI Assistant. Nothing is connected yet: restart it in this folder (or refresh its tools) so it reads the file. Keep VS Code open so Studio holds the shared live session.',
         'Open .mcp.json',
+        'Install assistant skills',
     );
     if (pick === 'Open .mcp.json') void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(target));
+    if (pick === 'Install assistant skills') await installAssistantSkillsCmd();
+}
+
+async function installAssistantSkillsCmd(): Promise<void> {
+    const selected = await vscode.window.showQuickPick([
+        { label: 'Claude Code', folder: '.claude', description: 'Install or update skills for all your projects' },
+        { label: 'Codex', folder: '.agents', description: 'Install or update skills for all your projects' },
+        { label: 'GitHub Copilot', folder: '', description: 'Included in this extension on supported VS Code versions' },
+        { label: 'Other assistant / plugin download', folder: '', description: 'Open the installation guide' },
+    ], { title: 'Semanticus assistant skills', placeHolder: 'Choose the assistant that uses your Semanticus MCP connection' });
+    if (!selected) return;
+    if (!selected.folder) {
+        await vscode.env.openExternal(vscode.Uri.parse('https://semanticus.com.au/docs/assistant-skills'));
+        return;
+    }
+    try {
+        const result = installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), selected.folder, 'skills'));
+        const preserved = result.preserved.length ? ` Kept your customised files: ${result.preserved.join(', ')}.` : '';
+        await vscode.window.showInformationMessage(`Semanticus ${result.version}: installed or updated ${result.installed.length} skills for ${selected.label}.${preserved} Refresh or restart your assistant if they do not appear.`);
+    } catch (e: any) {
+        await vscode.window.showErrorMessage(`Could not install Semanticus skills: ${e?.message ?? e}`);
+    }
 }
 
 // ---- object authoring / editing from the tree ------------------------------------------------

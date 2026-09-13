@@ -31,6 +31,7 @@ namespace Semanticus.Engine
         /// <summary>Wall-clock wait on this machine, including the round trip. Distinct from <see cref="TotalMs"/>
         /// which is server Duration when a trace is attached (and can be 0 ms for a cached query).</summary>
         public long WallMs { get; set; }
+        public long SetupMs { get; set; }
         public long FeMs { get; set; }            // Formula Engine = Total - SE
         public long SeMs { get; set; }            // Storage Engine (sum of SE query durations)
         public long SeCpuMs { get; set; }
@@ -209,16 +210,16 @@ namespace Semanticus.Engine
             var seMs = Math.Min(se.Sum(r => r.DurationMs), total); // sub-scans can sum past total; cap for sanity
             var seCpu = se.Sum(r => r.CpuMs);
 
-            // No SE rows => either a genuine no-scan answer (cache/metadata) or the trace captured nothing. Attach
-            // diagnostics (warm-up result + raw event count) so the cause is visible during the cloud bring-up.
+            // Missing scan events do not establish that the entire duration was Formula Engine work.
             var note = se.Count > 0 ? null
-                : (qe != null ? "Answered with no storage-engine scan (cached or metadata-only): Formula-Engine time only. " : "")
+                : (qe != null ? "The query completed, but no storage-engine scans were captured. A cached or metadata-only answer and missing scan events can look the same. Use Cold/Warm to compare another run. " : "The trace did not capture a completed query; only elapsed time is available. ")
                   + TraceDiag(live, warmupMs, snap.Count, $"qe={(qe != null ? 1 : 0)} se=0 cache={cacheHits}");
 
             return new ServerTimings
             {
                 TotalMs = total,
                 WallMs = wallMs,
+                SetupMs = warmupMs,
                 SeMs = seMs,
                 SeCpuMs = seCpu,
                 FeMs = Math.Max(0, total - seMs),
@@ -427,7 +428,7 @@ namespace Semanticus.Engine
                 ElapsedMs = rs.ElapsedMs,
                 Error = string.IsNullOrEmpty(rs.Error) ? null : rs.Error,
                 Note = entries.Length == 0
-                    ? "Query ran but no EVALUATEANDLOG output was captured: add EVALUATEANDLOG(<expr>, \"label\") around the sub-expressions you want to inspect. "
+                    ? "No evaluation-log events were captured. Visual mode adds logging to each measure. In Query mode, wrap the expressions to inspect in EVALUATEANDLOG. If logging is already present, the expression may not run or the endpoint may not emit events. "
                       + TraceDiag(live, warmupMs, raw[0], $"log={snap.Count}")
                     : null,
             };

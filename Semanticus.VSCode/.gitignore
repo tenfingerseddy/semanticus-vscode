@@ -11,3 +11,5 @@ media/studio/studio.js
 media/studio/studio-mcode.js
 out/extension.js
 out/extension.js.map
+out/assistantSkills.js
+out/assistantSkills.js.map

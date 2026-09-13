@@ -134,7 +134,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
       <div className="flex items-center gap-2">
         <div>
           <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Model Interview</div>
-          <div className="text-[13px] font-semibold mt-0.5">Behavioral contracts</div>
+          <div className="text-[13px] font-semibold mt-0.5">Business questions and expected answers</div>
         </div>
         <div className="ml-auto flex gap-1.5 shrink-0">
           {questions.length > 0 && (
@@ -268,7 +268,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
         withOrigin
       />
       <StrayList
-        title="Unattributed"
+        title="Model not identified"
         hint="Saved before questions were tied to a model. We can't tell which model they belong to, so they aren't run against this one. Re-save them while this model is open to keep them, or remove them."
         items={unattributed}
       />

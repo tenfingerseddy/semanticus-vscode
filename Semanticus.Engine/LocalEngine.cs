@@ -823,18 +823,11 @@ namespace Semanticus.Engine
             if (SilentQueryRenewForTests != null) return await SilentQueryRenewForTests().ConfigureAwait(false);
             if (expected == null || !string.Equals(expected.Kind, "xmla", StringComparison.OrdinalIgnoreCase)) return false;
             if (!ReferenceEquals(_live, expected)) return false;
-            var session = _sessions.Current;
-            var origin = session?.LiveOrigin;
-            if (origin == null || string.IsNullOrWhiteSpace(origin.Endpoint)) return false;
             try
             {
-                var mode = string.IsNullOrWhiteSpace(origin.AuthMode) ? "interactive" : origin.AuthMode;
-                var prepared = await EntraToken.BuildCredentialAsync(mode, origin.TenantId, System.Threading.CancellationToken.None, disableInteractive: true).ConfigureAwait(false);
-                if (prepared?.Credential == null) return false;
-                var tok = await EntraToken.GetTokenAsync(prepared.Credential, System.Threading.CancellationToken.None).ConfigureAwait(false);
-                var cs = LiveConnection.XmlaConnectionString(origin.Endpoint, origin.Database, tok.Token);
-                session.CacheLiveToken(LiveAuthKey(mode, origin.TenantId, prepared.HomeAccountId), tok);
-                return await TryBindLiveAsync("xmla", origin.Endpoint, cs, NewLiveIntent(), session, prepared.Account).ConfigureAwait(false);
+                // The query target may differ from the editing model, and the tenant default may have changed.
+                // Renew the existing connection's pinned credential without replacing either model or session.
+                return await expected.RunExclusiveAsync(() => expected.RenewAuthenticationAsync(force: true)).ConfigureAwait(false);
             }
             catch
             {
@@ -935,8 +928,8 @@ namespace Semanticus.Engine
             var token = cred != null
                 ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
                 : await EntraToken.AcquireFullAsync(mode, rawToken, System.Threading.CancellationToken.None, tenant);
-            var cs = LiveConnection.XmlaConnectionString(endpoint, database, token.Token);
-            var conn = await LiveConnection.OpenAsync("xmla", endpoint, cs);
+            var cs = LiveConnection.XmlaConnectionString(endpoint, database, null);
+            var conn = await LiveConnection.OpenAsync("xmla", endpoint, cs, token, SilentQueryCredential(cred, prepared, mode, tenant));
             // The account this sign-in resolved to — the identity the credential was ACTUALLY constructed with (the
             // freshly captured record, else the saved record we pinned), read from the SAME once-loaded snapshot the
             // credential was built from (round-10 HIGH). NOT a fresh ReadSavedAccount disk read: that could see a Bob a
@@ -3091,7 +3084,7 @@ namespace Semanticus.Engine
                     "signing in or opening the model failed; the saved account was left unchanged", ex);
                 throw;
             }
-            var liveCs = LiveConnection.XmlaConnectionString(endpoint, snap.DatabaseName, tok.Token);
+            var liveCs = LiveConnection.XmlaConnectionString(endpoint, snap.DatabaseName, null);
             OpenResult open;
             Session session;
             string account;
@@ -3156,7 +3149,8 @@ namespace Semanticus.Engine
             // connection too, REUSING the one token from above (so interactive prompts the browser exactly once).
             // Best-effort: the editable session is the primary outcome; if the ADOMD attach fails, leave _live null
             // (Studio offers to attach) rather than failing the whole open. Rides the OPEN's intent ticket + session.
-            open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session, account);
+            open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session, account,
+                accessToken: tok, silentCredential: SilentQueryCredential(cred, prepared, mode, tenant));
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
             return open;
         }
@@ -3232,10 +3226,22 @@ namespace Semanticus.Engine
         // The publish is gated twice: on the OPEN's intent ticket (a connect/disconnect issued after this open
         // started is a newer intent — the rebind must lose to it, never displace it) AND on the session still being
         // Current (a model swapped in behind us must not get the previous model's endpoint attached).
-        private async Task<bool> TryBindLiveAsync(string kind, string dataSource, string connectionString, long ticket, Session forSession, string account = null, LocalDesktop.DesktopIdentity desktopId = null)
+        private static Azure.Core.TokenCredential SilentQueryCredential(Azure.Core.TokenCredential opened,
+            EntraToken.PreparedCredential prepared, string mode, string tenant)
+        {
+            // A saved profile can choose a different credential family from the request's default auth mode.
+            var family = opened is Azure.Identity.InteractiveBrowserCredential ? "interactive"
+                : opened is Azure.Identity.DeviceCodeCredential ? "devicecode" : null;
+            var record = prepared?.RecordForSlotSeed;
+            return family == null ? opened
+                : EntraToken.BuildCredentialFromRecord(family, record?.TenantId ?? tenant, record, disableInteractive: true);
+        }
+
+        private async Task<bool> TryBindLiveAsync(string kind, string dataSource, string connectionString, long ticket, Session forSession, string account = null, LocalDesktop.DesktopIdentity desktopId = null,
+            Azure.Core.AccessToken? accessToken = null, Azure.Core.TokenCredential silentCredential = null)
         {
             LiveConnection conn;
-            try { conn = await LiveConnection.OpenAsync(kind, dataSource, connectionString); }
+            try { conn = await LiveConnection.OpenAsync(kind, dataSource, connectionString, accessToken, silentCredential); }
             catch { return false; }
             conn.Account = account;   // the identity this query connection authenticated as — a status read reports THIS, not a registry hint
             conn.DesktopName = desktopId?.Stem;       // local Desktop opens carry the captured identity (null elsewhere)

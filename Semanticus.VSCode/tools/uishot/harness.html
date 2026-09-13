@@ -2885,6 +2885,7 @@
     var want = decodeURIComponent((location.hash || '').slice(1)).trim();
     if (!want) return;
     var w = want.toLowerCase();
+    w = ({ 'edit history': 'edits', 'bpa': 'best practices' })[w] || w;
     var tries = 0, groupIdx = 0;
     var iv = setInterval(function () {
       // 1. Exact match on ANY button (primary lifecycle groups + the active group's secondary tab row + the

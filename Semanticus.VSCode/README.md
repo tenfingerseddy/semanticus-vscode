@@ -3,7 +3,7 @@
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own AI Assistant on one live model.**
 
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
-[Download 1.1.2](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.2)
+[Download 1.1.3](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.3)
 
 Semanticus brings model editing, DAX and M, best practices, lineage, tests and deployment into one workbench.
 Open a local project or connect to a model. Make a change, check what it affects and review the difference before
@@ -22,6 +22,28 @@ prepare a Change Plan. Inspect and adjust the result in the workbench, and undo 
 
 Semanticus runs no AI inference and holds no model-provider API keys. Bring your own MCP-compatible assistant
 and account. The [MCP reference](https://semanticus.com.au/docs/mcp-tools) documents 313 operations.
+
+## Help as you work
+
+Every Studio page explains its purpose and offers three **Getting started** steps. **Help** opens a detailed
+guide, a searchable list of tasks and explanations of common terms. You can read more when you need it
+without leaving the workbench.
+
+## Skills for your assistant
+
+Seven optional guides help your assistant use Semanticus: getting started, DAX optimisation, AI readiness,
+model interviews, Change Plans, reusable workflows and model knowledge.
+
+Run **Semanticus: Install or Update Assistant Skills** to install or update guides for Claude Code or Codex.
+Copilot can load the bundled skills directly on VS Code versions supporting extension-provided skills.
+The same content is available as a versioned plugin pack and portable skill folders.
+
+[Install and use the skills](https://semanticus.com.au/docs/assistant-skills) ·
+[Download the skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/download/v1.1.3/semanticus-assistant-skills-1.1.3.zip)
+
+Skills use your existing MCP connection. Connect AI Assistant writes the connection file for clients using
+`.mcp.json`; the setup guide explains the equivalent configuration for other clients. Core orientation also
+comes from MCP, so an assistant can work without installing skills.
 
 ## Tools for the whole model journey
 
@@ -60,19 +82,19 @@ reload. Every installer bundles its engine, so you do not need a separate .NET r
 | macOS Intel | Supported release package | Offline models and remote XMLA and Fabric connections |
 | macOS Apple Silicon | Supported release package | Offline models and remote XMLA and Fabric connections |
 
-Get the matching 1.1.2 installer and checksum from the
-[GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.2).
+Get the matching 1.1.3 installer and checksum from the
+[GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.3).
 Marketplace publication is separate, so the version offered there can differ.
 
-## What's new in 1.1.2
+## What's new in 1.1.3
 
-The post-UAT fixes cover Save, Publish, workflow Submit, licence handling, object copying, DAX and M validation,
-stale Change Plans and MCP startup. Workflow authoring adds saved-source editing, shared Canvas layouts, nested
-calls with inputs and answers, and reviewed workflow format upgrades.
+The release includes seven assistant skills and an install/update command, plus a downloadable plugin pack.
+Query authentication renews silently while the saved sign-in remains valid. DAX Lab Verify can select contexts
+across tables, Visual Debug instruments measure expressions, and Profile separates trace setup from query time
+without treating missing storage scans as proof of formula-engine-only work.
 
-Installed Linux checks and a live Publish-and-restore round trip passed. Linux and Windows automated checks passed.
-Each release installer is built on a matching runner and its bundled engine is extracted and executed.
-Read the [release notes](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.2) for details.
+Model Spec can return to its starting choices and resume a draft. Workflow Governance includes a project-profile
+selector. Read the [release notes](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.1.3) for details.
 
 ## Free and Pro
 

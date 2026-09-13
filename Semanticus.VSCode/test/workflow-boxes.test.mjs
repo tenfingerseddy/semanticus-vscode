@@ -443,8 +443,8 @@ assert.doesNotMatch(design, /lossy \? \(\s*<span[^>]*>Read-only workflow/,
   'lossy must not replace Customise and Delete with a dead Read-only label');
 assert.match(design, /readOnlyStock && !editing/,
   'Customise stays on the stock read-only path, including lossy stock');
-assert.match(design, /doesn't parse/);
-const parseErrAt = design.indexOf("doesn't parse");
+assert.match(design, /workflow file has a format error/);
+const parseErrAt = design.indexOf('workflow file has a format error');
 const parseErrPanel = design.slice(parseErrAt, design.indexOf('</Panel>', parseErrAt));
 assert.match(design, /deleteWorkflow/);
 assert.match(parseErrPanel, /delNamed|Delete/, 'an unparseable user copy must offer Delete');

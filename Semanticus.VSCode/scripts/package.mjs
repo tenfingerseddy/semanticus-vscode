@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { verifyVsix } from './verify-vsix.mjs';
 import { writeVsixEvidence } from './verify-vsix-matrix.mjs';
+import { prepareAssistantPack } from './assistant-pack.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const extRoot = path.resolve(scriptDir, '..');
@@ -136,6 +137,7 @@ if (!arg) {
 
 // Build the (platform-agnostic) webview ONCE, then publish + package the engine per target.
 const npmCli = resolveNpmCli();
+prepareAssistantPack({ check: true });
 run(process.execPath, [npmCli, 'run', 'build:webview']);
 run(process.execPath, [npmCli, 'run', 'compile']);
 

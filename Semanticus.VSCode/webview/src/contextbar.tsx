@@ -50,7 +50,7 @@ function syncVerdict(s: SessionInfo | null, conn: ConnectionStatus | null): { to
   // only true of an XMLA endpoint. Same verdict logic as the native status-bar chip (extension.ts renderSyncChip);
   // the two must not disagree.
   if (conn.kind === 'local') return { tone: 'neutral', label: 'Local model', detail: 'Tests and queries use an attached local running model.' };
-  return { tone: 'neutral', label: 'Published model', detail: 'Querying the published model. Reflects the last deploy.' };
+  return { tone: 'neutral', label: 'Published model', detail: 'Results come from the last published version of the model.' };
 }
 
 // Build the Compare refs a click seeds. left = what you're EDITING (the working copy, the only ref that carries staged
@@ -123,7 +123,7 @@ export function ContextBar({ onConnections, onReview }: { onConnections: () => v
         <span className="text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{querySub}</span>
       </button>
       <span className="text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
-      <button type="button" data-testid="connections-publishing" onClick={onConnections} title="Choose the final XMLA publish destination" className={segment}>
+      <button type="button" data-testid="connections-publishing" onClick={onConnections} title="Choose the live model that will receive published changes" className={segment}>
         <span className="uppercase font-semibold shrink-0" style={kicker}>Publish to</span>
         <span className="text-[12px] font-medium truncate min-w-0" style={{ color: publishing?.available ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{publishMain}</span>
         <span className="text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{publishSub}</span>

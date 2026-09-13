@@ -234,8 +234,8 @@ function SqlForm({ measures, editing, busy, setBusy, setErr, setTryNote, onSaved
   return (
     <>
       <Field label="Measure"><MeasureSelect measures={measures} value={measureRef} onChange={setMeasureRef} /></Field>
-      <Field label="Group by" hint="Empty means grand total only, and that alone cannot rule out the blank row trap.">
-        <input value={groupBy} onChange={(e) => setGroupBy(e.target.value)} placeholder="Column chips as text, comma separated" className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+      <Field label="Group by" hint="Choose fields such as customer region and product category to compare different cases. With no fields, only the overall total is checked, which can hide missing or unmatched rows.">
+        <input value={groupBy} onChange={(e) => setGroupBy(e.target.value)} placeholder="Columns to compare, separated by commas" className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
       </Field>
       <Field label="Source SQL you accept as the truth">
         <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={5} spellCheck={false} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
@@ -333,7 +333,7 @@ function QuestionForm({ busy, setBusy, setErr, setTryNote, onSaved, onClose }: {
       )}
       {tier === 'paraphrase' && (
         <>
-          <Field label="First way" hint="This shape is for people who write DAX.">
+          <Field label="First way" hint="This option compares two DAX queries. Use a known-answer test if you prefer to enter the expected number directly.">
             <textarea value={scalar} onChange={(e) => setScalar(e.target.value)} rows={2} spellCheck={false} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
           </Field>
           <Field label="Second way">

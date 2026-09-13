@@ -34,6 +34,16 @@ const EXACT_FILES = new Set([
   'extension/THIRD-PARTY-NOTICES.md',
   'extension/package.json',
   'extension/readme.md',
+  'extension/assistant-pack/manifest.json',
+  'extension/assistant-pack/README.md',
+  'extension/assistant-pack/LICENSE',
+  'extension/assistant-pack/.agents/plugins/marketplace.json',
+  'extension/assistant-pack/.claude-plugin/marketplace.json',
+  'extension/assistant-pack/plugins/semanticus/.claude-plugin/plugin.json',
+  'extension/assistant-pack/plugins/semanticus/.codex-plugin/plugin.json',
+  ...['semanticus', 'semanticus-optimize-dax', 'semanticus-ai-ready', 'semanticus-interview-model',
+    'semanticus-model-pr', 'semanticus-distill-workflow', 'semanticus-curate-knowledge']
+    .map(name => `extension/assistant-pack/plugins/semanticus/skills/${name}/SKILL.md`),
 ]);
 
 const ALLOWED_PREFIXES = [

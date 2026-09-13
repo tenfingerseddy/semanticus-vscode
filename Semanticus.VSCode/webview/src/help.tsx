@@ -14,6 +14,7 @@ interface SeeAlso { label: string; tab?: string; hint?: string }
 interface TabHelp {
   title: string;
   lead: string;
+  start: string[];
   sections: HelpSection[];
   pro?: string;           // what's Pro-gated on this tab (omit when nothing is)
   tip?: string;
@@ -21,652 +22,759 @@ interface TabHelp {
 }
 
 const HELP: Record<string, TabHelp> = {
-  // ---------------------------------------------------------------- Build --------
-  diagram: {
-    title: 'Diagram',
-    lead: 'An interactive map of your tables and relationships: arrange, audit, and edit the relationships themselves. Toggle "◈ Canvas / ▤ Relationships" in the header for the sortable grid view.',
-    sections: [
-      {
-        h: 'Diagrams & layouts',
-        bullets: [
-          '"All tables" always shows every table; "＋ New" creates an empty custom diagram you curate with "＋ Add table…", the Add-tables palette (drag a tile onto the canvas), or a selected table\'s "＋ related" button.',
-          'Layout buttons: "Bus matrix" (facts left, dimensions on top; the default), "Layered", "Vertical". Applying a layout collapses tables and saves positions.',
-          'All-tables positions are saved beside the model, so they follow the model across machines and the AI Assistant sees them too. Custom-diagram layouts stay on this machine.',
-        ],
-      },
-      {
-        h: 'Create a relationship',
-        bullets: [
-          'Expand a table (▸ chevron or "Expand all"), then drag a column row onto a column of another table.',
-          'A key-ish column (IsKey, or named *Key/*Id) is taken as the ONE side; the toast offers "Swap direction" if the guess was wrong.',
-          'Dropping on an already-related pair offers "Add inactive": the way to add a second (inactive) path like a Delivery Date.',
-        ],
-      },
-      {
-        h: 'Edit or remove a relationship',
-        bullets: [
-          'Single-click an edge to focus it; press Delete/Backspace to remove it.',
-          'Double-click an edge for the properties panel: cardinality, cross-filter (Single/Both), Active checkbox, and Delete.',
-          'The audit strip above the canvas counts bidirectional / inactive / isolated; amber numbers deserve a look.',
-        ],
-      },
-      {
-        h: 'What this tab does NOT do',
-        body: 'The canvas edits relationships only. Tables, columns and measures are created in the Model tree (right-click a table), and their properties live in the Properties view.',
-      },
+  "diagram": {
+    "title": "Diagram",
+    "lead": "See how your tables connect. Arrange the map and create or edit the links between tables.",
+    "start": [
+      "Open a model, then expand a table to see its columns.",
+      "Follow a line to see which columns connect two tables. Double-click it to review the relationship.",
+      "To add a relationship, drag a column onto a matching column in another table."
     ],
-    tip: 'Dragging from the native Model tree into the canvas is blocked by VS Code itself. Use the in-canvas "Add tables" palette, or the tree right-click "Add to Studio Diagram".',
-    seeAlso: [
-      { label: 'Trace a field through the model', tab: 'lineage' },
-      { label: 'Create a measure or table', hint: 'Model tree → right-click a table → "New Measure…" / view "…" menu → "New Table…"' },
-    ],
+    "sections": [
+      {
+        "h": "Understand the map",
+        "bullets": [
+          "A relationship lets a filter in one table affect another. For example, choosing a customer can narrow the sales shown in a report.",
+          "One-to-many means one customer can have many sales. Cross-filter direction controls which way the filter travels. An inactive relationship is saved but is not used by default."
+        ]
+      },
+      {
+        "h": "Arrange and edit",
+        "bullets": [
+          "Use the layout buttons to arrange tables, or drag them yourself. Switch to Relationships for a list you can sort.",
+          "All tables shows the whole model. New creates a custom diagram; Add tables lets you choose what appears. Removing a table from a custom diagram does not delete it from the model.",
+          "Select a relationship line and press Delete to remove the relationship. Double-click the line to change its settings."
+        ]
+      },
+      {
+        "h": "Add tables and calculations",
+        "bullets": [
+          "Use the Model list in the VS Code sidebar to create tables, columns and measures. A measure is a calculation, such as total sales. Right-click a table to see the available actions.",
+          "Select an item in the Model list to edit its name, description and other settings in Properties."
+        ]
+      }
+    ]
   },
-
-  advmodels: {
-    title: 'Advanced Modelling',
-    lead: 'Guided builders for the constructs that otherwise need the tree + property grid + raw DAX. Six areas: Perspectives · Field parameters · Calc groups · Calendars · RLS / OLS · DaxLib.',
-    sections: [
-      {
-        h: 'Perspectives',
-        body: 'An objects × perspectives include/exclude checkbox matrix. "+ Perspective" adds one; checking a table cascades to its fields; expand a table row to toggle individual measures and columns.',
-      },
-      {
-        h: 'Field parameters',
-        body: 'Pick measures/columns in order ("Add a measure or column" list → reorder with ↑/↓) and "Create". You get a Power-BI-identical field parameter (the slicer that swaps what a visual shows).',
-      },
-      {
-        h: 'Calc groups',
-        bullets: [
-          '"+ Group" creates the group; "+ Item" adds an item whose DAX wraps SELECTEDMEASURE() (seeded for you).',
-          'Set precedence on the group card (higher applies first) and a per-item format string (blank inherits the base measure\'s).',
-        ],
-      },
-      {
-        h: 'Calendars (the modern time-intelligence, CL 1701+)',
-        bullets: [
-          'Templates: Gregorian · Fiscal (pick the FY start month) · ISO · 4-4-5 · 13-Period. "Create calendar" generates missing columns + the TimeUnit mappings in one undoable step.',
-          'Below CL 1701 the panel offers "Upgrade to 1701", a ONE-WAY upgrade (older tooling may not open the model). The classic generated date table remains available in the collapsible section below.',
-          'Calendar-aware DAX takes the calendar name, e.g. TOTALYTD ( [Sales], \'Fiscal\' ).',
-        ],
-      },
-      {
-        h: 'RLS / OLS',
-        bullets: [
-          '"+ Role" → set the model permission (Read etc.), add members (UPN/group).',
-          'Per table: a row-filter DAX input (RLS; blank = all rows) and an OLS select (Default/Read/None); expand a table for column-level OLS.',
-          'Row filters are saved as typed. Test them with a live connection before shipping.',
-        ],
-      },
-      {
-        h: 'DaxLib',
-        body: 'Search daxlib.org (the "app store" for DAX functions), preview a package\'s functions, and Install: one undoable batch that pulls dependencies first. Browse is anonymous and read-only. All free.',
-      },
+  "search": {
+    "title": "Search",
+    "lead": "Find names, descriptions and formulas across the model. Review replacements before changing anything.",
+    "start": [
+      "Type at least two characters in the search box.",
+      "Select a result to find the item and its settings. Turn on Include DAX & M to search formulas and data-loading code.",
+      "To change text, enter a replacement and preview one result, or use Replace all to prepare a Change Plan."
     ],
-    seeAlso: [
-      { label: 'Author the DAX inside a calc item', tab: 'daxlab', hint: 'prototype in DAX Lab, then paste' },
-      { label: 'Create a plain role from the tree', hint: 'Model view "…" menu → "New Role…"' },
-    ],
+    "sections": [
+      {
+        "h": "Narrow your search",
+        "bullets": [
+          "Match case distinguishes upper- and lowercase letters. Whole word finds complete words. Regular expression is an optional pattern search for advanced users.",
+          "The result-type filters change which results you see. They do not narrow the changes prepared by Replace all."
+        ]
+      },
+      {
+        "h": "Review replacements",
+        "bullets": [
+          "Replace all prepares changes for review in Change Plan. It does not apply them immediately.",
+          "Check each proposed change. Some fields are read-only or need a dedicated editor; the result explains why they cannot be replaced here."
+        ]
+      }
+    ]
   },
-
-  mcode: {
-    title: 'M Code',
-    lead: 'Edit the model\'s M (the query language) with a real editor, configure incremental refresh, and apply spreadsheet-style column operations that WRITE M. Two lanes: "Incremental Refresh" and "M query".',
-    sections: [
-      {
-        h: 'M query lane',
-        bullets: [
-          'Pick a table, then a target: its M partitions or any shared expression/parameter.',
-          'The editor autocompletes the M standard library (Ctrl+Space), hovers inferred types, and squiggles problems live. "Format" pretty-prints offline; "Save" writes the metadata (never runs a refresh).',
-          '"+ New" creates a shared expression; "Duplicate" and "Reference…" build on an existing one.',
-          '"Applied steps" (right rail) reads the let…in… chain: click to jump, ✎ rename, ✕ delete (references re-point automatically).',
-        ],
-      },
-      {
-        h: 'Column operations on the preview',
-        bullets: [
-          'The sample grid is a read-only top-N preview of LOADED data (needs a live connection). Column ops work offline too.',
-          'Click a header\'s ⌄ (or right-click it): Remove · Rename… · Change type… · Filter rows… · Replace values… · Sort · Trim & Clean. Table-level: "Remove duplicates", "Keep top N…".',
-          'Every op writes a deterministic M step into the editor. It applies at the NEXT refresh; the sample keeps showing loaded data.',
-          '"Profile" (live) docks distinct/null counts under each header (one read-only DAX query).',
-        ],
-      },
-      {
-        h: 'Incremental refresh',
-        bullets: [
-          'The Prerequisites checklist verifies CL ≥ 1450, the RangeStart/RangeEnd parameters, and a partition filter on them. Create or update the parameters and add the range filter directly, or let Save policy wire both automatically.',
-          'Configure the archive window ("Store rows from the past"), the refresh window, offset, and Import vs Hybrid mode (Hybrid needs CL ≥ 1565). "Save policy" validates the prerequisites first.',
-          'This is pure metadata: it configures the policy; it never runs a data refresh.',
-        ],
-      },
-      {
-        h: 'Why there is no per-step data preview',
-        body: 'There is no redistributable cross-platform M engine, so M is never evaluated step-by-step here. The sample always shows loaded data; your steps take effect at the next refresh.',
-      },
+  "lineage": {
+    "title": "Lineage & Impact",
+    "lead": "See what a calculation uses and what relies on it. Check the likely effect of changing or removing a field.",
+    "start": [
+      "Find a measure or column using the search box.",
+      "Use Tree to follow its inputs, or Impact to see what depends on it.",
+      "Check Published reports before treating an unused field as a removal candidate."
     ],
-    seeAlso: [
-      { label: 'Preview table rows', tab: 'data' },
-      { label: 'Refresh a partition', hint: 'Model tree → the partition → "Refresh Partition…" (dry-run, then confirm)' },
-    ],
+    "sections": [
+      {
+        "h": "Choose a view",
+        "bullets": [
+          "Graph draws the connections. Click connected items to follow the chain; Clear pins resets the selection.",
+          "Tree shows dependencies as a list. Upstream means the inputs an item uses. Downstream means the items that use it.",
+          "Impact lists the calculations and relationships a change could affect."
+        ]
+      },
+      {
+        "h": "Interpret removal advice",
+        "bullets": [
+          "A field with no model dependencies may still be used by a report. Published reports adds the report usage that Semanticus can inspect.",
+          "Read the coverage and uncertainty notes with each result. Missing report access or an expression that could not be understood leaves an information gap.",
+          "Review the listed dependents before deleting. The result covers the sources that were checked, not every possible external consumer."
+        ]
+      }
+    ]
   },
-
-  daxlab: {
-    title: 'DAX Lab',
-    lead: 'A visual + filter-context lab for understanding, tuning and PROVING DAX against a live engine. Build a visual from field wells, flip it into an editable query, then benchmark, trace and verify below.',
-    sections: [
-      {
-        h: 'Visual mode',
-        bullets: [
-          'Drag fields from the left rail into Rows / Columns / Values / Filters (or click a field to insert into the editor). The visual auto-runs ~¼s after a change.',
-          'Hover any cell/point for its FILTER CONTEXT: every field=value in force, the measure value, and the equivalent CALCULATE(…) expression.',
-          'Viz types: Matrix, Table, Clustered bar, Line, Area, Card, Scatter. A filter chip opens a popover (date range/relative, numeric, text, boolean).',
-        ],
-      },
-      {
-        h: 'Query mode',
-        body: 'Switching Visual → Query copies the generated query in; a visual IS a query. Full DAX editor with model-aware autocomplete; paste long queries from Desktop; "Run" executes (50k row cap).',
-      },
-      {
-        h: 'The workbench (bottom tabs)',
-        bullets: [
-          'Result: the row grid.',
-          'Performance: "Profile" (formula-engine / storage-engine server timings), "Quick" (wall-clock), "Cold / Warm" (cache-cleared vs warm, the honest before/after), "Clear cache". On a shared endpoint you must tick the confirmation; clearing affects all users.',
-          'Plan: capture the logical + physical query plan (often unavailable on the Power BI XMLA endpoint; Profile and Cold/Warm are the reliable signals there).',
-          'Debug: EVALUATEANDLOG traces; "Log each measure" auto-wraps the Values measures.',
-          'Verify: prove a rewrite (Original vs Candidate across the visual\'s row × column × filter matrix). "✓ Equivalent: safe to apply" or a per-context mismatch table.',
-        ],
-      },
-      {
-        h: 'What this tab does NOT do',
-        body: 'DAX Lab never writes to the model. To apply a verified rewrite, edit the measure (Model tree → click it → Ctrl+S) or route it through a Change Plan.',
-      },
+  "daxlab": {
+    "title": "DAX Lab",
+    "lead": "Try calculations, compare answers and investigate slow queries. Experiments here do not change the saved model.",
+    "start": [
+      "Choose a test model. In Visual mode, add a calculation to Values and a field such as Customer or Product to Rows.",
+      "Run the query to see the result. Use Performance to measure its speed.",
+      "For a rewritten formula, open Verify and compare the original with the candidate across relevant fields."
     ],
-    tip: 'Everything that executes needs a live engine (the header Connect bar). The wells, editor and autocomplete work offline.',
-    seeAlso: [
-      { label: 'Create / edit the measure itself', hint: 'Model tree → right-click a table → "New Measure…"; click any measure to open its DAX editor' },
-      { label: 'Apply fixes as one reviewed batch', tab: 'optimize' },
+    "sections": [
+      {
+        "h": "Build a query",
+        "bullets": [
+          "DAX is the formula language used by Power BI models. A query asks the model for a result.",
+          "Visual mode builds the query from your selected fields. Query mode lets you edit the DAX directly. Hover a result to see its filter context: the values, such as year or region, that were used to calculate it.",
+          "The model used for queries can differ from the model you are editing. Check the Testing details at the bottom of Studio."
+        ]
+      },
+      {
+        "h": "Understand performance",
+        "bullets": [
+          "Quick measures elapsed time without clearing cached results. Cold / Warm compares a run after clearing the cache with repeat runs that can reuse earlier work.",
+          "Profile separates calculation work (Formula Engine) from reading stored data (Storage Engine) when the server provides those details. Missing trace events are missing evidence, not proof that no data was read.",
+          "Trace setup time is separate from query time. Plan shows the server's execution steps when available. Clearing a shared server's cache can slow other users' next queries; the existing confirmation explains that effect."
+        ]
+      },
+      {
+        "h": "Compare answers",
+        "bullets": [
+          "In Verify, enter Original and Candidate formulas. Choose fields from tables that matter to the calculation, such as Customer and Product, and include totals and edge cases.",
+          "A match supports the contexts actually checked. Empty, partial or unavailable checks do not establish that the rewrite is correct everywhere.",
+          "An intended change to the business rule needs a known-answer test in Tests. It should not be expected to match the old formula."
+        ]
+      },
+      {
+        "h": "Inspect intermediate values and save a change",
+        "bullets": [
+          "Debug records values from EVALUATEANDLOG(expression, \"label\") in a query. Log each measure adds logging for selected measures. No captured output means there is no debug result to inspect.",
+          "To keep a formula, edit the measure in the Model list or use a Change Plan. A local edit does not update the live test model until you publish it."
+        ]
+      }
     ],
+    "seeAlso": [
+      {
+        "label": "Test a known business answer",
+        "tab": "tests"
+      },
+      {
+        "label": "Review and apply changes",
+        "tab": "optimize"
+      }
+    ]
   },
-
-  spec: {
-    title: 'Model Spec',
-    lead: 'The shared, versionable draft behind a new or existing model. Start through the wizard, review it with AI Assistant, edit it by hand, then build when it is ready.',
-    sections: [
-      {
-        h: 'Start with the wizard',
-        bullets: [
-          'Create a new model from Open Model, then choose a blank draft, a read-only SQL schema draft or a saved Model Spec.',
-          'For an existing model, "Autogenerate from model" drafts its current structure without changing it.',
-        ],
-      },
-      {
-        h: 'Refine and build',
-        bullets: [
-          'Inline edits, Edit JSON and AI Assistant all update the same engine-owned draft.',
-          'Open spec and Save spec move the JSON artifact in or out of a project or source-control repository.',
-          '"Build into model" adds the reviewed objects as one undoable change. It never publishes.',
-        ],
-      },
-      {
-        h: 'Reading the spec',
-        body: 'Table cards carry role badges (fact/dimension/date/calculated/isolated), key/hidden column badges and summarize-by; relationships show bidi/inactive; the time-intelligence block lists the date table and variants.',
-      },
+  "data": {
+    "title": "Data",
+    "lead": "Browse a sample of the rows stored in a live model. Use this to understand the values behind your reports.",
+    "start": [
+      "Choose a test model with a live connection.",
+      "Select a table from the list.",
+      "Choose how many rows to display and review the returned sample."
     ],
-    seeAlso: [
-      { label: 'Review changes before applying them', tab: 'optimize' },
-      { label: 'Compare the built model to another', tab: 'compare' },
-    ],
+    "sections": [
+      {
+        "h": "What the sample tells you",
+        "bullets": [
+          "This is a limited sample, not every row in the table. A value missing from the sample may still exist elsewhere.",
+          "The preview reads loaded model data. It does not edit rows or run the data-loading steps."
+        ]
+      },
+      {
+        "h": "If no rows appear",
+        "bullets": [
+          "Check the Testing connection at the bottom of Studio and any message above the preview. A model opened from a file can be edited without having a live server to query.",
+          "Use DAX Lab to ask a specific question or filter the data. Use M Code to change how data is loaded at the next refresh."
+        ]
+      }
+    ]
   },
-
-  // ---------------------------------------------------------------- Inspect ------
-  lineage: {
-    title: 'Lineage & Impact',
-    lead: 'Trace where a field comes from and what depends on it, then find what\'s genuinely safe to remove. Five modes: Graph · Tree · Impact · Safe to remove · Published reports.',
-    sections: [
-      {
-        h: 'Graph: the force view',
-        bullets: [
-          'Click a node to PIN it: it lights up with its neighbours and the rest fades; keep clicking connected nodes to walk the chain. "Clear pins" resets.',
-          'Search focuses a node; big models open in Focused scope seeded at the busiest measure (depth slider 1–4).',
-          'The kind chips (right) are both the colour key and a filter; edge colours: depends-on (green), relationship (yellow), shown-in-a-report (orange).',
-        ],
-      },
-      {
-        h: 'Tree: the upstream/downstream view',
-        bullets: [
-          'Pick a root ("Start from" search, or a node\'s "root" button), then walk ↑ Upstream (what it\'s built from) or ↓ Downstream (what depends on it; the impact direction).',
-          'Node cards carry a safe-to-remove verdict dot; fan-out is capped with a "+N more…" expander.',
-        ],
-      },
-      {
-        h: 'Impact & Safe to remove',
-        bullets: [
-          'Impact: pick a measure/column → everything that depends on it, depth-indented, with via-relationship badges. "Nothing depends on this" is qualified "(model-only)" until reports are analyzed.',
-          'Safe to remove is a TRI-STATE: green = safe, yellow = used only by an unused object, red = referenced by something we can\'t evaluate offline. Respect the reds.',
-        ],
-      },
-      {
-        h: 'Published reports (make the verdicts report-aware)',
-        bullets: [
-          'Analyze local PBIR folders offline (no sign-in), or discover a cloud workspace\'s reports (choose an auth mode; nothing is called until you click).',
-          'Cloud report definitions need a write-capable scope + Contributor even for reading. The consent checkbox spells this out before any call.',
-          'After analysis, report-used fields stop being "safe to remove" and the graph/tree gain report → page → visual drill.',
-        ],
-      },
+  "stats": {
+    "title": "Storage",
+    "lead": "Find the tables and columns using the most model memory. Review opportunities to reduce their size.",
+    "start": [
+      "Connect the model you want to measure, then choose Scan storage.",
+      "Select a large table or column to see its breakdown.",
+      "Review the suggested action, then refresh and scan again after a change to measure its effect."
     ],
-    tip: 'The caveat banner tells you when verdicts are model-only. A field can look unused in the model and still drive a service-side report you haven\'t analyzed.',
-    seeAlso: [
-      { label: 'Delete carefully with a verified playbook', tab: 'workflows', hint: 'the model-hygiene workflow gates every delete' },
-      { label: 'See a table\'s size before dropping columns', tab: 'stats' },
-    ],
+    "sections": [
+      {
+        "h": "Read the breakdown",
+        "bullets": [
+          "Data is the space used to store values. Dictionary is the list of unique values. Hash indexes help the model look values up.",
+          "A column with many different values can use more memory. A size scan alone does not tell you the exact number of different values.",
+          "Before-and-after numbers compare measured scans. A smaller number is not automatically a saving caused by your edit."
+        ]
+      },
+      {
+        "h": "Know what was measured",
+        "bullets": [
+          "Without a live connection, the page can show model structure but cannot measure live memory use.",
+          "For Direct Lake, the scan reports data currently held in memory. That is not the complete size of the model.",
+          "Read the dependency check before removing a column. If its usage is unknown, the removal action is unavailable."
+        ]
+      }
+    ]
   },
-
-  data: {
-    title: 'Data',
-    lead: 'Preview live rows of any table. The table list works offline; the row preview itself runs a live top-N query.',
-    sections: [
+  "spec": {
+    "title": "Model Spec",
+    "lead": "Plan the tables, relationships and calculations before building them. The draft stays separate from the model until you build it.",
+    "start": [
+      "Choose a starting point: the open model, an empty draft, a SQL source or a saved Model Spec.",
+      "Review and edit the tables, columns, relationships and measures in the draft.",
+      "Save the draft, then choose Build into model when you want to add the reviewed items."
+    ],
+    "sections": [
       {
-        h: 'Using it',
-        bullets: [
-          'Connect in the header (a running Power BI Desktop, or "Attach XMLA…"), or use "Open Model…" to open a Desktop/XMLA model that\'s editable and queryable in one step.',
-          'Pick a table on the left (colour dots: yellow = date table, green = calculated; dimmed = hidden); choose 200 / 1,000 / 5,000 / 20,000 rows.',
-          'The Model tree\'s "Preview Data" right-click lands here with the table pre-selected.',
-        ],
+        "h": "Choose or change a starting point",
+        "bullets": [
+          "A Model Spec is a saved model plan. Drafting from an existing model reads its structure. Drafting from SQL reads table and column information; it does not copy source data.",
+          "Use Back to start to return to the choices. Save any draft you want to keep before replacing it.",
+          "Open spec loads a saved draft. Save spec exports a JSON file, a text format that you can keep with the project."
+        ]
       },
       {
-        h: 'Caveat',
-        body: 'Attaching connects a live engine for QUERIES only. It does not change which model is open in the tree, so make sure the running instance is the same model.',
+        "h": "Understand the building blocks",
+        "bullets": [
+          "A fact table usually holds events or transactions, such as sales. A dimension table describes things such as products or customers. A date table supports reporting over time.",
+          "A key identifies a row. A relationship connects columns in different tables. A measure calculates a result, such as sales after discounts."
+        ]
       },
-    ],
-    seeAlso: [
-      { label: 'Profile distinct/null counts per column', tab: 'mcode', hint: 'M Code → the sample grid\'s "Profile" toggle' },
-      { label: 'Run an arbitrary DAX query', tab: 'daxlab' },
-    ],
+      {
+        "h": "Build and continue",
+        "bullets": [
+          "Build into model adds the reviewed objects as one undoable model change. It does not publish or load source data.",
+          "Review the build result, then use Diagram and Tests to check the model. Publish is a separate action in Deploy."
+        ]
+      }
+    ]
   },
-
-  stats: {
-    title: 'Storage',
-    lead: 'Where the model spends storage, and what the scan justifies acting on. Offline you get the metadata overview; "Scan storage" against a live engine adds sizes, composition and opportunities.',
-    sections: [
+  "advmodels": {
+    "title": "Advanced Modelling",
+    "lead": "Build reusable calculations, calendars and report choices, or control which data people can see.",
+    "start": [
+      "Choose the feature you need from the tabs on this page.",
+      "Use its form to pick the affected tables or fields and enter the required settings.",
+      "Review the result in the Model list. Test calculations and access rules before publishing."
+    ],
+    "sections": [
       {
-        h: 'Reading a scan',
-        bullets: [
-          'The header: Known column storage plus its composition (data, dictionary, hash indexes), each with the measured change since the last comparable scan. A "structure changed" chip means the model shape differs between the two scans; the change is still measured, read it as before-vs-after.',
-          'Top storage consumers: ranked stacked bars (Columns or Tables), each split into data / dictionary / hash index. Click a bar to select the object and filter the Columns explorer to its table. In Tables mode the components are estimated from the scanned columns; the neutral remainder is unattributed.',
-          'Opportunities: grouped by what to do: Can remove, Worth reviewing, Behavior cleanup. Every action carries an honest effect label, and a smaller scan is a "measured decrease", never "saved".',
-        ],
+        "h": "Simplify reports",
+        "bullets": [
+          "Perspectives are named subsets of a model. They make field lists easier to browse; they are not a security boundary.",
+          "Field parameters let a report reader switch the field shown in a visual. Select the fields in the order you want them to appear."
+        ]
       },
       {
-        h: 'What to look for',
-        bullets: [
-          'A dictionary-dominated or hash-index-heavy column often indicates high cardinality, but the standard scan carries no cardinality evidence; a Deep scan that measures distinct counts is coming. Ask AI for a plan, or change the data type, then refresh and rescan to measure the effect.',
-          'Removal is offered only where the safe-to-remove check confirms nothing depends on the column; if that check can\'t run, usage is Unknown and the delete is disabled. Removal is re-verified at the moment you confirm, so a dependency added since the scan blocks it.',
-          'On Direct Lake the numbers are RESIDENT-ONLY (what\'s currently paged in). The banner says so; don\'t read them as totals, and read a change as possibly cache residency rather than storage.',
-        ],
+        "h": "Reuse calculations and dates",
+        "bullets": [
+          "Calculation groups apply a shared calculation to different measures, such as year-to-date sales and year-to-date costs. Add a group, then add its calculation items.",
+          "Calendars define date periods such as fiscal years and weeks. Choose a template and its settings. Some features need a newer model compatibility level; read the upgrade message before making that one-way change.",
+          "DaxLib offers reusable DAX functions. Preview a package before installing it and its required dependencies."
+        ]
       },
-    ],
-    seeAlso: [
-      { label: 'Check nothing depends on a column before dropping it', tab: 'lineage' },
-      { label: 'Benchmark before/after a change', tab: 'daxlab', hint: 'Performance → Cold / Warm' },
-    ],
+      {
+        "h": "Control data access",
+        "bullets": [
+          "Row-level security (RLS) limits which rows a role can see. Object-level security (OLS) hides entire tables or columns.",
+          "Create a role, choose its members and set its filters. An empty row filter does not restrict rows. Test roles against a live model to check what they actually expose."
+        ]
+      }
+    ]
   },
-
-  // ---------------------------------------------------------------- Improve ------
-  readiness: {
-    title: 'AI Readiness',
-    lead: 'Score how ready the model is for Copilot / Q&A / data agents (A–F, per-category), then fix the gaps: one click for the safe fixes, ready-made AI prompts for the rest.',
-    sections: [
-      {
-        h: 'The score',
-        bullets: [
-          'Categories only count when they have applicable rules (a dormant category never pads the score).',
-          'Hard gates (red banner) cap the grade on the RAW findings (e.g. scale limits), and waivers never lift them, so the grade can\'t be inflated.',
-          'The yellow caveat banner flags an incomplete signal (e.g. Direct Lake cardinality is resident-only).',
-        ],
-      },
-      {
-        h: 'Fixing findings',
-        bullets: [
-          '"Apply N safe fixes" applies the deterministic ones in one click (bulk = Pro; each is also applied singly per finding with "Apply").',
-          '"Ask AI" on an AI-content finding copies a ready prompt, with the object\'s real context, for your AI Assistant.',
-          '"Review as a plan →" moves everything into a Change Plan for a reviewed batch applied in one step. It never overwrites a plan you\'re already building.',
-          'Right-click any finding: "Reveal in Model tree" / "Copy reference".',
-        ],
-      },
-      {
-        h: 'Waivers: accept a finding honestly',
-        bullets: [
-          '"Waive" on a finding asks for a REQUIRED reason; it stops docking the score but stays listed under "⊘ Waived (accepted)" with the reason, never hidden.',
-          '"Waive rule" accepts every instance model-wide (Pro). "Un-waive" reverses either.',
-        ],
-      },
-      {
-        h: 'Prep-for-AI',
-        body: 'The Prep-for-AI category reads the model\'s Q&A enablement, verified answers, AI instructions and AI data schema. Your AI Assistant can update the supported settings through the shared session; findings tell you which are missing.',
-      },
-      {
-        h: 'Custom rules: your own checks',
-        bullets: [
-          'The "Custom rules" panel at the bottom authors your own readiness rules: pick a template, pick a real category, and the form checks the rule against the open model as you type (a test run shows what it would flag, before anything is saved).',
-          'Saved rules travel with the model, run with every scan, and their findings are tagged "(custom rule)"; waivers work on them like any finding.',
-          'A rule that matches nothing on this model stays dormant (it never pads a category), and a custom rule can never override a built-in one or lift a gate.',
-          'Your AI Assistant can preview, save and reset custom readiness rules through the shared session.',
-        ],
-      },
+  "mcode": {
+    "title": "M Code",
+    "lead": "Edit Power Query steps that load and transform data. Changes take effect when the model is refreshed.",
+    "start": [
+      "Choose a table and the query or shared expression you want to edit.",
+      "Edit the Power Query formula, or use the column actions to add a transformation.",
+      "Save the query. Publish and refresh through your normal process to load the changed data."
     ],
-    pro: 'Bulk "Apply safe fixes" and rule-level waives are Pro; single-finding fixes and per-instance waives are free.',
-    seeAlso: [
-      { label: 'Ship the payoff: a Data Agent on this model', tab: 'dataagent' },
-      { label: 'Review all fixes as one batch', tab: 'optimize' },
-    ],
+    "sections": [
+      {
+        "h": "Edit a query",
+        "bullets": [
+          "M is Power Query's formula language. A partition is a section of a table with its own loading query. A shared expression is a reusable query or parameter.",
+          "The editor offers suggestions, formatting and error markers. Applied steps lets you jump to, rename or remove a step.",
+          "Column actions such as rename, filter and change type write a new step into the editor."
+        ]
+      },
+      {
+        "h": "Understand the preview",
+        "bullets": [
+          "The sample shows data already loaded in the live model. It does not run each edited step, so it will not immediately reflect an unsaved or unrefreshed change.",
+          "Save updates the query definition. It does not run a refresh. You can edit the definition without a live connection."
+        ]
+      },
+      {
+        "h": "Set up incremental refresh",
+        "bullets": [
+          "Incremental refresh reloads a recent time window instead of every row. Set how much history to keep and how much recent data to refresh.",
+          "The checklist explains required date parameters and filters. Save policy checks those settings and can create the required parameters and filter.",
+          "Hybrid mode combines stored data with live queries for the newest rows. The page shows whether the model supports it."
+        ]
+      }
+    ]
   },
-
-  bpa: {
-    title: 'Best Practice Analyzer',
-    lead: 'Tabular-Editor-compatible best-practice rules over the model: auto-fix what\'s deterministic, hand the rest to the AI Assistant, waive what you\'ve decided to accept.',
-    sections: [
-      {
-        h: 'Scanning & fixing',
-        bullets: [
-          'Scans on open and re-scans automatically on every model change (from either door).',
-          'Per finding: "Fix" (deterministic) or "Ask AI" (copies a grounded prompt). "Fix all N auto-fixable" is the Pro bulk batch.',
-          '"Review as a plan →" routes the fixes into a Change Plan instead: reviewed, then applied in one step.',
-        ],
-      },
-      {
-        h: 'Waivers & interop',
-        bullets: [
-          'Waive a finding with a required reason (kept visible under "⊘ Waived (accepted)"); "Waive rule" is the model-wide Pro lever.',
-          'Rules ignored in Tabular Editor (its ignore annotations) are honoured here, and per-instance waives mirror back so TE3 respects them too.',
-          'Waived findings never block the deploy gate; they\'re audited acceptances, and the gate says how many it excluded.',
-        ],
-      },
-      {
-        h: 'Custom rules: your own checks',
-        bullets: [
-          'The "Custom rules" panel at the bottom authors your own rules: pick a template (naming pattern, missing property, an auto-fix), and the form checks the expression against the open model as you type; a test run shows what it would flag before anything is saved.',
-          'Saved rules layer on top of the standard set, travel with the model, and their violations are tagged "(custom rule)". Re-using a standard rule id overrides that rule (the preview warns you).',
-          'Your AI Assistant can preview, save and reset custom best-practice rules from a file, URL or inline JSON.',
-        ],
-      },
+  "optimize": {
+    "title": "Change Plan",
+    "lead": "Review proposed edits together before applying them. See each change and choose which ones to keep.",
+    "start": [
+      "Choose Analyse model, or send findings here from AI Readiness or Best practices.",
+      "Review the before-and-after values. Fill in missing text and select the items you want.",
+      "Apply the selected changes and read the result. Use Edits if you need to undo an applied batch."
     ],
-    pro: '"Fix all" (bulk) and rule-level waives are Pro; single fixes and per-instance waives are free.',
-    seeAlso: [
-      { label: 'See the gate these findings feed', tab: 'deploy', hint: 'Advanced → Source Control → "Readiness gate"' },
+    "sections": [
+      {
+        "h": "Prepare a plan",
+        "bullets": [
+          "A plan is a list of proposed changes. Creating or editing the plan does not change the model.",
+          "Your AI Assistant can work on the same plan. Its changes appear here. The AI Assistant sees your changes on its next call.",
+          "Needs content means a value still needs to be written, such as a useful business description. Ask AI prepares a prompt for your own assistant."
+        ]
+      },
+      {
+        "h": "Read the evidence",
+        "bullets": [
+          "Review the actual change, not just its label. A verified formula has been compared in the recorded test contexts; that is not a guarantee for every possible input.",
+          "Items you reject are left out. Read applied, skipped and failed counts after applying; selecting an item is not evidence that it was changed."
+        ]
+      },
+      {
+        "h": "Save the result",
+        "bullets": [
+          "An applied batch becomes one entry in Edits and can be undone together. Saving to a file and publishing to a live model are separate actions."
+        ]
+      }
     ],
+    "pro": "Reviewing plans is free. Applying a batch in one step is Pro; individual edits remain available on Free."
   },
-
-  optimize: {
-    title: 'Change Plan',
-    lead: 'Review a batch of changes before they touch the model, like a pull request: every change is a before → after diff, and the approved set applies as ONE undoable step.',
-    sections: [
-      {
-        h: 'Build a plan',
-        bullets: [
-          '"Analyse model" proposes a plan (deterministic fixes + an AI-content queue), or arrive via "Review as a plan →" from AI Readiness / BPA.',
-          'The AI Assistant can build and edit the same plan. Changes appear here in the VS Code view, and the AI Assistant sees them on its next call.',
-        ],
-      },
-      {
-        h: 'Review every item',
-        bullets: [
-          'Each row: approve checkbox, risk badge (safe / AI / rename / structural), and the before → after diff (monospace for DAX).',
-          'DAX rewrites can carry "verified equivalent ✓", proven against live data before you approve.',
-          '"Needs content" items wait for an authored value: type it and "Save", or "Ask AI" copies a grounded authoring prompt.',
-          '✕ rejects an item (it dims and won\'t apply).',
-        ],
-      },
-      {
-        h: 'Apply',
-        bullets: [
-          '"Apply approved (N)" runs the whole approved set as one undoable step; one undo reverts it all.',
-          '"Apply safe only (N)" restricts to the deterministic items.',
-          'The report shows applied / skipped / failed plus the BPA / grade / score movement.',
-        ],
-      },
+  "readiness": {
+    "title": "AI Readiness",
+    "lead": "Find missing context and model settings that can make AI answers less useful. Review the findings and improve them.",
+    "start": [
+      "Read the grade, coverage notes and most important findings.",
+      "Open a finding to see the affected item and the suggested change.",
+      "Apply a supported fix, write the missing explanation, or collect changes in a Change Plan."
     ],
-    pro: 'The one-step bulk apply is THE Pro feature. Free applies items one at a time; proposing, reviewing and authoring are all free.',
-    seeAlso: [
-      { label: 'Where the fixes come from', tab: 'readiness' },
-      { label: 'Undo an applied batch', tab: 'history', hint: 'one entry, one undo' },
+    "sections": [
+      {
+        "h": "Understand the score",
+        "bullets": [
+          "The grade summarises the checks that apply to this model. A check with nothing relevant to examine does not increase the score.",
+          "A higher grade means fewer issues were found by these checks. It does not prove that every AI answer will be correct.",
+          "Read any incomplete-data or grade-limit message alongside the number."
+        ]
+      },
+      {
+        "h": "Choose an action",
+        "bullets": [
+          "Apply makes the offered model change. Review it first. Ask AI copies a prompt containing the relevant model context for your own assistant.",
+          "Descriptions should explain business meaning, not just repeat a field name. Tests can check whether important business questions get the expected answers.",
+          "Waive means accept a finding without fixing it. The reason is recorded and the finding remains visible. Remove the waiver when it should count again."
+        ]
+      },
+      {
+        "h": "Add your own checks",
+        "bullets": [
+          "Custom rules let you check your organisation's naming or modelling requirements. Preview the findings before saving a rule.",
+          "Saved rules travel with the model. They do not replace the built-in limits on the readiness grade."
+        ]
+      }
     ],
+    "pro": "Single fixes and individual waivers are free. Bulk fixes and waiving a whole rule are Pro.",
+    "seeAlso": [
+      {
+        "label": "Check known business answers",
+        "tab": "tests"
+      }
+    ]
   },
-
-  // ---------------------------------------------------------------- Ship ---------
-  compare: {
-    title: 'Deploy: Review changes',
-    lead: 'Review any two models inside Deploy, drill from summary to code, then validate and merge selected changes into the open model or a file.',
-    sections: [
+  "bpa": {
+    "title": "BPA: Best Practice Analyzer",
+    "lead": "Check the model for common design, naming and performance issues. Review each finding before deciding how to address it.",
+    "start": [
+      "Read the findings and select an affected item.",
+      "Use its suggested fix or Ask AI for help with a change that needs judgement.",
+      "Review several changes in a Change Plan, or accept an intentional exception with a recorded reason."
+    ],
+    "sections": [
       {
-        h: 'Diffing',
-        bullets: [
-          'Open Deploy → Choose what to publish, pick Source and Target (⇄ swaps), then "Review".',
-          'Rows group by object type with Create/Update/Delete badges; click through to property-level or side-by-side code diffs.',
-          'Most objects are name-matched, so a rename reads as delete + create. Relationships are matched structurally by endpoints.',
-        ],
+        "h": "What these checks mean",
+        "bullets": [
+          "BPA stands for Best Practice Analyzer. Its rules flag patterns worth reviewing; a finding is not always a broken model.",
+          "Checks run when the model opens and when it changes. They examine model definitions, not every result returned by live data."
+        ]
       },
       {
-        h: 'Merging (two-step, validated)',
-        bullets: [
-          'Select changes (tri-state group checkboxes) → "Validate selection" rehearses the apply and flags anything that would fail (usually a missing parent; select it too).',
-          '"Merge N → open model" is UNDOABLE (one undo reverts the whole merge). "Apply N → file" writes disk with no in-app undo; git is the safety net.',
-          'Only a file or the working copy can be a merge target.',
-        ],
+        "h": "Fix or accept a finding",
+        "bullets": [
+          "Fix applies the offered change. Ask AI prepares a prompt for your own assistant. Review as a plan collects proposed fixes before you apply them.",
+          "Waive accepts a finding with a reason and keeps it visible. Waive rule accepts that rule throughout the model. You can reverse a waiver later."
+        ]
       },
+      {
+        "h": "Custom rules",
+        "bullets": [
+          "Use a template to create your own naming or property checks. Preview what the rule would flag before saving it.",
+          "Custom rules are saved with the model. Reusing a standard rule ID replaces that rule; the preview explains this before you save."
+        ]
+      }
     ],
-    seeAlso: [
-      { label: 'Copy single objects between models', hint: 'the Reference Model view (side bar): Set Reference Model… → right-click "Copy into Open Model" (or Ctrl+C / Ctrl+V)' },
-      { label: 'Promote between governed stages instead', tab: 'deploy' },
-    ],
+    "pro": "Single fixes and individual waivers are free. Bulk fixes and waiving a whole rule are Pro."
   },
-
-  deploy: {
-    title: 'Deploy',
-    lead: 'One release decision surface: Publish, Roll back, Promote, or open Advanced delivery and Data Agent tools. Every live write is previewed before its separate confirmation.',
-    sections: [
-      {
-        h: 'Publish',
-        bullets: [
-          'Press Publish. One card names the changes, the destination and the account. Nothing is written until you press the button on that card.',
-          'Ctrl+S saves what is in front of you. It never publishes.',
-          'Choose what to publish is the selective route, under the card, for people who want to push some changes and not others.',
-        ],
-      },
-      {
-        h: 'Roll back and Promote',
-        bullets: [
-          'Roll back reads engine-owned restore points, previews exactly what will be restored, removed or left untouched, then requires Confirm.',
-          'Promote: pick source and target stages → Preview (item changes plus readiness gate) → Deploy. A production target requires the human confirmation token from that preview.',
-          'A failing gate offers "deploy anyway (override the failing gate)" with a REQUIRED reason, recorded in the Verified Edits audit trail.',
-        ],
-      },
-      {
-        h: 'Advanced',
-        bullets: [
-          'Delivery tools keep local source control, remote git sync, automation scaffolds and direct publish available without crowding the three release decisions.',
-          'Data Agent is nested here as an advanced Ship capability. Existing Data Agent links route to this same workspace.',
-        ],
-      },
-      {
-        h: 'Publishing the open model to a live workspace',
-        body: 'The Publish chip in the status bar, the cloud icon on the Model tree, the palette entry, and the Publish button on Ship > Deploy all open the same confirm card. Publishing changes the model design, not its data. No data refresh.',
-      },
+  "tests": {
+    "title": "Tests",
+    "lead": "Check that calculations return expected answers, tables connect correctly and access rules behave as intended.",
+    "start": [
+      "Choose a live test model. Select New test to save an answer you already trust, or run the built-in relationship and access checks.",
+      "Choose whether to run everything, the current section or selected tests.",
+      "Read passed, failed and untested results. Use Run + record to keep a complete run, or Report to review and export it."
     ],
-    seeAlso: [
-      { label: 'Fix the gate\'s blockers', tab: 'bpa' },
-      { label: 'See recorded overrides', tab: 'history', hint: 'the Audit trail panel' },
+    "sections": [
+      {
+        "h": "Choose a useful test",
+        "bullets": [
+          "A known-answer test compares a calculation with a value you trust. Use an independent business report or source calculation for the expected value.",
+          "A source comparison, also called reconciliation, checks model results against a SQL query. It needs both the model connection and access to the source SQL server.",
+          "Model Interview saves business questions and expected answers. Include meaningful product, customer, region and time examples, not only different months."
+        ]
+      },
+      {
+        "h": "Connect to source data",
+        "bullets": [
+          "For a SQL comparison, review the suggested source, then enter the server, database and sign-in method. Your model connection alone does not provide SQL access.",
+          "Review generated SQL before accepting it. A query based on the same faulty logic as the model is not an independent check."
+        ]
+      },
+      {
+        "h": "Read the outcome",
+        "bullets": [
+          "Passed means the check ran and met its expected result. Failed means it found a difference or problem. Untested or skipped means there is no result to rely on.",
+          "A partial run covers only your chosen tests and does not receive a whole-model grade. If the model changes, run tests again before relying on the old results.",
+          "Relationship checks look for data that does not join as expected. Security checks review saved filters and visibility settings. They do not sign in as each user or prove live row access."
+        ]
+      }
     ],
+    "pro": "Running checks is free. Recording a complete run and exporting reports are Pro.",
+    "seeAlso": [
+      {
+        "label": "Review saved reports",
+        "tab": "evidence"
+      },
+      {
+        "label": "Compare two DAX formulas",
+        "tab": "daxlab"
+      }
+    ]
   },
-
-  dataagent: {
-    title: 'Data Agent',
-    lead: 'Deploy a Fabric Data Agent scoped to this model: the payoff of making it AI-ready. Three panels: Scope → Teach → Ship. Every cloud write shows a preview first; "Apply (writes to Fabric)" is always the explicit second step.',
-    sections: [
-      {
-        h: 'Scope',
-        bullets: [
-          '"+ Add this model" assembles a semantic-model data source from the open model, element by element, honouring the Prep-for-AI data-schema exclusions (✓ included · ✕ excluded).',
-          'It builds the config for review; nothing is written until you apply it into the draft.',
-        ],
-      },
-      {
-        h: 'Teach',
-        bullets: [
-          'AI instructions (15,000-char cap, counted live): how the agent should interpret this model, e.g. preferred measures, glossary, qualification rules.',
-          'Example question + DAX pairs attach per source. The Fabric portal doesn\'t support them for semantic-model sources yet, so pairs saved here still do not change how the agent answers; the definition format allows them, so they\'re kept ready.',
-        ],
-      },
-      {
-        h: 'Ship',
-        bullets: [
-          '"Publish" creates the read-only copy consumers query; the draft keeps iterating independently.',
-          'A published agent IS an MCP server; the "Connect your AI Assistant" card gives you the endpoint to copy.',
-          '"Delete agent" removes the Fabric item entirely (dry-run + apply, not undoable).',
-        ],
-      },
+  "evidence": {
+    "title": "Evidence",
+    "lead": "Review saved test and workflow reports. See what was checked, when it ran and which model it describes.",
+    "start": [
+      "Select a saved report from the list.",
+      "Read its outcome, model details and the checks that actually ran.",
+      "For an up-to-date result after a model change, return to Tests or Workflows and run the relevant checks again."
     ],
-    pro: 'The one-click "+ Add this model" source generation is Pro; hand-assembling the same source stays free.',
-    tip: 'The header\'s sign-in picker chooses who signs in to Fabric; Azure CLI can be logged into a different tenant than the model connection. Pick "Entra (interactive)" and the tenant if the workspaces look wrong. Semanticus never queries the agent or runs inference; connect your own AI Assistant to the published endpoint instead.',
-    seeAlso: [
-      { label: 'Raise the model\'s readiness first', tab: 'readiness' },
+    "sections": [
+      {
+        "h": "Use a saved report",
+        "bullets": [
+          "A report is a snapshot of a completed check. Opening it does not run the tests again or change the model.",
+          "Read failed, skipped and incomplete sections as well as the summary. A report can be complete as a record while documenting an unsuccessful check."
+        ]
+      },
+      {
+        "h": "If the list is empty",
+        "bullets": [
+          "Run checks in Tests or Workflows and use their report-saving controls. Reports saved with the current model appear here.",
+          "A report from another time or model is useful history, but it does not prove the current model is correct."
+        ]
+      }
     ],
+    "seeAlso": [
+      {
+        "label": "Run model tests",
+        "tab": "tests"
+      },
+      {
+        "label": "Run a workflow",
+        "tab": "workflows"
+      }
+    ]
   },
-
-  docs: {
-    title: 'Docs',
-    lead: 'Auto-generated, brandable documentation of the model, plus an authored narrative layer that merges in, live over the shared session.',
-    sections: [
+  "deploy": {
+    "title": "Deploy",
+    "lead": "Publish reviewed changes to a live model, restore an earlier version or move a model between release stages.",
+    "start": [
+      "Check the destination and account, then select Publish to review the proposed changes.",
+      "Read the change list and any failed checks. Confirm only when the destination and changes are the ones you intend.",
+      "Read the publishing result. Refresh data separately if your change needs new data to load."
+    ],
+    "sections": [
       {
-        h: 'Compose the document',
-        bullets: [
-          'The Include panel toggles every section: per-table detail, columns, DAX, measures index, relationships (+ diagram), hierarchies, calc groups, KPIs, roles & RLS, sources & lineage, storage, the AI-readiness scorecard, best-practices summary, Prep-for-AI surface, authored narrative, hidden objects.',
-          'Branding: title/subtitle/company/author/footer, accent colour, light/dark, a logo (≤512 KB). All choices persist.',
-          'Preview as HTML or Markdown; "Print / PDF" opens the print dialog; "Export…" saves to a file.',
-        ],
+        "h": "Save and publish are different",
+        "bullets": [
+          "Save keeps your local model or editor changes. Publish sends model design changes to the live destination used by reports.",
+          "The editing model, test model and publishing destination can differ. The bottom bar identifies each one.",
+          "Choose what to publish opens a comparison so you can review selected changes."
+        ]
       },
       {
-        h: 'The narrative layer',
-        bullets: [
-          'Pick the model, a table or a measure and write Markdown sections (overview, business context, glossary, …), stored WITH the model, separate from object Descriptions.',
-          '"Ask AI" copies a ready documentation prompt. The VS Code view shows the AI Assistant\'s additions with an attribution chip, and the AI Assistant sees saved changes on its next call.',
-          'Unsaved drafts auto-save when you switch objects; typing is never silently discarded.',
-        ],
+        "h": "Restore or move a release",
+        "bullets": [
+          "Roll back lets you choose a saved restore point and review what will be restored, removed or left in place before confirming.",
+          "Promote moves items between release stages, such as development, testing and production. Review the source, destination and preview before deploying.",
+          "A failed check may offer an override with a recorded reason. Read the specific failure to decide whether that is appropriate."
+        ]
       },
-    ],
-    seeAlso: [
-      { label: 'Edit an object\'s Description instead', hint: 'select it in the Model tree → the Properties view (Description gets a multiline editor)' },
-    ],
+      {
+        "h": "Advanced delivery",
+        "bullets": [
+          "Advanced contains source-control tools, Fabric Git, automation setup and Data Agent publishing. Use these when your project needs that delivery route.",
+          "Publishing changes model definitions. It does not refresh the data. Local Undo does not reverse a completed write to the live server."
+        ]
+      }
+    ]
   },
-
-  // ---------------------------------------------------------------- Standalone ---
-  history: {
-    title: 'Edit History',
-    lead: 'Every change this session, yours and the AI Assistant\'s, on one shared, undoable timeline; below it, the persistent, tamper-evident audit trail of verified edits.',
-    sections: [
+  "compare": {
+    "title": "Review changes",
+    "lead": "Compare two versions of a model and choose which differences to apply.",
+    "start": [
+      "Choose a source and target, then select Review.",
+      "Open a difference to compare the old and new values.",
+      "Select the changes you want, validate the selection and review the result before applying."
+    ],
+    "sections": [
       {
-        h: 'The timeline',
-        bullets: [
-          'Each entry is attributed (You / AI Assistant) with its label and the objects it touched.',
-          '"Undo last" / "Redo" step the shared timeline. Hover an entry for "Undo to here (N)": rolls back that edit and everything after it (a linear, Photoshop-style history; no cherry-picking a middle edit).',
-          'A batch (a change plan, a fix-all) is ONE entry; one undo reverts it all.',
-          'A verdict badge appears only when a Verified Edits record matches the row. No badge just means "wasn\'t checked"; silence is honest.',
-        ],
+        "h": "Read differences",
+        "bullets": [
+          "Create adds an item, Update changes it and Delete removes it. Most items are matched by name, so a rename can appear as a deletion and an addition.",
+          "Validation checks whether the selected changes can be applied together. A missing table or other required item may need to be included."
+        ]
       },
       {
-        h: 'The Audit trail (persistent)',
-        bullets: [
-          'A tamper-evident, append-only record that survives reload: verified edits, overrides (with their recorded reasons), deploys.',
-          'The header proves integrity: "intact · N records", or a loud warning naming the exact record where integrity breaks.',
-          'Hover a row\'s "Details" for the typed evidence and hashes. "Export MD/JSON" copies the trail (Pro).',
-        ],
-      },
-    ],
-    pro: 'Audit-trail export is Pro. The timeline, undo/redo and the trail itself are free.',
-    seeAlso: [
-      { label: 'Undo from the command palette', hint: '"Semanticus: Undo" / "Semanticus: Redo"' },
-      { label: 'Where overrides come from', tab: 'deploy' },
-    ],
+        "h": "Choose where changes go",
+        "bullets": [
+          "Merging into the open model creates an undoable batch. Applying changes to a file writes that file; use your saved copies or source control to recover earlier versions.",
+          "Comparing models does not publish them. Use Publish when you are ready to update a live destination.",
+          "When reviewing a live publishing destination, read the final confirmation card. Applying that selection writes to the server; it is not reversed by local Undo."
+        ]
+      }
+    ]
   },
-
-  workflows: {
-    title: 'Workflows',
-    lead: 'Playbooks that chain real actions with verified gates: instructions the AI Assistant, or you, follows step by step, where each gate is checked with evidence before a step passes. Built-in playbooks ship with Semanticus; yours are saved beside the model.',
-    sections: [
-      {
-        h: 'The library (left rail)',
-        bullets: [
-          'Grouped by journey stage: Design · Build · Data · Quality · Security · Ship · Custom. Filter with the search box.',
-          '"stock" = built-in and read-only; "Customise…" saves YOUR editable copy, which replaces the built-in one until you delete it (deleting the copy reverts to stock).',
-          'An accent dot on a card = it has an enforced gate (starting a run is Pro; READING any playbook is free).',
-        ],
-      },
-      {
-        h: 'Running (Run mode)',
-        bullets: [
-          '"Start run" walks the steps. Each step shows its instructions, the ops to use, and its Gate: questions to answer (some required, declines need a reason and are recorded) plus "Engine will verify" checks.',
-          'Verify kinds: dax_probe, dax_equivalence, readiness_rescan, bpa_clean, benchmark_delta. Evidence chips show passed ✓ / failed ✕ / skipped ⤼ (never a silent pass).',
-          '"Submit step" enforces the gate: a rejection is shown verbatim and the run stays put. "Skip" and "Abort run" both require recorded reasons.',
-          'Runs started by the AI Assistant appear here live: the same run, whether started here or by the assistant.',
-        ],
-      },
-      {
-        h: 'Designing (Design mode)',
-        bullets: [
-          'The designer edits a structured draft and writes clean markdown; the file is the artifact (git-diffable). The file is checked again before saving; a file that fails the check is never saved.',
-          'Steps have Actions (op chips picked from the LIVE op catalog, so only real ops can be chained), Instructions (imperative, ~150 words reads best), and an optional Gate (questions + verified checks).',
-          'Strictness: hard / warn / off (a workflow default plus per-step overrides); the default is hard.',
-        ],
-      },
-      {
-        h: 'The Enforcement toggle (the kill-switch)',
-        body: 'The "Enforcement" switch in the library rail turns gate enforcement off MODEL-WIDE, for quick tasks where a full gated run is overkill. Off means every gate is skipped (an amber banner reminds you), runs record no verified evidence, and gated runs start without Pro. It overrides every other strictness setting and is saved beside the model; turn it back on for accountable work.',
-      },
-      {
-        h: 'Why gates matter',
-        body: 'A workflow is a set of instructions with teeth: they tell the assistant what to do, and the gate makes it PROVE it did it. Answers are recorded, checks run against the actual model, and the whole run lands on the audit trail.',
-      },
+  "permissions": {
+    "title": "Permissions",
+    "lead": "Choose what your AI Assistant may do without asking and review requests waiting for your decision.",
+    "start": [
+      "Read the current setting and the actions listed in the permission table.",
+      "Choose a preset or adjust the allowed actions for each environment.",
+      "For a waiting request, check the action, destination and approval scope before allowing or declining it."
     ],
-    pro: 'Starting an ENFORCED (gated) workflow run is Pro. Reading playbooks, following them manually, and designing your own are free.',
-    seeAlso: [
-      { label: 'Learned workflows distilled from your runs', tab: 'knowledge' },
-      { label: 'See a run\'s edits on the timeline', tab: 'history' },
-    ],
+    "sections": [
+      {
+        "h": "Read the table",
+        "bullets": [
+          "Allow lets the assistant perform the action. Ask requires an approval. Deny refuses the action.",
+          "Local is work on this machine. Dev is a development environment. UAT is a test environment used before release. Prod is production, where people use the published model.",
+          "Label your saved destinations correctly so the intended column of the table applies."
+        ]
+      },
+      {
+        "h": "Understand an approval",
+        "bullets": [
+          "A request names the proposed action and destination. Read its description rather than approving from the action name alone.",
+          "Approval to read rows can cover several read operations for the stated time. Other approvals apply to the described action; the request explains the scope."
+        ]
+      },
+      {
+        "h": "Choose the amount of control",
+        "bullets": [
+          "The main switch turns these assistant permission checks on or off. Workflow checks are managed separately in Workflows → Governance.",
+          "These settings help prevent accidental actions through Semanticus. They do not replace the access rights of the account connected to your data."
+        ]
+      }
+    ]
   },
-
-  knowledge: {
-    title: 'Knowledge',
-    lead: 'Lessons the tool has learned: insights and post-mortems distilled from real sessions, learned workflows, and recall for the open model. Your own data stays in a plain file beside the model; Semanticus only counts and retrieves, while your AI Assistant does the judging.',
-    sections: [
-      {
-        h: 'Insights',
-        bullets: [
-          'Cards carry kind (insight / post-mortem), scope (this model vs all your models), a "shape" pill when scoped to this model\'s fingerprint, and counters: score (importance; deleted at 0), retrievals, uses.',
-          '▲ Upvote / ▼ Downvote tune how important an insight is; Edit fixes its text and match keys; Delete removes it.',
-          'A "Pending approval" section appears when auto-approve is off: an entry is saved but held out of recall until you approve it.',
-        ],
-      },
-      {
-        h: 'Learned workflows',
-        bullets: [
-          'After a verified success, the /distill-workflow skill turns the run into a repeatable workflow with provenance.',
-          '"Check" verifies the workflow reads correctly and every action it names is real; "Replay check" REHEARSES each step against the model using the saved example answers, with nothing changed: per-step outcomes, and "not admissible" when a rehearsal would fail.',
-        ],
-      },
-      {
-        h: 'Recall',
-        bullets: [
-          'Type what you\'re about to do and "Recall": deterministic retrieval by key overlap + same-shape fingerprint + score + recency; the "why" line explains each hit.',
-          'The Model fingerprint card shows the shape recall matches against (tables/measures/grade, fact/dim mix, domain).',
-        ],
-      },
-      {
-        h: 'Purge',
-        body: 'The safety valve: wipe a whole scope (project or global). A preview count first, then an explicit confirm. A purge marker is appended; the JSONL is never rewritten.',
-      },
+  "docs": {
+    "title": "Docs",
+    "lead": "Create a readable guide to the model, with its structure, calculations and your business explanations.",
+    "start": [
+      "Choose the sections to include in the document.",
+      "Add a title, branding and explanations of the model, tables or measures.",
+      "Preview the document, then export it or use Print / PDF to share it."
     ],
-    seeAlso: [
-      { label: 'Run a learned workflow', tab: 'workflows' },
-    ],
+    "sections": [
+      {
+        "h": "Choose useful detail",
+        "bullets": [
+          "Include the tables, calculations, relationships and checks your reader needs. Hidden fields and formulas can be included when the audience needs that detail.",
+          "Generated content describes the model structure. Add business meaning, definitions and examples so a reader understands why it exists."
+        ]
+      },
+      {
+        "h": "Write explanations",
+        "bullets": [
+          "Choose the model, a table or a measure and write the relevant explanation. Markdown is a simple text format for headings, lists and links.",
+          "These explanations are saved with the model and are separate from the Description field in Properties. Ask AI prepares a prompt for your own assistant."
+        ]
+      },
+      {
+        "h": "Share the result",
+        "bullets": [
+          "HTML creates a formatted page; Markdown creates an editable text document. Print / PDF opens a print view.",
+          "Check the preview before sharing. The document reflects the model state used to generate it."
+        ]
+      }
+    ]
   },
+  "history": {
+    "title": "Edits",
+    "lead": "See changes made by you and your AI Assistant. Undo recent model edits or review the saved audit record.",
+    "start": [
+      "Find the change you want to inspect in the timeline.",
+      "Use Undo last to reverse the latest change, or Redo to restore an undone change.",
+      "Read the audit trail for saved checks and publishing decisions that continue across sessions."
+    ],
+    "sections": [
+      {
+        "h": "Undo model edits",
+        "bullets": [
+          "The timeline is shared by you and your assistant. Undo to here reverses the chosen change and every later change, not just one item in the middle.",
+          "A batch, such as an applied Change Plan, is one timeline entry and is undone together.",
+          "This timeline covers the current session. Local Undo does not reverse every remote action, such as publishing to a server."
+        ]
+      },
+      {
+        "h": "Read the audit trail",
+        "bullets": [
+          "The saved audit trail records checked edits and other recorded actions. Its integrity check looks for a changed or missing link in the record.",
+          "A check badge appears only when evidence is attached. An entry without a badge was not necessarily tested.",
+          "Details contains the evidence behind the summary. Integrity of the record does not itself prove the underlying model is correct."
+        ]
+      }
+    ],
+    "pro": "The timeline, undo and redo are free. Exporting the audit trail is Pro."
+  },
+  "workflows": {
+    "title": "Workflows",
+    "lead": "Follow a repeatable set of steps for a modelling task. Use a built-in workflow or create one for your project.",
+    "start": [
+      "Choose a task on Home, or browse Library to find a workflow.",
+      "Read its steps, then start a run. Runs lets you continue work already started by you or your assistant.",
+      "Follow the instructions, submit each step and review its result before continuing."
+    ],
+    "sections": [
+      {
+        "h": "Find your way around",
+        "bullets": [
+          "Home offers starting tasks. Library lists saved workflows. Runs shows work in progress and past results.",
+          "Governance contains project profiles and workflow controls. A profile is a saved set of choices about which workflows and checks apply.",
+          "Author lets you create or edit a workflow. Customise makes an editable copy of a built-in workflow."
+        ]
+      },
+      {
+        "h": "Understand a step",
+        "bullets": [
+          "An action is a task the model tools can carry out. Instructions explain what to do. A gate is a check attached to a step.",
+          "A required check can stop the run when it fails. A warning records the problem and allows progress. Off skips that check. Read the result rather than treating a submitted answer as a passed test.",
+          "Skipping or stopping a run keeps the recorded outcome; it does not turn an incomplete check into a pass."
+        ]
+      },
+      {
+        "h": "Build a workflow",
+        "bullets": [
+          "Use Author to edit steps, instructions and checks. The saved source is the workflow definition and can be kept with your project files.",
+          "Canvas helps you see and arrange the sequence. Edit the steps or saved source to change what the workflow does; moving a box alone does not create a new action."
+        ]
+      },
+      {
+        "h": "Use project controls",
+        "bullets": [
+          "In Governance, choose a project profile to load its workflow settings. Review the resulting controls, including required workflows and whether checks are enforced.",
+          "Turning enforcement off skips checks for new runs. Runs already underway keep the setting they started with. This is separate from assistant permissions."
+        ]
+      }
+    ],
+    "pro": "Reading, designing and following workflows manually is free. Running workflows with enforced checks is Pro.",
+    "seeAlso": [
+      {
+        "label": "Review saved reports",
+        "tab": "evidence"
+      },
+      {
+        "label": "Set assistant permissions",
+        "tab": "permissions"
+      }
+    ]
+  },
+  "knowledge": {
+    "title": "Primer",
+    "lead": "Keep the business context that helps you and your AI Assistant understand this model.",
+    "start": [
+      "Read the model overview and saved business context.",
+      "Add or correct definitions, important calculations and known issues.",
+      "Review supporting insights when the model or its business rules change."
+    ],
+    "sections": [
+      {
+        "h": "What a Primer is",
+        "bullets": [
+          "A Primer is a short introduction to the model. Explain what it covers, what common terms mean and which calculations people should use.",
+          "Write for someone new to the project. For example, define whether revenue includes tax or whether customer counts include inactive accounts."
+        ]
+      },
+      {
+        "h": "Keep knowledge accurate",
+        "bullets": [
+          "Saved insights are reusable notes from earlier work. Their importance and usage help find relevant notes; those numbers do not prove that a note is correct.",
+          "Correct a note when the business rule changes. Keep facts separate from guesses and unresolved questions.",
+          "Your own assistant helps write and review this context. Semanticus stores and retrieves it; it does not generate answers by itself."
+        ]
+      },
+      {
+        "h": "Use saved lessons and workflows",
+        "bullets": [
+          "Insights are saved lessons. Edit their text and search terms, or adjust their importance. Review a suggested Primer addition before selecting Accept.",
+          "Learned workflows are reusable processes saved from earlier work. Check confirms that the definition can be read; Replay check tries the saved examples without changing the model.",
+          "Recall searches for lessons relevant to your next task. Delete saved knowledge removes lessons from future use for the chosen scope; it keeps the stored history."
+        ]
+      }
+    ],
+    "seeAlso": [
+      {
+        "label": "Save business questions as tests",
+        "tab": "tests"
+      },
+      {
+        "label": "Write a full model document",
+        "tab": "docs"
+      }
+    ]
+  },
+  "dataagent": {
+    "title": "Data Agent",
+    "lead": "Set up a Fabric Data Agent so people can ask questions about selected model data through their own assistant.",
+    "start": [
+      "Choose the Fabric account and workspace, then select or create an agent.",
+      "In Scope, choose its data sources. In Teach, add the business instructions it needs.",
+      "Review changes before applying them. Publish when ready, then copy the connection details for your assistant."
+    ],
+    "sections": [
+      {
+        "h": "Choose and explain the data",
+        "bullets": [
+          "Scope controls which model data is offered to the agent. Review included and excluded fields before saving the draft.",
+          "Teach contains instructions such as preferred measures, business definitions and how to handle ambiguous questions.",
+          "Read the support notes for example questions. Saving an example in the definition does not guarantee that Fabric uses it when answering."
+        ]
+      },
+      {
+        "h": "Publish and connect",
+        "bullets": [
+          "Publishing makes the reviewed agent available to its consumers while you can continue editing its draft.",
+          "The connection card provides an MCP endpoint, the address your assistant uses to reach the published agent. Semanticus itself does not ask the agent questions.",
+          "Deleting an agent removes the Fabric item. It is a remote action and cannot be reversed with model Undo."
+        ]
+      }
+    ],
+    "pro": "Automatically adding the open model as a source is Pro. Manually configuring a source remains available on Free."
+  }
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -677,6 +785,32 @@ const HELP: Record<string, TabHelp> = {
 
 interface WhereEntry { q: string; a: string; tab?: string }
 const WHERE: { group: string; items: WhereEntry[] }[] = [
+  {
+    group: 'Start here',
+    items: [
+      { q: 'I am new to Semanticus. Where should I begin?', a: 'Open a model from the Semanticus sidebar. Read Primer for its business context, explore Diagram, then select a calculation in the Model list. Each Studio page has Getting started steps and a detailed Help guide.', tab: 'knowledge' },
+      { q: 'What is the difference between editing, testing and publishing?', a: 'Editing changes your working model. Testing asks a live model for answers. Publishing sends reviewed changes to a live destination. These can be different models; check the bottom bar and use Connections to change them.' },
+      { q: 'Can I work without a live connection?', a: 'Yes. Open model files to inspect and edit their structure, formulas and descriptions. Running queries, measuring performance and testing real answers needs a live model with data.' },
+      { q: 'Give my AI Assistant the Semanticus guides', a: 'Run Semanticus: Install or Update Assistant Skills from the VS Code command palette. Choose your assistant, then refresh or restart it if needed. These guides use your existing Semanticus connection.' },
+      { q: 'Test a business answer against a number I trust', a: 'Tests → New test. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
+      { q: 'Compare model results with source data', a: 'Tests → New test → source comparison. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
+      { q: 'Review saved test and workflow reports', a: 'Evidence lists the reports saved with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
+      { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests. Workflow requirements are a separate choice under Workflows → Governance.', tab: 'permissions' },
+    ],
+  },
+  {
+    group: 'Common terms explained',
+    items: [
+      { q: 'Semantic model, table, column and measure', a: 'A semantic model organises data and business calculations for reports. Tables contain rows; columns hold values such as date or customer. A measure calculates an answer, such as total sales.' },
+      { q: 'DAX and filter context', a: 'DAX is the formula language for model calculations. Filter context is the set of values used for an answer, such as sales for a particular product, region and year.', tab: 'daxlab' },
+      { q: 'Power Query, M and partition', a: 'Power Query prepares data for loading. M is its formula language. A partition is a section of a model table with its own loading query.', tab: 'mcode' },
+      { q: 'XMLA endpoint, SQL server and tenant', a: 'An endpoint is a connection address. XMLA connects to a semantic model; SQL connects to source tables. A tenant identifies the Microsoft organisation your account signs into.' },
+      { q: 'Workflow, gate and project profile', a: 'A workflow is a saved sequence of steps. A gate is a check attached to a step. A project profile saves which workflows are available or required and how their checks apply.', tab: 'workflows' },
+      { q: 'Evidence, coverage and reconciliation', a: 'Evidence is the recorded result of a check. Coverage says what was checked and what was left out. Reconciliation compares model results with an independent source answer.', tab: 'tests' },
+      { q: 'BPA, finding and waiver', a: 'BPA means Best Practice Analyzer. A finding is an issue raised by a check. A waiver records your decision to accept that issue without fixing it.', tab: 'bpa' },
+      { q: 'MCP and assistant skills', a: 'MCP is the connection that lets your AI Assistant use Semanticus tools. A skill is a guide that helps it choose and use those tools for a task.' },
+    ],
+  },
   {
     group: 'Author (the Model tree: the side bar, not Studio)',
     items: [
@@ -695,8 +829,8 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     group: 'Build & analyze (Studio)',
     items: [
       { q: 'Field parameters, calc groups, calendars, perspectives, RLS/OLS, DaxLib', a: 'Advanced Modelling: six guided builders (also reachable from the Model view "…" → Advanced Modelling submenu).', tab: 'advmodels' },
-      { q: 'Run a DAX query / build a visual / hover filter context', a: 'DAX Lab: Visual or Query mode against a live engine.', tab: 'daxlab' },
-      { q: 'Prove a DAX rewrite is equivalent', a: 'DAX Lab → the Verify workbench tab (row × column × filter matrix).', tab: 'daxlab' },
+      { q: 'Try a calculation and see which filters affect its answer', a: 'DAX Lab: Visual or Query mode against a live engine.', tab: 'daxlab' },
+      { q: 'Check whether two DAX formulas return the same answers', a: 'DAX Lab → Verify. Choose relevant fields, compare both formulas and read which contexts were checked.', tab: 'daxlab' },
       { q: 'Benchmark cold vs warm', a: 'DAX Lab → Performance → "Cold / Warm".', tab: 'daxlab' },
       { q: 'Edit M / applied steps / incremental refresh', a: 'M Code (or right-click a table → "Edit M Code").', tab: 'mcode' },
       { q: 'Preview table rows', a: 'Data tab (or right-click a table → "Preview Data").', tab: 'data' },
@@ -709,10 +843,10 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     group: 'Improve & ship',
     items: [
       { q: 'Score & fix AI readiness', a: 'AI Readiness: one-click safe fixes, ready AI prompts for the rest.', tab: 'readiness' },
-      { q: 'Best-practice violations', a: 'BPA: fix singly, fix-all (Pro), or route into a Change Plan.', tab: 'bpa' },
+      { q: 'Best-practice violations', a: 'Best practices (BPA): fix one finding, apply a batch with Pro or review changes in a Change Plan.', tab: 'bpa' },
       { q: 'Review a batch of changes before applying', a: 'Change Plan: approve per item, apply as one undoable step.', tab: 'optimize' },
       { q: 'Publish the open model to a live workspace', a: 'Press the Publish chip in the status bar, or Ship > Deploy > Publish. One card names the changes, then you confirm. Ctrl+S never publishes.', tab: 'deploy' },
-      { q: 'Diff two models / merge changes', a: 'Deploy → Choose what to publish can review any two supported model sources.', tab: 'deploy' },
+      { q: 'Compare model versions and combine selected changes', a: 'Deploy → Choose what to publish can review any two supported model sources.', tab: 'deploy' },
       { q: 'Copy objects from another model', a: 'The Reference Model view (side bar): "Set Reference Model…", then right-click → "Copy into Open Model" (or Ctrl+C there, Ctrl+V in the Model tree).' },
       { q: 'Generate documentation', a: 'Docs: compose, brand, print to PDF, plus the authored narrative layer.', tab: 'docs' },
       { q: 'Ship a Fabric Data Agent', a: 'Deploy → Advanced → Data Agent: scope from this model, teach it, publish.', tab: 'dataagent' },
@@ -721,12 +855,12 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
   {
     group: 'AI Assistant & safety',
     items: [
-      { q: 'Connect the AI Assistant to this model', a: 'Command palette → "Semanticus: Connect AI Assistant": writes the workspace connection; the AI Assistant then operates the same live session.' },
+      { q: 'Connect the AI Assistant to this model', a: 'Command palette → "Semanticus: Connect AI Assistant" writes the connection settings. Refresh or restart your assistant so it reads them. Keep Semanticus open in VS Code.' },
       { q: 'See what the AI Assistant changed', a: 'Edit History: every change attributed on one timeline; "Undo to here" rolls back.', tab: 'history' },
-      { q: 'Undo / redo', a: 'Edit History buttons, or the palette: "Semanticus: Undo" / "Semanticus: Redo". A batch undoes as one step.', tab: 'history' },
+      { q: 'Undo / redo', a: 'Edit History buttons, or the palette: "Semanticus: Undo" / "Semanticus: Redo". A batch undoes as one step. Publishing to a live server is a separate action and is not reversed by local Undo. Publishing to a live server is a separate action and is not reversed by local Undo. Publishing to a live server is a separate action and is not reversed by local Undo.', tab: 'history' },
       { q: 'Run a verified playbook', a: 'Workflows: gated steps verified with evidence; free to read, Pro to run enforced.', tab: 'workflows' },
-      { q: 'Turn workflow enforcement off for a quick task', a: 'Workflows → the "Enforcement" switch in the library rail. Off means gates are skipped model-wide, with a banner; flip it back for accountable runs.', tab: 'workflows' },
-      { q: 'Teach the tool from past sessions', a: 'Knowledge: insights, learned workflows, recall for this model\'s shape.', tab: 'knowledge' },
+      { q: 'Turn workflow enforcement off for a quick task', a: 'Workflows → Governance → Enforcement. Off skips checks for new runs. Existing runs keep their original setting.', tab: 'workflows' },
+      { q: 'Save business context and lessons from earlier work', a: 'Primer: the model guide, saved insights, reusable workflows and a search for relevant notes.', tab: 'knowledge' },
       { q: 'Accept a finding without hiding it', a: 'Waive it (reason required) on AI Readiness or BPA; it stays surfaced forever under "⊘ Waived (accepted)".', tab: 'readiness' },
     ],
   },
@@ -767,6 +901,7 @@ function TabGuide({ h, onGo }: { h: TabHelp; onGo?: (tab: string) => void }) {
   return (
     <div className="flex flex-col gap-3.5">
       <div className="text-[12.5px]" style={{ color: 'var(--sem-fg)' }}>{h.lead}</div>
+      <GettingStarted steps={h.start} />
       {h.sections.map((s, i) => <SectionBlock key={i} s={s} />)}
       {h.pro && (
         <div className="text-[11px] rounded-md px-2.5 py-2" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
@@ -830,6 +965,26 @@ function WhereIndex({ onGo }: { onGo?: (tab: string) => void }) {
   );
 }
 
+function GettingStarted({ steps }: { steps: string[] }) {
+  return <ol className="list-decimal pl-5 flex flex-col gap-1.5 text-[12px] leading-relaxed" style={{ color: 'var(--sem-fg)' }}>
+    {steps.map((step, index) => <li key={index}>{step}</li>)}
+  </ol>;
+}
+
+/** Keep the purpose visible; longer instructions expand only when the user needs them. */
+export function PageGuide({ tab }: { tab: string }) {
+  const guide = HELP[tab];
+  if (!guide) return null;
+  return <aside aria-label="Page guidance" className="shrink-0 px-4 py-2 border-b max-h-[30vh] overflow-auto" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
+    <p className="m-0 text-[12px] leading-relaxed" style={{ color: 'var(--sem-muted)' }}>{guide.lead}</p>
+    <details key={tab} className="mt-1 text-[12px]">
+      <summary className="cursor-pointer w-fit font-medium" style={{ color: 'var(--sem-accent)' }}>Getting started</summary>
+      <div className="mt-2 max-w-4xl"><GettingStarted steps={guide.start} /></div>
+      <p className="m-0 mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Open Help above for more detail, related tasks and explanations of common terms.</p>
+    </details>
+  </aside>;
+}
+
 export function HelpButton({ tab, onGo, onShortcuts }: { tab: string; onGo?: (tab: string) => void; onShortcuts?: () => void }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'tab' | 'where'>('tab');
@@ -845,8 +1000,8 @@ export function HelpButton({ tab, onGo, onShortcuts }: { tab: string; onGo?: (ta
   return (
     <>
       <button onClick={() => { setView('tab'); setOpen(true); }} title={h ? `Guide: the ${h.title} tab (and “Where do I…?”)` : 'Help'} aria-label="Help"
-        className="w-6 h-6 rounded-full flex items-center justify-center text-[12px] font-semibold shrink-0"
-        style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>?</button>
+        className="h-6 px-2 rounded-md flex items-center justify-center text-[12px] font-semibold shrink-0"
+        style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>Help</button>
       {open && (
         <div className="fixed inset-0 z-50" onClick={() => setOpen(false)} style={{ background: 'rgba(0,0,0,0.35)' }}>
           <div onClick={(e) => e.stopPropagation()} className="absolute top-0 right-0 h-full flex flex-col"

@@ -47,7 +47,7 @@ export function AdvancedModelsView({ navArea }: { navArea?: { area: string; nonc
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold">Advanced Modelling</div>
             <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-              Author the advanced building blocks, guided and live. Your AI Assistant can build these too.
+              Build report choices, reusable calculations, calendars and access rules. Choose a feature below to get started.
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1">
@@ -218,7 +218,7 @@ function PerspectivesPanel() {
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <SectionTitle>Perspectives</SectionTitle>
         <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-          curated subsets for a focused Q&A / report view: check an object to include it (a table cascades to its fields)
+          Choose which fields appear in a named view of the model. Selecting a table includes its fields. This simplifies browsing; it does not restrict data access.
         </span>
         <div className="ml-auto flex items-center gap-1.5">
           {cols.length > 0 && (
@@ -237,7 +237,7 @@ function PerspectivesPanel() {
       </div>
 
       {cols.length === 0 ? (
-        <div className="text-[13px]" style={{ color: 'var(--sem-muted)' }}>No perspectives yet. Add one to start curating a view.</div>
+        <div className="text-[13px]" style={{ color: 'var(--sem-muted)' }}>No perspectives yet. Add one, give it a name and choose the fields to show.</div>
       ) : (
         <div ref={parentRef} className="overflow-auto rounded-lg" style={{ border: '1px solid var(--sem-border)', maxHeight: 520, width: 'fit-content', maxWidth: '100%' }}>
           <div style={{ minWidth: totalW, position: 'relative' }}>
@@ -463,7 +463,7 @@ function CalcGroupsPanel() {
         <div className="flex items-center gap-2">
           <SectionTitle>Calculation groups</SectionTitle>
           <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-            reusable calculations (time-intelligence, currency, % of total) applied over SELECTEDMEASURE(); higher precedence applies first
+            Reuse a calculation across measures, such as year-to-date or percent of total. SELECTEDMEASURE() refers to the measure being shown. Higher precedence applies first.
           </span>
           <div className="ml-auto">
             {creating ? (
@@ -703,8 +703,7 @@ function CalendarsPanel() {
         <Panel>
           <SectionTitle>Calendars need compatibility level 1701+</SectionTitle>
           <div className="text-[12px] mt-2" style={{ color: 'var(--sem-fg)' }}>
-            Calendar-based time intelligence is a modern metadata feature. This model is at compatibility
-            level <span className="tnum font-semibold">{list.compatibilityLevel}</span>.
+            Calendars define the periods used by date calculations. This model uses compatibility level <span className="tnum font-semibold">{list.compatibilityLevel}</span>.
           </div>
           <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>
             You can still use the classic date-table approach below. To author calendars, raise the level to 1701.
@@ -1276,7 +1275,7 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
 
       <div className="mt-2">
         <DaxField value={filter} onChange={setFilter} scope="rls" table={table.name} minHeight={52}
-          placeholder="row filter DAX, e.g. [Region] = USERPRINCIPALNAME()  (blank = all rows)"
+                placeholder="DAX condition, for example [Amount] > 0. Leave blank to allow all rows."
           onValidity={(v, n) => { setValid(v); setIssues(n); }} ariaLabel={`Row filter for ${table.name}`} askContext={`an RLS row-filter for the '${table.name}' table`} />
         <div className="mt-1 flex items-center gap-2">
           <MiniButton disabled={!dirty || !filterOk} onClick={saveFilter}>{dirty ? (filterOk ? 'Save filter' : 'Fix errors') : 'Saved'}</MiniButton>

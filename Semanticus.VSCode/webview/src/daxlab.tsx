@@ -8,6 +8,7 @@ import { useClaudeReflection, ClaudeRanBanner, type ActivityEvent } from './acti
 import { ResultGrid } from './grid';
 import { DaxEditor, useDaxModelContext, type DaxEditorHandle } from './daxeditor';
 import { FieldsPanel } from './fieldspanel';
+import { ObjectBrowser, type BrowserNode } from './objectbrowser';
 import type { ResultSet } from './wire';
 import { queryIdentity, rowAnnouncement, timingAnnouncement } from './wire';
 import { FieldWells, PivotConfig, EMPTY_CONFIG, buildQuery, buildInstrumentedQuery, seedConfig, filterToDax } from './daxwells';
@@ -26,7 +27,7 @@ interface EvalLogEntry { label?: string; expression?: string; rowCount: number; 
 interface EvalLogResult { traceAvailable: boolean; entries: EvalLogEntry[]; resultColumns: { name: string; type?: string }[]; resultRows: unknown[][]; resultRowCount: number; elapsedMs: number; note?: string; error?: string; }
 interface BenchmarkResult { runs: number; firstMs: number; warmMinMs: number; warmMedianMs: number; runsMs: number[]; rowCount: number; note?: string; error?: string; }
 interface ScanEvent { line?: number; kind: string; subclass?: string; durationMs: number; cpuMs: number; rows: number; query?: string; }
-interface ServerTimings { totalMs: number; feMs: number; seMs: number; seCpuMs: number; seQueries: number; seCacheHits?: number; seParallelism: number; rowCount: number; scans: ScanEvent[]; traceAvailable: boolean; note?: string; error?: string; }
+interface ServerTimings { totalMs: number; wallMs?: number; setupMs?: number; feMs: number; seMs: number; seCpuMs: number; seQueries: number; seCacheHits?: number; seParallelism: number; rowCount: number; scans: ScanEvent[]; traceAvailable: boolean; note?: string; error?: string; }
 interface EquivalenceMismatch { context: string; valueA: string; valueB: string; }
 interface EquivalenceResult { allMatch: boolean; rowsCompared: number; mismatchCount: number; truncated?: boolean; fidelity?: string | null; mismatches: EquivalenceMismatch[]; query?: string; error?: string; }
 
@@ -219,13 +220,16 @@ export function DaxLabView() {
   // verify (exprA seeds from the Values measure; the group-by + filters come from the visual's own matrix)
   const [exprA, setExprA] = usePersistedState('lab.exprA', '');
   const [exprB, setExprB] = usePersistedState('lab.exprB', '');
+  const [customVerify, setCustomVerify] = usePersistedState('lab.verify.custom.' + persistKey, false);
+  const [verifyFields, setVerifyFields] = usePersistedState<string[]>('lab.verify.fields.' + persistKey, []);
   // "Explain this number" (feature #2): right-click a value cell → the engine's explain_value dossier.
   const [explain, setExplain] = useState<ExplainPayload | null>(null);
 
   const shared = conn?.connected && conn.kind !== 'local';
   const idle = busy !== null;
   const currentQuery = () => (mode === 'visual' ? buildQuery(config) : query);
-  const groupByDerived = useMemo(() => [...config.rows, ...config.cols].map((f) => f.ref), [config]);
+  const groupByDerived = useMemo(() => customVerify ? verifyFields : [...config.rows, ...config.cols].map((f) => f.ref), [config, customVerify, verifyFields]);
+  const setVerifyGroupBy = (fields: string[]) => { setVerifyFields(fields); setCustomVerify(true); };
   const filterLinesDerived = useMemo(() => config.filters.map(filterToDax).filter((x): x is string => !!x), [config]);
   // The execution context evidence is valid FOR: the QUERY TARGET identity (the attached database +
   // registry connection id + authenticated account + tenant — NOT the editing-origin liveDatabase, which
@@ -273,7 +277,7 @@ export function DaxLabView() {
   function run() { setTab('result'); reveal(); void runQuery(currentQuery()); }
   async function debug(q?: string) {
     const gen = ++runGen.current;
-    const ran = q ?? currentQuery();
+    const ran = q ?? (mode === 'visual' ? buildInstrumentedQuery(config) : currentQuery());
     setTab('debug'); reveal(); setBusy('debug'); setErr(null); setClaudeEvent(null);
     try {
       const r = await rpc<EvalLogResult>('evaluateAndLog', ran, 10000);
@@ -358,13 +362,13 @@ export function DaxLabView() {
         <span className="font-semibold text-[14px]">DAX Lab</span>
         <Seg value={mode} onChange={switchMode} options={[['visual', 'Visual'], ['query', 'Query']]} />
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={resetDefault} disabled={idle} title="Reset the wells & query to the model defaults" className="text-[12px] px-3 py-1.5 rounded-lg" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', cursor: idle ? 'default' : 'pointer', opacity: idle ? 0.5 : 1 }}>Reset</button>
+          <button onClick={resetDefault} disabled={idle} title="Reset the selected fields and query to their starting values" className="text-[12px] px-3 py-1.5 rounded-lg" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', cursor: idle ? 'default' : 'pointer', opacity: idle ? 0.5 : 1 }}>Reset</button>
           {idle
             ? <button onClick={stopQuery} title="Stop the running query" aria-label="Stop the running query" className="text-[12.5px] font-semibold px-5 py-1.5 rounded-lg" style={{ background: 'var(--sem-bad)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer' }}>Stop</button>
             : <button disabled={!conn?.connected} onClick={run} title="Run the query" aria-label="Run the query" className="text-[12.5px] font-semibold px-5 py-1.5 rounded-lg" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer', opacity: conn?.connected ? 1 : 0.5 }}>Run</button>}
         </div>
       </div>
-      <div className="px-3 py-1.5 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)' }}><ConnectBar hint="DAX Lab runs, benchmarks & verifies against a live engine." /></div>
+      <div className="px-3 py-1.5 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)' }}><ConnectBar hint="Try formulas against a live model, measure their speed and compare their answers." /></div>
 
       {/* Results run against the published model, not your staged edits — say so when they diverge. */}
       <QueryStalenessChip className="px-3 pt-2 shrink-0" />
@@ -392,7 +396,7 @@ export function DaxLabView() {
                 </div>
                 <div className="p-3" style={{ height: 380, flex: 'none' }}>
                   {res ? <DaxVisual res={res} config={config} viz={viz} height={356} onExplain={setExplain} />
-                    : <div className="h-full grid place-items-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>{conn?.connected ? 'Drag a measure into Values to build a visual.' : 'Choose a test model above, then drag fields into the wells.'}</div>}
+                    : <div className="h-full grid place-items-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>{conn?.connected ? 'Drag a measure into Values to build a visual.' : 'Choose a test model above, then add fields to Rows, Columns or Values.'}</div>}
                 </div>
               </>
             ) : (
@@ -454,8 +458,8 @@ export function DaxLabView() {
                 : <Empty>{conn?.connected ? 'Run a query (or build a visual) to see rows here.' : 'Choose a test model above to run queries.'}</Empty>)}
               {tab === 'perf' && <PerfTab {...{ runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared, conn, idle, busy, clearCache, runProfile, runPlan, runQuick, runColdWarm, timings, cw, plan, bench, clearMsg }} />}
               {tab === 'plan' && <PlanTab plan={plan} shared={!!shared} connected={!!conn?.connected} idle={idle} busy={busy} clearMsg={clearMsg} onCapture={runPlan} onClearCapture={clearThenPlan} />}
-              {tab === 'debug' && <DebugTab logs={logs} logNote={logNote} connected={!!conn?.connected} idle={idle} busy={busy} visual={mode === 'visual'} onRun={() => debug()} onLogEach={() => debug(buildInstrumentedQuery(config))} />}
-              {tab === 'verify' && <VerifyTab {...{ exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr }} />}
+              {tab === 'debug' && <DebugTab logs={logs} logNote={logNote} connected={!!conn?.connected} idle={idle} busy={busy} visual={mode === 'visual'} onRun={() => debug()} />}
+              {tab === 'verify' && <VerifyTab {...{ exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr, customVerify, setVerifyGroupBy }} onChooseFields={() => setWbH(Math.max(wbH, 520))} onUseVisual={() => setCustomVerify(false)} />}
             </div>
           </div>
         </div>
@@ -473,14 +477,14 @@ function PerfTab(p: any) {
   return (
     <div className="p-3 flex flex-col gap-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>cold vs warm: prove an optimization helps the worst case</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Compare a fresh run with repeat runs that can reuse earlier work.</span>
         <label className="text-[11px] ml-1" style={{ color: 'var(--sem-muted)' }}>runs</label>
         <input type="number" min={1} max={25} value={runs} onChange={(e) => setRuns(Math.max(1, Math.min(25, Number(e.target.value) || 1)))} className="w-14 text-[12px] px-2 py-1 rounded-md tnum outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <Button disabled={!conn?.connected || idle} onClick={clearCache} title="Clear the Storage-Engine cache (needs local Power BI Desktop / admin XMLA)">{busy === 'clear' ? 'Clearing…' : 'Clear cache'}</Button>
           <Button disabled={!conn?.connected || idle} onClick={runProfile} title="Server timings: the formula-engine / storage-engine split + heaviest scans">{busy === 'profile' ? 'Profiling…' : 'Profile'}</Button>
           <Button disabled={!conn?.connected || idle} onClick={runPlan} title="Capture the logical + physical query plan">{busy === 'plan' ? 'Capturing…' : 'Plan'}</Button>
-          <Button disabled={!conn?.connected || idle} onClick={runQuick} title="Quick wall-clock benchmark">{busy === 'quick' ? 'Running…' : 'Quick'}</Button>
+          <Button disabled={!conn?.connected || idle} onClick={runQuick} title="Measure elapsed query time without clearing cached results">{busy === 'quick' ? 'Running…' : 'Quick'}</Button>
           <Button primary disabled={!conn?.connected || idle} onClick={runColdWarm} title="Cold (cache cleared) vs warm benchmark">{busy === 'coldwarm' ? 'Benchmarking…' : 'Cold / Warm'}</Button>
         </div>
       </div>
@@ -489,7 +493,7 @@ function PerfTab(p: any) {
         {shared && <label className="flex items-center gap-1.5 cursor-pointer" style={{ color: 'var(--sem-warn)' }}><input type="checkbox" checked={confirmShared} onChange={(e) => setConfirmShared(e.target.checked)} /> Shared endpoint: clearing the cache affects all users</label>}
       </div>
       {clearMsg && <div className="text-[11px]" style={{ color: 'var(--sem-good)' }}>{clearMsg}</div>}
-      {!timings && !cw && !plan && !bench && <Empty>Profile · Plan · Quick · Cold/Warm: results land here.</Empty>}
+      {!timings && !cw && !plan && !bench && <Empty>Start with Quick to measure query time. Use Profile for more detail, or Cold / Warm to compare fresh and repeat runs.</Empty>}
       {timings && <ServerTimingsView t={timings} />}
       {cw && <ColdWarmView cw={cw} />}
       {bench && (
@@ -511,31 +515,30 @@ function PlanTab({ plan, shared, connected, idle, busy, clearMsg, onCapture, onC
   return (
     <div className="p-3 flex flex-col gap-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>logical + physical query plan, captured on execution (cold runs show the most)</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>See the steps the server took to answer the query. Some servers do not provide this detail.</span>
         <div className="ml-auto flex gap-2">
           <Button disabled={!connected || idle} onClick={onCapture}>{busy === 'plan' ? 'Capturing…' : plan ? 'Re-capture' : 'Capture'}</Button>
-          <Button primary disabled={!connected || idle} onClick={onClearCapture} title="Clear the storage-engine cache, then capture. A warm query produces no plan">{busy === 'clear' || busy === 'plan' ? '…' : 'Clear cache & capture'}</Button>
+          <Button primary disabled={!connected || idle} onClick={onClearCapture} title="Clear cached data before capturing the plan. The server may still return no plan.">{busy === 'clear' || busy === 'plan' ? '…' : 'Clear cache & capture'}</Button>
         </div>
       </div>
       {clearMsg && <div className="text-[11px]" style={{ color: 'var(--sem-good)' }}>{clearMsg}</div>}
-      {plan ? <QueryPlanView plan={plan} /> : <Empty>Capture a plan to see the logical + physical trees.</Empty>}
-      {shared && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Note: query plans are often not emitted by the Power BI XMLA endpoint even for admins. <b>Profile</b> (server timings) and <b>Cold/Warm</b> work regardless; they're the reliable tuning signal here.</div>}
+      {plan ? <QueryPlanView plan={plan} /> : <Empty>Capture a plan to see the server execution steps. This is an advanced way to investigate a slow query.</Empty>}
+      {shared && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Note: query plans are often not emitted by the Power BI XMLA endpoint even for admins. <b>Profile</b> (server timings) and <b>Cold/Warm</b> can still help when timing or trace data is available.</div>}
     </div>
   );
 }
 
-function DebugTab({ logs, logNote, connected, idle, busy, visual, onRun, onLogEach }: { logs: EvalLogEntry[] | null; logNote: string | null; connected: boolean; idle: boolean; busy: string | null; visual: boolean; onRun: () => void; onLogEach: () => void }) {
+function DebugTab({ logs, logNote, connected, idle, busy, visual, onRun }: { logs: EvalLogEntry[] | null; logNote: string | null; connected: boolean; idle: boolean; busy: string | null; visual: boolean; onRun: () => void }) {
   const acting = busy === 'debug';
   return (
     <div className="p-3 flex flex-col gap-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>EVALUATEANDLOG traces{logs ? ` · ${logs.length} log${logs.length === 1 ? '' : 's'}` : ''}</span>
         <div className="ml-auto flex gap-2">
-          {visual && <Button disabled={!connected || idle} onClick={onLogEach} title="Wrap each Values measure in EVALUATEANDLOG and run">{acting ? 'Running…' : 'Log each measure'}</Button>}
-          <Button primary={!logs} disabled={!connected || idle} onClick={onRun}>{acting ? 'Running…' : logs ? 'Re-run' : 'Run with traces'}</Button>
+          <Button primary={!logs} disabled={!connected || idle} onClick={onRun}>{acting ? 'Running…' : visual ? 'Log each measure' : 'Capture query logs'}</Button>
         </div>
       </div>
-      {logNote && <div className="text-[11px]" style={{ color: 'var(--sem-warn)' }}>{logNote}</div>}
+      {logNote && <TraceNote note={logNote} />}
       {!logs && !logNote && <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}><span className="font-mono">EVALUATEANDLOG(expr,&nbsp;"label")</span> logs a labelled snapshot of any sub-expression. Hit <b>Log each measure</b> to auto-wrap the Values measures, or add it yourself in Query mode.</div>}
       {logs && logs.map((e, i) => (
         <div key={i} className="rounded-lg p-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
@@ -552,20 +555,33 @@ function DebugTab({ logs, logNote, connected, idle, busy, visual, onRun, onLogEa
 }
 
 function VerifyTab(p: any) {
-  const { exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr } = p;
+  const { exprA, setExprA, exprB, setExprB, groupByDerived, filterLinesDerived, conn, busy, runVerify, eqEv, eqStale, vErr, customVerify, setVerifyGroupBy, onChooseFields, onUseVisual } = p;
+  const [choosingFields, setChoosingFields] = useState(false);
+  const addFields = (nodes: BrowserNode[]) => setVerifyGroupBy([...new Set([...groupByDerived, ...nodes.map((n) => `'${n.table.split("'").join("''")}'[${n.name.split(']').join(']]')}]`)])]);
   return (
     <div className="p-3 flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>prove a rewrite returns the same values across the visual's row × column × filter matrix</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Compare expressions across the combinations of fields you choose, including fields from different tables.</span>
         <div className="ml-auto"><Button primary disabled={!conn?.connected || busy === 'verify'} onClick={runVerify}>{busy === 'verify' ? 'Verifying…' : 'Verify'}</Button></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <LabeledMono label="Original: the Values measure (exprA)" value={exprA} onChange={setExprA} />
+        <LabeledMono label="Original formula: the measure selected in Values" value={exprA} onChange={setExprA} />
         <LabeledMono label="Candidate rewrite (exprB)" value={exprB} onChange={setExprB} />
       </div>
       <div className="text-[11px] rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>
-        <b style={{ color: 'var(--sem-fg)' }}>Matrix from the visual:</b> group by {groupByDerived.length ? groupByDerived.join(', ') : '(none; add Rows/Columns)'}{filterLinesDerived.length ? ` · filters: ${filterLinesDerived.join(' && ')}` : ''}
+        <div className="flex gap-2 items-center flex-wrap">
+          <b style={{ color: 'var(--sem-fg)' }}>{customVerify ? 'Custom test contexts' : 'Test contexts from the visual'}</b>
+          <Button onClick={() => { if (!choosingFields) onChooseFields(); setChoosingFields(!choosingFields); }}>{choosingFields ? 'Done choosing' : 'Choose fields'}</Button>
+          {customVerify && <Button onClick={onUseVisual}>Use visual fields</Button>}
+        </div>
+        <div className="flex gap-1.5 flex-wrap mt-2">
+          {groupByDerived.map((field: string) => <span key={field} className="rounded border px-2 py-1" style={{ borderColor: 'var(--sem-border)' }}>{field} <button aria-label={'Remove ' + field} onClick={() => setVerifyGroupBy(groupByDerived.filter((f: string) => f !== field))}>×</button></span>)}
+          {!groupByDerived.length && <span>Grand total only. Choose fields for a useful comparison.</span>}
+        </div>
+        <div className="mt-2">Combine fields such as Product category, Customer segment, Region and Date. The comparison covers the returned combinations.</div>
+        {filterLinesDerived.length > 0 && <div className="mt-1">Filters from the visual: {filterLinesDerived.join(' && ')}</div>}
       </div>
+      {choosingFields && <ObjectBrowser kinds={['column']} multiSelect dragEnabled={false} height={220} onPick={(n) => addFields([n])} onPickMany={addFields} />}
       {vErr && <Banner color="var(--sem-bad)">{vErr}</Banner>}
       {eqEv && (() => {
         const eq: EquivalenceResult = eqEv.result;
@@ -581,11 +597,11 @@ function VerifyTab(p: any) {
         }
         const color = verdict === 'proven' ? 'var(--sem-good)' : verdict === 'failed' ? 'var(--sem-bad)' : 'var(--sem-warn)';
         const text: Record<EqVerdict, string> = {
-          proven: `✓ Equivalent: all ${eq.rowsCompared} filter contexts match. Safe to apply.`,
+          proven: `✓ Equivalent across the ${eq.rowsCompared} tested contexts.`,
           failed: `✗ NOT equivalent: ${eq.mismatchCount} of ${eq.rowsCompared} contexts differ. Do not apply.`,
           degraded_mismatch: `△ Difference observed in ${eq.mismatchCount} context(s) under a DEGRADED comparison. Not authoritative: the reduced-fidelity comparison itself can cause divergence. Not verified; do not apply on this evidence.`,
           degraded: `△ Values matched, but the comparison ran with reduced fidelity. NOT verified.${eq.fidelity ? ' ' + eq.fidelity : ''}`,
-          thin: `△ Matched at the grand total only. NOT verified: add Rows/Columns for a per-context proof.`,
+          thin: `△ Matched at the grand total only. NOT verified: choose fields for a per-context comparison.`,
           unverified: `△ Could not verify: ${eq.truncated ? `the comparison hit the row cap (${eq.rowsCompared} rows), so coverage is incomplete` : 'the comparison compared 0 rows, so nothing was proven'}.`,
           noContext: `△ Unproven (no evidence context): this result was reflected from an assistant run without its request grid, so a per-context proof cannot be claimed. Re-run Verify here for stamped evidence.`,
         };
@@ -610,6 +626,14 @@ function VerifyTab(p: any) {
 }
 
 // ---- server timings (FE/SE split) -----------------------------------------------------------
+function TraceNote({ note }: { note: string }) {
+  const diagnostic = note.indexOf('[trace:');
+  return <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+    {diagnostic < 0 ? note : note.slice(0, diagnostic).trim()}
+    {diagnostic >= 0 && <details className="mt-1"><summary className="cursor-pointer">Technical details</summary><code className="break-all">{note.slice(diagnostic)}</code></details>}
+  </div>;
+}
+
 function ServerTimingsView({ t }: { t: ServerTimings }) {
   const sePct = t.totalMs > 0 ? Math.round((t.seMs / t.totalMs) * 100) : 0;
   const fePct = Math.max(0, 100 - sePct);
@@ -617,24 +641,27 @@ function ServerTimingsView({ t }: { t: ServerTimings }) {
     <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Server timings</span>
-        {!t.traceAvailable && <span className="text-[10px]" style={{ color: 'var(--sem-warn)' }}>wall-clock only: {t.note}</span>}
+        {!t.traceAvailable && <span className="text-[10px]" style={{ color: 'var(--sem-warn)' }}>Elapsed time only: {t.wallMs ?? t.totalMs} ms</span>}
       </div>
+      {!t.traceAvailable && t.note && <TraceNote note={t.note} />}
       {t.traceAvailable && (
         <>
-          <div className="flex h-5 rounded overflow-hidden text-[10px]" style={{ background: 'var(--sem-surface)' }} title={`FE ${t.feMs}ms · SE ${t.seMs}ms`}>
+          {t.seQueries > 0 && <div className="flex h-5 rounded overflow-hidden text-[10px]" style={{ background: 'var(--sem-surface)' }} title={`FE ${t.feMs}ms · SE ${t.seMs}ms`}>
             <div className="flex items-center justify-center" style={{ width: `${fePct}%`, background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', minWidth: fePct > 0 ? 28 : 0 }}>{fePct > 8 ? `FE ${fePct}%` : ''}</div>
             <div className="flex items-center justify-center" style={{ width: `${sePct}%`, background: 'var(--sem-good)', color: '#000', minWidth: sePct > 0 ? 28 : 0 }}>{sePct > 8 ? `SE ${sePct}%` : ''}</div>
-          </div>
+          </div>}
           <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>
-            <span><b style={{ color: 'var(--sem-fg)' }}>{t.totalMs} ms</b> total</span>
-            <span><b style={{ color: 'var(--sem-accent)' }}>{t.feMs} ms</b> formula engine</span>
-            <span><b style={{ color: 'var(--sem-good)' }}>{t.seMs} ms</b> storage engine</span>
+            <span><b style={{ color: 'var(--sem-fg)' }}>{t.totalMs} ms</b> server query</span>
+            {t.wallMs != null && <span>{t.wallMs} ms round trip</span>}
+            {t.setupMs != null && t.setupMs >= 0 && <span>{t.setupMs} ms trace setup</span>}
+            {t.seQueries > 0 && <><span><b style={{ color: 'var(--sem-accent)' }}>{t.feMs} ms</b> estimated formula engine</span>
+            <span><b style={{ color: 'var(--sem-good)' }}>{t.seMs} ms</b> captured storage engine</span></>}
             <span><b style={{ color: 'var(--sem-fg)' }}>{t.seQueries}</b> SE queries</span>
             {t.seCacheHits != null && <span><b style={{ color: 'var(--sem-good)' }}>{t.seCacheHits}</b> SE cache hits</span>}
             <span>{t.seCpuMs} ms SE cpu</span>
             {t.seParallelism > 0 && <span>{t.seParallelism}× parallelism</span>}
           </div>
-          {t.note && <div className="text-[10px] mt-1" style={{ color: 'var(--sem-muted)' }}>{t.note}</div>}
+          {t.note && <TraceNote note={t.note} />}
           {t.scans.length > 0 && (
             <div className="mt-2">
               <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--sem-muted)' }}>Heaviest scans</div>

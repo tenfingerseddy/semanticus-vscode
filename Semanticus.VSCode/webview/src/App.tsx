@@ -26,7 +26,7 @@ import { DocumentationView } from './documentation';
 import { DeployView } from './deploy';
 import { EvidenceView, TestsView } from './tests';
 import { DataAgentView } from './dataagent';
-import { HelpButton } from './help';
+import { HelpButton, PageGuide } from './help';
 import { HistoryView, type EditEntry } from './history';
 import { WorkflowsView, type WorkflowRunView } from './workflows';
 import { emptyRuns, reduceRuns, liveRuns, runById, isRunNotFound, type RunMapState, type FoldOpts } from './workflowruns.mjs';
@@ -82,7 +82,7 @@ const TAB_GROUPS: { id: string; label: string; tabs: { id: StudioTab; label: str
     { id: 'optimize', label: 'Change Plan' },
   ] },
   { id: 'improve', label: 'Improve', tabs: [
-    { id: 'readiness', label: 'AI Readiness' }, { id: 'bpa', label: 'BPA' },
+    { id: 'readiness', label: 'AI Readiness' }, { id: 'bpa', label: 'Best practices' },
   ] },
   { id: 'prove', label: 'Prove', tabs: [
     { id: 'tests', label: 'Tests' }, { id: 'evidence', label: 'Evidence' },
@@ -671,6 +671,7 @@ function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pending
           ))}
         </div>
       )}
+      <PageGuide tab={tab} />
       <main className="flex-1 overflow-auto min-h-0">{children}</main>
       {/* Context bar — a FOOTER pinned to the bottom of the Studio panel (VS Code convention: ambient state lives at the
           bottom). flex:none so long tab content scrolls inside <main> above and never pushes it off screen. It replaces
@@ -711,7 +712,7 @@ function HistoryTab({ active, count, onClick }: { active: boolean; count: number
 // not a stage within it. Same button language as Edit History so the two standalone surfaces read as a pair.
 function WorkflowsTab({ active, onClick }: { active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} title="Workflows: playbooks that chain steps with verified gates. Run one here, or let your AI Assistant run it."
+    <button onClick={onClick} title="Workflows: follow saved steps for a modelling task, yourself or with your AI Assistant."
       className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold transition-colors"
       style={active
         ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
@@ -727,7 +728,7 @@ function WorkflowsTab({ active, onClick }: { active: boolean; onClick: () => voi
 // The Primer is the human-facing orientation document. Learning machinery remains behind it as a supplier.
 function KnowledgeTab({ active, onClick }: { active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} title="Primer: the open model's shared orientation document"
+    <button onClick={onClick} title="Primer: the business context and definitions that explain this model"
       className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold transition-colors"
       style={active
         ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }

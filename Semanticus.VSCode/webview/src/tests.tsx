@@ -230,7 +230,7 @@ export function TestsView() {
       {reportOpen && <ReportExportDialog modelName={run?.modelName} onClose={() => setReportOpen(false)} />}
       <main className="sem-centered-page w-full min-w-0 px-7 pt-6 pb-12">
         <header className="mb-3.5 flex flex-wrap items-end justify-between gap-4">
-          <div className="min-w-[240px] flex-1"><h1 className="m-0 text-[15px] font-semibold">Tests</h1><div className="mt-1 truncate text-[12px]" style={{ color: 'var(--sem-muted)' }}>{run?.live && <i aria-hidden className="mr-2 inline-block size-1.5 rounded-full" style={{ background: 'var(--sem-good)' }} />}{run?.environment ?? 'Prove the model with data: probe relationships, check role filters and tie saved measures back to accepted source SQL.'}</div></div>
+          <div className="min-w-[240px] flex-1"><h1 className="m-0 text-[15px] font-semibold">Tests</h1><div className="mt-1 truncate text-[12px]" style={{ color: 'var(--sem-muted)' }}>{run?.live && <i aria-hidden className="mr-2 inline-block size-1.5 rounded-full" style={{ background: 'var(--sem-good)' }} />}{run?.environment ?? 'Check calculation answers, relationships and access rules. Compare model results with a trusted answer or source query.'}</div></div>
           <div className="flex flex-wrap items-start gap-2">
             <NewTestMenu onPick={(shape) => { setEditing(null); setAuthor(shape); }} />
             <div className="flex flex-col gap-0.5">
@@ -254,7 +254,7 @@ export function TestsView() {
           {(Object.keys(tabCounts) as SubTab[]).map((tab) => <button key={tab} className="h-[38px] border-0 border-b-2 bg-transparent px-0.5 text-[12px] capitalize" onClick={() => setSub(tab)} style={{ color: sub === tab ? 'var(--sem-accent)' : 'var(--sem-muted)', borderBottomColor: sub === tab ? 'var(--sem-accent)' : 'transparent' }}>{tab}{/* history's count is unknown until its lazy load lands: no count beats a false 0 */}{(tab !== 'history' || history != null) && <span className="tnum ml-1 text-[11px]">{tabCounts[tab]}</span>}</button>)}
         </nav>
 
-        {!run && !busy && sub !== 'measures' && <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>No run yet. Run the suite to probe every relationship, check every role filter and execute saved reconciliations. {suite?.definitions.length ? `${plural(suite.definitions.length, 'saved test')} will run too.` : 'No saved tests yet: ambient checks still cover relationships and security.'}</span></Card>}
+        {!run && !busy && sub !== 'measures' && <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>No results yet. Run tests to check relationships, review access rules and compare saved calculations with their expected answers. {suite?.definitions.length ? `${plural(suite.definitions.length, 'saved test')} will run too.` : 'No saved tests yet. The built-in relationship and access-rule checks are still available.'}</span></Card>}
         {sub === 'measures' && <Measures run={run} suite={suite} ticked={ticked} onTick={setTicked} onEdit={(d) => { setEditing(d); setAuthor((d.kind === 'measureValue' ? 'measureValue' : 'measureReconcile') as AuthorShape); }} onSuiteChanged={loadSuite} onNew={() => { setEditing(null); setAuthor('measureValue'); }} />}
         {run && sub === 'relationships' && <Relationships report={run.relationships} />}
         {run && sub === 'security' && <Security report={run.security} />}
@@ -286,7 +286,7 @@ export function EvidenceView() {
       load={() => rpc<EvidenceArtifactW>('getEvidence', openEvidence.id)}
       onClose={() => setOpenEvidence(null)} />}
     <main className="sem-centered-page w-full min-w-0 px-7 pt-6 pb-12">
-      <header className="mb-4"><h1 className="m-0 text-[15px] font-semibold">Evidence</h1><div className="mt-1 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Review the sealed Test and Workflow reports saved with this model.</div></header>
+      <header className="mb-4"><h1 className="m-0 text-[15px] font-semibold">Evidence</h1><div className="mt-1 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Review saved test and workflow reports, including their results, date and model details.</div></header>
       {err && <div className="mb-3"><Banner color="var(--sem-bad)">{err}</Banner></div>}
       <EvidenceLibraryView library={library} onOpen={setOpenEvidence} />
     </main>
@@ -375,7 +375,7 @@ function Measures({ run, suite, ticked, onTick, onEdit, onSuiteChanged, onNew }:
   const columns = hasVariants ? '5px minmax(220px,1.5fr) 118px 150px 125px 100px 30px' : '5px minmax(220px,1.5fr) 118px 150px 125px 30px';
 
   const saved = suite?.definitions ?? [];
-  return <section><SectionIntro title="Measures" sub="Reconcile model measures to human-accepted source SQL, with context-by-context evidence." legend />
+  return <section><SectionIntro title="Measures" sub="Compare calculation results with a source SQL query you have reviewed, for each selected set of filters." legend />
     {saved.length > 0 && <SavedTestsList definitions={saved} ticked={ticked} onTick={onTick} onEdit={onEdit} onChanged={onSuiteChanged} />}
     {failing.length > 0 && <RootBand count={failing.length} title={failing.length === 1 ? `Root cause in ${failing[0]?.title ?? 'a measure'}` : `Root causes in ${failing.length} measures, worst in ${failing[0]?.title ?? 'a measure'}`} body={failing[0]?.message ?? 'The model result differs from the accepted source result.'} action="Inspect evidence" onAction={inspect} />}
     <div className="mb-2.5 flex flex-wrap items-center gap-2">
@@ -507,11 +507,11 @@ function SqlMappingReview({ definitions, onClose, onSaved }: { definitions: Test
   };
 
   const inp: CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', borderColor: 'var(--sem-border)' };
-  if (definitions.length === 0) return <Card className="mb-3 p-4 text-[12px]"><div className="flex items-start justify-between gap-4"><div><strong>No saved SQL mappings</strong><p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>Ask the AI Assistant to draft independent source SQL, review it, then accept it. This page edits connectivity only; it never invents ground truth.</p></div><button onClick={onClose} className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Close</button></div></Card>;
+  if (definitions.length === 0) return <Card className="mb-3 p-4 text-[12px]"><div className="flex items-start justify-between gap-4"><div><strong>No saved SQL mappings</strong><p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>Ask your AI Assistant to draft a source SQL query, then review and accept it as the expected answer. Use this page to set up the connection that runs that query.</p></div><button onClick={onClose} className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Close</button></div></Card>;
 
   return <Card className="mb-3 overflow-hidden">
     <div className="flex items-start justify-between gap-4 border-b px-4 py-3" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
-      <div><strong className="text-[13px]">Source SQL mappings</strong><p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Review detected Fabric coordinates, override endpoint/database when needed, and test identity access without running the accepted SQL.</p></div>
+      <div><strong className="text-[13px]">Source SQL mappings</strong><p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Check the suggested server and database, change them if needed and test whether your account can connect. This connection check does not run the saved SQL query.</p></div>
       <button onClick={onClose} className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Close</button>
     </div>
     <div className="grid min-h-[330px]" style={{ gridTemplateColumns: '260px minmax(0,1fr)' }}>
@@ -548,7 +548,7 @@ function SqlMappingReview({ definitions, onClose, onSaved }: { definitions: Test
             <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} disabled={authMode === 'azcli'} placeholder={authMode === 'azcli' ? 'Uses the Azure CLI tenant' : 'Tenant id or domain'} className="mt-1 min-h-8 w-full rounded-md border px-2.5 text-[12px] normal-case tracking-normal outline-none disabled:opacity-50" style={inp} />
           </label>
         </div>
-        <div className="mb-3"><QueryBlock title="Human-accepted source SQL (read-only)" text={params.sql} /></div>
+        <div className="mb-3"><QueryBlock title="Reviewed source SQL (read-only here)" text={params.sql} /></div>
         <div className="mb-3 text-[10px]" style={{ color: 'var(--sem-muted)' }}>Schema and entity come from model partitions and are shown for review. The accepted SQL owns its table references; changing those requires a newly reviewed SQL draft.</div>
         {review?.tested && <div className="mb-3"><Banner color={review.connected ? 'var(--sem-good)' : 'var(--sem-bad)'}>{review.connected ? `Connected in ${(review.elapsedMs ?? 0).toLocaleString()} ms. Identity and endpoint verified; the accepted SQL was not run.` : review.testError ?? 'Connection test failed.'}</Banner></div>}
         <div className="flex flex-wrap items-center gap-2"><button onClick={testConnection} disabled={busy || saving} className="rounded-md border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{busy ? 'Testing…' : 'Test connection'}</button>
@@ -569,7 +569,7 @@ function MeasureItem({ outcome, run, hasVariants, columns, isOpen, toggle, rowRe
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } };
   return <><div ref={rowRef} role="button" tabIndex={0} aria-expanded={isOpen} onClick={toggle} onKeyDown={onKeyDown} className="grid min-h-14 cursor-pointer items-center border-b" style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)', background: isOpen ? 'var(--sem-surface-2)' : 'var(--sem-surface)' }}>
     <div className="h-full" style={{ background: VERDICT[key].color }} />
-    <div className="min-w-0 px-3"><strong className="block truncate text-[12px] font-semibold">{outcome.title}</strong><small className="block truncate text-[11px]" style={{ color: outcome.missing ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>{outcome.missing ? 'Target missing: the bound measure no longer exists. Re-bind or delete the test.' : outcome.message ?? outcome.targetRef ?? '·'}</small></div>
+    <div className="min-w-0 px-3"><strong className="block truncate text-[12px] font-semibold">{outcome.title}</strong><small className="block truncate text-[11px]" style={{ color: outcome.missing ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>{outcome.missing ? 'The measure used by this test no longer exists. Edit the test to choose another measure, or delete the test.' : outcome.message ?? outcome.targetRef ?? '·'}</small></div>
     <div className="px-3"><VerdictPill verdict={key} /></div>
     <div className="px-3"><ContextCells rows={outcome.rows} /></div>
     <div className="tnum px-3 text-[12px]" title={outcome.timingDetail}>{formatDuration(outcome.durationMs)} {timedAgainstBudget && outcome.budgetMs != null && <small style={{ color: 'var(--sem-muted)' }}>/ {outcome.budgetMs.toLocaleString()}</small>} {slow && <span className="ml-1 rounded border px-1 py-0.5 text-[9px] font-semibold" style={{ color: 'var(--sem-warn)', borderColor: 'var(--sem-warn)' }}>SLOW</span>}{outcome.timingVerdict === 'NotVerifiable' && <small className="ml-1" style={{ color: 'var(--sem-muted)' }}>not timed</small>}</div>
@@ -627,7 +627,7 @@ function Relationships({ report }: { report?: RelationshipReportW }) {
     { title: 'Data types', pick: (rel) => rel.dataTypeMatch, sub: 'Join columns must use compatible types.' },
     { title: 'Referential integrity', pick: (rel) => rel.referentialIntegrity, sub: 'Every fact row must resolve to a dimension key.' },
   ];
-  return <section><SectionIntro title="Relationships" sub="Trust checks across keys, types and fact-to-dimension coverage." />
+  return <section><SectionIntro title="Relationships" sub="Check whether connected columns have compatible types, unique lookup values and matching rows." />
     {failedChecks.length > 0 && (worst
       ? <RootBand count={failedChecks.length} title={`${worst.referentialIntegrity.count == null ? 'Some' : worst.referentialIntegrity.count.toLocaleString()} ${worst.manyTable} rows have no matching ${worst.oneTable}`} body={failedChecks.length > 1 ? `Orphans land on the hidden blank row, so totals can still reconcile while breakdowns are wrong. ${failedChecks.length} relationship checks failed in total.` : 'Orphans land on the hidden blank row. Totals can still reconcile while breakdowns remain wrong.'} />
       : <RootBand count={failedChecks.length} title={`${plural(failedChecks.length, 'relationship check')} failed in ${plural(failures.length, 'relationship')}`} body={firstFailedCheck?.message ?? 'See the failing rows below.'} />)}
@@ -664,7 +664,7 @@ function Security({ report }: { report?: SecurityReportW }) {
   const roles = Array.from(new Set([...filters.map((filter) => filter.role), ...ols.map((item) => item.role)]));
   const failures = filters.filter((filter) => verdictKey(filter.check.verdict) === 'Fail');
   const first = failures[0];
-  return <section><SectionIntro title="Security" sub="Role filters and object visibility read statically. Row-level assertions with real identities arrive as their own gated slice." />
+  return <section><SectionIntro title="Security" sub="These checks review saved role filters and visibility rules. They do not sign in as each user or prove live row access." />
     {first && <RootBand count={failures.length} title={`Role filter failed: ${first.role} on ${first.table}`} body={first.check.message ?? `The filter on ${first.table} does not restrict rows.`} />}
     {roles.length === 0 ? <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>No role filters or object visibility data were returned.</span></Card> : roles.map((role) => <RoleCard key={role} role={role} filters={filters.filter((filter) => filter.role === role)} ols={ols.find((item) => item.role === role)} />)}
   </section>;
@@ -687,13 +687,13 @@ function EvidenceLibraryView({ library, onOpen }: { library: EvidenceLibraryW | 
         : item.verdict === 'NeedsReview' || item.verdict === 'Overridden' ? 'var(--sem-warn)' : 'var(--sem-nv)';
   return (
     <section>
-      <SectionIntro title="Saved reports" sub="Sealed Test and Workflow reports live beside the model as source-control-friendly JSON and HTML pairs. Nothing is saved automatically." />
+      <SectionIntro title="Saved reports" sub="Saved reports include a readable HTML page and a JSON data file beside the model. Choose Save with model to keep a report." />
       {library?.note && <div className="mb-3"><Banner color={library.invalidCount > 0 ? 'var(--sem-bad)' : 'var(--sem-warn)'}>{library.note}</Banner></div>}
       {library?.directoryPath && <div className="mb-3 truncate rounded-md border px-3 py-2 text-[11px]" title={library.directoryPath} style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>
         Stored in <span className="tnum" style={{ color: 'var(--sem-fg)' }}>{library.directoryPath}</span>
       </div>}
       {!library ? <Card className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading saved evidence…</Card>
-        : library.items.length === 0 ? <Card className="p-4 text-[12px]"><strong>No evidence saved yet.</strong><p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>Open a Test report or terminal Workflow evidence view, review it, then choose Save with model. Export remains a separate local copy.</p></Card>
+        : library.items.length === 0 ? <Card className="p-4 text-[12px]"><strong>No evidence saved yet.</strong><p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>Open a test report or a finished workflow report, review it, then choose Save with model. Export saves a separate copy in your chosen location.</p></Card>
           : <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))' }}>
             {library.items.map((item) => {
               const color = colorOf(item);
@@ -737,7 +737,7 @@ function History({ history }: { history: TestHistoryW | null }) {
     const rootIncrease = current.rootFailures - previous.rootFailures;
     if (rootIncrease > 0) regressions.push({ title: `Root causes increased by ${rootIncrease}`, detail: `${previous.rootFailures} to ${current.rootFailures}`, color: 'var(--sem-bad)' });
   }
-  return <section><SectionIntro title="History" sub="Coverage-aware grade trend and regression signals across recorded runs. Recording and history are Pro; running is always free." />
+  return <section><SectionIntro title="History" sub="Compare recorded runs to see changes in grades, test coverage and failures. Recording and history are Pro; running tests is free." />
     {history?.note ? <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>{history.note}</span></Card> : !history ? <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>Loading recorded runs…</span></Card> : runs.length === 0 ? <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>No recorded runs yet.</span></Card> : runs.length === 1 ? <Card className="p-4"><Eyebrow>One recorded run</Eyebrow><div className="mt-2 text-[13px]">{runs[0]?.health ? `${runs[0].health?.grade} · ${runs[0].health?.coveragePct}% coverage` : 'No health result'} <span className="ml-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{formatDate(runs[0]?.when)}</span></div></Card> : <div className="grid gap-3.5" style={{ gridTemplateColumns: '2fr 1fr' }}><HistoryChart runs={runs} /><Card className="p-4"><Eyebrow>Regression signals</Eyebrow>{regressions.length ? regressions.map((item, index) => <div key={`${item.title}-${index}`} className="border-t py-3 first:mt-2" style={{ borderColor: 'var(--sem-border)' }}><strong className="text-[12px]" style={{ color: item.color }}>{item.title}</strong><p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{item.detail}</p></div>) : <p className="m-0 mt-3 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No grade, coverage or root-cause regressions between consecutive recorded runs.</p>}</Card></div>}
   </section>;
 }

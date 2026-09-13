@@ -78,12 +78,12 @@ export function EvidenceArtifactDialog({ title, subtitle, baseName, stateKey, lo
             title={!content ? 'Nothing to export yet. Run the suite, then open Report again.' : 'Save a local copy of this report'}
             style={{ borderColor: 'var(--sem-accent)', background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Export…</button>
           {save && <button onClick={doSave} disabled={!artifact?.json || !!error || saving} className="rounded-md border px-3 py-1 text-[11px] font-semibold disabled:opacity-40"
-            style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-fg)' }} title="Write the sealed JSON and HTML beside this model; export alone writes nothing">{saving ? 'Saving…' : 'Save with model'}</button>}
+            style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-fg)' }} title="Save the report and its data beside this model. Export saves a separate copy.">{saving ? 'Saving…' : 'Save with model'}</button>}
           <span className="ml-auto max-w-[48%] truncate text-[10px]" title={artifact?.contentHash} style={{ color: 'var(--sem-muted)' }}>{artifact?.contentHash ? `SHA-256 ${artifact.contentHash}` : format === 'json' ? 'Canonical evidence record' : 'Self-contained HTML'}</span>
         </div>
         {saveNote && <div className="border-b px-4 py-2 text-[11px]" style={{ borderColor: 'var(--sem-border)', color: saveNote.startsWith('Saved') ? 'var(--sem-good)' : 'var(--sem-warn)' }}>{saveNote}</div>}
         <div className="min-h-0 flex-1" style={{ background: 'var(--sem-surface-2)' }}>
-          {!artifact && !error ? <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Building the evidence artifact…</div>
+          {!artifact && !error ? <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Preparing the report…</div>
             : error ? <Message color="var(--sem-bad)">{error}</Message>
               : artifact?.note && !content ? <Message color="var(--sem-warn)">{artifact.note}</Message>
                 : format === 'html' ? <iframe title={`${title} HTML preview`} srcDoc={artifact?.html ?? ''} sandbox="" className="h-full w-full border-0" style={{ background: '#fff' }} />

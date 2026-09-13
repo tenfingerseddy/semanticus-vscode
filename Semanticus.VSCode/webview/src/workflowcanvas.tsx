@@ -109,7 +109,7 @@ function Canvas({ steps, storageKey, workflowName, selected, onSelect }: {
   return (
     <div className="rounded-xl border overflow-hidden mb-3" style={{ borderColor: 'var(--sem-border)' }}>
       <div className="flex items-center gap-3 px-3 py-2 text-[11px]" style={{ background: 'var(--sem-surface)' }}>
-        <span className="flex-1" style={{ color: 'var(--sem-muted)' }}>{loading ? 'Loading shared layout…' : 'Drag steps to arrange. Select a step to read it below.'}</span>
+        <span className="flex-1" style={{ color: 'var(--sem-muted)' }}>{loading ? 'Loading shared layout…' : 'Drag steps to arrange the view. Select a step to read it below. To change the actions or their order, edit the workflow definition.'}</span>
         <button type="button" disabled={loading} onClick={arrange} className="font-semibold" style={{ color: 'var(--sem-accent)' }}>Arrange</button>
         <button type="button" disabled={loading} onClick={() => {
           setNodes(nodes.map((node, index) => ({ ...node, position: defaultPosition(index) })));

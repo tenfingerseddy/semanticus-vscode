@@ -112,7 +112,7 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: 'var(--sem-accent)' }}>Model orientation</div>
               <h1 className="m-0 mt-1 text-[22px] font-semibold">{doc?.modelName ? `${doc.modelName} Primer` : 'Model Primer'}</h1>
               <p className="m-0 mt-1 max-w-[820px] text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-                The one declared guide for people and the AI Assistant: what this model means, how to work with it, and what to watch. Lessons, recall, and purge live below.
+                Explain what this model covers, define business terms and record known issues. People and your AI Assistant use the same guide. Saved notes and their controls are below.
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {SECTIONS.map((section) => <span key={section} className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: pendingFor(section) ? 'var(--sem-warn)' : 'var(--sem-border)', color: pendingFor(section) ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>{section}{pendingFor(section) ? ` · ${pendingFor(section)} suggested` : ''}</span>)}
@@ -121,14 +121,14 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
                 <Jump href="#knowledge-insights">Insights{approved.length || pending.length ? ` · ${approved.length}` : ''}</Jump>
                 <Jump href="#knowledge-learned">Learned workflows</Jump>
                 <Jump href="#knowledge-recall">Recall</Jump>
-                <Jump href="#knowledge-purge">Purge</Jump>
+                <Jump href="#knowledge-purge">Delete saved knowledge</Jump>
               </nav>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {editing ? <>
                 <button onClick={() => { setDraft(doc?.markdown ?? ''); setEditing(false); setError(null); }} disabled={saving} className="rounded-md border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--sem-border)' }}>Cancel</button>
                 <button onClick={() => void save()} disabled={saving || !dirty} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saving ? 'Saving…' : 'Save Primer'}</button>
-              </> : <button onClick={() => setEditing(true)} disabled={!doc?.markdown} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Edit Markdown</button>}
+              </> : <button onClick={() => setEditing(true)} disabled={!doc?.markdown} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Edit Primer</button>}
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-[10.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
@@ -150,7 +150,7 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
         {!editing && !!suggestions?.suggestions?.length && <section className="rounded-xl border p-4" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
           <div className="mb-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-warn)' }}>Suggested updates</div>
-            <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Captured learning never changes the Primer until you accept the exact addition.</p>
+            <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Review each suggested addition. It is added to the Primer only when you select Accept.</p>
           </div>
           <div className="grid gap-2">
             {suggestions.suggestions.map((suggestion) => <article key={suggestion.id} className="rounded-lg border p-3" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-bg)' }}>
@@ -193,12 +193,12 @@ function InsightsSection({ approved, pending, loaded, onChanged }: {
     <section id="knowledge-insights" className="rounded-xl border p-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-accent)' }}>Insights</div>
       <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-        Lessons distilled from real work. Upvote and downvote change how important a lesson is. Edit fixes its text and match keys. Delete removes it.
+        Save useful lessons from earlier work. Upvote and downvote change their importance. Edit changes the text and search terms. Delete removes a lesson from use.
       </p>
       {!loaded ? (
         <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading insights…</div>
       ) : approved.length === 0 && pending.length === 0 ? (
-        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No lessons yet. As you and the AI Assistant work, lessons land here.</div>
+        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No lessons are saved yet. Ask your AI Assistant to save a useful business rule or lesson from your work.</div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">{approved.map((i) => <InsightCard key={i.id} rec={i} onChanged={onChanged} />)}</div>
       )}
@@ -337,7 +337,7 @@ function LearnedWorkflowsSection({ onOpenWorkflows }: { onOpenWorkflows?: () => 
       {!learned ? (
         <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading…</div>
       ) : learned.length === 0 ? (
-        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>None yet. After a verified success, a playbook distilled from that run will appear here.</div>
+        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No learned workflows yet. Ask your AI Assistant to turn a successful process into a reusable workflow.</div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">{learned.map((d) => <LearnedWorkflowCard key={d.name} def={d} onOpenWorkflows={onOpenWorkflows} />)}</div>
       )}
@@ -468,7 +468,7 @@ function RecallSection() {
     <section id="knowledge-recall" className="rounded-xl border p-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-accent)' }}>Recall</div>
       <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-        Type what you are about to do. Recall finds matching lessons by overlap, the same model shape, importance, and how recently they were used. Each hit says why it matched.
+        Describe your next task to find relevant saved lessons. Results consider matching words, similar models, importance and recent use. Each result explains why it was suggested.
       </p>
       {fp && <FingerprintCard fp={fp} />}
       <div className="mt-3 flex items-center gap-2">
@@ -570,9 +570,9 @@ function PurgeSection({ onPurged }: { onPurged: () => void }) {
 
   return (
     <section id="knowledge-purge" className="rounded-xl border p-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-accent)' }}>Purge</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-accent)' }}>Delete saved knowledge</div>
       <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-        Wipe a whole scope (this model or all models). A preview count first, then an explicit confirm. The history of what was stored is kept. The lessons stop showing.
+        Remove saved lessons from use for this model or across all models. Review the count before confirming. The storage history is kept; this does not erase the original records.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <select value={scope} onChange={(e) => { setScope(e.target.value); reset(); }} disabled={phase !== 'idle'} aria-label="Purge scope"

@@ -13,7 +13,7 @@ import { WorkflowDocumentEditor } from './workflowdocument.tsx';
 // ===================================================================================================
 // Design mode — the workflow DESIGNER (docs/workflow-designer-plan.md §3/§4). The designer edits a
 // structured Draft and EMITS the markdown deterministically; the file stays the artifact (git-diffable,
-// hand-editable, readable by the AI assistant over MCP). Nothing here validates "for real" — save_workflow
+// hand-editable, readable by the AI Assistant over MCP). Nothing here validates "for real" — save_workflow
 // re-parses on the engine and a refusal comes back verbatim, so the designer can never write a file the
 // parser refuses. Instruction text is preserved byte-for-byte; only the gate fence is generated.
 // ===================================================================================================
@@ -238,7 +238,7 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
   if (!creating && def?.error) {
     return (
       <Panel>
-        <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This file doesn't parse, so it can't be edited structurally</div>
+        <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This workflow file has a format error. Open the saved source to correct it before using the visual editor.</div>
         <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>{def.error}</div>
         {saveErr && <div className="mt-2"><Banner color="var(--sem-bad)">{saveErr}</Banner></div>}
         {info && <div className="mt-3 flex items-center gap-2 flex-wrap">
@@ -312,7 +312,7 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
           <Field label="Description"><TextInput value={draft.description} disabled={!isEditable()} onChange={(v) => set({ description: v })} placeholder="Shown in the library and to the AI Assistant" /></Field>
         </div>
         <div className="col-span-2">
-          <Field label="Triggers: ops that suggest this workflow (advisory)">
+          <Field label="Suggested for these actions (does not make the workflow required)">
             <OpChipEditor ops={draft.triggers} disabled={!isEditable()} onChange={(triggers) => set({ triggers })} />
           </Field>
         </div>
@@ -389,7 +389,7 @@ export function DesignMode({ info, def, creating, onSaved, onDeleted, layout = '
   );
   const rawView = (
     <Panel>
-      <SectionTitle>The file (deterministic emission)</SectionTitle>
+      <SectionTitle>Generated workflow file</SectionTitle>
       <pre className="mt-2 rounded-lg px-3 py-2 text-[11.5px] whitespace-pre-wrap overflow-x-auto"
         style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', font: '11.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace' }}>
         {emitMarkdown(draft)}
@@ -469,8 +469,7 @@ function BoxesPane({ def, workflowName, lossy, extraReasons }: { def: WorkflowDe
     <div className="sem-wf-boxes min-w-0" data-wf-view="boxes">
       {lossy && (
         <div className="mb-3"><Banner color="var(--sem-warn)">
-          This file has fields Outline cannot keep. The Canvas preserves them for reading.
-          To change this workflow, edit its file or ask your AI Assistant.
+          This workflow uses features the Outline editor cannot edit. Canvas can display them. Use the saved file editor or your AI Assistant to change the workflow.
         </Banner></div>
       )}
       <div className="text-[11.5px] mb-3 leading-relaxed" style={{ color: 'var(--sem-muted)' }}>
@@ -598,7 +597,7 @@ function StepCard({ step, index, count, editable, inputNames, onChange, onMove, 
         <div className="mt-2.5">
           <div className="flex items-center gap-2">
             <SectionTitle>Gate</SectionTitle>
-            {!gateActive && <span className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>none; this step only teaches</span>}
+            {!gateActive && <span className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>No actions selected. This step provides instructions only.</span>}
             <div className="flex-1" />
             {editable && (
               <div className="flex items-center gap-1.5">

@@ -243,7 +243,8 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
   const defLoad = defLoader.current;
 
   const refreshPolicy = () => rpc<WorkflowPolicy>('getWorkflowPolicy').then(setPolicy).catch(() => undefined);
-  const refreshProfiles = () => rpc<WorkflowProfileInfo[]>('listWorkflowProfiles').then(setProfiles).catch(() => setProfiles([]));
+  const refreshProfiles = () => rpc<WorkflowProfileInfo[]>('listWorkflowProfiles').then((items) => { setProfiles(items); setProfileErr(null); })
+    .catch((e) => { setProfileErr('Could not load project profiles: ' + String((e as Error).message ?? e)); setProfiles([]); });
   const refreshEnforcement = () => rpc<WorkflowEnforcement>('getWorkflowEnforcement').then(setEnforcement).catch(() => undefined);
 
   // Load the library + entitlement + policy; keep everything live (a save_workflow / set_*_binding / profile
@@ -426,7 +427,7 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
               {...shared} enforcement={enforcement} profiles={profiles}
               focusTarget={govTarget}
               profileErr={profileErr} bindErr={bindErr} actErr={actErr}
-              onSetEnforcement={setEnforcementMode} onApplyProfile={applyProfile}
+              onSetEnforcement={setEnforcementMode} onApplyProfile={applyProfile} onReloadProfiles={refreshProfiles}
               onToggleEnabled={toggleEnabled} onSetBinding={setBinding} onSetActivation={setActivation} />
           )}
 
@@ -533,7 +534,7 @@ function EnforcementOffBanner({ onFix }: { onFix: () => void }) {
 // ===================================================================================================
 const HEROES: { workflow: string; title: string; blurb: string }[] = [
   { workflow: 'make-ai-ready', title: 'Make the model AI-ready', blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant works through the gaps, and the readiness score shows whether the model held or improved.' },
-  { workflow: 'verified-measure', title: 'Author a hard measure', blurb: 'Pin what the requirement says, lock expected values from raw rows, and prove one candidate against an independent raw-row witness.' },
+  { workflow: 'verified-measure', title: 'Build and test a complex calculation', blurb: 'Define the business rule, work out trusted answers from source rows and test a proposed calculation against those answers.' },
 ];
 function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, onStartHero, onExplain, onBrowse, onGuided, onGovernance, onOpenRun }: {
   library: WorkflowInfo[] | null; activeRun: WorkflowRunView | null; recentRun: WorkflowRunView | null;
@@ -849,7 +850,7 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
                     ))}
                   </div>
                 ) : (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>Required for: nothing yet.</div>
+                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>No actions require this workflow yet.</div>
                 )}
               </Panel>
               <Panel>
@@ -968,17 +969,20 @@ function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, on
 // (the only home for profiles), and the whole-project table with THREE separate columns for the three distinct
 // concepts (On the menu / Required for / Hidden when). Per-workflow editing expands the three-axis rules inline.
 // ===================================================================================================
-function GovernanceSection({ library, policy, tier, titleOf, enforcement, profiles, focusTarget, profileErr, bindErr, actErr, onSetEnforcement, onApplyProfile, onToggleEnabled, onSetBinding, onSetActivation }: {
+function GovernanceSection({ library, policy, tier, titleOf, enforcement, profiles, focusTarget, profileErr, bindErr, actErr, onSetEnforcement, onApplyProfile, onReloadProfiles, onToggleEnabled, onSetBinding, onSetActivation }: {
   library: WorkflowInfo[] | null; policy: WorkflowPolicy | null; tier: string; titleOf: (n: string) => string;
   enforcement: WorkflowEnforcement | null; profiles: WorkflowProfileInfo[] | null;
   focusTarget: { name: string; nonce: number } | null;
   profileErr: string | null; bindErr: string | null; actErr: string | null;
   onSetEnforcement: (turnOff: boolean) => void; onApplyProfile: (name: string) => Promise<string>;
+  onReloadProfiles: () => void;
   onToggleEnabled: (n: string, e: boolean) => void; onSetBinding: (op: string, require: string[], mode: string) => void;
   onSetActivation: (n: string, when: string, setStr: string) => Promise<void>;
 }) {
   const enforced = enforcement?.enforced !== false;
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [profileChoice, setProfileChoice] = useState('');
+  const chosenProfile = profiles?.find((p) => p.name === profileChoice) ?? profiles?.find((p) => p.selected) ?? profiles?.[0];
   const tableRef = useRef<HTMLDivElement | null>(null);
   const lints = policy?.lints ?? [];
   // rows: only real, non-broken workflows that carry SOME governance signal or are simply governable — keep the
@@ -1001,10 +1005,17 @@ function GovernanceSection({ library, policy, tier, titleOf, enforcement, profil
       <div>
         <h3 className="text-[13.5px] font-semibold mb-1.5">Project profile <span className="text-[11.5px] font-normal" style={{ color: 'var(--sem-muted)' }}>(one choice sets availability, requirements and check strength; saved with the project)</span></h3>
         {profileErr && <div className="mb-2"><Banner color="var(--sem-warn, #d7a54a)">{profileErr}</Banner></div>}
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
-          {profiles == null ? <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading profiles…</div>
-            : profiles.map((p) => <ProfileCard key={p.name} profile={p} tier={tier} onApply={() => onApplyProfile(p.name)} />)}
-        </div>
+        {profiles == null ? <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading profiles…</div>
+          : profiles.length === 0 ? <div className="text-[12px]">No project profiles loaded. <button className="underline" onClick={onReloadProfiles}>Retry</button></div>
+          : <div className="flex flex-col gap-3">
+            <label className="text-[12px] font-semibold">Choose a project profile
+              <select aria-label="Project profile" value={chosenProfile?.name ?? ''} onChange={(e) => setProfileChoice(e.target.value)}
+                className="block mt-1 px-2 py-1.5 rounded-md w-full max-w-md" style={{ color: 'var(--sem-fg)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+                {profiles.map((p) => <option key={p.name} value={p.name}>{p.title}{p.selected ? ' (current)' : ''}{p.pro ? ' · Pro' : ''}</option>)}
+              </select>
+            </label>
+            {chosenProfile && <ProfileCard key={chosenProfile.name} profile={chosenProfile} tier={tier} onApply={() => onApplyProfile(chosenProfile.name)} />}
+          </div>}
       </div>
 
       <div>
@@ -1092,7 +1103,7 @@ function EnforcementCard({ enforced, onSetEnforcement }: { enforced: boolean; on
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <h3 className="text-[13.5px] font-semibold">Model-wide gate enforcement: {enforced ? 'On' : 'Off'}</h3>
-          <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>Off skips every gate honestly: runs record no verified evidence. Changing this shows a consequence preview first.</div>
+          <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>Off skips the checks for new runs, so those runs have no verified test results. Review the effect before applying the change.</div>
         </div>
         {enforced ? (
           confirming ? (
@@ -1590,7 +1601,7 @@ function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
           <span className="text-[12.5px] font-semibold" style={{ color: current || done ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{result.title}</span>
           <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: st.color, background: `color-mix(in srgb, ${st.color} 16%, transparent)` }}>{st.label}</span>
           {result.effectiveStrictness && done && (
-            <span className="text-[9.5px]" style={{ color: 'var(--sem-muted)' }} title="The strictness this gate actually ran at">Ran at {stepGateSkipped(result.effectiveStrictness) ? 'skipped (gate off)' : uiLabel(result.effectiveStrictness).toLowerCase()}</span>
+            <span className="text-[9.5px]" style={{ color: 'var(--sem-muted)' }} title="Whether this step stopped on failure, warned or skipped its checks">Ran at {stepGateSkipped(result.effectiveStrictness) ? 'skipped (gate off)' : uiLabel(result.effectiveStrictness).toLowerCase()}</span>
           )}
         </div>
 
@@ -1978,7 +1989,7 @@ function ReasonButton({ label, title, onConfirm, danger }: { label: string; titl
 function ErrorPanel({ name, error }: { name: string; error: string }) {
   return (
     <Panel>
-      <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This workflow file does not parse</div>
+      <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This workflow file has a format error</div>
       <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
         <span className="tnum">{name}</span> is still listed here rather than hidden, but it can't run until the error below is fixed.
       </div>

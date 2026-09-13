@@ -62,7 +62,7 @@ assert.match(context, />Publish to</);
 // The Connections hub verbs note uses the ratified outcome taxonomy (T164), not the retired "Use for tests" phrasing.
 assert.match(connections, /Query this model[\s\S]*The model you are editing stays open/);
 assert.match(connections, /Open live[\s\S]*No local files are created/);
-assert.match(connections, /Work locally[\s\S]*Publishing remains a separate choice/);
+assert.match(connections, /Work locally[\s\S]*Publish separately when you want to update the live model/);
 assert.match(connections, /Existing files remain user-owned, including files already in source control/);
 assert.match(connections, /setPublishDestination[\s\S]*Set as publish destination/, 'existing local and repository models must be able to link an explicit publish target (now a Current setup role)');
 assert.match(extension, /sendRequest<ModelConnectionRecord\[]>\('listConnections'\)/, 'the native picker must use the same engine registry as Studio');

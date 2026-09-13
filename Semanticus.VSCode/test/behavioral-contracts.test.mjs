@@ -9,7 +9,7 @@ const interview = read('webview/src/interview.tsx');
 const tests = read('webview/src/tests.tsx');
 const app = read('webview/src/App.tsx');
 
-assert.match(interview, /Behavioral contracts/, 'Tests must name saved interview questions as behavioral contracts');
+assert.match(interview, /Business questions and expected answers/, 'Tests must explain saved interview questions in plain language');
 assert.match(interview, /Running tests automatically re-checks saved number and paraphrase questions/, 'the automatic replay must be explicit');
 assert.match(interview, /Safe-decline questions are checked in an AI chat/, 'chat-only contracts must not imply automatic model execution');
 assert.match(interview, /never change its grade or coverage/, 'the evidence-only grading boundary must remain visible');

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { validatePayloadInventory } from '../scripts/verify-vsix.mjs';
 
 const target = 'win32-x64';
+const skillManifest = JSON.parse(readFileSync(new URL('../assistant-pack/manifest.json', import.meta.url), 'utf8'));
 const required = [
   '[Content_Types].xml',
   'extension.vsixmanifest',
@@ -11,6 +12,14 @@ const required = [
   'extension/THIRD-PARTY-NOTICES.md',
   'extension/package.json',
   'extension/readme.md',
+  'extension/assistant-pack/manifest.json',
+  'extension/assistant-pack/README.md',
+  'extension/assistant-pack/LICENSE',
+  'extension/assistant-pack/.agents/plugins/marketplace.json',
+  'extension/assistant-pack/.claude-plugin/marketplace.json',
+  'extension/assistant-pack/plugins/semanticus/.claude-plugin/plugin.json',
+  'extension/assistant-pack/plugins/semanticus/.codex-plugin/plugin.json',
+  ...skillManifest.skills.map(skill => `extension/assistant-pack/${skill.path}`),
   'extension/out/extension.js',
   'extension/media/studio/studio.js',
   'extension/media/studio/studio.css',
@@ -26,7 +35,7 @@ const required = [
   ...Array.from({ length: 100 }, (_, i) => `extension/engine/runtime-${i}.dll`),
 ];
 
-const entries = required.map((fileName) => ({ fileName, uncompressedSize: 2_000_000, externalFileAttributes: 0 }));
+const entries = required.map((fileName) => ({ fileName, uncompressedSize: fileName.startsWith('extension/assistant-pack/') ? 1_000 : 2_000_000, externalFileAttributes: 0 }));
 const manifest = '<Identity TargetPlatform="win32-x64" />';
 const packageJson = JSON.stringify({ name: 'semanticus-vscode', main: './out/extension.js' });
 const contentScan = { scannedEntries: entries.length };
@@ -69,7 +78,7 @@ for (const [unixTarget, measuredBytes, rejectedBytes] of [
 // stages THIRD-PARTY-NOTICES.md into the extension folder. A check that merely allows the file would stay
 // green the day the staging step is deleted, so drop the entry from the payload and the verifier must
 // refuse the package by name. Both licence documents are held this way, so neither can leave alone.
-for (const noticeFile of ['extension/NOTICE', 'extension/THIRD-PARTY-NOTICES.md']) {
+for (const noticeFile of ['extension/NOTICE', 'extension/THIRD-PARTY-NOTICES.md', ...skillManifest.skills.map(skill => `extension/assistant-pack/${skill.path}`)]) {
   const without = entries.filter((entry) => entry.fileName !== noticeFile);
   assert.equal(without.length, entries.length - 1, `${noticeFile} is not in the payload fixture`);
   assert.throws(

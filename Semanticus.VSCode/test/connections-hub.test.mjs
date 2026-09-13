@@ -66,7 +66,7 @@ assert.equal(count(hub, 'data-testid="hub-endpoint-input"'), 1,
 assert.match(hub, />XMLA endpoint/, 'the single endpoint input must carry the XMLA endpoint label');
 assert.equal(count(hub, 'type="search"') + count(hub, 'placeholder="powerbi'), 2,
   'the only endpoint-shaped inputs are the search box and the single Add-view endpoint field');
-assert.match(hub, /only place an endpoint is typed/, 'the Add view must state it is the only place an endpoint is typed');
+assert.match(hub, /remembers it so you can reopen the model without entering the address again/, 'the Add view explains that the connection address is remembered');
 assert.ok(hub.indexOf('function AddView') < hub.indexOf('data-testid="hub-endpoint-input"')
   && hub.indexOf('data-testid="hub-endpoint-input"') < hub.indexOf('Connect and remember'),
   'the endpoint input must live inside the Add view');
@@ -98,7 +98,7 @@ assert.match(hub, /Open live[\s\S]{0,160}Edit and query the published model dire
   'outcome: Open live carries its exact one-line explanation');
 assert.match(hub, /Query this model[\s\S]{0,160}Run queries and tests against this model\. The model you are editing stays open\./,
   'outcome: Query this model carries its exact one-line explanation');
-assert.match(hub, /Work locally[\s\S]{0,160}Create or reopen a durable local copy\. Publishing remains a separate choice\./,
+assert.match(hub, /Work locally[\s\S]{0,160}Work on a saved copy on this computer\. Publish separately when you want to update the live model\./,
   'outcome: Work locally carries its exact one-line explanation');
 for (const status of ['Currently open', 'Queries run here', 'Local copy exists', 'Sign-in required']) {
   assert.ok(hub.includes(status), `statuses are TEXT: "${status}" must be a plain status, never a mutated button label`);

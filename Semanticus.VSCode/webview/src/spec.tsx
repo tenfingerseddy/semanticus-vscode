@@ -67,6 +67,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
   const [dirty, setDirty] = useState(false);
   const [baseVersion, setBaseVersion] = useState<number | null>(null);   // the snap version the draft was synced from
   const [showFabric, setShowFabric] = useState(false);
+  const [showChoices, setShowChoices] = useState(false);
   const [fabric, setFabric] = useState({ server: '', database: '', storageMode: 'import', authMode: 'azcli', tenant: '' });
   const reloadTimer = useRef<number | undefined>(undefined);
 
@@ -109,7 +110,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
     catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   }
-  const autogenModel = () => run('model', async () => { setReport(null); setDirty(false); setSnap(await rpc<SpecSnapshot>('autogenerateSpecFromModel', 'human')); });
+  const autogenModel = () => run('model', async () => { const next = await rpc<SpecSnapshot>('autogenerateSpecFromModel', 'human'); setReport(null); setDirty(false); setSnap(next); setShowChoices(false); });
   const autogenFabric = () => run('fabric', async () => {
     if (!fabric.server.trim() || !fabric.database.trim()) { setErr('SQL endpoint and database are required.'); return; }
     setReport(null);
@@ -120,7 +121,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
     const tenant = fabric.tenant.trim();
     if (tenant) args.push(tenant);
     setSnap(await rpc<SpecSnapshot>('autogenerateSpecFromFabric', ...args));
-    setShowFabric(false);
+    setShowFabric(false); setShowChoices(false);
   });
   const build = () => {
     if (dirty) {
@@ -139,7 +140,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
   const loadFile = async () => {
     const path = await pickSpecFile('open');
     if (!path) return;
-    await run('load', async () => { setReport(null); setDirty(false); setSnap(await rpc<SpecSnapshot>('loadSpec', path, 'human')); });
+    await run('load', async () => { const next = await rpc<SpecSnapshot>('loadSpec', path, 'human'); setReport(null); setDirty(false); setSnap(next); setShowChoices(false); });
   };
   const saveFile = async () => {
     if (!snap?.spec || dirty) return;
@@ -160,6 +161,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
   const startBlank = () => run('blank', async () => {
     const blank: ModelSpec = { name: session?.modelName || 'New model', compatibilityLevel: 1604, storageMode: 'import', tables: [], relationships: [], measures: [], timeIntelligence: [] };
     setReport(null); setDirty(false); setSnap(await rpc<SpecSnapshot>('setSpec', JSON.stringify(blank), 'human'));
+    setShowChoices(false);
   });
 
   return (
@@ -173,9 +175,11 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
         {snap?.spec && <Chip>{SOURCE_LABEL[snap.source] ?? snap.source} · v{snap.version}</Chip>}
         {dirty && <span className="text-[11px] font-medium" style={{ color: 'var(--sem-warn)' }} title="You have unsaved changes to the spec">● Unsaved changes</span>}
         <div className="flex-1" />
+        {(spec || showFabric) && !showChoices && <Btn disabled={busy != null} onClick={() => { setShowChoices(true); setShowFabric(false); }}>Back to start</Btn>}
+        {showChoices && spec && <Btn onClick={() => setShowChoices(false)}>Resume draft</Btn>}
         {dirty && <Btn primary onClick={save} busy={busy === 'save'}>Save</Btn>}
         {dirty && <Btn onClick={discard}>Discard</Btn>}
-        {spec && <>
+        {spec && !showChoices && <>
           <Btn onClick={() => void loadFile()} busy={busy === 'load'}>Open spec…</Btn>
           <Btn onClick={() => void saveFile()} busy={busy === 'save-file'} disabled={dirty} title={dirty ? 'Save draft changes first' : 'Save this Model Spec as a JSON file'}>Save spec…</Btn>
           <Btn onClick={autogenModel} busy={busy === 'model'}>Autogenerate from model</Btn>
@@ -226,7 +230,14 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
       {report && <BuildReport report={report} onClose={() => setReport(null)} />}
 
       <div className="flex-1 min-h-0 overflow-auto">
-        {editingJson ? (
+        {showChoices ? (
+          <>
+            {(dirty || editingJson) && <div className="px-4 pt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Your draft is kept. Resume it to finish or discard your changes before choosing a new starting point.</div>}
+            <fieldset disabled={dirty || editingJson || busy != null} className="border-0 p-0 m-0 min-w-0">
+              <SpecWizard session={session} busy={busy} onAutogen={autogenModel} onSql={() => { setShowChoices(false); setShowFabric(true); }} onBlank={startBlank} onLoad={() => void loadFile()} />
+            </fieldset>
+          </>
+        ) : editingJson ? (
           <div className="p-4 flex flex-col gap-2 h-full">
             <textarea value={jsonDraft} onChange={(e) => setJsonDraft(e.target.value)} spellCheck={false}
               className="flex-1 min-h-[300px] font-mono text-[12px] p-3 rounded"
@@ -489,7 +500,7 @@ function RelationshipsEditor({ spec, edit }: { spec: ModelSpec; edit: (mut: (s: 
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => setBuilding((v) => !v)} className="text-[11px] px-2 py-0.5 rounded" style={{ color: 'var(--sem-accent)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>+ Relationship</button>
         <button onClick={detect} className="text-[11px] px-2 py-0.5 rounded" style={{ color: 'var(--sem-fg)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>Detect relationships</button>
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>from → to · cardinality defaults to many-to-one</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Connect a column to a matching column in another table. The default is many rows linked to one lookup row.</span>
       </div>
 
       {building && <RelationshipBuilder spec={spec} onAdd={(r) => { edit((s) => { s.relationships = s.relationships ?? []; s.relationships.push(r); }); setBuilding(false); }} onCancel={() => setBuilding(false)} />}
@@ -540,7 +551,7 @@ function RelationshipRow({ r, spec, onChange, onDelete }: { r: SpecRelationship;
       <Sel value={normCardinality(r.cardinality)} ariaLabel="Cardinality" title="Relationship cardinality (from → to)" onChange={(v) => onChange({ cardinality: normCardinality(v) })} options={CARDINALITY} />
       <Sel value={r.crossFilter ?? 'OneDirection'} ariaLabel="Cross-filter" title="Cross-filter direction" onChange={(v) => onChange({ crossFilter: v })} options={CROSSFILTER} />
       <Toggle on={r.isActive !== false} onToggle={(v) => onChange({ isActive: v })} title="Active relationship">active</Toggle>
-      {(!fromOk || !toOk) && <span className="text-[10px]" style={{ color: 'var(--sem-bad)' }} title="One endpoint no longer resolves to a table/column in this spec">unresolved</span>}
+      {(!fromOk || !toOk) && <span className="text-[10px]" style={{ color: 'var(--sem-bad)' }} title="A table or column used by this relationship is missing from the draft">unresolved</span>}
       <div className="ml-auto"><IconBtn title="Remove relationship" onClick={onDelete}>✕</IconBtn></div>
     </div>
   );
@@ -700,13 +711,13 @@ function SpecWizard({ session, busy, onAutogen, onSql, onBlank, onLoad }: {
         <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-accent)' }}>{hasObjects ? 'Model Spec wizard' : 'New model wizard'} · Step 1</div>
         <div className="mt-1 text-[18px] font-semibold">Create the first draft</div>
         <div className="mt-2 max-w-[680px] text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-          Choose a starting point. The wizard creates a Model Spec, not the finished model. You and AI Assistant review and edit the same draft here, then Build into model when it is ready.
+          A Model Spec is a plan for your tables, relationships and calculations. Choose where to start, review the draft here, then select Build into model when you are ready.
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {hasObjects && <WizardChoice title={`Draft from ${session?.modelName || 'the open model'}`} detail="Read the current model into a first draft. The model is not changed." onClick={onAutogen} busy={busy === 'model'} primary />}
           <WizardChoice title="Start from scratch" detail="Begin with an empty structure and add tables, relationships and measures during review." onClick={onBlank} busy={busy === 'blank'} primary={!hasObjects} />
-          <WizardChoice title="Draft from a SQL source" detail="Read table and column metadata from an endpoint. No source data is copied." onClick={onSql} />
-          <WizardChoice title="Open a saved Model Spec" detail="Continue a versioned JSON draft from this project or another repository." onClick={onLoad} busy={busy === 'load'} />
+          <WizardChoice title="Draft from a SQL source" detail="Read the table and column structure from a SQL server. No source rows are copied." onClick={onSql} />
+          <WizardChoice title="Open a saved Model Spec" detail="Continue a model plan previously saved as a JSON file." onClick={onLoad} busy={busy === 'load'} />
         </div>
         <div className="mt-5 border-t pt-4 text-[11px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
           <span className="font-semibold" style={{ color: 'var(--sem-fg)' }}>Step 2: Review and build.</span> Nothing is published by this wizard. Build is one undoable model change; publishing remains a separate reviewed action.

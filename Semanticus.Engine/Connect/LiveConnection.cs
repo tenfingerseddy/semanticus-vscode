@@ -20,7 +20,10 @@ namespace Semanticus.Engine
         private readonly Adomd.AdomdConnection _conn;
         private readonly Func<string, CancellationToken, ResultSet> _executeForTest;
         private CancellationTokenSource _currentCts;
-        private string _connectionString;   // kept so server-side tracing can re-auth identically (token encapsulated)
+        private string _connectionString;   // tracing uses the same endpoint/catalog and the current access token
+        private Azure.Core.AccessToken _accessToken;
+        private Azure.Core.TokenCredential _silentCredential;
+        private readonly SemaphoreSlim _tokenGate = new SemaphoreSlim(1, 1);
         private readonly ModelDispatcher _queryThread = new ModelDispatcher();
         // A session-scoped trace sees every query on this XMLA session. Keep the trace setup, warm-up, real query
         // and teardown in one exclusive lane with ordinary ExecuteAsync calls so another UI/MCP request cannot
@@ -84,12 +87,14 @@ namespace Semanticus.Engine
                 ? $"Data Source={dataSource};Application Name=Semanticus"
                 : $"Data Source={dataSource};Initial Catalog={database};Application Name=Semanticus";
 
-        public static async Task<LiveConnection> OpenAsync(string kind, string dataSource, string connectionString)
+        public static async Task<LiveConnection> OpenAsync(string kind, string dataSource, string connectionString,
+            Azure.Core.AccessToken? accessToken = null, Azure.Core.TokenCredential silentCredential = null)
         {
             var conn = new Adomd.AdomdConnection(connectionString);
             var lc = new LiveConnection(kind, dataSource, conn, connectionString);
             try
             {
+                if (accessToken.HasValue) lc.ConfigureAuthentication(accessToken.Value, silentCredential);
                 // Capture the resolved catalog on the query thread right after Open (the connection is thread-affine).
                 await lc._queryThread.RunAsync(() =>
                 {
@@ -113,6 +118,51 @@ namespace Semanticus.Engine
             return lc;
         }
 
+        // Keep the credential on the QUERY connection: an editing model can have a different target/account.
+        // ADOMD cannot renew a bearer passed as Password; its AccessToken callback also covers long operations.
+        internal void ConfigureAuthentication(Azure.Core.AccessToken token, Azure.Core.TokenCredential silentCredential)
+        {
+            _accessToken = token;
+            _silentCredential = silentCredential;
+            _conn.AccessToken = new Microsoft.AnalysisServices.AccessToken(token.Token, token.ExpiresOn);
+            if (silentCredential != null)
+                _conn.OnAccessTokenExpired = _ =>
+                {
+                    var fresh = FreshTokenAsync(force: true).GetAwaiter().GetResult();
+                    return new Microsoft.AnalysisServices.AccessToken(fresh.Token, fresh.ExpiresOn);
+                };
+        }
+
+        private async Task<Azure.Core.AccessToken> FreshTokenAsync(bool force)
+        {
+            await _tokenGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (_silentCredential != null && (force || _accessToken.ExpiresOn <= DateTimeOffset.UtcNow.AddMinutes(5)))
+                {
+                    try { _accessToken = await EntraToken.GetTokenAsync(_silentCredential, CancellationToken.None).ConfigureAwait(false); }
+                    catch when (!force && _accessToken.ExpiresOn > DateTimeOffset.UtcNow)
+                    {
+                        // A failed early refresh must not interrupt work while the existing token is still valid.
+                    }
+                }
+                return _accessToken;
+            }
+            finally { _tokenGate.Release(); }
+        }
+
+        internal async Task<bool> RenewAuthenticationAsync(bool force = false)
+        {
+            if (_silentCredential == null) return false;
+            var fresh = await FreshTokenAsync(force).ConfigureAwait(false);
+            await _queryThread.RunAsync(() =>
+            {
+                _conn.AccessToken = new Microsoft.AnalysisServices.AccessToken(fresh.Token, fresh.ExpiresOn);
+                return true;
+            }).ConfigureAwait(false);
+            return true;
+        }
+
         // Test-only: a NEVER-OPENED connection stub, so lifecycle tests can prove _live is dropped/swapped without a
         // real XMLA endpoint. Status() reports Connected (it does not probe the socket); executing a query would fail,
         // which is fine — these tests only assert connection PRESENCE and that Dispose() is clean.
@@ -134,7 +184,7 @@ namespace Semanticus.Engine
         }
 
         public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds) =>
-            RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds));
+            ExecuteAsync(query, maxRows, commandTimeoutSeconds, CancellationToken.None);
 
         /// <summary>Execute with a caller-held cancellation token: when it fires, <c>AdomdCommand.Cancel</c> is
         /// invoked (thread-safe by contract, like SqlCommand.Cancel) so the SERVER-side operation is really
@@ -142,8 +192,14 @@ namespace Semanticus.Engine
         /// error rather than running to the bitter end. The verify-ceiling path depends on this: an ABANDONED op
         /// would keep the lane + lifetime lease held, and abandoned ops piling up on the single lane is exactly the
         /// crash class the ceiling guards against.</summary>
-        public Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds, System.Threading.CancellationToken ct) =>
-            RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds, ct));
+        public async Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds, System.Threading.CancellationToken ct)
+        {
+            try { return await RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds, ct)).ConfigureAwait(false); }
+            catch (Azure.Identity.AuthenticationFailedException)
+            {
+                return new ResultSet { Error = "Silent sign-in could not renew this connection. Sign in again to continue.", AuthFailed = true, Query = query };
+            }
+        }
 
         // DaxTrace already owns the exclusive lane while it warms and runs the captured query. Re-entering through
         // ExecuteAsync would deadlock, so trace code uses this narrow bypass. It still preserves ADOMD thread affinity.
@@ -185,7 +241,11 @@ namespace Semanticus.Engine
         {
             using var lifetime = AcquireLifetimeLease();
             await _queryOperationGate.WaitAsync().ConfigureAwait(false);
-            try { return await operation().ConfigureAwait(false); }
+            try
+            {
+                await RenewAuthenticationAsync().ConfigureAwait(false);
+                return await operation().ConfigureAwait(false);
+            }
             finally { _queryOperationGate.Release(); }
         }
 
@@ -262,20 +322,22 @@ namespace Semanticus.Engine
 
         /// <summary>
         /// Open a fresh, authenticated AMO Server for server-side tracing (Profile / EvaluateAndLog / query plans)
-        /// and cache control. Reuses the SAME connection string the live ADOMD connection authenticated with — so
-        /// the bearer token rides along and tracing works on a token-auth Power BI / Fabric XMLA endpoint, not just
-        /// localhost. The token stays encapsulated (never returned or logged). AMO is thread-affine: the caller must
+        /// and cache control. Reuses the query connection's endpoint, catalog and renewed access token so tracing
+        /// works on a token-auth Power BI / Fabric XMLA endpoint, not just localhost.
+        /// The token stays encapsulated (never returned or logged). AMO is thread-affine: the caller must
         /// use + dispose the returned Server on its own thread.
         /// </summary>
         public TOM.Server ConnectTraceServer()
         {
             var server = new TOM.Server();
+            if (!string.IsNullOrEmpty(_accessToken.Token))
+                server.AccessToken = new Microsoft.AnalysisServices.AccessToken(_accessToken.Token, _accessToken.ExpiresOn);
             // Join OUR query session (SessionId) so a session-scoped, session-filtered trace is permitted WITHOUT
             // server-admin — the mechanism DAX Studio uses to trace a Power BI XMLA endpoint. Falls back to a plain
             // connect (localhost / no session id), where a server trace already works.
             var cs = string.IsNullOrEmpty(SessionId) ? _connectionString : _connectionString + ";SessionId=" + SessionId;
-            server.Connect(cs);
-            return server;
+            try { server.Connect(cs); return server; }
+            catch { server.Dispose(); throw; }
         }
 
         /// <summary>
@@ -383,6 +445,8 @@ namespace Semanticus.Engine
             try { _queryThread.RunAsync(() => { try { _conn.Dispose(); } catch { } return true; }).Wait(2000); } catch { }
             _queryThread.Dispose();
             _connectionString = null;   // bearer-bearing connection strings stay transient, never retained after retirement
+            _accessToken = default;
+            _silentCredential = null;
         }
 
         private sealed class LifetimeLease : IDisposable

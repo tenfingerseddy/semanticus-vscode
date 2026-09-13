@@ -86,7 +86,7 @@ const SCENARIOS: Scenario[] = [
     title: 'Author a hard measure',
     tag: 'Measure',
     hero: true,
-    blurb: 'Pin what the requirement actually says, lock the expected values from raw rows first, then author one candidate and prove it against an independent raw-row witness before any optional speed work.',
+    blurb: 'Define the business rule and work out trusted answers from source rows. Build a calculation, test it against those answers, then investigate speed if needed.',
     kind: 'template',
     template: 'hard-measure',
     runNote: 'Running the workflow is a Pro capability because it includes enforced equality checks. Setting it up here is free.',
@@ -235,7 +235,7 @@ export function ScenariosPanel({ tier, library, onApplied, onActiveChange, varia
             <div>
               <div className="mb-2">
                 <div className="text-[11px] font-semibold">Featured workflows</div>
-                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Start with the two jobs that best show the AI Assistant and proof working together.</div>
+                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Choose a task to work through with your AI Assistant. Each task explains what to do and how to check the result.</div>
               </div>
               <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
                 {SCENARIOS.filter((s) => s.hero).map((s) => (

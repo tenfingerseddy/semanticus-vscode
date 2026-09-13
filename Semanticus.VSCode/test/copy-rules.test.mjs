@@ -240,7 +240,9 @@ function propertyName(node) {
 function checkText(where, text, marketplaceKeyword = false, uiContext = false) {
   if (text.includes('\u2014')) failures.push(`${where}: em dash`);
   if (/\uFE0F/u.test(text) || /[\u{1F300}-\u{1FAFF}]/u.test(text)) failures.push(`${where}: colorful emoji`);
-  if (/\bclaude\b/i.test(text) && (marketplaceKeyword || /\s/.test(text))) failures.push(`${where}: use AI Assistant, not Claude`);
+  // An assistant selector must name the actual client whose files will be installed.
+  const assistantChoice = text === 'Claude Code' && where.startsWith('Semanticus.VSCode/src/extension.ts:');
+  if (!assistantChoice && /\bclaude\b/i.test(text) && (marketplaceKeyword || /\s/.test(text))) failures.push(`${where}: use AI Assistant, not Claude`);
   if (/\bAI assistant\b/.test(text)) failures.push(`${where}: capitalize AI Assistant`);
   // Golden rule 2: the UI door is pushed a change live; the agent door is never sent anything. No string a
   // person reads may claim the two are fed the same way (D-202, D-210).

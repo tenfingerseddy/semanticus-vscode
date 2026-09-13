@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceHash": "9b12b04bf63e745654b142b34dec36b3a15f35cbee8cdc06c1a01522afdb3675",
+  "sourceHash": "be7303b4bed86cd40006f3d7d7555df857f1f66e7213f951a841a227e7070b94",
   "sources": [
     "Semanticus.Engine/McpTools.cs",
     "Semanticus.Engine/McpTools.Evidence.cs",
@@ -252,6 +252,7 @@
       "Semanticus.Tests/WriteRoutingTests.cs",
       "Semanticus.Tests/tools/prev2-oracle/Program.cs",
       "Semanticus.Tests/tools/prev2-oracle/Shims.cs",
+      "Semanticus.VSCode/test/assistant-skills.test.mjs",
       "Semanticus.VSCode/test/attribution-and-license.test.mjs",
       "Semanticus.VSCode/test/behavioral-contracts.test.mjs",
       "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
