@@ -62,6 +62,12 @@ export interface SessionInfo {
   liveDataSource?: string;     // the attached query engine's data source
   currentAccount?: string;     // the account (UPN) the live-bound/queried model is signed in as — for the identity bar; null = unknown
   currentTenant?: string;      // the tenant that account/connection belongs to, when known
+  /** The model's TOM compatibility level. OPTIONAL and often absent: no free read carried it before
+   *  2026-09-15 (listCalendars, getDocModel and getSpec all did, and all three became Pro reads with their
+   *  features), so the engine half of the feature-line slice adds it here. Overview uses it for the free
+   *  "Raise compatibility level" action and shows that action ONLY when the number is present and low, so
+   *  an engine that has not shipped the field yet simply does not offer it. Never render a 0 as a level. */
+  compatibilityLevel?: number;
 }
 
 // A connect attempt's outcome. `message` carries the ENGINE's own words on failure (e.g. the service-principal
@@ -73,6 +79,7 @@ interface ConnCtx {
   conn: ConnectionStatus | null;     // the attached live QUERY engine (drives the tabs)
   session: SessionInfo | null;       // the OPEN model identity (what the tree shows)
   context: ModelConnectionContext | null; // engine-owned edit/query/publish identities
+  contextResolved: boolean;          // the first connectionContext read has completed (with or without a result)
   busy: boolean;
   err: string | null;
   instances: LocalInstance[];
@@ -97,6 +104,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [conn, setConn] = useState<ConnectionStatus | null>(null);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [context, setContext] = useState<ModelConnectionContext | null>(null);
+  // Until the first read completes, `context === null` means "not known yet", not "no publish destination".
+  // Publish… waits for this so a press in the first moments after Studio opens is not misread as choose-destination.
+  const [contextResolved, setContextResolved] = useState(false);
   const [instances, setInstances] = useState<LocalInstance[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -115,6 +125,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       setSession(s);
       setContext(x);
     } catch { /* leave prior state; the connect UI stays available */ }
+    finally { setContextResolved(true); }
   }
 
   async function connectLocal(dataSource: string | null = null): Promise<ConnectResult> {
@@ -177,7 +188,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const closeConnections = useCallback(() => setConnectionsOpen(false), []);
 
   return (
-    <Ctx.Provider value={{ conn, session, context, busy, err, instances, connectLocal, connectXmla, disconnect, refresh,
+    <Ctx.Provider value={{ conn, session, context, contextResolved, busy, err, instances, connectLocal, connectXmla, disconnect, refresh,
       connectionsOpen, openConnections, closeConnections }}>
       {children}
     </Ctx.Provider>
@@ -210,8 +221,7 @@ export function ConnectBar({ hint }: { hint?: string }) {
         {' '}Local files remain editable without a connection, but they cannot execute queries by themselves.
       </div>
       <div><button onClick={openConnections} disabled={busy}
-        className="text-[12px] px-3 py-1.5 rounded-lg font-medium disabled:opacity-40"
-        style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Choose test model</button></div>
+        className="sem-btn sem-btn-primary">Choose test model</button></div>
       {err && <div className="text-[12px]" style={{ color: 'var(--sem-bad)' }}>{err}</div>}
     </div>
   );

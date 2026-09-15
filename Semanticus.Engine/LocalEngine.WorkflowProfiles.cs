@@ -55,6 +55,7 @@ namespace Semanticus.Engine
 
         public Task<WorkflowProfileInfo[]> ListWorkflowProfilesAsync()
         {
+            RequireProFeature();
             var active = ActiveWorkflowProfile();
             return Task.FromResult(WorkflowProfiles.Select(p => new WorkflowProfileInfo
             {
@@ -65,15 +66,16 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowProfileResult> ActivateWorkflowProfileAsync(string name, string origin)
         {
+            RequireProFeature();
             var profile = WorkflowProfiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException("Workflow profile '" + name + "' was not found. list_workflow_profiles shows the available profiles.");
-            var file = WorkflowSettingsFile()
+            var (userDir, stockDir) = WorkflowDirs();
+            var file = WorkflowSettingsFileFor(userDir)
                 ?? throw new InvalidOperationException("No workspace can hold workflow settings. Open a model or workspace, then retry.");
-            if (profile.Pro)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying a profile with required workflows",
-                    "Free alternative: use the Solo analyst profile, or open a playbook and follow its steps by hand.");
-
-            var library = LoadWorkflowDefs().Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
+            // Profile activation is itself the explicit choice to move its required set to today's library.
+            // Validate against user/current names directly so it can also repair a settings file whose old pin
+            // names a compatibility file that is no longer present.
+            var library = WorkflowFiles(userDir).Keys.Concat(WorkflowFiles(stockDir).Keys).ToHashSet(StringComparer.Ordinal);
             var missing = profile.Bindings.Select(x => x.workflow).Where(x => !library.Contains(x)).Distinct(StringComparer.Ordinal).ToArray();
             if (missing.Length > 0)
                 throw new InvalidOperationException("This profile needs missing workflow(s): " + string.Join(", ", missing) + ". Restore the stock workflow library, then retry.");
@@ -104,6 +106,10 @@ namespace Semanticus.Engine
                     ["selectedUtc"] = DateTime.UtcNow.ToString("o"),
                     ["selectedBy"] = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
                 };
+                // A profile is an explicit policy choice. Pin its required stock closure to the files shipped
+                // today instead of inheriting the pre-redesign fallback used for untouched legacy settings.
+                SelectRequiredWorkflowRevisions(root, userDir, stockDir,
+                    new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal));
             });
 
             var workflows = await PublishWorkflowLibraryAsync();

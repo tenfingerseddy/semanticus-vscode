@@ -6,6 +6,63 @@ namespace Semanticus.Engine
     /// optional independent grand-total SQL are the caller's INDEPENDENTLY-authored ground truth — the engine never
     /// writes them (golden rule 1). The blank policy is REQUIRED (no silent default — the BLANK/NULL/0 reading must be
     /// a deliberate choice, contract d/e), as are finite, non-negative tolerances.</summary>
+    /// <summary>One input of a "Compare with source" check, as a drawer needs to present it.</summary>
+    public sealed class ReconcileField
+    {
+        public string Field { get; set; }   // the paramsJson property name, camelCase
+        public string Label { get; set; }   // what the person is being asked for, in their words
+        public string Help { get; set; }    // one plain sentence
+    }
+
+    /// <summary>
+    /// What a "Compare with source" drawer must keep VISIBLE and what it may hide behind Advanced. The split is not a
+    /// UI opinion: <see cref="Required"/> is exactly what the engine refuses to run without, and
+    /// <see cref="RequiredForAVerdict"/> is the one input the engine happily runs without while never being able to
+    /// certify the result.
+    ///
+    /// Kept here, beside the request it describes, so the two cannot drift; ReconcileContractTests pins every list
+    /// and proves each refusal is real.
+    /// </summary>
+    public static class ReconcileContract
+    {
+        /// <summary>The engine returns an InputError without these. They are the drawer's visible fields.</summary>
+        public static readonly ReconcileField[] Required =
+        {
+            new ReconcileField { Field = "measureRef", Label = "Which calculation",
+                Help = "The measure whose number you are checking." },
+            new ReconcileField { Field = "sql", Label = "The SQL you trust",
+                Help = "Your own query that works out the same number from the source. Semanticus never writes it for you." },
+            new ReconcileField { Field = "blankPolicy", Label = "What a blank means",
+                Help = "Choose one: blank counts as zero, blank is its own thing like NULL, or blank, NULL and zero are all different. There is no default, because the choice changes the answer." },
+        };
+
+        /// <summary>The engine RUNS without this, but the result can never be better than "couldn't check": a matching
+        /// grand total cannot rule out rows hiding on the blank row. A drawer that files this under Advanced without
+        /// saying so is offering a check that can never pass.</summary>
+        public static readonly ReconcileField[] RequiredForAVerdict =
+        {
+            new ReconcileField { Field = "groupBy", Label = "Groups to compare",
+                Help = "The columns to break the number down by, such as year and category. Without them only the grand total is compared, and a matching total cannot prove the detail matches." },
+        };
+
+        /// <summary>Tuning. Safe to keep behind Advanced: every one of these has a sound behaviour when left alone.</summary>
+        public static readonly ReconcileField[] Optional =
+        {
+            new ReconcileField { Field = "sqlSourceId", Label = "SQL source",
+                Help = "The saved source to read from, picked by name. Without one the check uses the endpoint saved on the check itself." },
+            new ReconcileField { Field = "sqlGrandTotal", Label = "Separate total query",
+                Help = "A second query for the overall total, so the total is asked for on its own rather than added up from the rows." },
+            new ReconcileField { Field = "filterDax", Label = "Only where",
+                Help = "Narrow the model side the same way the report was narrowed. Narrow your SQL to match, because Semanticus never edits your query." },
+            new ReconcileField { Field = "toleranceAbsolute", Label = "Allowed difference",
+                Help = "How far apart two numbers may be and still count as the same. Zero means they must match exactly." },
+            new ReconcileField { Field = "toleranceRelative", Label = "Allowed difference, as a share",
+                Help = "The same idea as a fraction of the source number. 0.01 means one percent." },
+            new ReconcileField { Field = "maxRows", Label = "How many rows to compare",
+                Help = "A cap, so a huge breakdown does not run away. A capped run is never reported as a complete one." },
+        };
+    }
+
     public sealed class ReconcileRequest
     {
         /// <summary>The measure to test (a name or a 'measure:Name' ref).</summary>
@@ -26,6 +83,13 @@ namespace Semanticus.Engine
         /// rows (contract c). Ignored in grand-total-only mode.</summary>
         public string SqlGrandTotal { get; set; }
 
+        /// <summary>Optional DAX filter predicates (comma-separated, the CALCULATETABLE argument shape, e.g.
+        /// <c>'Date'[Year] = 2026, 'Product'[Category] = "Bikes"</c>) applied to the DAX side of the comparison.
+        /// A check saved from a FILTERED visual must narrow the same way the visual did, or a calculation filtered
+        /// to one year silently becomes a check over the whole model. The SQL side is the caller's own text and is
+        /// NEVER rewritten: the author applies the same narrowing there (the drawer says so).</summary>
+        public string FilterDax { get; set; }
+
         /// <summary>Absolute tolerance floor. Must be finite and &gt;= 0.</summary>
         public double ToleranceAbsolute { get; set; }
 
@@ -39,8 +103,15 @@ namespace Semanticus.Engine
         /// passing run — it is marked incomplete.</summary>
         public int MaxRows { get; set; }
 
+        /// <summary>The NAMED SQL source this check uses (SqlSourceRecord.Id), saved once in Connections and picked
+        /// by name. When set it WINS over <see cref="Server"/>, <see cref="Database"/>, <see cref="AuthMode"/> and
+        /// <see cref="TenantId"/> below; when absent those inline values are used, which is how every definition
+        /// saved before named sources existed keeps working. A named source that has been removed is reported, never
+        /// quietly replaced by the inline values.</summary>
+        public string SqlSourceId { get; set; }
+
         /// <summary>Optional Fabric SQL endpoint override; when omitted the runner derives it from the model's Fabric
-        /// SQL source.</summary>
+        /// SQL source. A named <see cref="SqlSourceId"/> supersedes this.</summary>
         public string Server { get; set; }
         public string Database { get; set; }
 
@@ -59,6 +130,15 @@ namespace Semanticus.Engine
         public string FilterColumn { get; set; }
         public string FilterValue { get; set; }
         public string FilterDax { get; set; }
+
+        /// <summary>Optional DAX the test evaluates INSTEAD of the bound measure's own formula — the DAX Lab
+        /// "Test this expression" path, so an edited formula can be checked before it is applied to the model.
+        /// Either a scalar expression (wrapped in ROW, and narrowed by <see cref="FilterDax"/>) or a complete
+        /// EVALUATE query, which is run verbatim and read from its first cell (a complete query already carries
+        /// its own filter context, so FilterDax is not applied to it). The measure binding still travels, so the
+        /// test stays attached to the object it is about.</summary>
+        public string ExpressionDax { get; set; }
+
         public string Provenance { get; set; }
         public double? ToleranceAbsolute { get; set; }
         public double? ToleranceRelative { get; set; }

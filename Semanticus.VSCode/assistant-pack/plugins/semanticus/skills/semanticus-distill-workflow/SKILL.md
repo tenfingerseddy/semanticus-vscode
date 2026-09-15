@@ -13,9 +13,18 @@ Read a relevant current definition with `get_workflow`; use `list_workflows` if 
 its returned format and declared version rather than an old schema from memory. Replace
 model-specific names and values with explicit inputs. Keep each step short and name its operation.
 
+When editing an existing workflow, read `get_workflow_document` so the exact source, path and
+byte hash are current. The Studio Steps, Canvas and Source views share one draft. Use
+`preview_workflow_edit` to inspect typed edits or a draft, including the full-context diff and
+warnings, before writing. Apply reviewed text with `edit_workflow_document`; use `save_workflow`
+with `createOnly: true` for a new project copy. Built-in workflows are read-only. Use
+`upgrade_workflow` as a dry run first when a version-1 document needs stable step ids. Layout is
+presentation only and belongs through `get_workflow_layout` and `save_workflow_layout`. A successful
+write updates the VS Code library at once, while your assistant sees it on its next call.
+
 Preserve checks supported by source evidence. Label additional checks as proposed; do not claim
-offline or skipped tests passed. Respect the user's chosen profile and strictness. An instruction-only
-workflow is useful when enforced checks are unnecessary.
+offline or skipped tests passed. Respect the user's chosen project profile and how firmly its checks apply. An
+instruction-only workflow is useful when no check has to pass.
 
 Use `save_workflow` with the new name and full Markdown. It validates before writing and returns
 parse errors to repair. Saving under a stock name creates a project override; do that only when

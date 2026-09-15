@@ -14,7 +14,7 @@ namespace Semanticus.Tests
     /// finding: it drops out of the SCORE (counts as a pass) but is always surfaced (tagged + reasoned + counted), so
     /// the grade can't be silently inflated. Proves the contract: a waiver raises the score; a HARD GATE is NOT lifted
     /// by waivers (gates evaluate the raw count — you can't accept past a physical ceiling); a reason is required;
-    /// rule-level (model-wide) waiving is the Pro bulk lever while per-instance is free; round-trips persist; and BPA
+    /// rule-level (model-wide) and per-instance waiving are both free; round-trips persist; and BPA
     /// waivers interoperate with Tabular Editor's BestPracticeAnalyzer_IgnoreRules (honour inbound + mirror outbound).
     /// </summary>
     public sealed class WaiverTests
@@ -96,7 +96,7 @@ namespace Semanticus.Tests
         public async Task Air_waiver_does_not_lift_the_undescribed_measures_hard_gate()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(true));   // Pro, so even rule-level can't lift the gate
+            var engine = new LocalEngine(sessions, new Fake(true));   // tier is irrelevant to a hard gate; kept so a tier change can't mask the guarantee
             using (engine)
             {
                 await engine.CreateModelAsync("GateTest", 1567);
@@ -133,30 +133,32 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- monetization: rule-level (bulk) is Pro; per-instance is free ------------------------------------------
+        // ---- tier: waiving is free at every scope (Kane removed the rule-level gate on 2026-09-15) ------------------
 
         [Fact]
-        public async Task Rule_level_waiver_is_pro_gated_while_per_instance_is_free()
+        public async Task Rule_level_waiver_is_free_on_both_spellings_and_so_is_per_instance()
         {
             var (free, _) = await OpenAwAsync(pro: false);
             using (free)
             {
-                // rule-level (null ref OR '*') = "waive every instance, model-wide" — the bulk lever, refused on free
-                await Assert.ThrowsAsync<EntitlementException>(() => free.WaiveFindingAsync("air", "NAME-MEASURE", null, "blanket", "human"));
-                await Assert.ThrowsAsync<EntitlementException>(() => free.WaiveFindingAsync("bpa", "ANYRULE", "*", "blanket", "human"));
-                // per-instance stays free
+                // rule-level = "waive every instance, model-wide", spelled either with a null ref or with '*'. Both
+                // used to be the paid bulk lever; both are free now, and the record really lands on the model.
+                Assert.True((await free.WaiveFindingAsync("air", "NAME-MEASURE", null, "blanket", "human")).Changed);
+                Assert.True((await free.WaiveFindingAsync("bpa", "ANYRULE", "*", "blanket", "human")).Changed);
+                var waivers = await free.ListWaiversAsync();
+                Assert.Contains(waivers, w => w.System == "air" && w.RuleId == "NAME-MEASURE" && string.IsNullOrEmpty(w.ObjectRef));
+                Assert.Contains(waivers, w => w.System == "bpa" && w.RuleId == "ANYRULE" && string.IsNullOrEmpty(w.ObjectRef));
+
+                // per-instance is unchanged, and still works after a rule-level waiver on the same rule
                 var table = (await free.ListMeasuresAsync()).First().Table;
                 var msRef = await free.CreateMeasureAsync("table:" + table, "Wv_tmp_code3", "1", "agent");
-                var r = await free.WaiveFindingAsync("air", "NAME-MEASURE", msRef, "one off", "human");
-                Assert.True(r.Changed);
+                Assert.True((await free.WaiveFindingAsync("air", "NAME-MEASURE", msRef, "one off", "human")).Changed);
             }
 
+            // Pro takes the same path: the tier decides nothing here any more.
             var (pro, _) = await OpenAwAsync(pro: true);
             using (pro)
-            {
-                var r = await pro.WaiveFindingAsync("air", "NAME-MEASURE", null, "we never expand standard finance acronyms", "human");
-                Assert.True(r.Changed);   // Pro may waive the whole rule
-            }
+                Assert.True((await pro.WaiveFindingAsync("air", "NAME-MEASURE", null, "we never expand standard finance acronyms", "human")).Changed);
         }
 
         // ---- list + un-waive round-trip persists on the model ------------------------------------------------------

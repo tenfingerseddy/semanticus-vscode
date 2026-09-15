@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { rpc } from './bridge';
-import { UpsellNotice } from './pro';
 
 // ===================================================================================================
 // "This number over time" — the sparkline behind the What-moved-this-number panel (feature #3).
@@ -85,14 +84,9 @@ export function ValueSparkline({ measureRef, context }: { measureRef: string; co
 
   if (failed) return null;                      // an older engine without the op — silence, not a scare
   if (!hist) return <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Loading this number’s history…</div>;
-  if (hist.status === 'pro') {
-    return (
-      <UpsellNotice>
-        See what moved a number, automatically, with Pro. You can still compare snapshots by hand:
-        capture a baseline before an edit and compare after (free).
-      </UpsellNotice>
-    );
-  }
+  // There is no 'pro' branch any more: seeing what moved a number is FREE from 2026-09-15 (Kane's feature
+  // line), and the engine's own paused-free verdict went with it. An engine that still answers with the old
+  // status is simply treated as having no points, which is what the empty state below already says.
   const points = hist.points ?? [];
   const observed = points.filter((p) => numOf(p.value) !== null);
   return (

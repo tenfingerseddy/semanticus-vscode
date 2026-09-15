@@ -426,6 +426,40 @@ namespace Semanticus.RpcSmoke
                 }
                 finally { try { System.IO.File.Delete(vpaxPath); } catch { } }
 
+                // --- The report scope over the RPC door. The UI door must refuse exactly what the agent door
+                //     refuses: a report was CHOSEN for this model and never read, so nothing here can be called
+                //     unused and nothing may be swept. The sentence is the same on both doors on purpose. ---
+                var scopeFolder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "semanticus_rpc_scope_" + System.Guid.NewGuid().ToString("N").Substring(0, 8));
+                System.IO.Directory.CreateDirectory(scopeFolder);
+                try
+                {
+                    var chosen = await ui.Invoke<Semanticus.Engine.Lineage.ReportScopeResult>("setReportScope",
+                        new object[] { new[] { new Semanticus.Engine.Lineage.ReportScopeChoice { Kind = "local", Name = "Warehouse ops", Path = scopeFolder } }, "human" });
+                    Check("ReportScope/RPC: set_report_scope saves the choice and reads nothing (1 listed, 0 checked)",
+                        chosen != null && chosen.Listed == 1 && chosen.Checked == 0 && chosen.Reports[0].State == "notChecked");
+
+                    var listed = await agent.Invoke<Semanticus.Engine.Lineage.ReportScopeResult>("listReportScope");
+                    Check("ReportScope/RPC: the OTHER client sees the same choice, still unread",
+                        listed != null && listed.Listed == 1 && listed.Checked == 0
+                        && listed.Gaps.Any(g => g == "The chosen reports still need checking."));
+
+                    var refused = await ui.Invoke<RemoveSafeReport>("removeSafeObjects", new object[] { null, null, "human" });
+                    Check("ReportScope/RPC: remove_safe_objects refuses to sweep while a chosen report is unread",
+                        refused != null && refused.Count == 0
+                        && refused.Note == "Nothing removed. The chosen reports still need checking.");
+
+                    var scopedImpact = await ui.Invoke<Semanticus.Engine.Lineage.ImpactAssessmentResult>("impactAssessment",
+                        new object[] { new Semanticus.Engine.Lineage.ImpactAssessmentRequest { ObjectRef = explainRef, Intent = "remove" } });
+                    Check("ReportScope/RPC: the assessment says the chosen reports still need checking",
+                        scopedImpact?.Checked != null && scopedImpact.Checked.ReportsListed == 1 && scopedImpact.Checked.ReportsChecked == 0
+                        && scopedImpact.ReportSummary == "Report use is unknown. The chosen reports still need checking."
+                        && !scopedImpact.Coverage.Any(c => c.Area == "interview"));
+
+                    await ui.Invoke<Semanticus.Engine.Lineage.ReportScopeResult>("setReportScope",
+                        new object[] { Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human" });
+                }
+                finally { try { System.IO.Directory.Delete(scopeFolder, true); } catch { } }
+
                 Console.WriteLine();
                 if (_failures == 0) { Console.WriteLine("==== M1 RPC DUAL-DRIVE: PASS ===="); return 0; }
                 Console.WriteLine($"==== M1 RPC DUAL-DRIVE: {_failures} CHECK(S) FAILED ===="); return 1;

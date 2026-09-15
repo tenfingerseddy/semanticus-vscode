@@ -29,6 +29,7 @@ namespace Semanticus.Engine
     {
         public async Task<WorkflowReplayReport> ReplayCheckWorkflowAsync(string name)
         {
+            RequireProFeature();
             // 1) Extend the parse/op-catalog admission — run check_workflow first and carry its findings in.
             var check = await CheckWorkflowAsync(name);   // throws instructively if the workflow does not exist
             var def = LoadWorkflowDefs().First(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));

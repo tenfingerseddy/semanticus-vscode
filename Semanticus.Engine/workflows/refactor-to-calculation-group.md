@@ -1,78 +1,88 @@
 ---
 name: refactor-to-calculation-group
-title: Refactor repeated time-intelligence measures into one calculation group
-description: Collapse a family of copy-pasted time-intel measures (PY, YTD, MAT, %growth…) into a single calculation group, and prove, item by item, that not one number changed. A structural refactor most people are scared to do by hand.
+title: Replace repeated measures with a calculation group
+description: Replace a selected repeated variant family with calculation items, compare representative outputs, and retire only chosen measures.
 version: 1
 strictness: hard
-whenToUse: "When several base measures each repeat the SAME time-intelligence variants (Sales PY, Sales YTD, Sales MAT; Margin PY, Margin YTD…), dozens of near-identical measures. Use this to collapse them into one reusable calculation group without changing a single reported value; it is also the home for building a fresh calculation group of time-intelligence items. To expand ONE base measure into its variants, use time-intelligence-variants; not for a one-off single measure."
+whenToUse: "Use when many base measures repeat the same time variants. For variants on one base measure, use Add time comparisons; for general cleanup, use Tidy a model."
 triggers: [create_calculation_group, create_calculation_item]
 ---
 
-## Step 1: Inventory the repeated pattern
+## Step 1: Choose the repeated family
 
-List the base measures (e.g. [Sales Amount], [Total Cost], [Margin]) and the time-intelligence VARIANTS
-that repeat across them (PY, YTD, MAT, YoY %…). The calculation group will express each variant ONCE with
-`SELECTEDMEASURE()`; every base measure then inherits all of them. Record the base measures and the exact
-variant measures this refactor will replace; that list is your retirement scope and your proof checklist.
+List the base measures and the exact variant measures that the group is intended to replace. This is the
+retirement scope. Inspect dependants before planning deletion; report bindings may still use a variant by
+name even when the model has no downstream DAX reference.
 
 ```yaml gate
 inputs:
   - name: baseMeasures
-    question: "The base measures the variants apply to (e.g. Sales Amount, Total Cost, Margin)."
+    question: "Which base measures should receive the calculation items?"
     type: text
     required: required
   - name: variantMeasures
-    question: "Every existing variant measure this will replace (e.g. Sales PY, Sales YTD, Margin YTD…): the full retirement list."
+    question: "Which existing variant measures are candidates for replacement?"
     type: text
     required: required
 ```
 
-## Step 2: Freeze the ground truth
+## Step 2: Capture a representative before matrix
 
-Before creating anything, capture what the current variant measures produce. For each variant, `run_dax` it
-over a representative matrix (a couple of base measures × Year × Month) and keep the numbers. This frozen
-vector is the ONLY evidence of "what it used to compute"; the calc group must reproduce it exactly.
+Use `run_dax` over a small Year by Month or equivalent context matrix for the selected base and variant
+measures. Record those before-values and the contexts. This is an authored comparison plan, not an engine
+certificate; the current runner has no calculation-group-to-old-measure equivalence verify.
 
 ```yaml gate
+ops: [run_dax]
 inputs:
   - name: baselineMatrix
-    question: "The frozen before-values: each variant measure × the representative Year×Month matrix, from run_dax."
+    question: "The representative before-values and contexts captured with run_dax for each selected base and variant."
     type: text
     required: required
 ```
 
-## Step 3: Build the calculation group and its items
+## Step 3: Build the calculation group
 
-`create_calculation_group`, then one `create_calculation_item` per variant, each written against
-`SELECTEDMEASURE()` (e.g. PY = `CALCULATE ( SELECTEDMEASURE (), DATEADD ( 'Date'[Date], -1, YEAR ) )`). Set a
-sensible `set_calc_group_precedence` if it must combine with other groups, and `set_calc_item_format_string`
-where the variant changes the format (e.g. a % growth item). Keep the item names human ("PY", "YTD").
+Create one group and one item for each selected variant using `SELECTEDMEASURE()` and the model's marked
+date or calendar. Set precedence and dynamic format strings when other calculation groups or percentage
+items require them. Keep item names human and review the generated expressions before continuing.
 
-## Step 4: Prove every item reproduces the frozen numbers (the gate)
+```yaml gate
+ops: [create_calculation_group, create_calculation_item, set_calc_group_precedence, set_calc_item_format_string]
+```
 
-For each (base measure × calculation item) pair, `run_dax` the base measure with the item applied and compare
-to the matching frozen value from Step 2. Every cell must match. If any differs, fix the item's DAX and
-re-check; do NOT proceed on a mismatch (a calc group that changes a number is a silent data incident). Record
-the full comparison; confirm all pairs matched.
+## Step 4: Compare outputs and review dependants
+
+Run the same contexts again and compare every selected base by item with the before matrix. A mismatch is a
+refactor defect, not a reason to edit the old values to fit. Use `impact_of` and report inspection for each
+candidate retirement. Record the comparison and any unresolved report binding. The text matrix is useful
+review evidence, but it is not machine-equivalence proof in this engine version.
 
 ```yaml gate
 strictness: hard
+ops: [run_dax, impact_of, analyze_reports]
 inputs:
-  - name: allItemsReproduceBaseline
-    question: "Confirm EVERY (base × item) pair matched its Step-2 frozen value (paste the comparison). If any differed, you have not finished; fix and re-check."
+  - name: comparisonResult
+    question: "The after matrix against the same contexts, every mismatch, and each remaining model/report dependant."
     type: text
     required: required
-```
-
-## Step 5: Retire the redundant measures and re-verify the model
-
-With equivalence proven, remove the now-redundant variant measures (`delete_object`, or hide them first if
-reports still bind them by name; check `get_dependents` before deleting). Then a model-scope `bpa_clean` gate
-confirms the refactor introduced no new best-practice violations and left the model consistent.
-
-```yaml gate
-strictness: hard
 verify:
   - kind: bpa_clean
     scope: model
+```
+
+## Step 5: Retire only selected replacements and save
+
+Delete or hide a variant only when the review selected it and no report or model dependant still needs its
+name. Do not perform a mass deletion. Call `save_model` and record any variants left in place for a later
+report migration. A full machine-backed comparison remains an implementation gap; this run must not call
+the refactor certified.
+
+```yaml gate
+ops: [delete_object, save_model]
+inputs:
+  - name: retireDecision
+    question: "Which selected variants were retired or kept, and why does each remaining dependant make a keep necessary?"
+    type: text
+    required: required
 ```

@@ -44,7 +44,7 @@ assert.match(changelog, /## \[1\.0\.1\] - 2026-07-14/u);
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');
 assert.equal(packageJson.version, packageLock.version, 'package.json and package-lock.json versions differ');
 assert.equal(packageJson.version, packageLock.packages[''].version, 'root package-lock entry has a different version');
-assert.equal(packageJson.version, '1.1.3', 'release package version is not 1.1.3');
+assert.equal(packageJson.version, '1.2.0', 'release package version is not 1.2.0');
 assert.match(checklist, new RegExp(`package\\.json.*${packageJson.publisher}`, 'su'),
   'release checklist does not name the package publisher awaiting human ownership verification');
 assert.doesNotMatch(checklist, /replace `?"publisher": "kane"`?/u,

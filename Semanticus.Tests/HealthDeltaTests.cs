@@ -14,9 +14,10 @@ namespace Semanticus.Tests
     /// COMMITS, the engine computes a deterministic health delta — readiness grade movement (full rescan vs the
     /// memoized "before"), net-new BPA/lint findings on TOUCHED objects only, blast-radius count — and delivers
     /// it to BOTH doors (ChangeNotification.Health for the chip; the agent mailbox → MCP tool-result block).
-    /// The locked semantics under test: PRO with a SOFT gate (free never throws, just gets no block);
-    /// always-on with SUB-THRESHOLD SUPPRESSION (null unless the grade letter moved, a net-new Warning+ finding
-    /// landed on a touched object, or blast radius &gt; 0); dry-runs never emit.
+    /// The locked semantics under test: FREE FOR EVERYONE since 2026-09-15 (the soft tier gate is gone, so the
+    /// probe reports the same block on either tier); always-on with SUB-THRESHOLD SUPPRESSION (null unless the
+    /// grade letter moved, a net-new Warning+ finding landed on a touched object, or blast radius &gt; 0);
+    /// dry-runs never emit.
     /// </summary>
     public sealed class HealthDeltaTests
     {
@@ -96,15 +97,18 @@ namespace Semanticus.Tests
             Assert.Null(await engine.PullAgentHealthAsync());
         }
 
-        // (c) FREE tier: the SOFT gate means the edit succeeds exactly as before — no block, no throw.
+        // (c) FREE tier: the gate is gone, so the free tier gets the SAME block Pro does: the same rule ids on
+        //     the same worsening edit as (a), and the agent mailbox is fed too.
         [Fact]
-        public async Task Free_tier_gets_no_block_and_never_throws()
+        public async Task Free_tier_gets_the_same_block_as_pro()
         {
             var (engine, sm, _) = await FreshAsync(pro: false);
             var n = await OnNextChangeAsync(sm, () => engine.CreateMeasureAsync("table:Sales", "m2", "1", "agent"));
             Assert.NotNull(n);
-            Assert.Null(n.Health);
-            Assert.Null(await engine.PullAgentHealthAsync());
+            Assert.NotNull(n.Health);
+            Assert.Contains("DESC-MEASURE", n.Health.New);
+            Assert.Contains("FMT-MEASURE", n.Health.New);
+            Assert.NotNull(await engine.PullAgentHealthAsync());
         }
 
         // (d) Scoping: a finding introduced on the TOUCHED object is counted; the untouched object's
@@ -462,10 +466,11 @@ namespace Semanticus.Tests
             Assert.True((n.Health.Impact ?? 0) >= 1, "the dependent measure downstream of the 71st root must be counted");
         }
 
-        // P6: the probe is installed on every session and checks the entitlement LAZILY — a license activated
-        // mid-session (headless engine: no reopen) starts reporting on the very next edit.
+        // P6 used to pin the LAZY tier check: free got nothing until a license was activated mid-session. The
+        // probe has no entitlement any more (HealthDeltaProbe lost the parameter), so the pin flips: a tier that
+        // changes under the running session must change NOTHING about the delta, before or after.
         [Fact]
-        public async Task Mid_session_pro_activation_starts_reporting()
+        public async Task Tier_changing_mid_session_changes_nothing_about_the_delta()
         {
             var sm = new SessionManager();
             var toggle = new ToggleEntitlement { IsPro = false };
@@ -475,14 +480,15 @@ namespace Semanticus.Tests
             await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
 
             var free = await OnNextChangeAsync(sm, () => engine.CreateMeasureAsync(t, "m2", "1", "agent"));
-            Assert.Null(free!.Health);                              // free: no scan, no block
-            Assert.Null(await engine.PullAgentHealthAsync());
+            Assert.NotNull(free?.Health);                           // free: the same scan, the same block
+            Assert.Contains("DESC-MEASURE", free.Health.New);
+            Assert.NotNull(await engine.PullAgentHealthAsync());
 
             toggle.IsPro = true;                                    // headless mid-session activation
             var pro = await OnNextChangeAsync(sm, () => engine.CreateMeasureAsync(t, "m3", "2", "agent"));
-            Assert.NotNull(pro?.Health);                            // reporting starts on the next edit
+            Assert.NotNull(pro?.Health);                            // ...and nothing about it changed
             Assert.Contains("DESC-MEASURE", pro.Health.New);
-            Assert.NotNull(await engine.PullAgentHealthAsync());    // and the agent mailbox got it too
+            Assert.NotNull(await engine.PullAgentHealthAsync());    // the agent mailbox is fed on both tiers
         }
 
         private sealed class ToggleEntitlement : IEntitlement

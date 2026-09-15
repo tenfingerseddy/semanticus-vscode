@@ -49,7 +49,9 @@ assert.match(
   'the folder step must say it opens a folder',
 );
 
-const loadReference = sliceFn('loadReferenceModel');
+// The Reference Model tree was dropped on 2026-09-14 and its loader became openReferenceSession, which
+// Copy from another model… and the Connections hub both call. D-035 rides with the call, not the surface.
+const loadReference = sliceFn('openReferenceSession');
 assert.match(
   loadReference,
   /ParameterStructures\.byPosition/,
@@ -57,8 +59,8 @@ assert.match(
 );
 assert.match(
   loadReference,
-  /sendRequest<TreeNode\[]>\('listReferenceTree',\s*ParameterStructures\.byPosition,\s*referenceRef\)/,
-  'D-035: the reference tree call must force byPosition so StreamJsonRpc binds ModelRef',
+  /sendRequest<TreeNode\[]>\('listReferenceTree',\s*ParameterStructures\.byPosition,\s*ref\)/,
+  'D-035: the reference call must force byPosition so StreamJsonRpc binds ModelRef',
 );
 
 const saveCommand = sliceFn('saveCommand');

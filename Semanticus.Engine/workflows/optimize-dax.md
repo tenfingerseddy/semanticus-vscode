@@ -1,75 +1,82 @@
 ---
 name: optimize-dax
-title: Rewrite a measure and prove it unchanged, for speed or clarity
-description: Rewrite an existing measure (to make it faster, or just cleaner and more readable), then prove the rewrite returns the IDENTICAL result before you keep it. A hard equivalence gate stands between a rewrite and a silent behaviour change; the benchmark steps apply when the goal is speed and are skipped for a clarity-only cleanup.
-whenToUse: "Rewrite an existing measure while proving every number stays identical, whether the goal is SPEED (benchmark, profile, faster form) or CLARITY (VARs, house conventions, de-duplication, readability). To author a new measure from scratch use new-measure or verified-measure; to change what a measure computes use verified-measure."
+title: Fix a slow measure
+description: Freeze a measure, compare a rewrite across useful contexts, and keep it only when the evidence supports it.
+whenToUse: "Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose SPEED for measured timing work or READABILITY when the goal is a clearer equivalent expression. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure."
 version: 1
 strictness: hard
 triggers: [benchmark_dax, profile_dax, update_measure]
 ---
 
-## Step 1: State the goal and freeze the original
+## Step 1: Freeze the original and choose the goal
 
-Record the measure's current state BEFORE touching anything. Copy its expression
-verbatim with `get_dax`: this frozen text is the only proof of what it used to compute and the
-reference the equivalence gate holds the rewrite to. State the goal plainly: SPEED (it is measurably
-slow) or CLARITY (a cleaner, more standard, more maintainable expression that returns the same
-numbers). If the goal is speed, establish cold/warm timings now with `benchmark_dax_coldwarm` so you
-optimise the measured bottleneck, not a guessed one; if the goal is clarity, you can skip the
-benchmark. Either way the result must stay identical.
+Use `get_dax` before editing and paste the exact expression into `originalDax`; the engine has no automatic
+field that captures a read result into a later gate. Name the target measure, choose SPEED or READABILITY,
+and list the group-by columns that can expose a changed result. For SPEED, run `benchmark_dax` and record
+the comparable warm baseline. For READABILITY, decline the timing baseline and skip timing work.
 
 ```yaml gate
 inputs:
   - name: target
-    question: "The measure being rewritten (e.g. measure:Sales/Total Sales)."
+    question: "The measure being rewritten, for example measure:Sales/Net Sales."
     type: objectRef
     required: required
+  - name: goal
+    question: "Choose SPEED when a comparable timing matters, or READABILITY when the goal is a clearer equivalent expression."
+    type: text
+    required: required
   - name: originalDax
-    question: "The CURRENT expression, copied verbatim BEFORE any rewrite (get_dax gives it)."
+    question: "The exact expression returned by get_dax before the rewrite."
     type: text
     required: required
   - name: equivalenceGrid
-    question: "Comma-separated group-by columns for the per-context equivalence proof (e.g. Date[Year], Product[Category])."
+    question: "Qualified group-by columns for the equivalence check, such as 'Date'[Year], 'Product'[Category]."
     type: text
+    required: required
+  - name: speedBaselineMs
+    question: "For SPEED, the pre-rewrite warm median in milliseconds from benchmark_dax; decline for READABILITY or when no live timing is available."
+    type: number
     required: answer-or-decline
 ```
 
-## Step 2: Profile the bottleneck (speed goal only)
+## Step 2: Inspect the measured bottleneck when SPEED is selected
 
-For a SPEED rewrite, split the cost with `profile_dax`: formula-engine vs storage-engine time, and
-inspect the storage-engine query plans with `capture_query_plan`. Look for
-CallbackDataID (FE work pushed into SE scans), excessive materialisation, and repeated scans. Clear
-caches between runs with `clear_cache` so timings are honest. Optimise what the plan shows, not
-folklore. For a CLARITY rewrite there is no bottleneck to profile, so skip straight to Step 3.
+For SPEED, use `profile_dax`, `capture_query_plan` and `clear_cache` only when the connected environment
+supports them, then repeat the same benchmark shape. For READABILITY, go straight to the rewrite. A local
+or admin XMLA connection is needed for server plans and timings; offline work must say that performance is
+unverified rather than inventing a gain.
 
-## Step 3: Rewrite the measure
+```yaml gate
+ops: [profile_dax, capture_query_plan, clear_cache, benchmark_dax]
+```
 
-Apply the new expression with `update_measure`, keeping the format string and description. Follow the
-DAX floor: name intermediate results with VARs, DIVIDE over `/`, SELECTEDVALUE over
-VALUES-with-error-trap, filter columns not whole tables, avoid FILTER as a filter argument,
-fully-qualified column refs and unqualified measure refs. Run `validate_dax` and `lint_dax` before you
-rely on it. The rewrite is now live on the model, and the next step proves it did not change any number.
+## Step 3: Rewrite and prove the meaning stayed the same
 
-## Step 4: Prove equivalence before you trust it
-
-This is the hard gate: a rewrite must be PROVEN equivalent, never
-eyeballed. The engine compares the recorded original against the measure's current expression
-across the group-by grid you supplied. If any context differs, the gate fails and stays on
-this step: revert with `update_measure` and try again, or `skip_workflow_step` with a reason.
+Apply one focused `update_measure` after `validate_dax` and `lint_dax`, keeping the existing format and
+description. The hard equivalence check compares the frozen expression with the current one over the
+declared grid. A grand-total match is too thin; if a product or customer context differs, revert with
+`update_measure` and keep the original.
 
 ```yaml gate
 strictness: hard
+ops: [validate_dax, lint_dax, update_measure]
 verify:
   - kind: dax_equivalence
     probe: originalDax
-    when: inputs.originalDax.answered
 ```
 
-## Step 5: Confirm the win and keep it
+## Step 4: Keep the supported result
 
-For a SPEED rewrite, re-run `benchmark_dax_coldwarm` on the proven-equivalent rewrite and compare
-against the step-1 baseline; record the gain, and if it is not actually faster keep the original,
-because a correct slow measure beats a fast wrong one. For a CLARITY rewrite, confirm the
-proven-equivalent version genuinely reads better and still carries its format string and description;
-if the "cleaner" form is not actually clearer it is just churn, so keep the original. Either way, if
-the equivalence proof was thin (grand-total only, no real grid), do not trust it.
+For SPEED, rerun the same benchmark and let `benchmark_delta` compare it with `speedBaselineMs`; only a
+measured comparable result can support “faster”. For READABILITY, review the proven-equivalent expression
+and retain it only when it is actually clearer. If the timing is unavailable or regresses, revert rather
+than claiming success. Save after the chosen version is accepted.
+
+```yaml gate
+strictness: hard
+ops: [benchmark_dax, save_model]
+verify:
+  - kind: benchmark_delta
+    when: inputs.speedBaselineMs.answered
+    probe: speedBaselineMs
+```

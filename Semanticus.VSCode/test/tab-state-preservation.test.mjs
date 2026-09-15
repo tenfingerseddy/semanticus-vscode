@@ -83,8 +83,13 @@ ok('Storage activates lazily on first visit (active={tab === stats}) rather than
 ok('Lineage model-identity invalidation lives in the holder and still bumps the generations + clears discovery', () => {
   const provider = lineage.slice(lineage.indexOf('export function LineageTabStateProvider'), lineage.indexOf('export function LineageView'));
   assert.match(provider, /const modelSwitched = prevIdentity\.current !== undefined && prevIdentity\.current !== ident/);
-  assert.match(provider, /if \(modelSwitched\) \{[\s\S]*cloudGen\.current\+\+; localGen\.current\+\+;[\s\S]*activeCloudRunId\.current = null;[\s\S]*setReports\(null\); setSel\(new Set\(\)\); setConsent\(false\); setError\(null\); clearAnalysis\(\);/,
-    'a model swap must still orphan in-flight cloud/local work and clear every discovered thing (clearAnalysis also bumps the freshness token and drops the stale hint)');
+  // The freshness bookkeeping moved into the engine with the report scope (one owner of one truth), so the
+  // holder no longer carries a local analysis to invalidate. What must still happen on a model swap is the
+  // same: orphan in-flight cloud work, drop every discovered thing, and re-read the new model's own scope.
+  assert.match(provider, /if \(modelSwitched\) \{[\s\S]*cloudGen\.current\+\+;[\s\S]*activeCloudRunId\.current = null;[\s\S]*setReports\(null\); setSel\(new Set\(\)\); setConsent\(false\); setError\(null\);[\s\S]*setScope\(EMPTY_SCOPE\); setUsage\(null\); setCleanup\(false\); setDrawerOpen\(false\);[\s\S]*void refreshScope\(\);/,
+    'a model swap must orphan in-flight cloud work, clear every discovered thing, and re-read the new model\'s report scope');
+  assert.doesNotMatch(provider, /clearAnalysis/,
+    'the webview must not hold a report analysis of its own again: that is what let the page and the engine disagree');
 });
 ok('Lineage progress correlation stays exact and outlives the tab (holder-scoped onProgress by runId)', () => {
   const provider = lineage.slice(lineage.indexOf('export function LineageTabStateProvider'), lineage.indexOf('export function LineageView'));

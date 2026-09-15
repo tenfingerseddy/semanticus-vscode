@@ -90,15 +90,54 @@ namespace Semanticus.McpSmoke
 
                 var impactActivityWait = ui.WaitActivityAsync(e => e?.Kind == "impact_assessment");
                 var assessment = await McpToolsImpactAssessment.ImpactAssessment(claude, measureRef, "rename");
-                Check("MCP impact_assessment composes blast radius + explicit report unknowns through the shared door",
+                // The agent door must say what it actually checked. With NO reports chosen for this model, the
+                // result names the model it traversed, carries an empty report list, and says plainly that no
+                // report has been read - it never returns a clean answer about reports it never opened.
+                Check("MCP impact_assessment says what it checked: the model, and no reports",
                     assessment != null && assessment.ObjectRef == measureRef
                     && assessment.ModelImpact != null && assessment.Coverage.Any(c => c.Area == "model" && c.Status == "complete")
-                    && assessment.Unknowns.Any(u => u.Contains("Published-report usage"))
-                    && assessment.Verdict != "Verified" && assessment.SuggestedNextAction != null);
+                    && assessment.Checked != null && assessment.Checked.ReportsListed == 0 && assessment.Checked.ReportsChecked == 0
+                    && !string.IsNullOrEmpty(assessment.Checked.Model)
+                    && assessment.ReportSummary == "Report use is unknown. No reports have been chosen for this model yet."
+                    && assessment.Checked.Gaps.Any(g => g.Contains("Reports have not been checked", StringComparison.Ordinal))
+                    && assessment.Verdict != "Verified" && assessment.SuggestedNextAction != null
+                    && assessment.SuggestedNextAction.Op == "check_reports");
+                // And the Interview, which left the app, is gone from this result on the agent door too.
+                Check("MCP impact_assessment carries no Interview coverage or replay entries",
+                    !assessment.Coverage.Any(c => c.Area == "interview")
+                    && !assessment.ReplayChecks.Any(c => c.Kind == "interview-question"));
                 var impactActivity = await impactActivityWait.WaitAsync(TimeSpan.FromSeconds(5));
                 Check("UI receives the compact impact_assessment activity from the agent door",
                     impactActivity != null && impactActivity.Origin == "agent" && impactActivity.Target == measureRef
                     && impactActivity.Label == "Assessed rename impact");
+
+                // A report is CHOSEN for this model and deliberately NOT read. Astra's R1: the protection was asked
+                // for and has not been established, so the agent door must say so and must refuse to sweep. This
+                // is the branch that used to fall back to a model-only deletion with nobody told.
+                var scopeFolder = Path.Combine(Path.GetTempPath(), "smx-mcpsmoke-scope-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(scopeFolder);
+                var chosen = await McpTools.SetReportScope(claude, new[]
+                {
+                    new Semanticus.Engine.Lineage.ReportScopeChoice { Kind = "local", Name = "Warehouse ops", Path = scopeFolder },
+                });
+                Check("MCP set_report_scope saves the choice and reads nothing",
+                    chosen != null && chosen.Listed == 1 && chosen.Checked == 0
+                    && chosen.Reports.Single().State == "notChecked");
+
+                var unchecked1 = await McpToolsImpactAssessment.ImpactAssessment(claude, measureRef, "remove");
+                Check("MCP impact_assessment says the chosen reports still need checking",
+                    unchecked1.Checked.ReportsListed == 1 && unchecked1.Checked.ReportsChecked == 0
+                    && unchecked1.Checked.Gaps.Any(g => g == "The chosen reports still need checking.")
+                    && unchecked1.ReportSummary == "Report use is unknown. The chosen reports still need checking.");
+
+                var refused = await McpTools.RemoveSafeObjects(claude, null, null);
+                Check("MCP remove_safe_objects refuses to sweep while a chosen report is unread",
+                    refused != null && refused.Count == 0 && refused.Removed.Length == 0
+                    && refused.Note == "Nothing removed. The chosen reports still need checking.");
+
+                // Put the model back the way the rest of this smoke expects to find it.
+                await McpTools.SetReportScope(claude, Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>());
+                try { Directory.Delete(scopeFolder, true); } catch { }
 
                 var before = await McpTools.GetDax(claude, measureRef);
 
@@ -1167,28 +1206,28 @@ namespace Semanticus.McpSmoke
                 // the RemoteEngine proxy exactly like every section above — this exercises the tool bodies + proxy +
                 // cross-process dual-drive against one live session.
                 var wfList = await McpTools.ListWorkflows(claude);
-                Check("MCP list_workflows returns the 15 stock workflows, all parsed clean (Error==null) and Gated (Pro to start)",
-                    wfList.Length == 15 && wfList.All(w => w.Error == null) && wfList.All(w => w.Gated));
+                Check("MCP list_workflows returns the 16 stock workflows, all parsed clean (Error==null) and Gated (Pro to start)",
+                    wfList.Length == 16 && wfList.All(w => w.Error == null) && wfList.All(w => w.Gated));
 
                 var wfStart = await McpTools.StartWorkflow(claude, "new-measure");
                 var wfRunId = wfStart.RunId;
-                Check("MCP start_workflow('new-measure') returns a run on step-1 with VERBATIM instructions + 3 gate questions",
+                Check("MCP start_workflow('new-measure') returns a run on step-1 with VERBATIM instructions + 2 gate questions",
                     wfStart.Status == "active" && wfStart.CurrentStep != null && wfStart.CurrentStep.StepId == "step-1"
                     && !string.IsNullOrWhiteSpace(wfStart.CurrentStep.Instructions)
-                    && wfStart.CurrentStep.Questions.Length == 3);
+                    && wfStart.CurrentStep.Questions.Length == 2);
 
                 // Submitting step-1 with NO answers is REJECTED — the rejection names each unanswered question verbatim
-                // (the error text IS the steering mechanism). The measure's `verificationValue` question is quoted back.
+                // (the error text IS the steering mechanism). The measure's required `meaning` question is quoted back.
                 string wfReject = null;
                 try { await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-1", "{}"); }
                 catch (Exception ex) { wfReject = ex.Message; }
-                Check("MCP submit_workflow_step(step-1, {}) THROWS and names the question verbatim ('A known-good number')",
-                    wfReject != null && wfReject.Contains("A known-good number"));
+                Check("MCP submit_workflow_step(step-1, {}) THROWS and names the question verbatim ('What business question does this measure answer')",
+                    wfReject != null && wfReject.Contains("What business question does this measure answer"));
 
-                // Submit step-1 with an explicit DECLINE for verificationValue (+ the two answer-or-decline text answers).
+                // Submit step-1 with the required meaning plus an explicit DECLINE for verificationValue.
                 // The decline is recorded on the step result — auditable, never silently dropped — and the run advances.
                 var wfStep1 = await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-1",
-                    "{\"verificationValue\": {\"declined\": true, \"reason\": \"smoke has no reference figure\"}, \"intendedFilterContext\": \"none\", \"expectedGrain\": \"n/a\"}");
+                    "{\"meaning\": \"Total sales amount, checked by Product category\", \"verificationValue\": {\"declined\": true, \"reason\": \"smoke has no reference figure\"}}");
                 Check("MCP submit_workflow_step(step-1, decline) records the decline (Declined + reason) and advances to step-2",
                     wfStep1.Steps[0].Answers.TryGetValue("verificationValue", out var wfDecline)
                     && wfDecline.Declined && wfDecline.DeclineReason == "smoke has no reference figure"
@@ -1201,15 +1240,19 @@ namespace Semanticus.McpSmoke
 
                 // step-3 (hard gate): pass an EXISTING measure as `target`. Expected honesty: dax_probe is NOT_APPLICABLE
                 // (its when-input verificationValue was declined — E2) and bpa_clean scope:object PASSES (the measure pre-existed,
-                // so its violations were snapshotted at start → none are NEW) → the run COMPLETES. Register the UI's
+                // so its violations were snapshotted at start → none are NEW) → the run advances to the gateless step-4,
+                // and submitting that COMPLETES it. Register the UI's
                 // workflow/didChange waiter BEFORE the completing submit so the dual-drive broadcast is observed live.
                 // The waiter names the event it wants (this run, completed) so a still-in-flight step-2 "active"
                 // broadcast on the ui pipe can never consume it (there is no cross-pipe ordering guarantee).
                 var wfWait = ui.Notify.WaitWorkflowAsync(v => v.RunId == wfRunId && v.Status == "completed");
                 var wfStep3Answers = System.Text.Json.JsonSerializer.Serialize(
                     new System.Collections.Generic.Dictionary<string, string> { ["target"] = measureRef });
-                var wfDone = await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-3", wfStep3Answers);
-                Check("MCP submit_workflow_step(step-3, existing measure) COMPLETES the run", wfDone.Status == "completed");
+                var wfStep3 = await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-3", wfStep3Answers);
+                Check("MCP submit_workflow_step(step-3, existing measure) passes the hard gate and advances to step-4",
+                    wfStep3.Status == "active" && wfStep3.CurrentStep != null && wfStep3.CurrentStep.StepId == "step-4");
+                var wfDone = await McpTools.SubmitWorkflowStep(claude, wfRunId, "step-4", null);
+                Check("MCP submit_workflow_step(step-4, gateless save step) COMPLETES the run", wfDone.Status == "completed");
                 var wfS3 = wfDone.Steps[2];
                 Check("workflow verify honesty: step-3 dax_probe is NOT_APPLICABLE (when-input declined) and bpa_clean PASSED (no NEW violations on the pre-existing measure)",
                     wfS3.VerifyResults.Any(v => v.Kind == "dax_probe" && v.Status == "not_applicable")
@@ -1244,10 +1287,10 @@ namespace Semanticus.McpSmoke
                     && savedWorkflowRead.Html?.Contains(savedWorkflowRead.ContentHash) == true);
 
                 // ---- WORKFLOW TEMPLATES (docs/pro-mode-spec.md §10-T1 — the customisation layer, dual-drive) --------
-                // The template shelf lives in its OWN dir beside the binary, so it never leaks into the 15-workflow
+                // The template shelf lives in its OWN dir beside the binary, so it never leaks into the 16-workflow
                 // library (asserted above at ==15). Drive the 5 template ops through the RemoteEngine proxy — the same
                 // cross-process dual-drive path every section above uses. We instantiate ONE template into the model's
-                // sidecar, prove the invariant refuses an injection, then delete it so the shared dir returns to 15.
+                // sidecar, prove the invariant refuses an injection, then delete it so the shared dir returns to 16.
                 var tmplNames = new[] { "metric-certification", "month-end-close", "deploy-freeze-guard", "hard-measure" };
                 var tmplList = await McpTools.ListWorkflowTemplates(claude);
                 Check("MCP list_workflow_templates returns the 4 stock templates (parsed clean, with slots) and NONE leak into list_workflows",
@@ -1272,7 +1315,7 @@ namespace Semanticus.McpSmoke
                     var instLib = await McpTools.InstantiateWorkflowTemplate(claude, "metric-certification", "smoke-metric-cert", goodVals);
                     var afterInst = await McpTools.ListWorkflows(claude);
                     Check("MCP instantiate_workflow_template renders a runnable workflow (#33) from the template, admission-clean",
-                        wfCountBefore == 15 && afterInst.Length == wfCountBefore + 1
+                        wfCountBefore == 16 && afterInst.Length == wfCountBefore + 1
                         && afterInst.Any(w => w.Name == "smoke-metric-cert" && w.Error == null)
                         && instLib.Any(w => w.Name == "smoke-metric-cert"));
 
@@ -1297,11 +1340,11 @@ namespace Semanticus.McpSmoke
                 }
                 finally
                 {
-                    // Return the shared AdventureWorks sidecar to 15 so a re-run sees the same count (the ==15 assert above).
+                    // Return the shared AdventureWorks sidecar to 16 so a re-run sees the same count (the ==16 assert above).
                     try { await McpTools.DeleteWorkflow(claude, "smoke-metric-cert"); } catch { }
                 }
-                Check("templates leg leaves the workflow library back at 15 (a shelf is not the board)",
-                    (await McpTools.ListWorkflows(claude)).Length == 15);
+                Check("templates leg leaves the workflow library back at 16 (a shelf is not the board)",
+                    (await McpTools.ListWorkflows(claude)).Length == 16);
 
                 // ---- DYNAMIC WORKFLOW ACTIVATION (docs/pro-mode-spec.md §10.6 — 10-T2, dual-drive) ------------------
                 // set_workflow_activation curates the MENU (show/hide a workflow when a condition holds). Drive it +
@@ -1320,7 +1363,7 @@ namespace Semanticus.McpSmoke
                     var offWf = offList.Single(w => w.Name == actWf);
                     Check("MCP set_workflow_activation(set:off) deactivates the workflow with a PLAIN reason (no predicate echo)",
                         !offWf.Active && !string.IsNullOrWhiteSpace(offWf.ActiveReason) && !offWf.ActiveReason.Contains("dayOfMonth"));
-                    Check("activation write leaves the library at exactly 15 (curation is not content)", offList.Length == 15);
+                    Check("activation write leaves the library at exactly 16 (curation is not content)", offList.Length == 16);
                     var libNote1 = await libWait1.WaitAsync(TimeSpan.FromSeconds(5));
                     Check("set_workflow_activation broadcasts workflow/libraryDidChange to the UI door (dual-drive)",
                         libNote1 != null && libNote1.Any(w => w.Name == actWf && !w.Active));
@@ -1351,7 +1394,7 @@ namespace Semanticus.McpSmoke
                 }
                 var actRestored = await McpTools.ListWorkflows(claude);
                 Check("activation leg leaves the library back at exactly 15, the workflow re-enabled + active",
-                    actRestored.Length == 15 && actRestored.Single(w => w.Name == actWf) is { Active: true, Enabled: true });
+                    actRestored.Length == 16 && actRestored.Single(w => w.Name == actWf) is { Active: true, Enabled: true });
 
                 // ---- THE MODEL INTERVIEW (docs/product-innovation-brainstorm.md §1 — dual-drive) --------------------
                 // Drive all 4 ops through the RemoteEngine proxy (the cross-process door). Offline honesty is the

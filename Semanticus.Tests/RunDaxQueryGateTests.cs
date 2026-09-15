@@ -114,7 +114,7 @@ namespace Semanticus.Tests
         // A QueryData=DENY posture: the 'client' preset denies data preview off UAT/prod, and the target is labelled prod.
         private void DenyQueryData()
         {
-            AgentPolicyStore.SetPreset("client", "human", isPro: true);
+            AgentPolicyStore.SetPreset("client", "human");
             var rec = ConnectionRegistry.Remember("xmla", Endpoint, "");   // "" matches the ForTest stub's empty Database
             ConnectionRegistry.SetLabel(rec.Id, "prod", "human");
         }

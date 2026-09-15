@@ -19,7 +19,7 @@ namespace Semanticus.Tests
         public async Task InitializeAsync()
         {
             _sessions = new SessionManager();
-            _engine = new LocalEngine(_sessions);
+            _engine = new LocalEngine(_sessions, TestEntitlements.Pro);
             await _engine.OpenAsync(TestModels.FindBim());
             await _engine.SetCompatibilityLevelAsync(1604, "human");
             _tableRef = await _engine.CreateImportTableAsync("IR_Wire", "let\n    Source = #table(type table [order_dt = datetime], {})\nin\n    Source", "agent");

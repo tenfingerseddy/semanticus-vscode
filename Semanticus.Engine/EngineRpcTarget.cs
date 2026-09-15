@@ -64,6 +64,9 @@ namespace Semanticus.Engine
         public Task<TestDefinition> saveTest(TestDefinition def, string origin = "human") => _engine.SaveTestDefinitionAsync(def, _origin);
         public Task<bool> deleteTest(string id, string origin = "human") => _engine.DeleteTestDefinitionAsync(id, _origin);
         public Task<TestHistoryInfo> listTestRuns(int last = 20) => _engine.ListTestRunsAsync(last);
+        public Task<TestRunDetail> getTestRun(string runId) => _engine.GetTestRunAsync(runId);
+        public Task<TestRunRecordResult> recordTestRun(string runId, string origin = "human") => _engine.RecordTestRunAsync(runId, _origin);
+        public Task<UnmatchedRowsResult> getUnmatchedRows(string relationship, int limit = 200, string origin = "human") => _engine.GetUnmatchedRowsAsync(relationship, limit, _origin);
         public Task<TestReportResult> exportTestReport() => _engine.ExportTestReportAsync();
         public Task<EvidenceLibrary> listEvidence() => _engine.ListEvidenceAsync();
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> getEvidence(string id) => _engine.GetEvidenceAsync(id);
@@ -80,6 +83,7 @@ namespace Semanticus.Engine
         public Task<WorkflowProfileResult> activateWorkflowProfile(string name, string origin = "human") => _engine.ActivateWorkflowProfileAsync(name, _origin);
         public Task<WorkflowDef> getWorkflow(string name) => _engine.GetWorkflowAsync(name);
         public Task<WorkflowDocumentResult> getWorkflowDocument(string name, string sessionId = null) => _engine.GetWorkflowDocumentAsync(name, sessionId);
+        public Task<WorkflowEditPreviewResult> previewWorkflowEdit(string name, string expectByteHash, string expectPath, string editsJson, string draftText = null, bool create = false, string sessionId = null) => _engine.PreviewWorkflowEditAsync(name, expectByteHash, expectPath, editsJson, draftText, create, sessionId);
         public Task<WorkflowUpgradeResult> upgradeWorkflow(string name, bool dryRun = true, string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null) => _engine.UpgradeWorkflowAsync(name, dryRun, expectByteHash, expectPath, _origin, sessionId);
         public Task<WorkflowDocumentEditResult> editWorkflowDocument(string name, string expectByteHash, string exactText, string expectPath, string origin = "human", string sessionId = null) => _engine.EditWorkflowDocumentAsync(name, expectByteHash, exactText, expectPath, _origin, sessionId);
         public Task<WorkflowLayout> getWorkflowLayout(string name) => _engine.GetWorkflowLayoutAsync(name);
@@ -90,7 +94,7 @@ namespace Semanticus.Engine
         public Task<WorkflowRunView> skipWorkflowStep(string runId = null, string stepId = null, string reason = null, string origin = "human") => _engine.SkipWorkflowStepAsync(runId, stepId, reason, _origin);
         public Task<WorkflowRunView> abortWorkflow(string runId = null, string reason = null, string origin = "human") => _engine.AbortWorkflowAsync(runId, reason, _origin);
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> exportWorkflowEvidence(string runId = null) => _engine.ExportWorkflowEvidenceAsync(runId);
-        public Task<WorkflowInfo[]> saveWorkflow(string name, string markdown, string origin = "human", bool createOnly = false) => _engine.SaveWorkflowAsync(name, markdown, _origin, createOnly);
+        public Task<WorkflowInfo[]> saveWorkflow(string name, string markdown, string origin = "human", bool createOnly = false, string sessionId = null) => _engine.SaveWorkflowAsync(name, markdown, _origin, createOnly, sessionId);
         public Task<WorkflowInfo[]> deleteWorkflow(string name, string origin = "human") => _engine.DeleteWorkflowAsync(name, _origin);
         public Task<WorkflowTemplateInfo[]> listWorkflowTemplates() => _engine.ListWorkflowTemplatesAsync();
         public Task<WorkflowTemplate> getWorkflowTemplate(string name) => _engine.GetWorkflowTemplateAsync(name);
@@ -227,6 +231,9 @@ namespace Semanticus.Engine
         public Task<UnusedResult> unusedObjects() => _engine.UnusedObjectsAsync();
         public Task<ReportAnalysisResult> analyzeReports(string[] paths) => _engine.AnalyzeReportsAsync(paths);
         public Task<RemoveSafeReport> removeSafeObjects(string[] refs = null, string[] reportPaths = null, string origin = "human") => _engine.RemoveSafeObjectsAsync(refs, reportPaths, _origin);
+        public Task<Lineage.ReportScopeResult> listReportScope() => _engine.ListReportScopeAsync();
+        public Task<Lineage.ReportScopeResult> setReportScope(Lineage.ReportScopeChoice[] choices = null, string origin = "human") => _engine.SetReportScopeAsync(choices, _origin);
+        public Task<Lineage.ReportScopeResult> checkReports(string[] ids = null, bool consent = false, string authMode = null, string tenantId = null, string runId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.CheckReportsAsync(ids, consent, authMode, tenantId, runId, _origin, cancellationToken);
         public Task<CloudReport[]> listReports(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListReportsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<ReportAnalysisResult> analyzeCloudReports(string workspaceId, string[] reportIds, bool consent = false, string authMode = "azcli", string tenantId = null, string runId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId, _origin, cancellationToken);
         public Task<string> scriptObjects(string[] refs, string format) => _engine.ScriptObjectsAsync(refs, format);
@@ -333,6 +340,14 @@ namespace Semanticus.Engine
         public Task<ConnectionContext> clearReferenceBinding() => _engine.ClearReferenceBindingAsync();
         public Task<DeployGate> deployGate(ModelRef compareTarget = null, string origin = "human") => _engine.DeployGateAsync(compareTarget, _origin);
         public Task<ModelConnectionRecord[]> listConnections() => _engine.ListConnectionsAsync();
+        public Task<SqlSourceRecord[]> listSqlSources() => _engine.ListSqlSourcesAsync();
+        public Task<SqlSourceUsage[]> listSqlSourceUsage() => _engine.ListSqlSourceUsageAsync();
+        public Task<SqlSourceRecord> saveSqlSource(string id, string name, string server, string database, string authMode, string tenantId, string origin = "human") => _engine.SaveSqlSourceAsync(id, name, server, database, authMode, tenantId, _origin);
+        public Task<SqlSourceDeleteResult> deleteSqlSource(string id, string origin = "human") => _engine.DeleteSqlSourceAsync(id, _origin);
+        public Task<SqlSourceTestResult> testSqlSource(string id, string origin = "human") => _engine.TestSqlSourceAsync(id, _origin);
+        public Task<TableSourceMappingInfo> setTableSourceMapping(string table, string sqlSourceId, string schema = null, string entity = null, string origin = "human") => _engine.SetTableSourceMappingAsync(table, sqlSourceId, schema, entity, _origin);
+        public Task<bool> clearTableSourceMapping(string table, string origin = "human") => _engine.ClearTableSourceMappingAsync(table, _origin);
+        public Task<TableSourceMappingList> listTableMappings() => _engine.ListTableSourceMappingsAsync();
         public Task<ConnectionHistoryEvent[]> listConnectionHistory(string connectionId = null) => _engine.ListConnectionHistoryAsync(connectionId);
         public Task<ConnectionAccountProbe[]> probeConnectionAccounts() => _engine.ProbeConnectionAccountsAsync();
         public Task<AuthPrerequisites> probeAuthPrerequisites(string mode, string tenantId = null) => _engine.ProbeAuthPrerequisitesAsync(mode, tenantId);

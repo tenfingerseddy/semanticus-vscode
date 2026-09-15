@@ -10,6 +10,9 @@ namespace Semanticus.Tests
     /// list_calculation_groups — the focused read behind the Advanced-Modelling calc-group editor. Proves it
     /// returns each group's precedence and its ordered items with DAX + dynamic format-string, reflecting the
     /// existing write ops (create group/item, set precedence, set format).
+    ///
+    /// Every engine here is Pro: calculation groups are Advanced Modelling, and that feature's READS are Pro too
+    /// (2026-09-15). The subject is what the read returns, not the tier, so the refusal lives in the gate tests.
     /// </summary>
     public sealed class CalcGroupReadTests
     {
@@ -23,7 +26,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Lists_groups_with_precedence_and_ordered_items()
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            var engine = new LocalEngine(new SessionManager(), new Fake(true));
             using (engine)
             {
                 await engine.CreateModelAsync("CG", 1604);
@@ -55,7 +58,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Setting_a_calculation_item_ordinal_undoes_to_the_old_order()
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            var engine = new LocalEngine(new SessionManager(), new Fake(true));
             using (engine)
             {
                 await engine.CreateModelAsync("CG", 1604);
@@ -83,7 +86,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Undo_of_a_precedence_change_restores_the_listed_value()
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            var engine = new LocalEngine(new SessionManager(), new Fake(true));
             using (engine)
             {
                 await engine.CreateModelAsync("CG", 1604);
@@ -101,7 +104,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Empty_when_no_calc_groups()
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            var engine = new LocalEngine(new SessionManager(), new Fake(true));
             using (engine)
             {
                 await engine.CreateModelAsync("Plain", 1604);

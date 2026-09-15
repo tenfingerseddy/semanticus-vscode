@@ -29,8 +29,6 @@ namespace Semanticus.Tests
             public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "free" };
         }
 
-        private static readonly SecurityStaticReport NoSec = SecurityStaticChecks.Evaluate(Array.Empty<RoleFilterInput>());
-
         private static RelationshipIntegrityReport Rels(params Verdict[] riVerdicts)
             => RelationshipIntegrity.Evaluate(riVerdicts.Select((v, i) => new RelationshipCheckInput
             {
@@ -58,7 +56,7 @@ namespace Semanticus.Tests
         public void Grade_cannot_be_A_when_coverage_is_thin()
         {
             var h = TestHealthAnalyzer.Analyze(
-                Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
+                Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable, Verdict.NotVerifiable), null);
             Assert.True(h.CoveragePct < 90.0);
             Assert.NotEqual("A", h.Grade);
         }
@@ -66,7 +64,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Empty_suite_is_not_grade_A()
         {
-            var h = TestHealthAnalyzer.Analyze(Rels(), NoSec, null);
+            var h = TestHealthAnalyzer.Analyze(Rels(), null);
             Assert.Equal(0.0, h.CoveragePct);
             Assert.NotEqual("A", h.Grade);
         }
@@ -99,7 +97,7 @@ namespace Semanticus.Tests
         public async Task Empty_measure_formula_fails_instead_of_grading_A()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new Free());
+            using var engine = new LocalEngine(sessions, new Pro());   // Tests is Pro since 2026-09-15; the grade is the subject
             await engine.CreateModelAsync("EmptyMeasure", 1604);
             var table = await engine.CreateTableAsync("Facts", "human");
             var measureRef = await engine.CreateMeasureAsync(table, "Blank Total", "1", "human");
@@ -392,22 +390,31 @@ verify:
             Assert.DoesNotContain("Tamper-evident record", altered);
         }
 
-        // D-097: Free can review the latest run; signing stays Pro.
+        // D-097 superseded on 2026-09-15: Tests and Saved reports became one whole Pro feature, reads included, so
+        // the free "reading copy" of the evidence no longer exists. The honesty point survives in a stronger form:
+        // free is refused in one sentence before any work, and every report a Pro user gets is sealed, so there is
+        // no unsigned copy of an evidence document in circulation.
         [Fact]
-        public async Task Free_tier_can_review_test_evidence()
+        public async Task Test_evidence_is_refused_on_free_and_always_sealed_on_pro()
         {
+            using var freeSessions = new SessionManager();
+            using var freeEngine = new LocalEngine(freeSessions, new Free());
+            await freeEngine.OpenAsync(TestModels.FindBim());
+            var refused = await Assert.ThrowsAsync<EntitlementException>(() => freeEngine.RunTestSuiteAsync(false, "human"));
+            Assert.Contains("Tests is a Semanticus Pro feature", refused.Message);
+            await Assert.ThrowsAsync<EntitlementException>(() => freeEngine.ExportTestReportAsync());
+
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new Free());
+            using var engine = new LocalEngine(sessions, new Pro());
             await engine.OpenAsync(TestModels.FindBim());
             var run = await engine.RunTestSuiteAsync(false, "human");
             Assert.Null(run.Error);
             var report = await engine.ExportTestReportAsync();
             Assert.Null(report.Error);
-            Assert.Contains("signable test report is Pro", report.Note);
             Assert.False(string.IsNullOrWhiteSpace(report.Markdown));
             Assert.False(string.IsNullOrWhiteSpace(report.Html));
-            Assert.True(string.IsNullOrWhiteSpace(report.Json));
-            Assert.True(string.IsNullOrWhiteSpace(report.ContentHash));
+            Assert.False(string.IsNullOrWhiteSpace(report.Json));         // sealed, not a reading copy
+            Assert.False(string.IsNullOrWhiteSpace(report.ContentHash));
         }
 
         // D-138: one model identity across sidecars.

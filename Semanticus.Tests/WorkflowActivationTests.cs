@@ -29,8 +29,9 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
-        // A gate-free vehicle (runs FREE) carrying tags — so activation is exercised in isolation from the
-        // entitlement + strictness axes. A second, ops:[create_measure] vehicle drives the binding force-active cases.
+        // A gate-free vehicle carrying tags, so activation is exercised in isolation from the strictness axis. Every
+        // engine here holds Pro: since 2026-09-15 the whole workflow area is Pro, so the tier is never the variable.
+        // A second, ops:[create_measure] vehicle drives the binding force-active cases.
         private const string ActVehicleMd = @"---
 name: act-vehicle
 title: Activation vehicle
@@ -174,7 +175,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -193,7 +194,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -214,7 +215,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -233,7 +234,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -255,7 +256,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -276,7 +277,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -302,7 +303,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -323,7 +324,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -344,7 +345,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -362,7 +363,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -393,7 +394,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -419,7 +420,7 @@ Review what you made.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -462,7 +463,7 @@ Do the thing for {{surfaceName}}.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -486,7 +487,7 @@ Do the thing for {{surfaceName}}.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)

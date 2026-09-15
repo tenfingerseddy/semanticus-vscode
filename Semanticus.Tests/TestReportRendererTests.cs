@@ -26,7 +26,6 @@ namespace Semanticus.Tests
             Assert.True(root >= 0);
             Assert.True(root < markdown.IndexOf("## Measures", StringComparison.Ordinal));
             Assert.True(root < markdown.IndexOf("## Relationships", StringComparison.Ordinal));
-            Assert.True(root < markdown.IndexOf("## Security", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -65,14 +64,12 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void Report_includes_measured_relationship_and_security_evidence_but_no_history()
+        public void Report_includes_measured_relationship_evidence_but_no_history()
         {
             var markdown = TestReportRenderer.Render(Run());
             Assert.Contains("2 orphan rows (2% of 100)", markdown);
             Assert.Contains("Table row counts", markdown);
             Assert.Contains("Model COUNTROWS 100 at 2026-07-11T12:00:01Z; source COUNT_BIG 100 at 2026-07-11T12:00:03Z", markdown);
-            Assert.Contains("Preview: `[Region] = 1`", markdown);
-            Assert.Contains("8 visible tables, 2 hidden tables, 3 hidden columns", markdown);
             Assert.DoesNotContain("## History", markdown);
         }
 
@@ -85,7 +82,6 @@ namespace Semanticus.Tests
             Assert.Contains("<strong>Grade B | Coverage 82.6%</strong>", html);
             Assert.True(html.IndexOf("Root causes", StringComparison.Ordinal) < html.IndexOf("Measures", StringComparison.Ordinal));
             Assert.Contains("Table row counts", html);
-            Assert.Contains("Object visibility Regional", html);
         }
 
         [Fact]
@@ -98,32 +94,19 @@ namespace Semanticus.Tests
             Assert.Contains("&lt;script&gt;alert", html);
         }
 
+        // Security and the Model interview left Tests in 1.2.0 (Kane, 2026-09-15), so neither may reappear
+        // in a report: a sealed artifact that still carried them would be evidence of checks nobody ran.
         [Fact]
-        public void Interview_is_timestamped_evidence_without_changing_health()
+        public void The_report_has_no_security_or_interview_section()
         {
-            var run = Run();
-            var grade = run.Health.Grade;
-            var coverage = run.Health.CoveragePct;
-            run.Interview = new[]
-            {
-                new InterviewEvidence
-                {
-                    Question = "What were total sales?", Outcome = "Correct",
-                    When = "2026-07-12T09:30:00Z", Detail = "the answer matched the trusted value",
-                    ReplayStatus = "replayed", PreviousOutcome = "Correct",
-                },
-                new InterviewEvidence { Question = "Can this model answer churn?", ReplayStatus = "chat-only" },
-            };
+            var markdown = TestReportRenderer.Render(Run());
+            Assert.DoesNotContain("## Security", markdown, StringComparison.Ordinal);
+            Assert.DoesNotContain("Model Interview", markdown, StringComparison.Ordinal);
+            Assert.DoesNotContain("Object visibility", markdown, StringComparison.Ordinal);
 
-            var markdown = TestReportRenderer.Render(run);
-
-            Assert.Contains("## Behavioral contracts (Model Interview)", markdown);
-            Assert.Contains("behavioral evidence only; they do not change the test grade or coverage", markdown);
-            Assert.Contains("Right. Observed 2026-07-12T09:30:00Z", markdown);
-            Assert.Contains("Replayed in this Tests run", markdown);
-            Assert.Contains("Chat-only contract", markdown);
-            Assert.Equal(grade, run.Health.Grade);
-            Assert.Equal(coverage, run.Health.CoveragePct);
+            var html = EvidenceArtifact.Seal(TestReportRenderer.BuildEvidence(Run())).Html;
+            Assert.DoesNotContain("Model Interview", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("Object visibility", html, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -148,7 +131,6 @@ namespace Semanticus.Tests
             Assert.Equal(artifact.ContentHash, EvidenceHash.HashOfJsonText(artifact.Json));
             Assert.Contains(artifact.ContentHash, artifact.Html);
             Assert.Contains("Relationships and integrity", artifact.Html);
-            Assert.Contains("Model Interview", artifact.Html);
         }
 
         private static TestSuiteRunResult Run()
@@ -175,14 +157,6 @@ namespace Semanticus.Tests
                     ModelObservedUtc = "2026-07-11T12:00:01Z", SourceObservedUtc = "2026-07-11T12:00:03Z",
                 }),
             };
-            var security = SecurityStaticChecks.Evaluate(new[]
-            {
-                new RoleFilterInput { Role = "Regional", Table = "Sales", FilterExpression = "[Region] = 1" },
-            });
-            security.Ols = new[]
-            {
-                new RoleOls { Role = "Regional", TablesTotal = 10, TablesHidden = 2, ColumnsHidden = 3 },
-            };
             return new TestSuiteRunResult
             {
                 ModelName = "Contoso",
@@ -196,7 +170,6 @@ namespace Semanticus.Tests
                     Grade = "B", CoveragePct = 82.6, GatedBy = new[] { "one relationship check failed" },
                 },
                 Relationships = relationships,
-                Security = security,
                 Reconciles = new[] { Outcome("Revenue ties to GL", Verdict.Fail, "Grand total") },
             };
         }

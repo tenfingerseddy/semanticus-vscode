@@ -16,9 +16,9 @@ namespace Semanticus.Engine
     /// <c>LineageGraph.ImpactFrom</c> BFS over ALL of the commit's SEMANTIC changes (no root cap — a truncated
     /// walk could suppress a real blast radius).
     ///
-    /// The probe is installed on EVERY session; the Pro gate is checked LAZILY per invocation (SOFT gate — the
-    /// free tier costs one bool check and never throws; a license activated mid-session starts reporting on the
-    /// next edit). <see cref="ComputeOrNull"/> returns null below the threshold (no grade-letter move, no
+    /// The probe is installed on EVERY session and reports for every tier: Kane made the health delta free on
+    /// 2026-09-15, so the lazy entitlement check it used to carry is gone.
+    /// <see cref="ComputeOrNull"/> returns null below the threshold (no grade-letter move, no
     /// net-new Warning+ finding, blast radius 0) so BOTH sinks — the didChange chip and the MCP tool-result
     /// block — key off null.
     ///
@@ -54,7 +54,6 @@ namespace Semanticus.Engine
         private readonly Func<Model, IReadOnlyList<BpaRule>> _bpaRules;   // the session's EFFECTIVE rules (standard + model-embedded)
         private readonly Action<ActivityEvent> _publishActivity;          // Phase-0 evidence record (Kind="health_delta") — L0 tee + rich-evidence UI
         private readonly Action<string, HealthDelta> _stashAgentHealth;   // the engine-level mailbox (correlation-true; survives a model swap mid-call)
-        private readonly Func<bool> _isPro;                               // LAZY entitlement read — see the class doc (P6)
 
         // One analyzer (and thus ONE ReadinessRuleSet.Default() materialization) per probe/session — the rule
         // set is immutable, so re-building it every commit was pure allocation churn.
@@ -81,15 +80,12 @@ namespace Semanticus.Engine
         public long LastComputeMs { get; private set; }
 
         public HealthDeltaProbe(Func<Model, IReadOnlyList<BpaRule>> bpaRules, Action<ActivityEvent> publishActivity,
-            Action<string, HealthDelta> stashAgentHealth = null, Func<bool> isPro = null)
+            Action<string, HealthDelta> stashAgentHealth = null)
         {
             _bpaRules = bpaRules ?? throw new ArgumentNullException(nameof(bpaRules));
             _publishActivity = publishActivity;
             _stashAgentHealth = stashAgentHealth;
-            _isPro = isPro;
         }
-
-        private bool IsPro() => _isPro?.Invoke() ?? true;
 
         // The ISessionObserver seam: thin adapters so the descriptive baseline/commit names (and their doc
         // contracts) stay the probe's real surface.
@@ -103,11 +99,10 @@ namespace Semanticus.Engine
             if (delta != null && commit.Health == null) commit.Health = delta;
         }
 
-        /// <summary>Memoize the pre-edit baseline if absent (no-op after the first call, and while the
-        /// entitlement isn't Pro — the check is LAZY so a mid-session activation starts reporting). Dispatcher thread.</summary>
+        /// <summary>Memoize the pre-edit baseline if absent (a no-op after the first call). Dispatcher thread.</summary>
         public void EnsureBaseline(Model model)
         {
-            if (_before != null || !IsPro()) return;   // free tier: one bool check, nothing else
+            if (_before != null) return;
             var card = _analyzer.Baseline(model, _readinessState);   // full scan; seeds the incremental memo
             // Stable ids resolve against the model AS OF this snapshot — pre-mutation, so every finding's ref
             // still resolves (post-rename it wouldn't).
@@ -132,7 +127,6 @@ namespace Semanticus.Engine
         /// drains exactly its own call's movement (see <see cref="AgentHealthMailbox"/>).</summary>
         public HealthDelta OnCommit(Model model, long revision, string origin, string label, IReadOnlyList<ChangeDelta> deltas, string correlationId)
         {
-            if (!IsPro()) return null;   // soft gate, checked lazily — free edits stay plain "rev N" at near-zero cost
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             var before = _before;   // null only if EnsureBaseline failed — then report no claims and self-heal below

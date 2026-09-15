@@ -9,8 +9,16 @@ import dagre from '@dagrejs/dagre';
 import { rpc, onDidChange, onLayoutChange, loadState, saveState, requestDropTables, type LayoutData } from './bridge';
 import { edgeTypes, RelConnectionLine } from './diagramedges';
 import { RelationshipsView } from './relationships';
+import { CANVAS_CHIP_MIN_H, CanvasChip, RowLabel, RowMenu, RowSep, ToolRow, canvasInsetStyle, useCanvasBox, useToolRow } from './toolrow';
 import type { ColumnRow } from './wire';
 import { uiLabel } from './copy';
+
+// The page's own how-to sentences. They used to sit on the toolbar as a long grey line, which cost the canvas a
+// whole row on every screen for something you read once. They live here as named constants so the tooltip of the
+// control they describe and the shell's page-notes popover read the SAME words, and neither can drift.
+export const DIAGRAM_CANVAS_HINT = 'Drag a table from the Add tables list onto the canvas. Open a table to draw a link between two of its columns. Click a link, then press Delete, to remove it.';
+export const DIAGRAM_RELATIONSHIPS_HINT = 'Every link between two tables: how the rows match up, which way the filtering flows, whether it is switched on, and the common problems.';
+export const DIAGRAM_NOTES: string[] = [DIAGRAM_CANVAS_HINT, DIAGRAM_RELATIONSHIPS_HINT];
 
 // Field-parameter accent: a restrained muted violet (Kane's "purple") that sits beside the Ink+Signal palette
 // without competing with Signal green / date amber / calc teal. Solid swatch takes black text like the others.
@@ -203,10 +211,6 @@ function ColRow({ c }: { c: ColumnRow }) {
 const tbBtn: React.CSSProperties = {
   background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)',
   borderRadius: 4, fontSize: 10, padding: '2px 6px', cursor: 'pointer',
-};
-// Active/toggled toolbar button (e.g. snap-to-grid on).
-const tbBtnActive: React.CSSProperties = {
-  ...tbBtn, background: 'var(--sem-accent-soft)', borderColor: 'var(--sem-accent)', color: 'var(--sem-fg)',
 };
 
 const nodeTypes = { table: TableNode };
@@ -616,7 +620,14 @@ const positionsToLayoutNodes = (pos: Record<string, XY>) =>
 // unmounts when you leave the tab), preventing a stale request from re-firing (and re-creating a diagram) on return.
 let consumedAddNonce = 0;
 
-function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } | null }) {
+function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
+  addReq: { tables: string[]; nonce: number } | null;
+  focusReq?: { id: string; nonce: number } | null;
+  onAddConsumed?: (nonce: number) => void;
+  // The Canvas / Relationships switch. It leads this tool's ONE row rather than owning a row of its own, so
+  // the two views share a single 40px strip instead of stacking two.
+  modeSwitch?: React.ReactNode;
+}) {
   const [graph, setGraph] = useState<ModelGraph | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [diagrams, setDiagrams] = useState<SavedDiagram[]>(() => loadState<SavedDiagram[]>('diagrams', [DEFAULT_DIAGRAM]));
@@ -634,6 +645,31 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   const [edges, setEdges] = useEdgesState<Edge>([]);
   const rf = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+
+  // --- viewport framing (NOT a layout write: fitView only moves the camera, saved positions are untouched) ---
+  // True once the person has panned/zoomed since the LAST fit. The deferred first-open fit checks this so it can
+  // never yank the camera away from a view the person set up themselves while the model was still loading.
+  const interactedSinceFit = useRef(false);
+  const didFirstFit = useRef(false);
+  const doFit = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+    try { rf.fitView(opts ?? { padding: 0.2, duration: 300 }); } catch { /* not mounted */ }
+    interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
+  }, [rf]);
+  // Fit only once the nodes have been MEASURED. React Flow fills `node.measured` on a render pass AFTER the nodes are
+  // set, and a table card's height depends on its anchors (and on updateNodeInternals re-measuring them). Fitting
+  // before that frames a box built from unmeasured/stale sizes, which is what left the graph parked in the lower
+  // third of an otherwise empty canvas on first open at 1440x900. Poll a few frames, then fit anyway so a node that
+  // never reports a size cannot mean no fit at all.
+  const fitWhenMeasured = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+    let tries = 0;
+    const tick = () => {
+      const ns = rf.getNodes();
+      const ready = ns.length > 0 && ns.every((n) => (n.measured?.width ?? 0) > 0 && (n.measured?.height ?? 0) > 0);
+      if (ready || tries++ > 30) { doFit(opts); return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [rf, doFit]);
 
   const active = useMemo(() => diagrams.find((d) => d.id === activeId) ?? diagrams[0] ?? DEFAULT_DIAGRAM, [diagrams, activeId]);
   // Tracks whether the All-tables diagram is active, readable from the once-mounted layout/didChange handler
@@ -783,6 +819,7 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     if (!graph) return;
     const switched = prevActive.current !== activeId;
     prevActive.current = activeId;
+    if (switched) didFirstFit.current = false;   // a switched-to diagram is a first open of ITS layout, so frame it too
     const counts = relCounts(graph.relationships);
     const memberNames = new Set(members.map((t) => t.name));
     const expanded = active.expanded ?? {};
@@ -830,10 +867,18 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     // and frame it (the mount-time fitView fires before the async graph load, so the fresh arrange needs its own fit).
     if (arranging) {
       editActive((d) => ({ ...d, layout: effLayout, positions: { ...d.positions, ...Object.fromEntries(placed) } }));
-      window.setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
     }
     // anchors re-sided / columns shown-or-hidden change a node's handle geometry → tell React Flow to re-measure
     window.setTimeout(() => members.forEach((t) => updateNodeInternals(t.name)), 0);
+    // FIRST OPEN: frame the diagram once the graph has actually arrived. The <ReactFlow fitView> prop only fits at
+    // initialisation — which happens while `nodes` is still empty, because the graph loads async — so a diagram that
+    // opens from SAVED positions (the common case; `arranging` is false whenever a layout was already persisted)
+    // never got framed at all and inherited whatever viewport the empty canvas had. Skipped if the person already
+    // moved the view while it loaded.
+    if (!didFirstFit.current && members.length > 0 && !interactedSinceFit.current) {
+      didFirstFit.current = true;
+      fitWhenMeasured({ padding: 0.2 });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, activeId, membershipKey, layout, expandedKey, columns]);
 
@@ -897,8 +942,10 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     setNodes((ns) => ns.map((n) => ({ ...n, position: placed.get(n.id) ?? n.position })));
     editActive((d) => ({ ...d, positions: Object.fromEntries(placed), layout: mode, expanded: {} }));
     if (active.all) saveEngineLayout(Object.fromEntries(placed));
-    window.setTimeout(() => rf.fitView({ padding: 0.2, duration: 300 }), 30);
-  }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout]);
+    // A layout change is an explicit command ("show me the bus matrix"), so this fit is unconditional — the
+    // interaction guard exists to protect a view the person chose, not to suppress the arrangement they just asked for.
+    fitWhenMeasured({ padding: 0.2, duration: 300 });
+  }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout, fitWhenMeasured]);
   const autoArrange = useCallback(() => arrangeWith(hierarchyPositions, 'hierarchy'), [arrangeWith]);
   const busMatrix = useCallback(() => arrangeWith(busMatrixPositions, 'busmatrix'), [arrangeWith]);
   const layered = useCallback(() => arrangeWith(layeredPositions, 'layered'), [arrangeWith]);
@@ -954,8 +1001,14 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
   // Consume a one-shot host add-request exactly once (monotonic nonce; the module-level guard survives remounts so
   // leaving and returning to the tab can't replay a stale request).
   useEffect(() => {
-    if (addReq && addReq.nonce > consumedAddNonce) { consumedAddNonce = addReq.nonce; addTablesToActive(addReq.tables); }
+    if (addReq && addReq.nonce > consumedAddNonce) {
+      consumedAddNonce = addReq.nonce; addTablesToActive(addReq.tables); onAddConsumed?.(addReq.nonce);
+    }
   }, [addReq, addTablesToActive]);
+  useEffect(() => {
+    if (!focusReq || !graph?.relationships.some((relationship) => relationship.name === focusReq.id)) return;
+    setFocusedEdge(focusReq.id); setSelectedRel(focusReq.id);
+  }, [focusReq?.nonce, graph]);
 
   // --- create / edit relationships ---
   const onConnect = useCallback(async (c: Connection) => {
@@ -1105,69 +1158,80 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
     return graph.tables.filter((t) => !shown.has(t.name)).map((t) => t.name);
   }, [graph, active.all, baseMembers]);
 
+  // The row measures ITSELF, not the window: a narrower editor column has to fold just as a narrow window does.
+  // Two folds, in priority order. Show goes first because a filter you set once is the least-reached-for
+  // group on the row; the arrange cluster goes second. Snap and Fit never fold: Fit is what a person reaches
+  // for the moment a resize leaves the diagram looking wrong.
+  const row = useToolRow(2);
+  // The canvas is a flex child with no height of its own to read, and the second chip's fate depends on that
+  // height, so the box is measured directly - the VISIBLE box, because the page frame lets the canvas run a
+  // little way behind the bottom bar and a chip pinned to the hidden strip is a chip nobody sees.
+  const [canvasRef, canvasBox] = useCanvasBox();
+  const canvasH = canvasBox.height;
+  const legendText = 'Line colours: green is a one-way link, amber filters both ways, grey dashed is switched off. The fork end of a line is the many side, the bar end is the one side.';
+  const arrangeControls = (
+    <>
+      <button className="sem-btn sem-btn-sm" onClick={autoArrange} aria-pressed={layout === 'hierarchy'} title="Vertical: facts on the left, lookup tables on the right. Tables stack down each band and the links run across as lanes">Vertical</button>
+      <button className="sem-btn sem-btn-sm" onClick={layered} aria-pressed={layout === 'layered'} title="Layered: lookup tables across the top, facts underneath. Every link is a clean straight lane">Layered</button>
+      <button className="sem-btn sem-btn-sm" onClick={busMatrix} aria-pressed={layout === 'busmatrix'} title="Bus matrix, the usual one: facts down the left, lookup tables across the top, unlinked tables on the right">Bus matrix</button>
+      <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(true)} title="Open every table so you can see its columns and drag one column onto another to link them">Expand all</button>
+      <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(false)} title="Close every table">Collapse all</button>
+    </>
+  );
+  const kindChips = (
+    <>
+      <KindChip on={showData} onClick={() => setShowData((v) => !v)} color="var(--sem-accent)" label="Tables" count={kindCounts.data} title="Show regular data tables" />
+      <KindChip on={showCalc} onClick={() => setShowCalc((v) => !v)} color="#17B3A3" label="Calculated" count={kindCounts.calc} title="Show tables built from a calculation" />
+      <KindChip on={showFp} onClick={() => setShowFp((v) => !v)} color={FIELD_PARAM_VIOLET} label="Field params" count={kindCounts.fp} title="Show field parameters" />
+    </>
+  );
+
   if (err) return <div className="p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
   if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model graph…</div>;
 
   return (
     <div className="h-full flex flex-col">
-      {/* toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 text-[11px] border-b flex-wrap" style={{ borderColor: 'var(--sem-border)' }}>
+      {/* ONE tool row. The hint sentence that used to sit beside the Canvas / Relationships switch is now the
+          tooltip of ＋ New and a line in DIAGRAM_NOTES; the counts and the legend are chips inside the canvas. */}
+      <ToolRow rowRef={row.ref}>
+        {modeSwitch}
+        <RowSep />
         {renaming ? (
-          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} aria-label="Diagram name"
             onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
-            style={tbInput} />
+            className="sem-toolrow-input" style={{ maxWidth: 180 }} />
         ) : (
-          <select value={activeId} onChange={(e) => setActiveId(e.target.value)} style={tbInput} title="Switch diagram">
+          <select value={activeId} onChange={(e) => setActiveId(e.target.value)} className="sem-toolrow-input" style={{ maxWidth: 180 }} title="Switch diagram">
             {diagrams.map((d) => <option key={d.id} value={d.id}>{d.name}{d.all ? '' : ` (${graph.tables.filter((t) => d.tables.includes(t.name)).length})`}</option>)}
           </select>
         )}
-        <button onClick={newDiagram} style={tbBtn} title="New blank custom diagram. Add tables with ＋ Add table…">＋ New</button>
-        {!active.all && <button onClick={() => { setNameDraft(active.name); setRenaming(true); }} style={tbBtn} title="Rename">✎</button>}
-        {!active.all && <button onClick={deleteDiagram} style={tbBtn} title="Delete this diagram">Delete</button>}
-        <span style={{ width: 1, height: 16, background: 'var(--sem-border)' }} />
+        <button className="sem-btn sem-btn-sm" onClick={newDiagram} aria-label="New diagram" title={DIAGRAM_CANVAS_HINT}>＋ New</button>
+        {/* Rename and delete are rare and destructive, so they fold behind one control rather than each taking
+            room on every screen from the controls people use all day. */}
         {!active.all && (
-          <select value="" onChange={(e) => { if (e.target.value) addTables([e.target.value]); }} style={tbInput} title="Add a table to this diagram" disabled={absent.length === 0}>
+          <RowMenu label="⋯" title="Rename or delete this diagram">
+            <button className="sem-btn sem-btn-sm" onClick={() => { setNameDraft(active.name); setRenaming(true); }}>Rename</button>
+            <button className="sem-btn sem-btn-sm" onClick={deleteDiagram}>Delete this diagram</button>
+          </RowMenu>
+        )}
+        {!active.all && (
+          <select value="" onChange={(e) => { if (e.target.value) addTables([e.target.value]); }} className="sem-toolrow-input" style={{ maxWidth: 150 }} title="Add a table to this diagram" disabled={absent.length === 0}>
             <option value="">＋ Add table…</option>
             {absent.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         )}
-        <button onClick={autoArrange} style={layout === 'hierarchy' ? tbBtnActive : tbBtn} title="Vertical: facts left, dimensions right. Tables stack vertically in each band, relationships run as horizontal lanes">Vertical</button>
-        <button onClick={layered} style={layout === 'layered' ? tbBtnActive : tbBtn} title="Layered: dimensions across the top, facts underneath. Every relationship is a clean vertical lane">Layered</button>
-        <button onClick={busMatrix} style={layout === 'busmatrix' ? tbBtnActive : tbBtn} title="Bus-matrix layout (the default): facts (many side) down the left, dimensions (one side) across the top, unrelated tables on the right">Bus matrix</button>
-        <span style={{ width: 1, height: 16, background: 'var(--sem-border)' }} />
-        <button onClick={() => setExpandAll(true)} style={tbBtn} title="Expand every table to show its columns (drag column→column to relate)">Expand all</button>
-        <button onClick={() => setExpandAll(false)} style={tbBtn} title="Collapse all tables">Collapse all</button>
-        <button onClick={() => setSnap((s) => !s)} style={snap ? tbBtnActive : tbBtn} title="Snap dragged tables to a grid for tidy, aligned custom layouts">Snap{snap ? ' ✓' : ''}</button>
-        <button onClick={() => rf.fitView({ padding: 0.2, duration: 300 })} style={tbBtn} title="Fit to view">Fit</button>
-        <span style={{ width: 1, height: 16, background: 'var(--sem-border)' }} />
-        <span style={{ color: 'var(--sem-muted)' }}>Show</span>
-        <KindChip on={showData} onClick={() => setShowData((v) => !v)} color="var(--sem-accent)" label="Tables" count={kindCounts.data} title="Show regular data tables" />
-        <KindChip on={showCalc} onClick={() => setShowCalc((v) => !v)} color="#17B3A3" label="Calculated" count={kindCounts.calc} title="Show calculated (DAX) tables" />
-        <KindChip on={showFp} onClick={() => setShowFp((v) => !v)} color={FIELD_PARAM_VIOLET} label="Field params" count={kindCounts.fp} title="Show field parameters" />
-        <span className="ml-auto" style={{ color: 'var(--sem-muted)' }}>{members.length} shown · expand a table to draw relationships</span>
-      </div>
-      {/* model audit */}
-      {audit && (
-        <div className="flex items-center gap-4 px-4 py-2 text-[11px] border-b" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
-          <Stat label="tables" value={audit.tables} />
-          <Stat label="relationships" value={audit.rels} />
-          <Stat label="bidirectional" value={audit.bidi} warn={audit.bidi > 0} />
-          <Stat label="inactive" value={audit.inactive} />
-          <Stat label="isolated" value={audit.isolated} warn={audit.isolated > 0} />
-          <div className="ml-auto flex items-center gap-3">
-            <CardGlyph kind="many" /> many
-            <CardGlyph kind="one" /> one
-            <span style={{ width: 1, height: 12, background: 'var(--sem-border)' }} />
-            <Legend color="var(--sem-accent)" text="1-way" />
-            <Legend color="var(--sem-warn)" text="bi-directional" />
-            <Legend color="var(--sem-muted)" text="inactive" dashed />
-          </div>
-        </div>
-      )}
+        <RowSep />
+        {row.level >= 2 ? <RowMenu label="Arrange" title="Lay the tables out, and open or close them all">{arrangeControls}</RowMenu> : arrangeControls}
+        <RowSep />
+        <button className="sem-btn sem-btn-sm" onClick={() => setSnap((s) => !s)} aria-pressed={snap} title="Line dragged tables up on a grid, so a layout you arrange by hand stays tidy">Snap</button>
+        <button className="sem-btn sem-btn-sm" onClick={() => doFit()} title="Fit the whole diagram in view">Fit</button>
+        <RowSep />
+        {row.narrow ? <RowMenu label="Show" title="Choose which kinds of table to show" align="end">{kindChips}</RowMenu> : <><RowLabel>Show</RowLabel>{kindChips}</>}
+      </ToolRow>
       <CardinalityMarkers />
       {/* The canvas is ALWAYS mounted (even when empty) so it's a live drop target for tables dragged from the Model
           tree; the empty-state hint is an overlay on top (pointer-events:none so it never blocks a drop). */}
-      <div className="flex-1 min-h-0 relative" onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
+      <div className="flex-1 min-h-0 relative" ref={canvasRef} style={canvasInsetStyle(canvasBox.bottomInset)} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
         {!active.all && absent.length > 0 && <TablePalette tables={absent} onAdd={(n) => addTables([n])} />}
         {selRel && <RelPropsPanel rel={selRel} onClose={() => setSelectedRel(null)} onChanged={load} onDelete={deleteRelationship} />}
         {toast && (
@@ -1182,6 +1246,7 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
           nodes={displayNodes} edges={displayEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
           onNodesChange={onNodesChange} onNodeDrag={onNodeDrag} onNodeDragStop={commitPositions}
           onConnect={onConnect} onEdgeClick={onEdgeClick} onEdgeDoubleClick={onEdgeDoubleClick} onPaneClick={clearFocus}
+          onMove={(evt) => { if (evt) interactedSinceFit.current = true; }}   // evt is null for our own programmatic fitView, non-null for a real drag/wheel
           connectionMode={ConnectionMode.Loose} connectionLineComponent={RelConnectionLine}
           snapToGrid={snap} snapGrid={[GRID, GRID]}
           fitView minZoom={0.15} proOptions={{ hideAttribution: true }}
@@ -1189,11 +1254,38 @@ function DiagramInner({ addReq }: { addReq: { tables: string[]; nonce: number } 
           <Background color="var(--sem-border)" gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        {/* The counts and the legend, which used to be a 34px row of their own above the canvas. As chips they
+            cost the canvas nothing, and they sit clear of the zoom controls React Flow pins to the bottom-left.
+            On a canvas too short for two chips the legend folds into the counts chip's tooltip rather than
+            stacking a second chip over the picture. */}
+        {audit && (
+          // The Add tables list already owns the canvas's left edge on a custom diagram, so the chip starts to
+          // the right of it rather than sitting underneath it.
+          <CanvasChip at="start" style={!active.all && absent.length > 0 ? { left: 200 } : undefined}
+            title={canvasH >= CANVAS_CHIP_MIN_H ? undefined : legendText}>
+            <span><b>{audit.tables}</b> tables</span>
+            <span><b>{audit.rels}</b> links</span>
+            {audit.bidi > 0 && <span><b style={{ color: 'var(--sem-warn)' }}>{audit.bidi}</b> filter both ways</span>}
+            {audit.inactive > 0 && <span><b>{audit.inactive}</b> switched off</span>}
+            {audit.isolated > 0 && <span><b style={{ color: 'var(--sem-warn)' }}>{audit.isolated}</b> not linked</span>}
+            <span>{members.length} shown</span>
+          </CanvasChip>
+        )}
+        {audit && canvasH >= CANVAS_CHIP_MIN_H && (
+          <CanvasChip at="end" title={legendText}>
+            <CardGlyph kind="many" /> many
+            <CardGlyph kind="one" /> one
+            <span style={{ width: 1, height: 12, background: 'var(--sem-border)' }} />
+            <Legend color="var(--sem-accent)" text="1-way" />
+            <Legend color="var(--sem-warn)" text="both ways" />
+            <Legend color="var(--sem-muted)" text="switched off" dashed />
+          </CanvasChip>
+        )}
         {members.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-[12px] pointer-events-none px-6 text-center" style={{ color: 'var(--sem-muted)' }}>
             {baseMembers.length > 0
-              ? 'All tables hidden by filters. Re-enable a type under “Show” above.'
-              : 'Empty diagram. Drag tables from the “Add tables” palette, use “＋ Add table…” above, or select a table and “＋ related”.'}
+              ? 'Every table is hidden by a filter. Switch one back on under Show.'
+              : 'This diagram is empty. Drag a table from the Add tables list onto the canvas, pick one under ＋ Add table, or select a table and choose ＋ related.'}
           </div>
         )}
       </div>
@@ -1211,44 +1303,38 @@ const tbInput: React.CSSProperties = {
 // them; the choice persists. Both read the same live model graph, so they stay in sync.
 // `addTables` is a one-shot request from the host (Model-tree "Add to Studio Diagram") carrying the table(s) to drop
 // onto the canvas, with a nonce so a repeat add re-fires. Forwarded to DiagramInner, which consumes it once.
-export function DiagramView({ addTables }: { addTables?: { tables: string[]; nonce: number } | null }) {
+export function DiagramView({ addTables, focusRelationship, onNavConsumed }: {
+  addTables?: { tables: string[]; nonce: number } | null;
+  focusRelationship?: { id: string; nonce: number } | null;
+  onNavConsumed?: (nonce: number) => void;
+}) {
   const [view, setView] = useState<'canvas' | 'rels'>(() => loadState<'canvas' | 'rels'>('diagramView', 'canvas'));
   useEffect(() => { saveState('diagramView', view); }, [view]);
+  useEffect(() => { if (focusRelationship) setView('canvas'); }, [focusRelationship?.nonce]);
+  // The switch is built HERE (it owns the view state) and handed to whichever view is showing, so the pair leads
+  // that view's single tool row instead of standing on a row of its own above it.
+  const modeSwitch = (
+    <div className="sem-seg" role="group" aria-label="Diagram view">
+      <button className="sem-seg-item" aria-pressed={view === 'canvas'} onClick={() => setView('canvas')} title={DIAGRAM_CANVAS_HINT}>Canvas</button>
+      <button className="sem-seg-item" aria-pressed={view === 'rels'} onClick={() => setView('rels')} title={DIAGRAM_RELATIONSHIPS_HINT}>Relationships</button>
+    </div>
+  );
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center gap-1 px-4 pt-2 pb-1.5 border-b" style={{ borderColor: 'var(--sem-border)' }}>
-        <ViewToggle active={view === 'canvas'} onClick={() => setView('canvas')}>◈ Canvas</ViewToggle>
-        <ViewToggle active={view === 'rels'} onClick={() => setView('rels')}>▤ Relationships</ViewToggle>
-        <span className="text-[11px] ml-2" style={{ color: 'var(--sem-muted)' }}>
-          {view === 'canvas' ? 'Drag from “Add tables” onto the canvas · expand a table to draw relationships · click a relationship then Delete to remove' : 'Every relationship: cardinality, cross-filter, active flag, and common problems'}
-        </span>
-      </div>
-      <div className="flex-1 min-h-0">
-        {view === 'canvas' ? <ReactFlowProvider><DiagramInner addReq={addTables ?? null} /></ReactFlowProvider> : <RelationshipsView />}
-      </div>
+      {view === 'canvas'
+        ? <ReactFlowProvider><DiagramInner addReq={addTables ?? null} focusReq={focusRelationship} onAddConsumed={onNavConsumed} modeSwitch={modeSwitch} /></ReactFlowProvider>
+        : <RelationshipsView modeSwitch={modeSwitch} />}
     </div>
   );
 }
 
-function ViewToggle({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className="text-[12px] px-2.5 py-1 rounded-md font-medium"
-      style={active ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-muted)' }}>
-      {children}
-    </button>
-  );
-}
-
-function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
-  return <div className="flex items-baseline gap-1"><span className="font-semibold tnum" style={{ color: warn ? 'var(--sem-warn)' : 'var(--sem-fg)' }}>{value}</span><span>{label}</span></div>;
-}
-// A compact table-kind toggle in the diagram toolbar. The swatch matches that kind's node accent (green data, teal
-// calc, violet field-parameter) so the chip reads as "show these". ON = filled swatch + active button; OFF = hollow
-// swatch + dimmed. Toggling hides the whole kind (and its relationship lines) from the canvas.
+// A compact table-kind toggle on the diagram's tool row. The swatch matches that kind's node accent (green data,
+// teal calc, violet field-parameter) so the chip reads as "show these". ON = filled swatch + pressed button;
+// OFF = hollow swatch + dimmed. Toggling hides the whole kind (and its lines) from the canvas. It takes the shared
+// dense control scale, so it is the same height as every other control on the row.
 function KindChip({ on, onClick, color, label, count, title }: { on: boolean; onClick: () => void; color: string; label: string; count: number; title: string }) {
   return (
-    <button onClick={onClick} title={title} aria-pressed={on}
-      style={{ ...(on ? tbBtnActive : tbBtn), display: 'inline-flex', alignItems: 'center', gap: 5, opacity: on ? 1 : 0.6 }}>
+    <button className="sem-btn sem-btn-sm" onClick={onClick} title={title} aria-pressed={on} style={{ opacity: on ? 1 : 0.6 }}>
       <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? color : 'transparent', border: `1px solid ${color}` }} />
       {label}<span className="tnum" style={{ color: 'var(--sem-muted)' }}>{count}</span>
     </button>

@@ -31,10 +31,14 @@ assert.match(calendars, /Cannot map/,
 // Lineage deletes had the same inert window.confirm pattern (also reported with D-028).
 assert.doesNotMatch(lineage, /window\.confirm/,
   'lineage delete must not wait on a browser-native confirmation dialog');
-assert.match(lineage, /setConfirmSweep\(true\)/,
-  'lineage bulk remove must use in-panel confirmation');
-assert.match(lineage, /setConfirmItem\(item\)/,
-  'lineage single delete must use in-panel confirmation');
+// Removal from Lineage is now a PROPOSAL, so there is no delete on this page left to confirm: the thing
+// stays in the model until the proposal is applied under Changes, where it is rechecked first. The rule the
+// old in-panel confirmation existed to keep (never a native dialog, never a surprise delete) is kept by
+// there being no delete here at all.
+assert.match(lineage, /'delete_if_unused'/,
+  'lineage removal must be a proposal that re-verifies at apply, not a plain delete');
+assert.doesNotMatch(lineage, /rpc\('deleteObject'/,
+  'lineage must not delete an object outright any more');
 
 // D-058: the palette command must not return on a missing tree-node argument.
 const timeIntel = extension.slice(extension.indexOf('async function timeIntelCmd'), extension.indexOf('async function summarizeByCmd'));

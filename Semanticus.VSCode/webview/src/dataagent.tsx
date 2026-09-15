@@ -4,20 +4,21 @@ import { usePersistedState } from './hooks';
 import { Panel, Button, Banner, SectionTitle, Pill } from './workflows';
 import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
 import { useConnection } from './connection';
+import { AccountPicker } from './accountpicker';
 import { isEditableElementTree, parseElementTree, updateElementSelection, type DataAgentElement } from './dataagent-schema.mjs';
 import { uiLabel } from './copy';
 
 // ===================================================================================================
 // Data Agent — the "Validate → Deploy → Consume" payoff tab (docs/data-agent-tab-plan.md §4). Deploy a
 // Fabric Data Agent scoped to the model you just made AI-ready: SCOPE (add this model, element tree) →
-// TEACH (AI instructions + few-shots) → SHIP (publish + the MCP endpoint to connect your AI Assistant to).
+// TEACH (AI instructions + few-shots) → SHIP (publish + the MCP endpoint to connect your assistant to).
 //
 // A Data Agent is a definition-based Fabric ITEM. Reads (list/get) are free; the Semanticus verb
 // generate_data_agent_config_from_model (Pro) assembles a semantic_model source from the open session.
 // EVERY cloud write goes dry-run FIRST (commit=false reports the exact request, sends nothing) and renders
 // that RequestSummary before an explicit "Apply (writes to Fabric)" — the commit-token contract made visual.
 // The engine holds no credentials and runs NO inference (golden rule #1): it never queries the agent — a
-// published agent is an MCP server you connect your OWN AI Assistant to. "AI Assistant", never "Claude".
+// published agent is an MCP server you connect your OWN assistant to. "your assistant", never "Claude".
 // ===================================================================================================
 
 // ---- wire shapes (camelCase, mirror Semanticus.Engine/Alm/DataAgentProtocol.cs + AlmProtocol.FabricWorkspace) ----
@@ -136,7 +137,7 @@ export function DataAgentView() {
             ) : detail.error ? (
               <div className="p-4"><AgentFetchError agentId={selected} error={detail.error} onRetry={loadDetail} /></div>
             ) : (
-              <div className="flex flex-col gap-4 p-4 min-w-0">
+              <div className="sem-tool-page flex flex-col gap-4 min-w-0">
                 <AgentHeader detail={detail} ws={ws} />
                 <ScopePanel workspaceId={workspaceId} agentId={selected} detail={detail} tier={tier} authMode={authMode} tenantId={tenant} onChanged={loadDetail} />
                 <TeachPanel workspaceId={workspaceId} agentId={selected} detail={detail} tier={tier} authMode={authMode} tenantId={tenant} onChanged={loadDetail} />
@@ -160,21 +161,9 @@ function Header({ workspaces, workspaceId, onWorkspace, onRefresh, wsErr, authMo
       <div className="text-[13px] font-semibold">Data Agent</div>
       <div className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Deploy a Fabric Data Agent scoped to this model.</div>
       <div className="ml-auto flex items-center gap-2">
-        <select value={authMode} onChange={(e) => onAuthMode(e.target.value)}
-          title="WHO signs in to Fabric here; az cli may be logged into a different tenant than the model's XMLA session"
-          className="text-[12px] px-2 py-1 rounded-md outline-none"
-          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-          <option value="azcli">az cli</option>
-          <option value="interactive">Entra (interactive)</option>
-          <option value="devicecode">device code</option>
-          <option value="serviceprincipal">service principal</option>
-        </select>
-        {authMode !== 'azcli' && (
-          <input value={tenantId} onChange={(e) => onTenantId(e.target.value)} placeholder="tenant id / domain (optional)"
-            title="The Entra tenant to sign in to; set this when the model lives in a different tenant than your default"
-            className="text-[12px] px-2 py-1 rounded-md outline-none"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', width: 180 }} />
-        )}
+        {/* The same choice Promote makes, so it is the same control. The mode ids and the persisted key
+            here are unchanged: only the words a person reads, and where they live, moved. */}
+        <AccountPicker mode={authMode} onMode={onAuthMode} tenantId={tenantId} onTenantId={onTenantId} />
         <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Workspace</span>
         <select value={workspaceId} onChange={(e) => onWorkspace(e.target.value)}
           disabled={!workspaces || workspaces.length === 0}
@@ -669,9 +658,9 @@ function McpEndpointCard({ endpoint }: { endpoint: string }) {
   const copy = async () => { if (await copyText(endpoint)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } };
   return (
     <div className="mt-3 rounded-lg border p-3" style={{ background: 'var(--sem-accent-soft)', borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-      <div className="text-[12px] font-semibold" style={{ color: 'var(--sem-accent)' }}>Connect your AI Assistant</div>
+      <div className="text-[12px] font-semibold" style={{ color: 'var(--sem-accent)' }}>Connect your assistant</div>
       <div className="text-[11px] mt-1" style={{ color: 'var(--sem-fg)' }}>
-        A published agent is an MCP server. Semanticus never queries the agent or runs inference. Connect your AI Assistant to this endpoint instead.
+        A published agent is an MCP server. Semanticus never queries the agent or runs inference. Connect your assistant to this endpoint instead.
       </div>
       <div className="mt-2 flex items-center gap-2">
         <code className="flex-1 min-w-0 truncate text-[11px] px-2 py-1 rounded-md" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace' }}>{endpoint}</code>
@@ -707,18 +696,20 @@ function WriteFlow({ label, applyLabel = 'Apply (writes to Fabric)', run, onComm
   };
   const reset = () => { setPhase('idle'); setReport(null); setErr(null); setUpsell(null); };
 
+  // Only the fill differs from a plain .sem-btn. The border has to move with the fill, or a filled button
+  // keeps the neutral ring the shared class gives it and reads as two controls stacked.
   const triggerStyle = danger
-    ? { background: 'var(--sem-bad)', color: '#fff' }
+    ? { background: 'var(--sem-bad)', color: '#fff', borderColor: 'var(--sem-bad)' }
     : primary
-      ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-      : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' };
+      ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', borderColor: 'var(--sem-accent)' }
+      : undefined;
 
   return (
     <div className="flex flex-col gap-2">
       {phase === 'idle' && (
         <button onClick={() => call(false, 'review')} disabled={disabled || busy}
           title={tier === 'free' ? 'Configure and publish data agents with Pro.' : undefined}
-          className="self-start text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap" style={triggerStyle}>
+          className="sem-btn self-start" style={triggerStyle}>
           {busy ? 'Preparing…' : label}
           <ProBadge show={tier === 'free'} variant={danger || primary ? 'onAccent' : 'accent'} />
         </button>
@@ -732,8 +723,8 @@ function WriteFlow({ label, applyLabel = 'Apply (writes to Fabric)', run, onComm
           <ReportView report={report} />
           <div className="mt-2.5 flex items-center gap-2">
             <button onClick={() => call(true, 'done')} disabled={busy}
-              className="text-[12px] px-3 py-1.5 rounded-lg font-medium disabled:opacity-40 whitespace-nowrap"
-              style={danger ? { background: 'var(--sem-bad)', color: '#fff' } : { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>
+              className={danger ? 'sem-btn' : 'sem-btn sem-btn-primary'}
+              style={danger ? { background: 'var(--sem-bad)', color: '#fff', borderColor: 'var(--sem-bad)' } : undefined}>
               {busy ? 'Writing…' : applyLabel}
             </button>
             <Button onClick={reset} disabled={busy}>Cancel</Button>

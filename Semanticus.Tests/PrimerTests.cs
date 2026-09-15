@@ -43,7 +43,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions);
+                using var engine = new LocalEngine(sessions, new Fake(true));
                 await engine.OpenAsync(a);
                 var starter = await engine.GetPrimerAsync();
                 Assert.False(starter.Exists);
@@ -62,8 +62,11 @@ namespace Semanticus.Tests
             finally { Directory.Delete(dir, true); }
         }
 
+        /// <summary>Both doors write the Primer to the same sidecar, leave the model revision alone, and fail without
+        /// touching the file. The engine holds Pro because Model notes is a Pro feature since 2026-09-15; the tier is
+        /// not what this test is about.</summary>
         [Fact]
-        public async Task Set_model_primer_public_doors_share_the_Free_sidecar_write_and_fail_atomically()
+        public async Task Set_model_primer_public_doors_share_the_sidecar_write_and_fail_atomically()
         {
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-public-doors", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -72,7 +75,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false));
+                using var engine = new LocalEngine(sessions, new Fake(true));
                 var rpc = new EngineRpcTarget(engine);
                 await engine.OpenAsync(model);
                 var revision = sessions.Current.Revision;
@@ -164,8 +167,11 @@ namespace Semanticus.Tests
             finally { Directory.Delete(dir, true); }
         }
 
+        /// <summary>Kane's 2026-09-15 line put Model notes (the Primer itself) into Pro and left the suggestion
+        /// queue free, so the two halves split: a rejection stays rejected for whoever reads the queue, while
+        /// reading or editing the Primer by hand is refused on free.</summary>
         [Fact]
-        public async Task Rejected_suggestions_stay_dismissed_and_free_users_keep_manual_editing()
+        public async Task Rejected_suggestions_stay_dismissed_and_the_primer_itself_is_pro()
         {
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-reject", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -184,14 +190,112 @@ namespace Semanticus.Tests
                     Assert.DoesNotContain("approved fiscal calendar", (await pro.GetPrimerAsync()).Markdown);
                 }
 
+                // The queue itself is free, and the rejection recorded above holds for whoever reads it next.
                 using var free = new LocalEngine(new SessionManager(), new Fake(false));
                 await free.OpenAsync(model);
-                var gated = await free.ListPrimerSuggestionsAsync();
-                Assert.False(gated.IsPro);
-                Assert.Empty(gated.Suggestions);
-                var manual = await free.GetPrimerAsync();
-                var saved = await free.SetPrimerAsync(manual.Markdown.Replace("_Add what people and the AI Assistant should know._", "Manual context"), "human");
-                Assert.Contains("Manual context", saved.Markdown);
+                var queue = await free.ListPrimerSuggestionsAsync();
+                Assert.Empty(queue.Suggestions);
+
+                // The Primer is Model notes, so free is refused at the read as well as the write.
+                var read = await Assert.ThrowsAsync<EntitlementException>(() => free.GetPrimerAsync());
+                Assert.StartsWith("Model notes is a Semanticus Pro feature.", read.Message);
+                var write = await Assert.ThrowsAsync<EntitlementException>(
+                    () => free.SetPrimerAsync(PrimerContract.Template("Manual"), "human"));
+                Assert.StartsWith("Model notes is a Semanticus Pro feature.", write.Message);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        /// <summary>
+        /// B1 (Astra, 2026-09-15). Deciding a suggestion stays FREE, but the decision must not carry the Primer
+        /// back. Model notes is Pro: get_model_primer refuses a free read of that exact document, so returning it
+        /// inside the acceptance response was a free read of a paid page through a side entrance. Astra reproduced
+        /// it on the real RPC pipe and on MCP stdio, so all three surfaces are pinned here.
+        /// </summary>
+        [Fact]
+        public async Task A_free_decision_returns_the_decision_and_never_the_paid_primer()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-primer-b1", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var model = Path.Combine(dir, "Model.bim");
+            File.Copy(TestModels.FindBim(), model);
+            const string secret = "The ledger is reconciled by the finance team every Tuesday.";
+            try
+            {
+                string engineId, rpcId, mcpId, rejectId;
+                using (var pro = new LocalEngine(new SessionManager(), new Fake(true)))
+                {
+                    await pro.OpenAsync(model);
+                    // Existing paid text, so a leak is a leak of something real rather than of the blank template.
+                    var template = (await pro.GetPrimerAsync()).Markdown
+                        .Replace("_Add what people and the AI Assistant should know._", secret);
+                    Assert.Contains(secret, (await pro.SetPrimerAsync(template, "human")).Markdown);
+
+                    engineId = (await pro.AddInsightAsync("Stock lags the sales snapshot by one refresh.", new[] { "primer:Gotchas" }, "insight", "project", true, "agent")).Id;
+                    rpcId = (await pro.AddInsightAsync("Fiscal year starts in July.", new[] { "primer:Patterns" }, "insight", "project", true, "agent")).Id;
+                    mcpId = (await pro.AddInsightAsync("Returns are negative rows, never a separate table.", new[] { "primer:Gotchas" }, "insight", "project", true, "agent")).Id;
+                    rejectId = (await pro.AddInsightAsync("Old currency conversion is retired.", new[] { "primer:Patterns" }, "insight", "project", true, "agent")).Id;
+                }
+
+                using var free = new LocalEngine(new SessionManager(), new Fake(false));
+                await free.OpenAsync(model);
+                // The queue is free, and so is the decision. Only the document behind it is paid.
+                Assert.Equal(4, (await free.ListPrimerSuggestionsAsync()).Suggestions.Length);
+
+                var direct = await free.AcceptPrimerSuggestionAsync(engineId, "human");
+                Assert.True(direct.Changed);
+                Assert.Equal("accepted", direct.Decision);
+                Assert.Null(direct.Primer);
+                Assert.Contains("Gotchas", direct.Note);
+
+                var overRpc = await new EngineRpcTarget(free).acceptPrimerSuggestion(rpcId, "human");
+                Assert.Equal("accepted", overRpc.Decision);
+                Assert.Null(overRpc.Primer);
+
+                var overMcp = await McpTools.AcceptPrimerSuggestion(free, mcpId);
+                Assert.Equal("accepted", overMcp.Decision);
+                Assert.Null(overMcp.Primer);
+
+                var refused = await free.RejectPrimerSuggestionAsync(rejectId, "human");
+                Assert.Equal("rejected", refused.Decision);
+                Assert.False(refused.Changed);
+                Assert.Null(refused.Primer);
+
+                // The acceptances really did land: the free door changed the paid document without reading it.
+                Assert.Empty((await free.ListPrimerSuggestionsAsync()).Suggestions);
+                var read = await Assert.ThrowsAsync<EntitlementException>(() => free.GetPrimerAsync());
+                Assert.StartsWith("Model notes is a Semanticus Pro feature.", read.Message);
+
+                using var pro2 = new LocalEngine(new SessionManager(), new Fake(true));
+                await pro2.OpenAsync(model);
+                var paid = await pro2.GetPrimerAsync();
+                Assert.Contains(secret, paid.Markdown);
+                Assert.Contains("Stock lags the sales snapshot", paid.Markdown);
+                Assert.Contains("Fiscal year starts in July", paid.Markdown);
+                Assert.Contains("Returns are negative rows", paid.Markdown);
+                Assert.DoesNotContain("Old currency conversion is retired", paid.Markdown);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        /// <summary>The other half of B1: with Model notes granted, the decision still hands the Primer back, so
+        /// the repair is a gate and not a removal of the field.</summary>
+        [Fact]
+        public async Task A_paid_decision_still_carries_the_primer_back()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-primer-b1-pro", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var model = Path.Combine(dir, "Model.bim");
+            File.Copy(TestModels.FindBim(), model);
+            try
+            {
+                using var pro = new LocalEngine(new SessionManager(), new Fake(true));
+                await pro.OpenAsync(model);
+                var insight = await pro.AddInsightAsync("Quantities are always positive.", new[] { "primer:Gotchas" }, "insight", "project", true, "agent");
+                var accepted = await McpTools.AcceptPrimerSuggestion(pro, insight.Id);
+                Assert.Equal("accepted", accepted.Decision);
+                Assert.NotNull(accepted.Primer);
+                Assert.Contains("Quantities are always positive", accepted.Primer.Markdown);
             }
             finally { Directory.Delete(dir, true); }
         }
@@ -231,7 +335,7 @@ namespace Semanticus.Tests
                 string savedPath, savedMarkdown;
                 // Desktop session 1.
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("Model", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Contoso Sales");
@@ -246,7 +350,7 @@ namespace Semanticus.Tests
                 }
                 // Desktop restart: fresh engine + session, BOTH coordinates rotated, same .pbix display name.
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("Model", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:52002", Guid.NewGuid().ToString(), null, localName: "Contoso Sales");
@@ -268,7 +372,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("Sales", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales Report");
                 var sales = await engine.SetPrimerAsync(
@@ -294,7 +398,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 await engine.CreateTableAsync("Sales", "human");
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Contoso Sales");
@@ -324,7 +428,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
 
                 await engine.CreateModelAsync("Cloud", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/WS", "SalesDW", "tenant");
@@ -353,14 +457,14 @@ namespace Semanticus.Tests
             {
                 string first;
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false)))
+                using (var engine = new LocalEngine(sessions, new Fake(true)))
                 {
                     await engine.OpenAsync(model);
                     first = (await engine.GetPrimerAsync()).FilePath;
                 }
                 Assert.Matches("^disk-[0-9a-f]{16}\\.md$", Path.GetFileName(first));
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false)))
+                using (var engine = new LocalEngine(sessions, new Fake(true)))
                 {
                     await engine.OpenAsync(model);
                     Assert.Equal(first, (await engine.GetPrimerAsync()).FilePath);
@@ -380,7 +484,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Contoso Sales");
 
@@ -430,7 +534,7 @@ namespace Semanticus.Tests
                 var pbix = @"C:\data\reports\Contoso Sales.pbix";
                 string savedPath, savedMarkdown;
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("Model", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Contoso Sales", localPath: pbix);
@@ -441,7 +545,7 @@ namespace Semanticus.Tests
                     Assert.StartsWith("local-", Path.GetFileName(saved.FilePath));
                 }
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("Model", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:52002", Guid.NewGuid().ToString(), null, localName: "Contoso Sales", localPath: pbix);
@@ -462,7 +566,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("A", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales", localPath: @"C:\region-a\Sales.pbix");
                 var a = await engine.SetPrimerAsync(
@@ -487,7 +591,7 @@ namespace Semanticus.Tests
             {
                 // Session 1: stem only (no path capturable) — writes the stem-keyed file, stamped WITHOUT a path.
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("M", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
@@ -497,7 +601,7 @@ namespace Semanticus.Tests
                 // Session 2: same stem, path now KNOWN — path-keyed. The stem file cannot be verified as this
                 // model's (its stamp has no path), so it is flagged honestly and NOT served.
                 using (var sessions = new SessionManager())
-                using (var engine = new LocalEngine(sessions, new Fake(false), ws))
+                using (var engine = new LocalEngine(sessions, new Fake(true), ws))
                 {
                     await engine.CreateModelAsync("M", 1604);
                     sessions.Current.LiveOrigin = new LiveOrigin("localhost:52002", Guid.NewGuid().ToString(), null, localName: "Sales", localPath: @"C:\data\Sales.pbix");
@@ -519,7 +623,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 // The OTHER model's sidecar state: a stem-keyed primer stamped with ITS OWN .pbix path (as a
                 // sidecar copied between machines would carry). Written by a first session so key + stamp shape
                 // are the engine's own, then the stamp's path is what proves foreignness.
@@ -549,7 +653,7 @@ namespace Semanticus.Tests
             {
                 var pbix = @"C:\data\Sales.pbix";
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
                 var stemSaved = await engine.SetPrimerAsync(
@@ -577,7 +681,7 @@ namespace Semanticus.Tests
             {
                 var pbix = @"C:\mine\Sales.pbix";
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales", localPath: pbix);
                 var saved = await engine.SetPrimerAsync(
@@ -610,7 +714,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
                 var saved = await engine.SetPrimerAsync(
@@ -639,7 +743,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
                 var saved = await engine.SetPrimerAsync(
@@ -671,7 +775,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
                 var saved = await engine.SetPrimerAsync(
@@ -700,7 +804,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales", localPath: @"C:\data\Sales.pbix");
                 var saved = await engine.SetPrimerAsync(
@@ -726,7 +830,7 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake(false), ws);
+                using var engine = new LocalEngine(sessions, new Fake(true), ws);
                 await engine.CreateModelAsync("M", 1604);
                 sessions.Current.LiveOrigin = new LiveOrigin("localhost:51001", Guid.NewGuid().ToString(), null, localName: "Sales");
                 var b = await engine.SetPrimerAsync(

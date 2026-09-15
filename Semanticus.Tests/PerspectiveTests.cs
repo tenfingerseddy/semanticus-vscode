@@ -24,7 +24,9 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
-        private static async Task<LocalEngine> OpenAwAsync(bool pro = false)
+        // Pro by default: perspectives are Advanced Modelling, and that feature's reads (get_perspectives) are Pro
+        // too since 2026-09-15. These tests are about the primitive, not the tier, so they hold the feature.
+        private static async Task<LocalEngine> OpenAwAsync(bool pro = true)
         {
             var engine = new LocalEngine(new SessionManager(), new Fake(pro));
             await engine.OpenAsync(TestModels.FindBim());

@@ -461,7 +461,7 @@ inputs:
         }
 
         [Fact]
-        public void Make_ai_ready_step_five_still_asks_for_an_improved_grade()
+        public void Make_ai_ready_final_rescan_still_asks_for_an_improved_grade()
         {
             var path = Path.Combine(AppContext.BaseDirectory, "workflows", "make-ai-ready.md");
             Assert.True(File.Exists(path), "stock playbook was not copied beside the test binary: " + path);

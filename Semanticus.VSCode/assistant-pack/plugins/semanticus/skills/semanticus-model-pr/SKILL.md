@@ -23,6 +23,9 @@ work without inventing a second approval step.
 skipped and failed results. If the model changed since the plan was assembled, inspect the new
 state and refresh affected items. A single `undo` reverts the applied model batch.
 
-Use `save_model` for local persistence. Remote models remain unchanged until publication:
-preview `deploy_live`, review its destination and changes, then commit when the task includes
-that write. The user sees the same plan and edits in Studio.
+Use `save_model` for local persistence. Apply changes to the working model first, then save local
+files when that is part of the request. Remote models remain unchanged until publication: preview
+`deploy_live`, review its destination and changes, then commit when the task includes that write.
+Restoring a remote restore point is a separate remote action; local `undo` does not reverse it.
+The user sees the same plan and edits in Studio under Changes. The VS Code view updates at once;
+your assistant sees a user edit on its next call.

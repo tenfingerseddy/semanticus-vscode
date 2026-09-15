@@ -1,66 +1,56 @@
 ---
 name: make-ai-ready
-title: Make the model AI-ready
-description: Descriptions, synonyms, Q&A, and Prep-for-AI config in the order Microsoft's AI-readiness workflow prescribes, gated on a readiness rescan.
+title: Explain the model to assistants
+description: Improve assistant-facing meaning for selected objects, review preparation settings, and show what remains unresolved.
+whenToUse: "Use when assistants need clearer definitions, vocabulary or instructions for selected model objects. For types, visibility or unused-object cleanup, use Tidy a model; for one description, use the direct description action."
 version: 1
 strictness: hard
 triggers: [make_model_ai_ready, ai_readiness_scan, set_description]
 ---
 
-## Step 1: Optimize and describe first
+## Step 1: Scan and choose the content scope
 
-Microsoft's AI-readiness step 1 is the classic hygiene and perf work (data types,
-high-cardinality columns, inefficient DAX) plus descriptions. Run
-`ai_readiness_scan` to see the gaps, then add business-meaning descriptions to every visible
-table, column, and measure with `set_description`. Descriptions double as documentation and
-the LLM's grounding; everything downstream depends on them.
-
-## Step 2: Synonyms and perspectives
-
-Add the business vocabulary (what people actually call things) per entity with
-`set_synonyms`. For large models, curate role-scoped views with
-`create_perspective` / `set_perspective_member`, which also scope the AI schema.
-Watch for the Copilot Tooling Format `copilot/` folder: detect its presence, do not
-hand-author it.
-
-## Step 3: Enable Q&A
-
-Q&A is still a Prep-for-AI prerequisite as of mid-2026. Enable it with
-`enable_qna`. Note the legacy Q&A experience is deprecated (announced Dec 2025, removal by
-Dec 2026); re-verify this dependency near that date before relying on it long-term.
+Run `ai_readiness_scan`, `list_objects` and the relevant grounding reads. Choose the objects and missing
+business context this pass will address. Deterministic visibility, type and summarization fixes belong to
+Tidy a model; this workflow supplies authored meaning, vocabulary and instructions.
 
 ```yaml gate
+ops: [ai_readiness_scan, list_objects]
 inputs:
-  - name: qnaConfirmed
-    question: "Is Q&A enablement confirmed for this model (or explicitly not applicable)?"
+  - name: contentScope
+    question: "Which selected tables, columns or measures need business descriptions, synonyms or assistant instructions in this pass?"
+    type: text
+    required: required
+```
+
+## Step 2: Add selected explanations and settings
+
+Read existing descriptions and AI instructions before replacing them. Use `set_description` for concise
+business definitions, `set_synonyms` for terms users actually use, and `set_ai_instructions` for model-wide
+rules. Use `set_ai_data_schema` or a perspective only for a deliberate field set. Enable Q&A only when this
+model's supported capability and the user’s plan need it; its legacy status is a follow-up to verify, not an
+automatic requirement. These writes are live metadata/content changes, not a readiness proof by themselves.
+
+```yaml gate
+ops: [get_ai_instructions, set_description, set_synonyms, set_ai_instructions, set_ai_data_schema, create_perspective, set_perspective_member, enable_qna]
+inputs:
+  - name: qnaPath
+    question: "Is Q&A or the linguistic schema relevant and supported for this model, or should this pass leave it unchanged?"
     type: text
     required: answer-or-decline
 ```
 
-## Step 4: Prep for AI, schema and instructions
+## Step 3: Rescan and report the remaining work
 
-Curate which fields the AI sees with `set_ai_data_schema`: exclude plumbing and
-ambiguous fields; a smaller, well-named schema beats an exhaustive one. Then author
-model-level AI instructions (10k cap) with `set_ai_instructions`: the business
-rules and definitional gotchas the LLM cannot infer. Consider verified answers for the
-highest-value recurring questions.
-
-```yaml gate
-inputs:
-  - name: schemaCurated
-    question: "Have you excluded plumbing/ambiguous fields from the AI data schema and written AI instructions?"
-    type: text
-    required: answer-or-decline
-```
-
-## Step 5: Score and gate
-
-Re-scan with `ai_readiness_summary` and confirm the grade improved with no new findings.
-Semanticus's deterministic readiness scoring with hard gates is the
-differentiated lane. Apply any remaining `apply_safe_fixes` and re-check before you call it ready.
+Run `ai_readiness_scan` again. The hard rescan compares the score and findings with the start of the run:
+when earlier findings are still open it passes only if the grade improved. It does not prove that model
+numbers changed or that a legacy Q&A capability will remain available. Record
+remaining authored-content gaps and any deployed-model refresh needed before service-side instructions are
+visible. Save the model after the review.
 
 ```yaml gate
 strictness: hard
+ops: [ai_readiness_scan, save_model]
 verify:
   - kind: readiness_rescan
     scope: model

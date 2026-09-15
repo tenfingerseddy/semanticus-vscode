@@ -21,6 +21,7 @@ namespace Semanticus.Engine
 
         public async Task<CalendarListResult> ListCalendarsAsync(string tableRef)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return await s.ReadAsync(m =>
             {
@@ -100,6 +101,7 @@ namespace Semanticus.Engine
 
         public async Task<CalendarResult> DefineCalendarAsync(string tableRef, string name, CalendarMappingSpec[] mappings, string description, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A calendar name is required.");
             if (mappings == null || mappings.Length == 0)
                 throw new ArgumentException("At least one column mapping is required (e.g. {column:'Date', timeUnit:'Date'}).");
@@ -130,6 +132,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> DeleteCalendarAsync(string tableRef, string name, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, $"delete calendar {name}", m =>
@@ -145,6 +148,7 @@ namespace Semanticus.Engine
 
         public async Task<CalendarResult> TagCalendarColumnAsync(string tableRef, string calendarName, string column, string timeUnit, bool associated, bool remove, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(column)) throw new ArgumentException("A column name is required.");
             var s = _sessions.Require();
             var mapped = new List<string>();

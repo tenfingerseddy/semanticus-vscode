@@ -276,7 +276,7 @@ namespace Semanticus.Tests
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             // Deny the delete capability on prod outright; leave DeployLive on the default ask.
-            AgentPolicyStore.SetCell("DeployDelete", "prod", "deny", "human", isPro: true);
+            AgentPolicyStore.SetCell("DeployDelete", "prod", "deny", "human");
 
             var create = await engine.CreateDataAgentAsync("ws-guid", "Agent1", "", commit: true, "serviceprincipal", null, "agent");
             Assert.Equal("error", create.Status);
@@ -305,14 +305,14 @@ namespace Semanticus.Tests
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             // client preset: QueryData@prod = deny — refusal names the policy, no ask is queued.
-            AgentPolicyStore.SetPreset("client", "human", isPro: true);
+            AgentPolicyStore.SetPreset("client", "human");
             var denied = engine.GuardAgent(AgentCapability.QueryData, CloudEp, "DS", "agent", isCommit: true,
                 summary: "s", intentBasis: "querydata", consumeGrant: false);
             Assert.NotNull(denied);
             Assert.Empty(ApprovalLedger.List());
 
             // standard preset: QueryData@prod = ask — grant once, then MANY reads ride the same grant untouched.
-            AgentPolicyStore.SetPreset("standard", "human", isPro: true);
+            AgentPolicyStore.SetPreset("standard", "human");
             var ask = engine.GuardAgent(AgentCapability.QueryData, CloudEp, "DS", "agent", true, "s", "querydata", consumeGrant: false);
             Assert.NotNull(ask);
             ApprovalLedger.Approve(ApprovalLedger.List().Single().Id, "human");

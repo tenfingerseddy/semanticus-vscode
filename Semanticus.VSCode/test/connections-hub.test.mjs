@@ -17,6 +17,8 @@ const main = read('webview', 'src', 'main.tsx');
 const bridge = read('webview', 'src', 'bridge.ts');
 const connection = read('webview', 'src', 'connection.tsx');
 const extension = read('src', 'extension.ts');
+const harness = read('tools', 'uishot', 'harness.html');
+const shot = read('tools', 'uishot', 'shot.mjs');
 const manifest = JSON.parse(read('package.json'));
 const count = (haystack, needle) => haystack.split(needle).length - 1;
 const slice = (from, to) => hub.slice(hub.indexOf(from), hub.indexOf(to));
@@ -40,10 +42,13 @@ for (const v of ['OpenView', 'SetupView', 'AccountsView', 'HistoryView', 'AddVie
   assert.doesNotMatch(hub, new RegExp(`<${v}\\s*/>`), `${v} must not remount as an inner component`);
   assert.match(hub, new RegExp(`${v}\\(\\)`), `${v} is invoked as a function so typed input survives a re-render`);
 }
-// Current setup keeps the four explicit role cards.
-for (const label of ['"Editing"', '"Tests and queries"', '"Publish to"', '"Reference model"']) {
+// Current setup keeps three explicit role cards. Reference left on 2026-09-14 with the footer's Reference slot:
+// it was not a role of the session the way editing, testing and publishing are, and it read as a fourth thing to
+// configure before you could start. The engine keeps its reference slot; the way in becomes an action.
+for (const label of ['"Editing"', '"Tests and queries"', '"Publish to"']) {
   assert.match(hub, new RegExp(`label=${label}`), `Current setup must keep the ${label} role card`);
 }
+assert.doesNotMatch(hub, /label="Reference model"/, 'the Reference role card is gone from Current setup');
 
 // ---- ONE shared FLOATING frame for both doors (T164 P1) -------------------------------------------------------
 // A single return renders the hub as a centered floating dialog in BOTH hosting modes; only the close callback differs.
@@ -56,9 +61,14 @@ assert.match(hub, /backdropFilter: 'blur\(2px\)'/, 'the backdrop must blur');
 assert.match(hub, /width: 'min\(1130px, 96vw\)'/, 'the dialog must reclaim the ratified width');
 assert.match(hub, /height: 'min\(790px, calc\(100vh - 84px\)\)'/, 'the dialog must reclaim the ratified height');
 assert.match(hub, /if \(e\.target === e\.currentTarget\) onClose\(\)/, 'a backdrop click must dismiss');
-assert.match(hub, /if \(e\.key === 'Escape'\)[\s\S]{0,80}onClose\(\)/, 'Escape must dismiss (the dialog, after any open row menu)');
+// CHANGED 2026-09-15 (Astra, finding 2): Escape still dismisses the hub, but ONLY while the hub is the
+// topmost surface. The hub opens over the Tests drawer, and both used to close on the same key, throwing
+// away a half-finished check to save a SQL source for it. surface-stack.ts owns the rule; its behaviour is
+// run in tests-fixes.test.mjs, and the two lines below pin that this file takes part in it.
+assert.match(hub, /useSurfaceEscape\(\(\) => \{ if \(menuIdRef\.current\) setMenuId\(null\); else onClose\(\); \}, shown\);/,
+  'Escape must dismiss (the dialog, after any open row menu), and only while the hub is the surface on top');
 assert.match(hub, /window\.addEventListener\('keydown', onKey\);\s*\n\s*return \(\) => \{ window\.removeEventListener\('keydown', onKey\); restoreRef\.current\?\.focus\(\); \};\s*\n\s*\}, \[shown, onClose\]\);/,
-  'the Escape / focus-trap effect must run in BOTH modes (guarded on shown, not overlay-only)');
+  'the focus-trap effect must run in BOTH modes (guarded on shown, not overlay-only)');
 
 // ---- "Add a published model" is the ONLY place an endpoint is typed --------------------------------------------
 assert.equal(count(hub, 'data-testid="hub-endpoint-input"'), 1,
@@ -111,7 +121,7 @@ assert.match(hub, /data-testid="hub-env-select"/, 'the env-label editor (a selec
 const setup = slice('function SetupView', 'function AccountsView');
 assert.match(setup, /Set as publish destination/, 'Publish is chosen on its Current setup role card');
 assert.match(setup, /setPublish/, 'the publish role card drives setPublishDestination');
-assert.match(setup, /useAsReference/, 'the reference role card assigns the reference model');
+assert.doesNotMatch(setup, /useAsReference/, 'Current setup no longer assigns a reference model');
 // The Setup verbs note is the ratified taxonomy, not the retired "Use for tests and queries" phrasing.
 assert.match(setup, /Open live[\s\S]{0,120}No local files are created/, 'the Setup note uses the Open live taxonomy');
 assert.match(setup, /Query this model[\s\S]{0,120}The model you are editing stays open/, 'the Setup note uses the Query this model taxonomy');
@@ -150,14 +160,31 @@ assert.match(extension, /isGuidName\(r\.database\)/, 'the friendly name must nev
 
 // ---- Phase 2 accounts: a REAL per-open choice from saved profiles; make-default is explicit + quantified ---------
 assert.match(hub, /data-testid="hub-account-dialog"/, 'the shared Phase 2 account dialog must render');
-assert.match(hub, />This choice applies to this open\./,
-  'the account dialog must promise (in rendered text) the choice applies to THIS open only (per-open, not tenant-wide)');
-assert.match(hub, /data-testid="hub-use-for-open"[\s\S]{0,300}>Use for this open</,
-  'Phase 2 must render a real per-open "Use for this open" control on the saved profiles');
+assert.match(hub, /data-purpose=\{purpose\}/, 'the account dialog must retain whether the user is opening or querying');
+assert.match(hub, /Saved accounts are remembered identities\.[\s\S]{0,240}currently authorized for this model/,
+  'the account dialog must distinguish a saved identity from the currently authorized connection');
+assert.match(hub, /authRequired \? 'may have expired\.' : 'is separate from these saved identities\.'/,
+  'the account dialog must keep recovery copy truthful for auth versus ordinary failures');
+assert.match(hub, /This choice applies to this \{purpose\} only/,
+  'the account dialog must retain the open/query purpose');
+assert.match(hub, /data-testid="hub-use-for-open"[\s\S]{0,320}>Use for this \{purpose\}</,
+  'Phase 2 must render a real per-purpose saved-profile retry control');
 assert.match(hub, /data-testid="hub-sign-in-another"[\s\S]{0,800}>Sign in another account</,
   'the dialog must render "Sign in another account" (adds a saved profile via the real Microsoft picker)');
+assert.match(hub, /data-testid="hub-signin-and-use"[\s\S]{0,260}>Sign in and use</,
+  'a signed-out remembered identity must keep an explicit Sign in and use action');
+assert.match(hub, /data-testid="hub-sign-in-again"[\s\S]{0,260}>Sign in again</,
+  'an auth-failed profile must keep an explicit attempt-local sign-in action');
+assert.match(hub, /markFailedAuthAttempt = \(r: ConnectionRecord, purpose: 'open' \| 'query', profileId\?: string, loginHint\?: string\)/,
+  'a failed forced sign-in must retain the hinted profile identity when marking attempt-local recovery');
+assert.match(hub, /p\.username\.toLowerCase\(\) === loginHint\.toLowerCase\(\)/,
+  'attempt-local recovery matches a login hint to the saved profile without changing its global signed-in state');
+assert.match(hub, /Who should authorize {role} for {nameOf\(r\)\}\?/, 'the account dialog title must name the repaired role');
+assert.match(hub, /const role = purpose === 'query' \? 'Tests and queries' : 'Open for editing'/,
+  'the account dialog must distinguish the query role from editing');
 assert.match(hub, /The saved endpoint stays the same whichever account you pick/,
   'the dialog must promise the saved endpoint is unchanged whichever account is picked');
+assert.match(hub, /data-testid="hub-account-recovery"/, 'a failed XMLA action must explain the saved-account recovery state');
 assert.match(hub, /would open with it from now on/,
   'make-default must quantify its blast radius (N remembered models on the tenant would open with it)');
 assert.match(hub, /data-testid="hub-make-default"[\s\S]{0,220}>Make default</,
@@ -167,13 +194,66 @@ assert.match(hub, /Make an account the default instead/,
 // The per-open account choice is reached from the row overflow + the detail account note.
 assert.match(hub, /Choose account for this open/, 'the per-open account choice keeps its exact ratified label');
 
+// XMLA failures from either direct remembered action return to the existing account chooser. The test seam below
+// drives the real hub, fails Query once, and checks the retry args + unchanged default/session in shot.mjs.
+assert.match(hub, /const recoverAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query'\) =>/, 'recovery must retain target and purpose');
+assert.match(hub, /if \(isSwitchableXmla\(r\) && isAuthRequiredFailure\(failure\)\) \{[\s\S]{0,180}recoverAccountChoice\(r, purpose\)/, 'failed remembered Open must return to account choice only for switchable XMLA auth failures');
+assert.match(hub, /setError\(failure\);[\s\S]{0,180}recoverAccountChoice\(r, 'query'\)/, 'failed remembered Query must return to account choice');
+assert.match(harness, /Authentication failed for all authenticators\. Technical Details: RootActivityId:/, 'the deterministic harness must use the real RPC auth-error message shape');
+assert.match(harness, /window\.__uishotRecovery\.connectCalls\.push/, 'the harness must record RPC attempts');
+assert.match(hub, /const isAuthRequiredFailure = \(message\?: string \| null\): boolean =>/, 'recovery must classify the RPC message instead of assuming an exception type');
+assert.match(hub, /isSwitchableXmla\(r\) && isAuthRequiredFailure\(failure\)/, 'only a switchable XMLA auth failure may open account recovery');
+assert.match(shot, /hub === 'recovery'/, 'the headless harness must exercise the real failure/retry UI');
+assert.match(shot, /recovered\.connectCalls\[1\]\[6\], 'pf2'/, 'the recovery harness must prove the selected profile reaches the retry RPC');
+
+// ---- the failure notice: one notice, a plain cause line, the engine text behind a disclosure (2026-09-14 review) ----
+assert.match(hub, /function plainAuthCause\(message\?: string \| null, account\?: string\): string \| null/,
+  'the notice must open with a plain-words cause built from the classified failure, not the raw engine string');
+assert.match(hub, /return `The saved sign-in \$\{who\} no longer works\.`/,
+  'the default classified auth cause reads as one plain sentence naming the account');
+assert.match(hub, /if \(!isAuthRequiredFailure\(m\)\) return null/,
+  'an unclassified failure gets no invented plain cause; it keeps the engine text as its own cause line');
+assert.match(hub, /const plainCause = plainAuthCause\(error, causeAccount\)/,
+  'the account dialog must build its cause line from the failure and the failed account');
+assert.match(hub, /\{plainCause \|\| `The last attempt failed: \$\{error\}`\}/,
+  'the cause line leads the notice and falls back to the engine text when nothing was classified');
+assert.match(hub, /data-testid="hub-account-details"[\s\S]{0,220}>Show details</,
+  'the raw engine text must sit behind a "Show details" disclosure');
+// ONE notice: the cause, the instruction and the disclosure share a single hub-account-error container, so the
+// recovery / retry instruction is no longer a second stacked block with its own border.
+assert.ok(hub.indexOf('data-testid="hub-account-recovery"') > hub.indexOf('data-testid="hub-account-error"')
+  && hub.indexOf('data-testid="hub-account-recovery"') < hub.indexOf('data-testid="hub-account-details"'),
+  'the recovery instruction must sit INSIDE the one failure notice, between the cause line and the disclosure');
+assert.equal(count(hub, "className=\"mt-2 rounded-md border px-2.5 py-2 text-[10px] leading-4 break-words\" style={{ borderColor: tone"), 1,
+  'the red cause notice and the amber instruction notice must be one bordered notice with one honest tone');
+assert.match(hub, /sign-in needed for this connection/, 'the attempt-local row wording is kept');
+assert.match(hub, /Sign in needed for this connection as \{failedProfile\.username\}/,
+  'the instruction keeps the attempt-local sign-in-needed wording');
+
+// ---- the primary button follows the SELECTED row and never silently retries an expired credential ---------------
+assert.match(hub, /data-testid="hub-account-select"/, 'an account row must be selectable, since the primary follows it');
+assert.match(hub, /const picked = list\.find\(\(p\) => p\.id === pickedProfileId\) \|\| failedProfile/,
+  'the selection defaults to the row that just failed, so the primary names it');
+assert.match(hub, /picked\.id === failedProfile\?\.id \? `Sign in again as \$\{picked\.username\}`/,
+  'a selected sign-in-needed row makes the primary read "Sign in again as <account>"');
+assert.match(hub, /: `Use \$\{picked\.username\} for this \$\{purpose\}`/,
+  'a selected signed-in row makes the primary read "Use <account> for this open/query"');
+assert.match(hub, /if \(needsSignIn\) \{ void applyAccount\(r, \{ forceReauth: true, loginHint: picked\.username \}\); return; \}/,
+  'the primary repairs a sign-in-needed row with a forced, identity-pinned sign-in, never a silent retry');
+assert.match(hub, /data-testid="hub-open-default" disabled=\{busyId != null \|\| \(!picked && list\.length > 0\)\}/,
+  'the primary is disabled when no usable account row is selected');
+assert.match(hub, /onClick=\{runPrimary\}/, 'the primary action follows the selection, not a fixed default open');
+assert.match(harness, /The local model at localhost:51000 is not ready\./, 'the harness must model an ordinary local failure');
+assert.match(shot, /hub === 'local-failure'/, 'the headless harness must exercise the ordinary local failure UI');
+assert.match(shot, /assert\.equal\(await page\.\$\('\[data-testid="hub-account-dialog"\]'\), null/, 'the local failure harness must prove no Microsoft account dialog appears');
+
 // ---- every existing capability still reaches an existing engine op (dual-drive intact) -------------------------
 for (const op of ['listConnections', 'probeConnectionAccounts', 'listConnectionHistory', 'prepareWorkingCopy',
   'setPublishDestination', 'labelConnection', 'forgetConnection', "'openLive'", "'openLocal'",
   'listAccountProfiles', 'setDefaultAccountProfile']) {
   assert.ok(hub.includes(op), `the hub must drive the engine op ${op}`);
 }
-assert.match(hub, /useAsReference/, 'Use as reference must remain reachable');
+assert.doesNotMatch(hub, /useAsReference/, 'the hub offers no way to set a reference model any more');
 
 // ---- the standalone door: ONE bundle, hosted full-page (as the shared frame) when Studio is closed --------------
 assert.match(main, /window as unknown as \{ __semanticusInitialView\?: string; __semanticusInitialSection\?: string \}/, 'main must read the initial-view + initial-section flags');
@@ -300,7 +380,9 @@ assert.match(picker, /const item = qp\.selectedItems\[0\]; qp\.hide\(\); done\(\
 // (7) the overflow menu supports keyboard navigation (focus-in on open + Arrow/Home/End); Escape closes the menu
 // (menu-aware modal handler), then the dialog.
 assert.match(hub, /\[data-hub-menu\] \[role="menuitem"\]'\)\?\.focus\(\)/, 'opening the overflow menu moves focus into it');
-assert.match(hub, /if \(e\.key === 'Escape'\) \{ if \(menuIdRef\.current\) setMenuId\(null\); else onClose\(\); return; \}/,
+// CHANGED 2026-09-15 (Astra, finding 2): Escape moved out of the focus-trap effect and onto the shared
+// surface hook, so the hub acts on it only while it is on top. Menu before dialog is unchanged.
+assert.match(hub, /if \(menuIdRef\.current\) setMenuId\(null\); else onClose\(\);/,
   'Escape closes an open row menu first, then the dialog');
 assert.match(modelRow, /e\.key === 'ArrowDown'[\s\S]{0,400}e\.key === 'End'/, 'the overflow menu handles Arrow/Home/End');
 
@@ -351,7 +433,7 @@ assert.match(hub, /if \(stale\) openAccountChoice\(r, 'query'\); else void query
 assert.match(hub, /busy=\{busyId === 'query:' \+ r\.id\}/, 'Query shows progress while its connect runs');
 // HIGH (sol): the account picker preserves the initiating verb; applyAccount routes by that EXPLICIT intent, never by
 // re-inferring the pre-op role (a stale model is neither the editing nor the query connection, which used to fall to open).
-assert.match(hub, /const openAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query' \| null = null\) => \{ setSwitchPurpose\(purpose\); setSwitchTarget\(r\); \}/, 'a stale account choice carries explicit Open/Query intent');
+assert.match(hub, /const openAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query' \| null = null\) => \{ setError\(null\); setFailedAuthAttempt\(null\); setSwitchPurpose\(purpose\); setSwitchTarget\(r\); \}/, 'a stale account choice carries explicit Open/Query intent and clears prior attempt-local failure');
 assert.match(hub, /const asQuery = switchPurpose \? switchPurpose === 'query' : isQueryRole\(r\)/, 'applyAccount routes by explicit intent when set, else by role');
 assert.match(hub, /if \(stale\) openAccountChoice\(r, 'open'\); else void openModel\(r\)/, 'a stale Open (row + Open live outcome) carries OPEN intent');
 
@@ -376,7 +458,7 @@ assert.match(hub, /const openAddView = \(mode: string = 'interactive'\) => \{ se
 assert.match(hub, /data-testid="hub-profile-resignin"/, 'a signed-out saved profile has a Sign in recovery route (not a dead badge)');
 // (MED, sol) signed-out is checked BEFORE default in the account dialog, so a DEFAULT-but-signed-out profile still gets
 // a targeted re-auth (forceReauth + loginHint), never just the badge + a default open that could sign in someone else.
-assert.match(hub, /\{!p\.signedIn\s*\n\s*\? <button className=\{BTN_QUIET\} data-testid="hub-signin-and-use"[\s\S]{0,180}forceReauth: true, loginHint: p\.username/, 'a signed-out profile (default or not) gets a targeted "Sign in and use", ordered before the default badge');
+assert.match(hub, /: !p\.signedIn\s*\n\s*\? <button className=\{BTN_QUIET\} data-testid="hub-signin-and-use"[\s\S]{0,180}forceReauth: true, loginHint: p\.username/, 'a signed-out profile (default or not) gets a targeted "Sign in and use", ordered before the default badge');
 
 // (service identity preflight) the advanced modes expose a tenant field + a live prerequisites preflight that reads
 // PRESENCE + NAMES only, states the secret is never stored, and that Key Vault is not resolved in-app.
@@ -457,5 +539,287 @@ assert.match(hub, /if \(!shown \|\| !nextView\) return;/, 'the hub must consume 
 assert.match(hub, /nextView = null;/, 'the hub must clear the pending view after consuming it');
 assert.match(deploySrc, /onClick=\{\(\) => \{ openConnectionsOnView\('setup'\); openConnections\(\); \}\}/,
   'Change publish destination must request Current setup, then open the hub');
+
+// ================================================================================================================
+// A remembered connection reads as WORDS, never as an address (Kane, live test on the Yoga, 2026-09-15). His list
+// titled a published model "Contoso%20Fabric%20Monitoring" (Contoso stands in for the real tenant name, which the
+// public-mirror gate refuses to carry): a WORKSPACE-level record with no dataset, so the old
+// nameOf fell through to short(r.endpoint) — the encoded last path segment — in the row, the detail title, the
+// Model row and the Open now panel, with the endpoint printed raw underneath. Behavioral, per the
+// bridge-timeouts / lineage-actions extract-and-execute pattern: the display helpers stay top-level pure
+// functions in connectionshub.tsx so they remain statically extractable AND runnable here.
+// ================================================================================================================
+const { default: tsc } = await import('typescript');
+const HELPERS = ['short', 'isGuidName', 'decodeSegment', 'workspaceNameFromEndpoint', 'isWorkspaceOnly', 'nameOf', 'subtitleOf', 'modelRowText', 'endpointText'];
+const helperSource = HELPERS.map((name) => {
+  const m = hub.match(new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n\\}`));
+  assert.ok(m, `${name} must stay a statically extractable top-level function in connectionshub.tsx`);
+  return m[0];
+}).join('\n');
+const helperJs = tsc.transpileModule(helperSource, { compilerOptions: { target: tsc.ScriptTarget.ES2020 } }).outputText;
+const H = Function(`"use strict"; ${helperJs}; return { ${HELPERS.join(', ')} };`)();
+
+// The workspace helper mirrors the ENGINE's ConnectionRegistry.WorkspaceNameFromEndpoint rule for rule, so one
+// endpoint is one string on both doors: only a TRAILING /myorg/<name> counts, and malformed percent-encoding
+// yields nothing rather than the raw segment (showing "Bad%ZZ" as a name is the defect, not a milder version).
+assert.equal(H.workspaceNameFromEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring'), 'Contoso Fabric Monitoring');
+assert.equal(H.workspaceNameFromEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Contoso%20%5BTest%5D'), 'Contoso [Test]');
+assert.equal(H.workspaceNameFromEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Sales/'), 'Sales', 'a trailing slash is still the trailing segment');
+assert.equal(H.workspaceNameFromEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Sales/extra'), null, 'a non-trailing /myorg/<name> is not the workspace');
+assert.equal(H.workspaceNameFromEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Bad%ZZ'), null, 'malformed encoding must yield no name, never the raw segment');
+assert.equal(H.workspaceNameFromEndpoint('localhost:51234'), null, 'a local data source has no workspace');
+assert.equal(H.workspaceNameFromEndpoint(undefined), null);
+
+// decodeSegment is the softer half: it turns escapes into words for text we have already decided to SHOW, and
+// hands back exactly what it was given when the escapes are malformed, because dropping the text would be worse.
+assert.equal(H.decodeSegment('Contoso%20Fabric%20Monitoring'), 'Contoso Fabric Monitoring');
+assert.equal(H.decodeSegment('Sales%20%26%20Marketing'), 'Sales & Marketing');
+assert.equal(H.decodeSegment('Bad%ZZ'), 'Bad%ZZ', 'malformed escapes fall back to the text as stored');
+assert.equal(H.decodeSegment(undefined), '');
+
+// The defect itself: a workspace-only record now titles as the decoded workspace.
+const workspaceOnly = { id: 'w', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring' };
+assert.equal(H.nameOf(workspaceOnly), 'Contoso Fabric Monitoring');
+assert.ok(H.isWorkspaceOnly(workspaceOnly), 'an xmla record with no dataset is a workspace, not a model');
+assert.equal(H.subtitleOf(workspaceOnly, 'as megan@contoso.com'), 'Workspace · you pick the model when you open it');
+assert.equal(H.modelRowText(workspaceOnly), 'You pick the model when you open this workspace',
+  'the detail Model row must not repeat the workspace name as if a model had been chosen');
+
+// Once a model has been opened from that workspace the engine records the dataset, and the row flips: the model
+// name is the title and the workspace becomes the subtitle, alongside who the next open signs in as.
+const opened = { ...workspaceOnly, id: 'm', database: 'Fabric Monitoring', modelName: 'Fabric Monitoring' };
+assert.equal(H.nameOf(opened), 'Fabric Monitoring');
+assert.ok(!H.isWorkspaceOnly(opened));
+assert.equal(H.subtitleOf(opened, 'as megan@contoso.com'), 'In Contoso Fabric Monitoring · as megan@contoso.com');
+assert.equal(H.modelRowText(opened), 'Fabric Monitoring');
+
+// The subtitle stays ONE line for every kind — the row height is what the nine-models-without-a-scrollbar check
+// measures — and the two local kinds keep the words they already had, now decoded.
+assert.equal(H.subtitleOf({ id: 'f', kind: 'file', endpoint: 'C:\\Models\\B%20Edit.SemanticModel' }, 'x'), 'C:\\Models\\B Edit.SemanticModel');
+assert.equal(H.subtitleOf({ id: 'g', kind: 'localDesktop', endpoint: 'localhost:52100' }, 'x'), 'localhost:52100');
+for (const r of [workspaceOnly, opened, { id: 'f', kind: 'file', endpoint: 'C:\\M\\a.bim' }]) {
+  assert.ok(!H.subtitleOf(r, 'as megan@contoso.com').includes('\n'), 'the row subtitle must stay one line');
+}
+
+// Encoded text never survives into a name, whichever field it came from, and the non-cloud kinds keep the
+// behaviour they already had (a bare GUID is still not a name; a local file still names itself).
+assert.equal(H.nameOf({ id: 'e', kind: 'xmla', endpoint: 'asazure://x/y/Sales%20Ops' }), 'Sales Ops', 'a non-myorg endpoint still decodes its last segment');
+assert.equal(H.nameOf({ id: 'g', kind: 'localDesktop', endpoint: 'localhost:52100', database: '493c64f4-b0f5-4a1e-9c2d-77a1e6b0f3aa' }), 'Local running model');
+assert.equal(H.nameOf({ id: 'f', kind: 'file', endpoint: 'C:\\Models\\B Edit.SemanticModel' }), 'B Edit.SemanticModel');
+assert.equal(H.nameOf({ id: 'n', kind: 'xmla', endpoint: '' }), 'Model');
+
+// An endpoint shown as DETAIL is shown decoded too — it is text for a person to read, not a string to copy.
+assert.equal(H.endpointText('powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring'),
+  'powerbi://api.powerbi.com/v1.0/myorg/Contoso Fabric Monitoring');
+
+// ---- and the four surfaces must actually USE them, so a name is one string everywhere ----
+const rowBlock = slice('function ModelRow', 'function DetailPane');
+assert.match(rowBlock, /\{nameOf\(r\)\}/, 'the row title is the shared name');
+assert.match(rowBlock, /\{subtitleOf\(r, identity\)\}/, 'the row subtitle names the workspace (or says it is one)');
+assert.doesNotMatch(rowBlock, /short\(/, 'no surface may show a raw endpoint segment as text');
+assert.doesNotMatch(rowBlock, /\{r\.endpoint\}/, 'the row must not print a raw endpoint anywhere, tooltip included');
+const detailBlock = slice('function DetailPane', 'function AccountDialog');
+assert.match(detailBlock, /\{endpointText\(r\.endpoint\)\}/, 'the detail card shows the endpoint decoded');
+assert.match(detailBlock, /\{modelRowText\(r\)\}/, 'the detail Model row uses the shared name, not the raw segment');
+assert.doesNotMatch(detailBlock, /short\(r\.endpoint\)/, 'the detail card must not fall back to a raw endpoint segment');
+assert.match(hub, /endpointText\(editing\.source\)/, 'the Open now panel shows its path decoded');
+assert.match(hub, /return side\?\.available \? \(side\.modelName \|\| side\.database \|\| workspaceNameFromEndpoint\(side\.source\) \|\| decodeSegment\(short\(side\.source\)\) \|\| fallback\) : fallback;/,
+  'Open now falls back through the shared helpers, never a raw segment');
+
+// The harness must carry the shape Kane hit, or the screenshots prove nothing.
+assert.match(harness, /powerbi:\/\/api\.powerbi\.com\/v1\.0\/myorg\/Contoso%20Fabric%20Monitoring/,
+  'the uishot harness needs a remembered WORKSPACE-only record with an encoded endpoint');
+
+// The context bar names the same targets from the same connection context, and its own last-resort helper had the
+// same defect: it took the endpoint's final path segment verbatim. The engine now fills modelName for a workspace
+// target so this fallback is rarely reached, but "rarely reached" is not "harmless" — an endpoint with no /myorg/
+// segment still lands here. Only the NAME text changes; the header rows belong to another lane.
+const contextbar = read('webview', 'src', 'contextbar.tsx');
+const epSrc = contextbar.match(/\nfunction shortEndpoint\([\s\S]*?\n\}/);
+assert.ok(epSrc, 'shortEndpoint must stay a statically extractable top-level function in contextbar.tsx');
+const shortEndpoint = Function(`"use strict"; ${tsc.transpileModule(epSrc[0], { compilerOptions: { target: tsc.ScriptTarget.ES2020 } }).outputText}; return shortEndpoint;`)();
+assert.equal(shortEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring'), 'Contoso Fabric Monitoring',
+  'the context bar must not name a target with an encoded segment either');
+assert.equal(shortEndpoint('asazure://x.asazure.windows.net/Sales%20Ops'), 'Sales Ops');
+assert.equal(shortEndpoint('powerbi://api.powerbi.com/v1.0/myorg/Bad%ZZ'), 'Bad%ZZ',
+  'a malformed escape keeps the text as stored rather than losing the only hint there is');
+assert.equal(shortEndpoint('powerbi://api.powerbi.com'), 'api.powerbi.com', 'a dotted trailing segment still falls back to the host');
+assert.equal(shortEndpoint('localhost:51000'), 'localhost:51000', 'a bare host:port is unchanged (there is nothing to decode or shorten)');
+assert.equal(shortEndpoint(''), '');
+
+
+// ================================================================================================================
+// THE FOURTH ROLE: named SQL sources (Kane's Tests redesign, 2026-09-15; the Connections half).
+//
+// A check used to carry its own server, database and sign-in. Astra's UAT found the same warehouse typed again for
+// every check, and a check authored with no sign-in mode reached the token helper, which reads an absent mode as the
+// Azure command line, so a person on a browser sign-in got a failure about a command line they had never run. The
+// fix is a saved, named, tested record in Connections that checks and table mappings point at by id.
+//
+// Engine surface (cp/tests-engine-b, commit 31f8ef98, EngineRpcTarget.cs:337-343): listSqlSources / saveSqlSource /
+// deleteSqlSource / testSqlSource, plus listTableMappings for the table half. A refused delete returns both the
+// counts (checksUsing / tableMappingsUsing) and the names (checkTitles / mappedTables); the hub shows the names.
+// ================================================================================================================
+const sqlView = slice("function SqlSourcesView", "const navBtn");
+
+// ---- the role exists, in the rail and in Current setup ----------------------------------------------------------
+assert.match(hub, /export type HubView = [^\n]*'sqlsources'/, "HubView must carry the SQL sources section");
+assert.match(hub, /navBtn\('sqlsources',[\s\S]*?'SQL sources'\)/, 'nav must offer SQL sources');
+assert.match(hub, /view === 'sqlsources' && SqlSourcesView\(\)/, 'the hub must render the SQL sources view');
+assert.doesNotMatch(hub, /<SqlSourcesView\s*\/>/, 'SqlSourcesView must not remount as an inner component (D-004)');
+assert.match(hub, /SqlSourcesView\(\)/, 'SqlSourcesView is invoked as a function so typed input survives a re-render');
+assert.match(hub, /label="SQL sources"/, 'Current setup must carry the fourth role card beside Editing, Tests and Publish to');
+
+// ---- the named actions -----------------------------------------------------------------------------------------
+for (const [testid, label] of [
+  ['hub-sql-add', 'Add SQL source'],
+  ['hub-sql-edit', 'Edit'],
+  ['hub-sql-test', 'Test connection'],
+  ['hub-sql-remove', 'Remove'],
+]) {
+  assert.ok(sqlView.includes(`data-testid="${testid}"`), `the SQL sources list needs the ${label} action (${testid})`);
+  // The label reaches the button as element text, or as the idle half of a busy/idle expression.
+  assert.ok(sqlView.includes(`>${label}<`) || sqlView.includes(`: '${label}'`), `the ${testid} action must read "${label}"`);
+}
+// Every action goes through the engine ops the engine lane shipped, by their RPC names.
+//
+// listTableMappings and listTests are NOT in this list any more (2026-09-15). Both belong to Tests, which
+// is one whole Pro feature now, and both return far more than a use count: check definitions with their
+// expected values, and saved verdicts with row counts. Neither may become free to keep a label working, so
+// the hub reads the free usage projection instead and this list follows it.
+for (const op of ['listSqlSources', 'saveSqlSource', 'deleteSqlSource', 'testSqlSource', 'listSqlSourceUsage']) {
+  assert.match(hub, new RegExp(`rpc<[^>]*>\\('${op}'`), `the hub must call ${op} on the engine, not keep its own store`);
+}
+for (const gone of ['listTests', 'listTableMappings']) {
+  assert.doesNotMatch(hub, new RegExp(`rpc<[^>]*>\\('${gone}'`),
+    `${gone} is a Pro Tests read; Connections must not call it to count what uses a source`);
+}
+// ---- and it reads the shape the engine actually returns --------------------------------------------------------
+// Astra, 2026-09-15: the hub asked for `{ sources }` while the engine returns a bare array, so every SUCCESSFUL
+// usage read produced an empty list and every source on the page read "not counted". The engine's own method
+// signature is the fixture here, so the page and the door cannot drift apart again without this failing.
+const engineTarget = readFileSync(resolve(root, '..', 'Semanticus.Engine', 'EngineRpcTarget.cs'), 'utf8');
+const usageReturn = /public Task<([^>]+)> listSqlSourceUsage\(\)/.exec(engineTarget);
+assert.ok(usageReturn, 'EngineRpcTarget must still expose listSqlSourceUsage for the hub to read');
+assert.equal(usageReturn[1], 'SqlSourceUsage[]',
+  'the engine door returns a bare array; the assertions below are written against that shape');
+assert.match(hub, /rpc<SqlSourceUsage\[\]>\('listSqlSourceUsage'\)/,
+  'the hub must ask for the array the engine returns, not a wrapper object that is never sent');
+assert.doesNotMatch(hub, /\{ sources\?: SqlSourceUsage\[\] \}/,
+  'the wrapper shape never existed on the wire: reading it made every count "not counted"');
+assert.match(hub, /Array\.isArray\(rows\) \? rows : null/,
+  'a shape the page does not recognise is not counted, never zero use');
+assert.match(harness, /RESPONSES\.listSqlSourceUsage = cfg\.listSqlSourceUsage \|\| SQL_SOURCES\.map/,
+  'the screenshot harness must mock the same array, or the scene proves the wrong shape');
+// A source holds NO credential: the hub must never offer a password or a token box.
+assert.doesNotMatch(sqlView, /type="password"/, 'a SQL source never takes a password');
+assert.doesNotMatch(sqlView, /placeholder="[^"]*token/i, 'a SQL source never takes a token');
+// It reuses the ONE shared account picker rather than growing a second sign-in control.
+assert.match(hub, /import \{ AccountPicker \} from '\.\/accountpicker'/, 'the form must reuse the shared account picker');
+assert.match(sqlView, /<AccountPicker/, 'the SQL source form signs in through the shared picker');
+// The picker's tenant box says "where the MODEL lives", which is the wrong noun on a SQL source: the thing that
+// lives somewhere here is a database. The shared control takes the words as a prop rather than being forked.
+const pickerSrc = read('webview', 'src', 'accountpicker.tsx');
+assert.match(pickerSrc, /tenantLabel\?: string/, 'the shared picker must let a page name what the tenant box is for');
+assert.match(pickerSrc, /tenantLabel \?\? 'where the model lives \(optional\)'/,
+  'the default words are unchanged, so no other page moves');
+assert.match(sqlView, /tenantLabel="where the database lives \(optional\)"/,
+  'a SQL source asks where the DATABASE lives, not where a model lives');
+
+// ---- the four states -------------------------------------------------------------------------------------------
+// The words live in copy.ts, so the hub and the Tests page cannot drift into saying two things about one feature.
+const copyTs = read('webview', 'src', 'copy.ts');
+assert.ok(copyTs.includes("empty: 'No SQL sources yet. Save a server and database once, then choose it from any check.'"),
+  'the empty state must be the ratified sentence, and it must live in copy.ts');
+assert.ok(sqlView.includes('SQL_SOURCE_COPY.empty'), 'the empty state must render the shared sentence, not its own copy of it');
+assert.ok(sqlView.includes('data-testid="hub-sql-loading"'), 'the list must have a loading state');
+assert.ok(sqlView.includes('data-testid="hub-sql-error"'), 'the list must show a load failure rather than an empty list');
+assert.ok(sqlView.includes('data-testid="hub-sql-failed"'), 'a source whose last test failed must be marked in the row');
+
+// ---- the direct-open route the Tests page uses -------------------------------------------------------------------
+assert.match(hub, /export function openSqlSources\(/, 'the Tests page needs a named way in');
+assert.match(hub, /export function listSqlSources\(/, "a check's source picker needs the saved sources");
+assert.match(hub, /openConnectionsOnView\('sqlsources'\)/, 'the way in must land the hub on the SQL sources section');
+assert.match(hub, /export interface SqlSourceRecord/, 'the record shape is shared with the Tests lane');
+assert.match(hub, /section === 'sqlsources'/, 'a host-driven open must be able to land on SQL sources too');
+
+// ---- behavioural: the pure helpers, extracted and RUN --------------------------------------------------------
+const SQL_HELPERS = ['sqlSourceFormError', 'sqlSourceTestLine', 'sqlSourceUsageLine', 'sqlSourceUsedByNames'];
+const sqlHelperSource = SQL_HELPERS.map((name) => {
+  const m = hub.match(new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n\\}`));
+  assert.ok(m, `${name} must stay a statically extractable top-level function in connectionshub.tsx`);
+  return m[0];
+}).join('\n');
+const S = Function(`"use strict"; ${tsc.transpileModule(sqlHelperSource, { compilerOptions: { target: tsc.ScriptTarget.ES2020 } }).outputText}; return { ${SQL_HELPERS.join(', ')} };`)();
+
+// Save validates the obvious BEFORE the engine is called, and says which box in plain words. Order matters: the
+// person is told about the first empty box, not handed three complaints at once.
+const full = { id: null, name: 'Contoso warehouse', server: 'contoso-sql.database.windows.net', database: 'Warehouse', authMode: 'interactive', tenantId: '' };
+assert.equal(S.sqlSourceFormError(full), null, 'a complete form has nothing to complain about');
+assert.match(S.sqlSourceFormError({ ...full, name: '   ' }), /name/i, 'a missing name is refused in the form');
+assert.match(S.sqlSourceFormError({ ...full, server: '' }), /server address/i, 'a missing server is refused in the form');
+assert.match(S.sqlSourceFormError({ ...full, database: '' }), /database/i, 'a missing database is refused in the form');
+assert.ok(!/^\s|\s$/.test(S.sqlSourceFormError({ ...full, name: '' })), 'the message is a sentence, not padding');
+// FAIL CLOSED on the only shape a pasted password arrives in, the same rule the engine applies at the boundary.
+assert.match(S.sqlSourceFormError({ ...full, server: 'Server=x;User Id=sa;Password=hunter2' }), /connection string/i,
+  'a pasted connection string is refused in the form, never sent to the engine');
+assert.match(S.sqlSourceFormError({ ...full, database: 'Initial Catalog=Warehouse;' }), /connection string/i);
+
+// "Never tested" is a THIRD state, distinct from "the last test failed". Rounding it into "ok" would be a lie.
+assert.equal(S.sqlSourceTestLine(undefined, '15 Sep, 04:12 PM'), 'Not tested yet');
+assert.equal(S.sqlSourceTestLine(null, ''), 'Not tested yet');
+assert.equal(S.sqlSourceTestLine(true, '15 Sep, 04:12 PM'), 'Last test worked on 15 Sep, 04:12 PM');
+assert.equal(S.sqlSourceTestLine(false, '15 Sep, 04:12 PM'), 'Last test failed on 15 Sep, 04:12 PM');
+assert.equal(S.sqlSourceTestLine(true, ''), 'Last test worked', 'a result with no date still states the result');
+
+// "Used by N checks and M table mappings" is only said when it was really counted, and the THIRD argument is
+// what makes that honest from 2026-09-15. There are now three different ways a count can be missing and they
+// must not print the same sentence: no usage reading at all (no model to ask), a reading that came back
+// without this source, and a reading that carried the source but not one of its counts. Only the first is
+// "open a model". The other two are a partial answer, and a partial answer is NOT zero use, because zero is
+// the one sentence a person deletes a source on.
+assert.equal(S.sqlSourceUsageLine(3, 4), 'Used by 3 checks · 4 table mappings');
+assert.equal(S.sqlSourceUsageLine(1, 1), 'Used by 1 check · 1 table mapping', 'one of a thing is singular');
+assert.equal(S.sqlSourceUsageLine(0, 0), 'Nothing in this model uses it yet.');
+assert.equal(S.sqlSourceUsageLine(null, null, false), 'Open a model to see what uses this source.',
+  'no usage reading at all means there is no model to ask');
+assert.equal(S.sqlSourceUsageLine(null, null), 'What uses this source was not counted.',
+  'a reading that did not mention this source is uncounted, never zero');
+assert.equal(S.sqlSourceUsageLine(null, 4), 'Checks were not counted. Used by 4 table mappings.',
+  'and a missing half says which half it lost');
+assert.equal(S.sqlSourceUsageLine(2, null), 'Used by 2 checks. Table mappings were not counted.',
+  'an uncounted half is said out loud, never rounded to zero');
+
+// The refusal names what still points at the source. Where the hub knows fewer names than the engine counted, it
+// says how many are missing from the list instead of quietly showing a short list as if it were complete.
+assert.equal(S.sqlSourceUsedByNames(['Sales total vs finance', 'Orders by month'], 2), 'Sales total vs finance, Orders by month');
+assert.equal(S.sqlSourceUsedByNames(['Sales total vs finance'], 3), 'Sales total vs finance, and 2 more');
+assert.equal(S.sqlSourceUsedByNames([], 2), '2 not named here');
+assert.equal(S.sqlSourceUsedByNames([], 0), '');
+assert.equal(S.sqlSourceUsedByNames(['  ', 'Sales'], 2), 'Sales, and 1 more', 'a blank title is not a name');
+
+// ---- the refused Remove renders those names ---------------------------------------------------------------------
+assert.ok(sqlView.includes('data-testid="hub-sql-refused"'), 'a refused Remove needs its own block, not a toast');
+assert.ok(sqlView.includes('sqlSourceUsedByNames('), 'the refusal must render the names, not only the engine counts');
+assert.ok(sqlView.includes('sqlRefused.checkTitles'), "the refusal must read the engine's own check titles");
+assert.ok(sqlView.includes('sqlRefused.mappedTables'), "the refusal must read the engine's own mapped tables");
+assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedChecks'), 'the refusal must label the check list');
+assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedTables'), 'the refusal must label the table-mapping list');
+assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedNext'), 'the refusal must say what to do next, not only that it was refused');
+assert.ok(copyTs.includes("refusedChecks: 'Checks that use it'"), 'the check list keeps its ratified label');
+assert.ok(copyTs.includes("refusedTables: 'Table mappings that use it'"), 'the table-mapping list keeps its ratified label');
+assert.ok(copyTs.includes("refusedNext: 'Point those at another source, or remove them, then remove this source.'"),
+  'the next step is a real instruction, not a restatement of the refusal');
+// The engine's own refusal note is only shown when it counted NOTHING (a missing id, a store that would not answer).
+// Printing it beside the lists as well would make one refusal read as two, which is the Promote defect (D-166).
+assert.ok(/checksUsing \?\? 0\) === 0 && \(sqlRefused\.tableMappingsUsing \?\? 0\) === 0 && sqlRefused\.note/.test(sqlView),
+  "the engine's note is a fallback for an uncounted refusal, never a second copy of the same sentence");
+
+// ---- the harness must carry the fixtures, or the screenshots prove nothing ---------------------------------------
+assert.match(harness, /listSqlSources:/, 'the uishot harness must answer listSqlSources');
+assert.match(harness, /testSqlSource:/, 'the uishot harness must answer testSqlSource');
+assert.match(harness, /deleteSqlSource:/, 'the uishot harness must answer deleteSqlSource');
+assert.match(harness, /saveSqlSource:/, 'the uishot harness must answer saveSqlSource');
+assert.match(harness, /lastTestOk: false/, 'the fixtures must include a source whose last test failed');
 
 console.log('Connections hub contract passed');

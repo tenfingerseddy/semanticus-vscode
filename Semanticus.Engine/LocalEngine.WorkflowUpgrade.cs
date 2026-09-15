@@ -9,6 +9,7 @@ namespace Semanticus.Engine
         public async Task<WorkflowUpgradeResult> UpgradeWorkflowAsync(string name, bool dryRun = true,
             string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null)
         {
+            RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, stockDir) = WorkflowDirs(context);

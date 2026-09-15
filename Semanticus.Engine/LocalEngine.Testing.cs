@@ -30,6 +30,7 @@ namespace Semanticus.Engine
 
         public async Task<ReconcileMappingReview> ReviewReconcileMappingAsync(ReconcileMappingRequest req, string origin = "human")
         {
+            RequireProFeature();
             if (req == null) return new ReconcileMappingReview { Error = "No mapping request supplied." };
             var s = _sessions.Current;
             if (s == null) return new ReconcileMappingReview { Error = "No open model. Use open_model, connect_local or connect_xmla first." };
@@ -88,6 +89,7 @@ namespace Semanticus.Engine
 
         public async Task<ReconcileRunResult> ReconcileMeasureAsync(ReconcileRequest req, string origin = "human")
         {
+            RequireProFeature();
             if (req == null)
                 return ReconcileRunResult.Fail("No request supplied.", ReconcileStatus.InputError);
 
@@ -126,6 +128,17 @@ namespace Semanticus.Engine
             var probe = await s.ReadAsync(m => ResolveMeasureAndSource(m, req.MeasureRef, groupBy));
             if (probe.Error != null)
                 return ReconcileRunResult.Fail(probe.Error, ReconcileStatus.InputError, next: "list_measures / list_columns");
+
+            // A NAMED SQL source wins over the inline coordinates here too, so sqlSourceId means the same thing
+            // whether a saved check carries it or a direct reconcile_measure call passes it. A field that exists
+            // and is silently ignored on one path is its own defect. Apply() is idempotent: a saved check has
+            // already resolved by the time it reaches here, and resolving the same id again lands on the same
+            // coordinates.
+            var namedSqlSource = SqlSources.Apply(req);
+            if (namedSqlSource.Error != null)
+                return ReconcileRunResult.Fail(
+                    "This reconciliation is set to use a SQL source that is no longer saved. Open Connections, pick a SQL source, then try again.",
+                    ReconcileStatus.InputError, next: "list_sql_sources");
 
             var server = string.IsNullOrWhiteSpace(req.Server) ? probe.Server : req.Server.Trim();
             var database = string.IsNullOrWhiteSpace(req.Database) ? probe.Database : req.Database.Trim();
@@ -186,10 +199,8 @@ namespace Semanticus.Engine
             // ---- member cells (grouped mode) ----
             if (grouped)
             {
-                var memberQuery = BuildDaxMemberQuery(probe.MeasureName, probe.GroupByRefs);
-                result.DaxQuery = string.IsNullOrWhiteSpace(req.SqlGrandTotal)
-                    ? memberQuery
-                    : memberQuery + "\n\n// Grand total, evaluated independently\n" + BuildDaxGrandTotalQuery(probe.MeasureName);
+                var memberQuery = BuildDaxMemberQuery(probe.MeasureName, probe.GroupByRefs, req.FilterDax);
+                result.DaxQuery = BuildReconcileDaxQuery(req, probe.MeasureName, probe.GroupByRefs);
                 result.DaxExecutedAtUtc = DateTime.UtcNow;
                 var daxRs = await live.ExecuteAsync(memberQuery, maxRows, 120).ConfigureAwait(false);
                 if (daxRs.PolicyRefused) return ReconcileRunResult.Fail(daxRs.Error, ReconcileStatus.InputError, refused: true);
@@ -223,7 +234,7 @@ namespace Semanticus.Engine
                 // caller supplies its own total SQL. We never reconstruct it from the member rows.
                 if (!string.IsNullOrWhiteSpace(req.SqlGrandTotal))
                 {
-                    var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.SqlGrandTotal);
+                    var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.SqlGrandTotal, req.FilterDax);
                     if (gt.Error != null)
                         return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery);
                     cells.Add(gt.Cell);
@@ -233,8 +244,8 @@ namespace Semanticus.Engine
             else
             {
                 // ---- grand-total-only mode: req.Sql IS the total SQL ----
-                result.DaxQuery = BuildDaxGrandTotalQuery(probe.MeasureName);
-                var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.Sql);
+                result.DaxQuery = BuildReconcileDaxQuery(req, probe.MeasureName, Array.Empty<string>());
+                var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.Sql, req.FilterDax);
                 if (gt.Error != null)
                     return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery);
                 cells.Add(gt.Cell);
@@ -291,30 +302,68 @@ namespace Semanticus.Engine
         // The DAX side: SUMMARIZECOLUMNS over the grouping columns + the measure, with a constant "__recon_present"
         // sentinel so a row whose measure is BLANK is RETAINED (SUMMARIZECOLUMNS otherwise drops all-blank rows) — that
         // keeps a present-BLANK member distinguishable from a MISSING one (contract e), which the join relies on.
-        private static string BuildDaxMemberQuery(string measureName, string[] groupBy)
+        /// <summary>The exact DAX a reconcile REQUEST produces, given the already-resolved measure name and grouping
+        /// refs. The one seam both the runner and its tests go through, so "the saved filters reach the query" is
+        /// provable without a live endpoint (the resolution of names is the live path's own job).</summary>
+        internal static string BuildReconcileDaxQuery(ReconcileRequest req, string measureName, string[] groupByRefs)
+        {
+            if (req == null) return null;
+            if (groupByRefs == null || groupByRefs.Length == 0) return BuildDaxGrandTotalQuery(measureName, req.FilterDax);
+            var member = BuildDaxMemberQuery(measureName, groupByRefs, req.FilterDax);
+            return string.IsNullOrWhiteSpace(req.SqlGrandTotal)
+                ? member
+                : member + "\n\n// Grand total, evaluated independently\n" + BuildDaxGrandTotalQuery(measureName, req.FilterDax);
+        }
+
+        // A check saved from a FILTERED visual carries the visual's filter lines. They narrow the DAX side through
+        // CALCULATETABLE / CALCULATE (boolean predicates are legal there, unlike SUMMARIZECOLUMNS filter args, which
+        // must be tables). Internal for the builder tests: the filters must be provable WITHOUT a live endpoint.
+        internal static string BuildDaxMemberQuery(string measureName, string[] groupBy, string filterDax = null)
         {
             var sb = new StringBuilder();
-            sb.Append("EVALUATE\nSUMMARIZECOLUMNS(\n");
+            var filter = NormalizeFilterDax(filterDax);
+            sb.Append("EVALUATE\n");
+            if (filter != null) sb.Append("CALCULATETABLE(\n");
+            sb.Append("SUMMARIZECOLUMNS(\n");
             var args = new List<string>();
             foreach (var g in groupBy) args.Add("    " + g);
             args.Add("    \"" + ReconValueCol + "\", " + MeasureBracket(measureName));
             args.Add("    \"" + ReconPresentCol + "\", 1");
             sb.Append(string.Join(",\n", args));
             sb.Append("\n)");
+            if (filter != null) sb.Append(",\n" + filter + "\n)");
             return sb.ToString();
         }
 
         // The DAX grand total: the measure evaluated at total filter context, queried INDEPENDENTLY (never rebuilt
         // from the members). ROW normally returns a single row (a BLANK measure => a present-empty value) — we VERIFY
-        // the shape below and fail on anything else rather than assume it.
-        private static string BuildDaxGrandTotalQuery(string measureName)
-            => "EVALUATE\nROW(\"" + ReconValueCol + "\", " + MeasureBracket(measureName) + ")";
+        // the shape below and fail on anything else rather than assume it. The saved visual filters narrow the total
+        // the same way they narrow the members, so the two sides of one check describe the same population.
+        internal static string BuildDaxGrandTotalQuery(string measureName, string filterDax = null)
+        {
+            var filter = NormalizeFilterDax(filterDax);
+            var value = filter == null
+                ? MeasureBracket(measureName)
+                : "CALCULATE(" + MeasureBracket(measureName) + ", " + filter + ")";
+            return "EVALUATE\nROW(\"" + ReconValueCol + "\", " + value + ")";
+        }
+
+        /// <summary>Trim the saved filter text and drop a trailing comma, so "a, b," splices cleanly. Whitespace-only
+        /// is the same as no filter. The text itself is the author's own DAX and is never rewritten.</summary>
+        internal static string NormalizeFilterDax(string filterDax)
+        {
+            var t = filterDax?.Trim();
+            if (string.IsNullOrEmpty(t)) return null;
+            t = t.TrimEnd(',', ' ', '\t', '\r', '\n');
+            return string.IsNullOrEmpty(t) ? null : t;
+        }
 
         private async Task<GrandTotalOutcome> BuildGrandTotalCellAsync(
-            LiveConnection live, string measureName, string server, string database, string token, string sql)
+            LiveConnection live, string measureName, string server, string database, string token, string sql,
+            string filterDax = null)
         {
             var daxAt = DateTime.UtcNow;
-            var daxRs = await live.ExecuteAsync(BuildDaxGrandTotalQuery(measureName), 10, 120).ConfigureAwait(false);
+            var daxRs = await live.ExecuteAsync(BuildDaxGrandTotalQuery(measureName, filterDax), 10, 120).ConfigureAwait(false);
             if (daxRs.PolicyRefused) return GrandTotalOutcome.Failed("DAX grand-total query", daxRs.Error);
             if (!string.IsNullOrEmpty(daxRs.Error)) return GrandTotalOutcome.Failed("DAX grand-total query", daxRs.Error);
             // ROW(...) always returns exactly one row with one column; anything else is an engine anomaly we fail on

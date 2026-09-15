@@ -34,7 +34,7 @@ namespace Semanticus.Tests
         private static async Task<(LocalEngine engine, SessionManager sm)> FreshAsync(int cl = 1701)
         {
             var sm = new SessionManager();
-            var engine = new LocalEngine(sm);
+            var engine = new LocalEngine(sm, TestEntitlements.Pro);
             await engine.CreateModelAsync("CalWrap", cl);
             return (engine, sm);
         }
@@ -229,7 +229,7 @@ namespace Semanticus.Tests
                     await engine.SaveAsync(dir, "TMDL");
                 }
 
-                using (var reopened = new LocalEngine(new SessionManager()))
+                using (var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
                 {
                     await reopened.OpenAsync(dir);
                     var cal = Assert.Single((await reopened.ListCalendarsAsync(null)).Calendars);

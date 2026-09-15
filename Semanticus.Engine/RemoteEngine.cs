@@ -311,6 +311,9 @@ namespace Semanticus.Engine
         public Task<UnusedResult> UnusedObjectsAsync() => _rpc.InvokeAsync<UnusedResult>("unusedObjects");
         public Task<ReportAnalysisResult> AnalyzeReportsAsync(string[] paths) => _rpc.InvokeAsync<ReportAnalysisResult>("analyzeReports", new object[] { paths });
         public Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin) => _rpc.InvokeAsync<RemoveSafeReport>("removeSafeObjects", new object[] { refs, reportPaths, origin });
+        public Task<Lineage.ReportScopeResult> ListReportScopeAsync() => _rpc.InvokeAsync<Lineage.ReportScopeResult>("listReportScope");
+        public Task<Lineage.ReportScopeResult> SetReportScopeAsync(Lineage.ReportScopeChoice[] choices, string origin) => _rpc.InvokeAsync<Lineage.ReportScopeResult>("setReportScope", new object[] { choices, origin });
+        public Task<Lineage.ReportScopeResult> CheckReportsAsync(string[] ids, bool consent, string authMode, string tenantId, string runId, string origin, System.Threading.CancellationToken cancellationToken) => _rpc.InvokeAsync<Lineage.ReportScopeResult>("checkReports", new object[] { ids, consent, authMode, tenantId, runId, origin });
         public Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<CloudReport[]>("listReports", cancellationToken, workspaceId, authMode, tenantId, origin);
         public Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<ReportAnalysisResult>("analyzeCloudReports", cancellationToken, workspaceId, reportIds, consent, authMode, tenantId, runId, origin);
         public Task<string> ScriptObjectsAsync(string[] refs, string format) => _rpc.InvokeAsync<string>("scriptObjects", refs, format);
@@ -383,6 +386,9 @@ namespace Semanticus.Engine
         public Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin) => _rpc.InvokeAsync<TestDefinition>("saveTest", def, origin);
         public Task<bool> DeleteTestDefinitionAsync(string id, string origin) => _rpc.InvokeAsync<bool>("deleteTest", id, origin);
         public Task<TestHistoryInfo> ListTestRunsAsync(int last) => _rpc.InvokeAsync<TestHistoryInfo>("listTestRuns", last);
+        public Task<TestRunDetail> GetTestRunAsync(string runId) => _rpc.InvokeAsync<TestRunDetail>("getTestRun", runId);
+        public Task<TestRunRecordResult> RecordTestRunAsync(string runId, string origin) => _rpc.InvokeAsync<TestRunRecordResult>("recordTestRun", runId, origin);
+        public Task<UnmatchedRowsResult> GetUnmatchedRowsAsync(string relationship, int limit, string origin) => _rpc.InvokeAsync<UnmatchedRowsResult>("getUnmatchedRows", relationship, limit, origin);
         public Task<TestReportResult> ExportTestReportAsync() => _rpc.InvokeAsync<TestReportResult>("exportTestReport");
         public Task<EvidenceLibrary> ListEvidenceAsync() => _rpc.InvokeAsync<EvidenceLibrary>("listEvidence");
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> GetEvidenceAsync(string id) => _rpc.InvokeAsync<Semanticus.Engine.Evidence.EvidenceArtifact>("getEvidence", id);
@@ -400,6 +406,7 @@ namespace Semanticus.Engine
         public Task<WorkflowEnforcement> SetWorkflowEnforcementAsync(string mode, string origin) => _rpc.InvokeAsync<WorkflowEnforcement>("setWorkflowEnforcement", mode, origin);
         public Task<WorkflowDef> GetWorkflowAsync(string name) => _rpc.InvokeAsync<WorkflowDef>("getWorkflow", name);
         public Task<WorkflowDocumentResult> GetWorkflowDocumentAsync(string name, string sessionId = null) => _rpc.InvokeAsync<WorkflowDocumentResult>("getWorkflowDocument", name, sessionId);
+        public Task<WorkflowEditPreviewResult> PreviewWorkflowEditAsync(string name, string expectByteHash, string expectPath, string editsJson, string draftText = null, bool create = false, string sessionId = null) => _rpc.InvokeAsync<WorkflowEditPreviewResult>("previewWorkflowEdit", name, expectByteHash, expectPath, editsJson, draftText, create, sessionId);
         public Task<WorkflowUpgradeResult> UpgradeWorkflowAsync(string name, bool dryRun = true, string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null) => _rpc.InvokeAsync<WorkflowUpgradeResult>("upgradeWorkflow", name, dryRun, expectByteHash, expectPath, origin, sessionId);
         public Task<WorkflowDocumentEditResult> EditWorkflowDocumentAsync(string name, string expectByteHash, string exactText, string expectPath, string origin, string sessionId = null) => _rpc.InvokeAsync<WorkflowDocumentEditResult>("editWorkflowDocument", name, expectByteHash, exactText, expectPath, origin, sessionId);
         public Task<WorkflowLayout> GetWorkflowLayoutAsync(string name) => _rpc.InvokeAsync<WorkflowLayout>("getWorkflowLayout", name);
@@ -410,7 +417,7 @@ namespace Semanticus.Engine
         public Task<WorkflowRunView> SkipWorkflowStepAsync(string runId, string stepId, string reason, string origin) => _rpc.InvokeAsync<WorkflowRunView>("skipWorkflowStep", runId, stepId, reason, origin);
         public Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin) => _rpc.InvokeAsync<WorkflowRunView>("abortWorkflow", runId, reason, origin);
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> ExportWorkflowEvidenceAsync(string runId) => _rpc.InvokeAsync<Semanticus.Engine.Evidence.EvidenceArtifact>("exportWorkflowEvidence", runId);
-        public Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false) => _rpc.InvokeAsync<WorkflowInfo[]>("saveWorkflow", name, markdown, origin, createOnly);
+        public Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false, string sessionId = null) => _rpc.InvokeAsync<WorkflowInfo[]>("saveWorkflow", name, markdown, origin, createOnly, sessionId);
         public Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin) => _rpc.InvokeAsync<WorkflowInfo[]>("deleteWorkflow", name, origin);
         public Task<WorkflowTemplateInfo[]> ListWorkflowTemplatesAsync() => _rpc.InvokeAsync<WorkflowTemplateInfo[]>("listWorkflowTemplates");
         public Task<WorkflowTemplate> GetWorkflowTemplateAsync(string name) => _rpc.InvokeAsync<WorkflowTemplate>("getWorkflowTemplate", name);
@@ -488,6 +495,14 @@ namespace Semanticus.Engine
         public Task<ConnectionContext> ClearReferenceBindingAsync() => _rpc.InvokeAsync<ConnectionContext>("clearReferenceBinding");
         public Task<DeployGate> DeployGateAsync(ModelRef compareTarget, string origin) => _rpc.InvokeAsync<DeployGate>("deployGate", compareTarget, origin);
         public Task<ModelConnectionRecord[]> ListConnectionsAsync() => _rpc.InvokeAsync<ModelConnectionRecord[]>("listConnections");
+        public Task<SqlSourceRecord[]> ListSqlSourcesAsync() => _rpc.InvokeAsync<SqlSourceRecord[]>("listSqlSources");
+        public Task<SqlSourceUsage[]> ListSqlSourceUsageAsync() => _rpc.InvokeAsync<SqlSourceUsage[]>("listSqlSourceUsage");
+        public Task<SqlSourceRecord> SaveSqlSourceAsync(string id, string name, string server, string database, string authMode, string tenantId, string origin = "agent") => _rpc.InvokeAsync<SqlSourceRecord>("saveSqlSource", id, name, server, database, authMode, tenantId, origin);
+        public Task<SqlSourceDeleteResult> DeleteSqlSourceAsync(string id, string origin = "agent") => _rpc.InvokeAsync<SqlSourceDeleteResult>("deleteSqlSource", id, origin);
+        public Task<SqlSourceTestResult> TestSqlSourceAsync(string id, string origin = "agent") => _rpc.InvokeAsync<SqlSourceTestResult>("testSqlSource", id, origin);
+        public Task<TableSourceMappingInfo> SetTableSourceMappingAsync(string table, string sqlSourceId, string schema, string entity, string origin = "agent") => _rpc.InvokeAsync<TableSourceMappingInfo>("setTableSourceMapping", table, sqlSourceId, schema, entity, origin);
+        public Task<bool> ClearTableSourceMappingAsync(string table, string origin = "agent") => _rpc.InvokeAsync<bool>("clearTableSourceMapping", table, origin);
+        public Task<TableSourceMappingList> ListTableSourceMappingsAsync() => _rpc.InvokeAsync<TableSourceMappingList>("listTableMappings");
         public Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null) => _rpc.InvokeAsync<ConnectionHistoryEvent[]>("listConnectionHistory", connectionId);
         public Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync() => _rpc.InvokeAsync<ConnectionAccountProbe[]>("probeConnectionAccounts");
         public Task<AuthPrerequisites> ProbeAuthPrerequisitesAsync(string mode, string tenantId = null) => _rpc.InvokeAsync<AuthPrerequisites>("probeAuthPrerequisites", mode, tenantId);

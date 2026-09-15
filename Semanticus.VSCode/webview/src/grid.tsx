@@ -5,6 +5,7 @@ import { ColumnFilter, FilterPopover, FunnelIcon, compile, describe, distinctVal
 export interface GridColumn { name: string; type?: string }
 
 const COL_W = 168;
+const MIN_FIT_COL_W = 118;   // narrower than this and squeezing to fit hurts more than scrolling does
 const ROW_H = 26;
 const POP_W = 280;
 
@@ -105,7 +106,25 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
     estimateSize: () => ROW_H,
     overscan: 14,
   });
-  const totalW = Math.max(columns.length * COL_W, 1);
+  // Columns that ALMOST fit used to overflow by a sliver, so the last one was cut mid-value and the only
+  // hint was a scrollbar the host may render as an overlay. Shrink them to fit instead, as long as they stay
+  // readable; a genuinely wide result still scrolls (and .sem-grid-scroll makes that scrollbar visible).
+  const [boxW, setBoxW] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current; if (!el) return;
+    const read = () => setBoxW(el.clientWidth);
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const colW = useMemo(() => {
+    if (!boxW || columns.length === 0) return COL_W;
+    if (columns.length * COL_W <= boxW) return COL_W;
+    const perCol = Math.floor(boxW / columns.length);
+    return perCol >= MIN_FIT_COL_W ? perCol : COL_W;
+  }, [boxW, columns.length]);
+  const totalW = Math.max(columns.length * colW, 1);
 
   // Cycle a header: unsorted → asc → desc → unsorted.
   const onHeader = (i: number) =>
@@ -158,7 +177,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
         </>
       )}
 
-      <div ref={parentRef} className="overflow-auto rounded-lg flex-1 min-h-0" style={{ border: '1px solid var(--sem-border)' }}>
+      <div ref={parentRef} className="sem-grid-scroll overflow-auto rounded-lg flex-1 min-h-0" style={{ border: '1px solid var(--sem-border)' }}>
         <div style={{ minWidth: totalW, position: 'relative' }}>
           {/* sticky header — click to sort, funnel to filter, ⌄/right-click for column ops (opt-in), + an optional
               second (profiling) row that scroll- and width-syncs because it lives in the same sticky wrapper */}
@@ -173,7 +192,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
                     onContextMenu={onColumnMenu ? (e) => { e.preventDefault(); e.stopPropagation(); onColumnMenu(i, e.currentTarget as HTMLElement); } : undefined}
                     title={(c.type ? `${c.name} · ${c.type}` : c.name) + ' · click to sort' + (onColumnMenu ? ' · ⌄ or right-click for column operations' : '')}
                     className="group px-2 py-1 text-[11px] font-semibold cursor-pointer select-none flex items-center gap-1"
-                    style={{ width: COL_W, color: active ? 'var(--sem-accent)' : 'var(--sem-fg)', boxShadow: menuHere ? 'inset 0 0 0 1px var(--sem-accent)' : undefined }}>
+                    style={{ width: colW, color: active ? 'var(--sem-accent)' : 'var(--sem-fg)', boxShadow: menuHere ? 'inset 0 0 0 1px var(--sem-accent)' : undefined }}>
                     {showTypeGlyph && <TypeGlyph type={c.type} />}
                     <span className="truncate flex-1 min-w-0">{c.name}</span>
                     {active && <span className="shrink-0 text-[9px]">{sort!.dir === 1 ? '▲' : '▼'}</span>}
@@ -196,7 +215,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
             {subHeader && (
               <div className="flex" style={{ borderBottom: '1px solid var(--sem-border)' }}>
                 {columns.map((_, i) => (
-                  <div key={i} className="px-2 py-0.5 overflow-hidden" style={{ width: COL_W }}>{subHeader(i)}</div>
+                  <div key={i} className="px-2 py-0.5 overflow-hidden" style={{ width: colW }}>{subHeader(i)}</div>
                 ))}
               </div>
             )}
@@ -216,7 +235,7 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
                           // dimension/label cell has no explanation, so it keeps the normal context menu.
                           if (onCellMenu(row, ci, { x: e.clientX, y: e.clientY })) { e.preventDefault(); e.stopPropagation(); }
                         } : undefined}
-                        style={{ width: COL_W, borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}
+                        style={{ width: colW, borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}
                         title={cell(v) + (onCellMenu && isNum(v) ? '\nRight-click: explain this number' : '')}>
                         {cell(v)}
                       </div>

@@ -78,7 +78,6 @@ namespace Semanticus.Tests
                 ("b", "B", new[] { "A" })));
             var h = TestHealthAnalyzer.Analyze(
                 RelationshipIntegrity.Evaluate(Array.Empty<RelationshipCheckInput>()),
-                SecurityStaticChecks.Evaluate(Array.Empty<RoleFilterInput>()),
                 outcomes);
             Assert.Equal(1, h.RootFailures);
             Assert.Equal(1, h.Failed);

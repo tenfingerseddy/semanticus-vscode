@@ -3950,7 +3950,8 @@ namespace Semanticus.Tests
                 + "\"modelName\":\"Invented Sales Model\",\"modelFingerprint\":\"fixture-fingerprint\",\"steps\":["
                 + "{\"StepId\":\"step-1\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
                 + "{\"StepId\":\"step-2\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":null,\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
-                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
+                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
+                + "{\"StepId\":\"step-4\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
                 + "\"witnessLocks\":null,\"witnessRevisions\":null,\"partitionRevisions\":null,\"anchorLocks\":null,\"anchorRevisions\":null}", json);
         }
 
@@ -4450,7 +4451,8 @@ namespace Semanticus.Tests
                 + "\"modelName\":\"Invented Sales Model\",\"modelFingerprint\":\"fixture-fingerprint\",\"steps\":["
                 + "{\"StepId\":\"step-1\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
                 + "{\"StepId\":\"step-2\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":null,\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
-                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
+                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
+                + "{\"StepId\":\"step-4\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
                 + "\"witnessLocks\":null,\"witnessRevisions\":null,\"partitionRevisions\":null,\"anchorLocks\":null,\"anchorRevisions\":null}", json);
         }
 

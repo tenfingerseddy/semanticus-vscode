@@ -25,7 +25,7 @@ namespace Semanticus.Tests
         public async Task Tmdl_apply_rejects_a_new_top_level_object_typed_op_creates_it()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.CreateModelAsync("RoutingTest", 1604);   // fresh modern model (the real target CL)
@@ -63,7 +63,7 @@ namespace Semanticus.Tests
         public async Task Interleaved_writes_to_the_same_object_are_last_writer_wins_and_undoable()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.CreateModelAsync("ConflictTest", 1604);
@@ -192,7 +192,7 @@ namespace Semanticus.Tests
             // actionable InvalidOperationException instead of an opaque NRE. (A natively-modern model is unaffected; its
             // roles have OLS indexers — see Tmdl_apply_rejects_..., which deletes on a fresh CL-1604 model and succeeds.)
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());                   // AdventureWorks @ CL 1200

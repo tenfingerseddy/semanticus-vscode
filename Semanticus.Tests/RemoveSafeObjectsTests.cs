@@ -11,8 +11,8 @@ namespace Semanticus.Tests
     /// remove_safe_objects — the safe-to-remove sweep's ACT half (the Lineage tab's "Measure Killer" delete).
     /// Pins the safety bar the feature is sold on: the verified-safe set is deleted as ONE undoable transaction
     /// through the tracked mutation path; each item is RE-VERIFIED at apply time so a verdict that went stale
-    /// since the caller's scan downgrades to skipped (never a stale delete); the free tier keeps the per-item
-    /// path but is refused the &gt;1 bulk with the model left intact; ONE audit record carries the evidence;
+    /// since the caller's scan downgrades to skipped (never a stale delete); the free tier gets the whole sweep,
+    /// not one item at a time (Kane removed that gate on 2026-09-15); ONE audit record carries the evidence;
     /// and dry_run rehearses the whole sweep without mutating.
     /// </summary>
     public sealed class RemoveSafeObjectsTests
@@ -95,7 +95,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Free_tier_may_remove_one_item_but_a_bulk_sweep_is_refused_with_the_model_intact()
+        public async Task Free_tier_sweeps_more_than_one_item_in_one_transaction()
         {
             var (engine, sm, table) = await OpenAsync(pro: false);
             using var _ = engine;
@@ -103,17 +103,17 @@ namespace Semanticus.Tests
             var b = await engine.CreateMeasureAsync("table:" + table, "Sweep_FreeB", "2", "human");
             var revBefore = sm.Current.Revision;
 
-            // Bulk (>1 verified-safe) refuses with the teach message and mutates NOTHING.
-            var ex = await Assert.ThrowsAsync<EntitlementException>(() => engine.RemoveSafeObjectsAsync(new[] { a, b }, null, "human"));
-            Assert.Contains("one at a time free", ex.Message);
-            Assert.Equal(revBefore, sm.Current.Revision);   // the refusal left no mutation behind
-            Assert.True(await ExistsAsync(engine, a));
-            Assert.True(await ExistsAsync(engine, b));
-
-            // A single item stays free — the same per-item primitive delete_object offers.
-            var one = await engine.RemoveSafeObjectsAsync(new[] { a }, null, "human");
-            Assert.Equal(1, one.Count);
+            // The >1 sweep used to stop here on free. It is the same op for both tiers now, so the free tier gets the
+            // whole safety bar too: one transaction, both items gone, one undo to put them back.
+            var report = await engine.RemoveSafeObjectsAsync(new[] { a, b }, null, "human");
+            Assert.Equal(2, report.Count);
+            Assert.Empty(report.Skipped);
             Assert.False(await ExistsAsync(engine, a));
+            Assert.False(await ExistsAsync(engine, b));
+            Assert.Equal(revBefore + 1, sm.Current.Revision);   // ONE tracked mutation, not one per item
+
+            await engine.UndoAsync("human");
+            Assert.True(await ExistsAsync(engine, a));
             Assert.True(await ExistsAsync(engine, b));
         }
 

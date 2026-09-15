@@ -19,7 +19,9 @@ then recheck `ai_readiness_summary`. A higher grade is a metadata improvement, n
 an assistant answers every business question correctly. Use interviews or expected-answer tests
 when the user wants evidence about answers.
 
-The user can inspect the same Change Plan in Studio. Model edits share one undo history.
+The user can inspect the same proposed changes in Studio under Checks and Changes. Model edits
+share one undo history. The VS Code view updates at once; your assistant sees an edit on its
+next call.
 Reuse the existing account for a deployed model; service-principal authentication is an option,
 not a universal requirement. `save_model` saves local files. For a requested remote update,
 preview `deploy_live`, review its actual changes and destination, then commit within the user's

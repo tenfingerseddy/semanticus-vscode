@@ -47,9 +47,7 @@ namespace Semanticus.Engine
             b.AppendLine();
 
             RenderMeasures(b, run.Reconciles);
-            RenderInterview(b, run.Interview, run.InterviewNote);
             RenderRelationships(b, run.Relationships);
-            RenderSecurity(b, run.Security);
             return b.ToString().TrimEnd().Replace('—', '-').Replace('–', '-') + Environment.NewLine;
         }
 
@@ -183,10 +181,6 @@ namespace Semanticus.Engine
                     });
 
             doc.Sections.Add(BuildRelationshipFindings(run.Relationships));
-            doc.Sections.Add(BuildSecurityFindings(run.Security));
-            doc.Sections.Add(BuildInterviewFindings(run.Interview));
-            if (!string.IsNullOrWhiteSpace(run.InterviewNote))
-                doc.Sections.Add(new SemEvidence.NoteSection { Title = "Interview store", Text = Reason(run.InterviewNote), Tone = "warning" });
             if (!string.IsNullOrWhiteSpace(run.Note))
                 doc.Sections.Add(new SemEvidence.NoteSection { Title = "Run note", Text = Reason(run.Note), Tone = "info" });
             return doc;
@@ -199,6 +193,9 @@ namespace Semanticus.Engine
             {
                 if (o == null) continue;
                 var detail = Reason(o.Message);
+                if (!string.IsNullOrWhiteSpace(o.Expected))
+                    detail += " Expected " + Text(o.Expected, "not recorded") + ", actual " + Text(o.Actual, "not recorded")
+                        + ", difference " + Number(o.Difference) + ".";
                 if (o.TimingVerdict.HasValue)
                     detail += " Timing: " + (o.DurationMs.HasValue ? o.DurationMs.Value.ToString(CultureInfo.InvariantCulture) + " ms" : "not measured")
                         + " against " + (o.BudgetMs.HasValue ? o.BudgetMs.Value.ToString(CultureInfo.InvariantCulture) + " ms" : "no recorded budget")
@@ -234,55 +231,6 @@ namespace Semanticus.Engine
             if (rows.Count == 0)
                 rows.Add(Finding("Relationship integrity", SemEvidence.Verdict.Unknown, "No relationship or SQL-backed table checks were present."));
             return new SemEvidence.FindingsSection { Title = "Relationships and integrity", Rows = rows };
-        }
-
-        private static SemEvidence.FindingsSection BuildSecurityFindings(SecurityStaticReport report)
-        {
-            var rows = new List<SemEvidence.FindingRow>();
-            foreach (var filter in report?.Filters ?? Array.Empty<RoleFilterResult>())
-            {
-                if (filter == null) continue;
-                rows.Add(Finding("Role " + Text(filter.Role, "Unnamed role") + " on " + Text(filter.Table, "Unnamed table"),
-                    Map(filter.Check?.Verdict ?? Verdict.NotVerifiable), Reason(filter.Check?.Message) + " Filter: " + Code(filter.FilterPreview, "not recorded") + "."));
-            }
-            foreach (var role in report?.Ols ?? Array.Empty<RoleOls>())
-            {
-                if (role == null) continue;
-                var visible = Math.Max(0, role.TablesTotal - role.TablesHidden);
-                rows.Add(Finding("Object visibility " + Text(role.Role, "Unnamed role"), SemEvidence.Verdict.Unknown,
-                    visible.ToString(CultureInfo.InvariantCulture) + " visible tables, " + role.TablesHidden.ToString(CultureInfo.InvariantCulture)
-                    + " hidden tables, " + role.ColumnsHidden.ToString(CultureInfo.InvariantCulture) + " hidden columns. Visibility is descriptive, not a pass."));
-            }
-            if (rows.Count == 0)
-                rows.Add(Finding("Security checks", SemEvidence.Verdict.Unknown, "No static role filters or object visibility evidence were present."));
-            return new SemEvidence.FindingsSection { Title = "Security", Rows = rows };
-        }
-
-        private static SemEvidence.FindingsSection BuildInterviewFindings(InterviewEvidence[] evidence)
-        {
-            var rows = new List<SemEvidence.FindingRow>();
-            foreach (var item in evidence ?? Array.Empty<InterviewEvidence>())
-            {
-                if (item == null) continue;
-                var verdict = item.Outcome switch
-                {
-                    "Correct" => SemEvidence.Verdict.Verified,
-                    "Refused" => SemEvidence.Verdict.Verified,
-                    "SilentlyWrong" => SemEvidence.Verdict.Broken,
-                    _ => SemEvidence.Verdict.Unknown,
-                };
-                rows.Add(Finding(Text(item.Question, "Unnamed question"), verdict,
-                    InterviewOutcomeName(item.Outcome) + ". Observed " + Text(item.When, "not observed") + ". "
-                    + ContractRunDetail(item)
-                    + (string.IsNullOrWhiteSpace(item.Detail) ? "No outcome detail was recorded." : Reason(item.Detail))));
-            }
-            if (rows.Count == 0)
-                rows.Add(Finding("Model Interview", SemEvidence.Verdict.Unknown, "No saved interview questions were captured with this run."));
-            return new SemEvidence.FindingsSection
-            {
-                Title = "Behavioral contracts (Model Interview; evidence only; does not change grade or coverage)",
-                Rows = rows,
-            };
         }
 
         private static SemEvidence.Verdict OverallVerdict(TestHealth health)
@@ -342,9 +290,6 @@ namespace Semanticus.Engine
             foreach (var table in run.Relationships?.TableRowCounts ?? Array.Empty<TableRowCountResult>())
                 if (table?.Check?.Verdict == Verdict.Fail)
                     yield return "Table row count " + Text(table.ModelTable, "Unnamed table") + ": " + Reason(table.Check.Message);
-            foreach (var filter in run.Security?.Filters ?? Array.Empty<RoleFilterResult>())
-                if (filter?.Check?.Verdict == Verdict.Fail)
-                    yield return "Security " + Text(filter.Role, "Unnamed role") + " on " + Text(filter.Table, "Unnamed table") + ": " + Reason(filter.Check.Message);
         }
 
         private static void RenderMeasures(StringBuilder b, ReconcileOutcome[] outcomes)
@@ -360,6 +305,9 @@ namespace Semanticus.Engine
             foreach (var o in outcomes.Where(x => x != null))
             {
                 var line = "- **" + Text(o.Title, o.TargetRef ?? "Unnamed measure test") + "**: " + VerdictName(o.Verdict) + ". " + Reason(o.Message);
+                if (!string.IsNullOrWhiteSpace(o.Expected))
+                    line += " Expected " + Code(o.Expected, "not recorded") + ", actual " + Code(o.Actual, "not recorded")
+                        + ", difference " + Number(o.Difference) + ".";
                 if (o.TimingVerdict.HasValue)
                 {
                     var measured = o.DurationMs.HasValue ? o.DurationMs.Value.ToString(CultureInfo.InvariantCulture) + " ms" : "duration not measured";
@@ -418,69 +366,6 @@ namespace Semanticus.Engine
                     + VerdictName(table.Check?.Verdict ?? Verdict.NotVerifiable) + ". " + Reason(table.Check?.Message)
                     + " Model COUNTROWS " + Count(table.ModelCount) + " at " + Text(table.ModelObservedUtc, "not observed")
                     + "; source COUNT_BIG " + Count(table.SourceCount) + " at " + Text(table.SourceObservedUtc, "not observed") + ".");
-            b.AppendLine();
-        }
-
-        private static void RenderInterview(StringBuilder b, InterviewEvidence[] evidence, string note)
-        {
-            b.AppendLine("## Behavioral contracts (Model Interview)");
-            b.AppendLine();
-            b.AppendLine("Saved Model Interview questions replay as behavioral evidence only; they do not change the test grade or coverage.");
-            b.AppendLine();
-            var items = evidence?.Where(x => x != null).ToList() ?? new List<InterviewEvidence>();
-            if (items.Count == 0) b.AppendLine("- No saved interview questions were captured with this run.");
-            foreach (var item in items)
-            {
-                var outcome = InterviewOutcomeName(item.Outcome);
-                var observed = string.IsNullOrWhiteSpace(item.When) ? "not observed" : Text(item.When, "not observed");
-                var detail = string.IsNullOrWhiteSpace(item.Detail) ? "No outcome detail was recorded." : Reason(item.Detail);
-                b.AppendLine("- **" + Text(item.Question, "Unnamed question") + "**: " + outcome + ". Observed " + observed + ". " + ContractRunDetail(item) + detail);
-            }
-            if (!string.IsNullOrWhiteSpace(note)) b.AppendLine("- Store note: " + Reason(note));
-            b.AppendLine();
-        }
-
-        private static string InterviewOutcomeName(string outcome) => outcome switch
-        {
-            "Correct" => "Right",
-            "Refused" => "Safely said it couldn't answer",
-            "SilentlyWrong" => "Confidently wrong",
-            "Unverified" => "Couldn't check",
-            _ => "Not asked yet",
-        };
-
-        private static string ContractRunDetail(InterviewEvidence item)
-        {
-            if (item == null) return "";
-            if (string.Equals(item.ReplayStatus, "chat-only", StringComparison.Ordinal))
-                return "Chat-only contract; this Tests run did not grade an assistant response. ";
-            if (string.Equals(item.ReplayStatus, "replayed", StringComparison.Ordinal))
-                return "Replayed in this Tests run. " + (item.Changed
-                    ? "Changed from " + InterviewOutcomeName(item.PreviousOutcome) + ". "
-                    : item.PreviousOutcome == null ? "First observation. " : "Unchanged from the previous observation. ");
-            return "";
-        }
-
-        private static void RenderSecurity(StringBuilder b, SecurityStaticReport report)
-        {
-            b.AppendLine("## Security");
-            b.AppendLine();
-            var filters = report?.Filters?.Where(f => f != null).ToList() ?? new List<RoleFilterResult>();
-            var ols = report?.Ols?.Where(o => o != null).ToList() ?? new List<RoleOls>();
-            if (filters.Count == 0) b.AppendLine("- No static role filters were present.");
-            foreach (var filter in filters)
-                b.AppendLine("- Filter " + Text(filter.Role, "Unnamed role") + " on " + Text(filter.Table, "Unnamed table")
-                    + ": " + VerdictName(filter.Check?.Verdict ?? Verdict.NotVerifiable) + ". " + Reason(filter.Check?.Message)
-                    + " Preview: `" + Code(filter.FilterPreview, "not recorded") + "`.");
-            if (ols.Count == 0) b.AppendLine("- Object visibility was not available for this model.");
-            foreach (var role in ols)
-            {
-                var visible = Math.Max(0, role.TablesTotal - role.TablesHidden);
-                b.AppendLine("- Object visibility " + Text(role.Role, "Unnamed role") + ": "
-                    + visible.ToString(CultureInfo.InvariantCulture) + " visible tables, "
-                    + role.TablesHidden.ToString(CultureInfo.InvariantCulture) + " hidden tables, "
-                    + role.ColumnsHidden.ToString(CultureInfo.InvariantCulture) + " hidden columns.");
-            }
             b.AppendLine();
         }
 

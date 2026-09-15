@@ -1,103 +1,72 @@
 ---
 name: import-table
-title: Import a table and prove it loaded correctly
-description: Bring in an import table, type every column, tame datetime cardinality, hide the plumbing, lay the incremental-refresh groundwork, then PROVE the load against a control total from the source before you trust a single number.
-whenToUse: "Bring a table into the model (fact or dimension) and prove it loaded correctly against a known source figure. Use it whenever a broken fold, a dropped filter, or a coerced type could silently lose or duplicate rows. To connect two tables you have already loaded, use add-relationship."
+title: Import a table
+description: Bring in one table, make its fields deliberate, and record an independent load check when available.
+whenToUse: "Use when adding a fact or dimension table from a source. For a loaded table that needs a relationship, use Connect tables; for a large table needing a rolling window, use Set up rolling refresh."
 version: 1
 strictness: hard
 triggers: [create_import_table, set_column_data_type, set_incremental_refresh_policy]
 ---
 
-## Step 1: Import the table
+## Step 1: Choose the source and load the table
 
-Create one query per entity with `create_import_table`, named as the final table name.
-Stage shared logic in referenced queries with load disabled. Select only the
-columns you will report on and filter unneeded rows as early as possible: the cheapest
-VertiPaq win is data that never arrives.
-
-## Step 2: Type every column deliberately
-
-Never trust type inference. Walk every column with `list_columns` and set
-its type with `set_column_data_type`: whole number vs decimal, Fixed Decimal for money (float
-sums drift), integer keys where possible, no numeric data stored as text. Keep steps foldable
-so incremental refresh still works. Name the table below so the gate can check it.
+Name the source entity and the final model table. Call `create_import_table` for that entity, selecting
+only fields needed for reporting and filtering rows early when the source query can fold. If the source or
+table cannot be reached, leave the load as unavailable and say what must be supplied; do not report a load
+as reconciled from the model's own row count.
 
 ```yaml gate
+ops: [create_import_table]
 inputs:
-  - name: target
-    question: "The ref of the table you are hardening (e.g. table:Sales)."
-    type: objectRef
+  - name: sourceTable
+    question: "Which source entity should be imported, and what final table name should it have?"
+    type: text
     required: required
-  - name: typesConfirmed
-    question: "Have you set a deliberate data type on every column (money = Fixed Decimal, keys = integer)?"
-    type: text
-    required: answer-or-decline
-verify:
-  - kind: bpa_clean
-    scope: model
 ```
 
-## Step 3: Split datetime columns
+## Step 2: Review types and exposed fields
 
-A datetime column's cardinality explodes VertiPaq dictionaries. Split each
-datetime into a separate date column (365/yr) and a time-of-day column (86,400 max), or drop
-the time entirely if it is never reported. Separate columns compress far better and join to
-Date/Time dimensions. `vpaq_scan` surfaces the high-cardinality symptom so you prioritise.
-
-## Step 4: Hide the plumbing and set summarization
-
-Hide every key column (FK/PK), RLS/sort-by helper, and any fact column exposed through a
-measure with `set_column_hidden`: the field list should show only what a report author
-should touch. Set `SummarizeBy = None` on keys, years, and IDs with
-`set_summarize_by` so nothing silently SUMs; prefer explicit measures over implicit
-aggregation.
+Use `list_columns` after the table exists. Set deliberate types with `set_column_data_type`, hide keys and
+other plumbing with `set_column_hidden`, and set `SummarizeBy = None` for keys, years and identifiers with
+`set_summarize_by`. Split a datetime only when reporting needs separate date and time; do not turn every
+small import into an incremental-refresh design. Hand a large rolling fact to Set up rolling refresh.
 
 ```yaml gate
-verify:
-  - kind: bpa_clean
-    scope: model
+ops: [list_columns, set_column_data_type, set_column_hidden, set_summarize_by]
 ```
 
-## Step 5: Prepare incremental-refresh plumbing
+## Step 3: Check a source control total
 
-Even if the policy comes later, add the plumbing now. Create `RangeStart` and
-`RangeEnd` datetime parameters with `create_named_expression` plus the filter step that folds;
-a broken fold silently moves work to the mashup engine and breaks incremental refresh. When
-ready, apply the rolling window with `set_incremental_refresh_policy` and confirm partitions
-with `list_partitions`.
-
-```yaml gate
-inputs:
-  - name: irDecision
-    question: "Will this table use incremental refresh? If yes, is the RangeStart/RangeEnd filter confirmed foldable?"
-    type: text
-    required: answer-or-decline
-```
-
-## Step 6: Prove the load (HARD GATE)
-
-A loaded table is unproven until a control total confirms it, fact or dimension. Author
-a control measure over the table with `create_measure`: a `COUNTROWS` for a row count, or a `SUM` over
-an additive column, and give `target` its ref. Ask the business for the matching figure from the
-SOURCE system: a row count or a control total they computed independently, NOT a number this model
-derived. The hard gate probes the measure against that value; if it differs, the load is wrong (a
-filter dropped rows, a fold broke, a join fanned out, or a type coerced), so fix it and re-probe. The
-gate holds on this step until the number matches or you decline the check.
+When a source row count or additive control total is available, create a small control measure and give
+`target` its ref. The scalar probe compares the model result at the stated context with the independent
+source value. A mismatch points to filtering, folding, joins or coercion and must be fixed before saving.
+When no source number or query access exists, decline `controlTotal` with that reason; the result remains
+an honest load that was not independently reconciled.
 
 ```yaml gate
 strictness: hard
 ops: [create_measure, probe_measure]
 inputs:
-  - name: controlMeasure
-    question: "The ref of the control measure you created to check the load (e.g. measure:Sales/Order Line Count)."
+  - name: target
+    question: "The control measure ref, for example measure:Product/Product Row Count."
     type: objectRef
     required: required
   - name: controlTotal
-    question: "A control total or row count from the SOURCE system, supplied by the user, not derived by the model (e.g. 'the OLTP system reports 1,204,882 order lines for 2024')."
+    question: "A row count or additive total from the source system for the same scope; decline when no independent value or source access is available."
     type: verification
     required: answer-or-decline
 verify:
   - kind: dax_probe
     when: inputs.controlTotal.answered
     probe: controlTotal
+```
+
+## Step 4: Save the imported table
+
+Call `save_model` and record the selected source fields, deliberate types and control result. A missing
+control total stays visible as an unresolved check. Do not imply that incremental refresh or a live source
+refresh happened in this workflow.
+
+```yaml gate
+ops: [save_model]
 ```

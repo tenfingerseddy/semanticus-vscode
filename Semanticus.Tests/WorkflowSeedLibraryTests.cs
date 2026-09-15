@@ -23,7 +23,8 @@ namespace Semanticus.Tests
         private static readonly string[] Expected =
             { "add-relationship", "calendar-setup", "check-blast-radius", "deploy-to-production", "governed-rename",
               "import-table", "incremental-refresh-setup", "make-ai-ready", "model-hygiene-pass",
-              "new-measure", "optimize-dax", "refactor-to-calculation-group", "secure-with-rls",
+              "new-measure", "optimize-dax", "reconcile-saved-tests-sql",
+              "refactor-to-calculation-group", "secure-with-rls",
               "time-intelligence-variants", "verified-measure" };
 
         private static List<WorkflowDef> LoadStock()

@@ -10,12 +10,6 @@ namespace Semanticus.Tests
 {
     public sealed class TestSuiteCoverageTests
     {
-        private sealed class Fake : IEntitlement
-        {
-            public bool IsPro => false;
-            public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "free" };
-        }
-
         [Fact]
         public async Task Unmapped_model_measures_are_notverifiable_instead_of_disappearing()
         {
@@ -26,7 +20,9 @@ namespace Semanticus.Tests
             try
             {
                 using var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Fake());
+                // Tests is a whole Pro feature since 2026-09-15: the subject here is coverage honesty, so the
+                // engine holds the entitlement and the run reaches the reconciles instead of the refusal.
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
                 await engine.OpenAsync(model);
                 var measures = await engine.ListMeasuresAsync();
 

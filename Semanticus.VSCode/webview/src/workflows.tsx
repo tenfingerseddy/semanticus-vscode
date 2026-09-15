@@ -4,7 +4,8 @@ import { mdToHtml } from './docrender';
 import { DesignMode } from './workflowdesign';
 import { ScenariosPanel } from './workflowscenarios';
 import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResultW } from './artifactdialog';
-import { uiLabel } from './copy';
+import { uiLabel, opTitle, checkTitle } from './copy';
+import { Caret } from './ui';
 import {
   liveRuns, mostRecentLive, mostRecentTerminal, runForWorkflow, focusedRun,
   stepGateSkipped, runSections, frameProgress, frameIsCurrent, providedAnswerDraft, type RunFrameItem, type RunSection, type RunRow, type RunMapState,
@@ -30,6 +31,7 @@ const RUN_AGED_OUT = 'This run is no longer available for an evidence report. On
 export interface WorkflowInfo {
   name: string; title: string; description: string; version: number; source: string;
   stepCount: number; gated: boolean; triggers: string[]; error?: string | null;
+  whenToUse?: string | null;
   // §9a availability (the manual per-workflow kill switch) + §10.6 activation (rule-driven menu curation).
   // enabled:false = can't be started until turned back on; active:false while enabled = off today's menu but
   // still startable. Both stay LISTED (the honesty rule): a hidden workflow can't be re-enabled. Optional so
@@ -161,7 +163,37 @@ const BINDABLE_OPS: { op: string; label: string }[] = [
   { op: 'create_relationship', label: 'New relationship' },
   { op: 'create_calculation_item', label: 'New calculation item' },
 ];
-const opLabel = (op: string) => BINDABLE_OPS.find((b) => b.op === op)?.label ?? uiLabel(op);
+const opLabel = (op: string) => BINDABLE_OPS.find((b) => b.op === op)?.label ?? opTitle(op);
+
+// "hard" / "warn" / "inherit" are engine words. A person reads what actually happens to their run.
+export function strictnessWords(s?: string | null): string {
+  return s === 'hard' ? 'must pass' : s === 'warn' ? 'warn only' : 'as the workflow says';
+}
+
+// One plain sentence for a step, built from what the step really is: who does the work, what it asks you,
+// and how many checks it records. The workflow's own instructions are written for the assistant, so they
+// are never the sentence a person reads first — they sit behind a disclosure.
+export function stepSummary(ops: string[], gate?: GateSpec | null): string {
+  const parts: string[] = [];
+  parts.push(ops.length
+    ? `Your assistant does the work: ${ops.map((op) => opTitle(op).toLowerCase()).join(', ')}.`
+    : 'Your assistant does this part.');
+  const asks = gate?.inputs.length ?? 0;
+  if (asks) parts.push(`It asks you ${asks} question${asks === 1 ? '' : 's'} first.`);
+  const checks = gate?.verify.length ?? 0;
+  if (checks) parts.push(`${checks} check${checks === 1 ? '' : 's'} ${checks === 1 ? 'is' : 'are'} recorded before the run moves on.`);
+  return parts.join(' ');
+}
+
+// The engine's op catalog, read once per session. It carries a one-sentence description per op, which is
+// the honest explanation to hang on a chip; the short title comes from opTitle.
+let opHintCache: Promise<Record<string, string>> | null = null;
+function opHints(): Promise<Record<string, string>> {
+  opHintCache ??= rpc<{ name: string; description: string }[]>('getOpCatalog')
+    .then((list) => Object.fromEntries((list ?? []).map((o) => [o.name, o.description])))
+    .catch(() => ({}));
+  return opHintCache;
+}
 
 // The step-node visual language — one glyph + tint per run status (mirrors Edit History's verdict rail).
 // Overview mode (no run) uses the neutral 'todo' style with the step number in the circle.
@@ -198,8 +230,9 @@ type Section = 'home' | 'library' | 'runs' | 'governance' | 'author';
 // rides across the top of every section (never a takeover). All engine wiring is shared: one library, one run,
 // one policy read, all live off the same broadcasts, so an agent-driven change surfaces in Studio immediately.
 // ===================================================================================================
-export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnRun }: {
-  navTarget?: { name: string; nonce: number } | null;
+export function WorkflowsView({ navTarget, onNavConsumed, runs, onRunUpdate, markOwnRun, isOwnRun }: {
+  navTarget?: { kind: 'workflow' | 'section'; value: string; nonce: number } | null;
+  onNavConsumed?: (nonce: number) => void;
   // Runs live at the SHELL (App.tsx) so an agent-driven run isn't missed while this tab is unmounted. We read the
   // shared run-map and fold our own transitions back into it; ownership is tracked by the shell too.
   runs: RunMapState; onRunUpdate: (r: WorkflowRunView) => void;
@@ -265,9 +298,11 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
   // A feature surface can hand off to the exact playbook that completes the job (lineage → workflow). Land on
   // its runnable playbook page and reset transient authoring/overlay state.
   useEffect(() => {
-    if (!navTarget?.name) return;
+    if (!navTarget) return;
     setGuided(false); setCreating(false); setStartErr(null);
-    setSection('library'); setOpenName(navTarget.name); setSelected(navTarget.name);
+    if (navTarget.kind === 'section' && navTarget.value === 'runs') { setSection('runs'); setOpenName(null); }
+    else if (navTarget.kind === 'workflow' && navTarget.value) { setSection('library'); setOpenName(navTarget.value); setSelected(navTarget.value); }
+    onNavConsumed?.(navTarget.nonce);
   }, [navTarget?.nonce]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the selected workflow's definition (full instructions + gates) — free: reading the playbook is content.
@@ -374,7 +409,10 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
         profileTitle={activeProfile?.title ?? 'Custom'}
         onNavigate={(s) => { setSection(s); if (s !== 'library') setOpenName(null); if (s !== 'home') setGuided(false); }} />
       <main className="flex-1 min-w-0 overflow-auto">
-        <div className="p-4 flex flex-col gap-4 min-w-0">
+        {/* Author is the one section whose content is a picture that should fill the page rather than a
+            column that scrolls. The extra class makes this page at least as tall as the scroll region, so
+            the canvas below it has a real height to grow into. Every other section is unchanged. */}
+        <div className={`sem-tool-page flex flex-col gap-4 min-w-0${section === 'author' ? ' sem-wf-author-page' : ''}`}>
           {/* ambient live-run banner — every section but Runs (there it IS the content) */}
           {bannerRun && section !== 'runs' && (
             <LiveBanner run={bannerRun} liveCount={liveCount} startedByYou={isOwnRun(bannerRun.runId)}
@@ -434,6 +472,7 @@ export function WorkflowsView({ navTarget, runs, onRunUpdate, markOwnRun, isOwnR
           {section === 'author' && (
             <AuthorSection
               creating={creating} info={library?.find((w) => w.name === selected) ?? null} def={def}
+              sessionId={runs.sessionId} activeRun={selected ? runForWorkflow(runs, selected) : null}
               onNew={newPlaybook}
               onSaved={(n) => { setCreating(false); setSelected(n); defLoad.reload(n); }}
               onDeleted={() => { setCreating(false); setSelected(null); setSection('library'); }} />
@@ -498,7 +537,7 @@ function SectionSidebar({ section, liveCount, enforced, profileTitle, onNavigate
         })}
         <div className="mt-auto rounded-lg border p-2.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
           <div className="text-[9px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Project policy</div>
-          <div className="text-[11.5px] font-semibold mt-0.5" style={{ color: enforced ? 'var(--sem-fg)' : 'var(--sem-warn, #d7a54a)' }}>{enforced ? 'Enforcement on' : 'Enforcement off'}</div>
+          <div className="text-[11.5px] font-semibold mt-0.5" style={{ color: enforced ? 'var(--sem-fg)' : 'var(--sem-warn, #d7a54a)' }}>{enforced ? 'Required workflows are on' : 'Required workflows are off'}</div>
           <div className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{profileTitle} profile</div>
           <button onClick={() => onNavigate('governance')} className="text-[11px] font-semibold mt-1" style={{ color: 'var(--sem-accent)' }}>Review controls</button>
         </div>
@@ -514,7 +553,7 @@ function LiveBanner({ run, liveCount, startedByYou, onContinue }: { run: Workflo
     <div className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, var(--sem-border))' }}>
       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: 'var(--sem-accent)', boxShadow: '0 0 0 4px var(--sem-accent-soft)' }} />
       <span className="text-[12px] font-semibold">{run.title || run.workflow} is running</span>
-      <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>step {Math.min(run.stepIndex + 1, run.totalSteps)} of {totalStepsText(run)}, started by {startedByYou ? 'you' : 'the AI Assistant'}{more ? ` · ${liveCount} runs live` : ''}</span>
+      <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>step {Math.min(run.stepIndex + 1, run.totalSteps)} of {totalStepsText(run)}, started by {startedByYou ? 'you' : 'your assistant'}{more ? ` · ${liveCount} runs live` : ''}</span>
       <button onClick={onContinue} className="ml-auto text-[11px] px-2.5 py-1 rounded-md font-semibold shrink-0" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{more ? 'Continue runs' : 'Continue run'}</button>
     </div>
   );
@@ -523,7 +562,7 @@ function EnforcementOffBanner({ onFix }: { onFix: () => void }) {
   return (
     <div className="flex items-center gap-2 rounded-md px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 45%, transparent)', color: 'var(--sem-fg)' }}>
       <span aria-hidden>!</span>
-      <span className="flex-1">Enforcement is <b>off</b> model-wide. New runs start with gates skipped and record no verified evidence. Runs already underway keep the setting they started with. Good for quick tasks; turn it back on for accountable runs.</span>
+      <span className="flex-1"><b>Required workflows are off.</b> Edits are not checked against required workflows until you turn them back on. Runs already underway keep the setting they started with. Good for quick tasks; turn it back on for accountable runs.</span>
       <button onClick={onFix} className="text-[11px] px-2 py-0.5 rounded-md font-semibold shrink-0" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Review in Governance</button>
     </div>
   );
@@ -532,9 +571,13 @@ function EnforcementOffBanner({ onFix }: { onFix: () => void }) {
 // ===================================================================================================
 // HOME — the calm landing: the current/recent run, the two ratified quick-start jobs, and three quiet cards.
 // ===================================================================================================
-const HEROES: { workflow: string; title: string; blurb: string }[] = [
-  { workflow: 'make-ai-ready', title: 'Make the model AI-ready', blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant works through the gaps, and the readiness score shows whether the model held or improved.' },
-  { workflow: 'verified-measure', title: 'Build and test a complex calculation', blurb: 'Define the business rule, work out trusted answers from source rows and test a proposed calculation against those answers.' },
+const HOME_JOBS: { workflow: string; title: string; when: string; outcome: string; careful?: string }[] = [
+  { workflow: 'new-measure', title: 'Add a measure', when: 'A clear calculation with one number you can check it against.', outcome: 'A new measure with its format and description, checked against one number you trust.', careful: 'verified-measure' },
+  { workflow: 'optimize-dax', title: 'Fix a slow measure', when: 'A measure that is right but slow, or hard to read.', outcome: 'Selected answers and speed compared before and after; the faster or clearer version kept.' },
+  { workflow: 'import-table', title: 'Import a table', when: 'A new source table for the model.', outcome: 'The table imported, typed and tidied, with its load checked against one number from the source.' },
+  { workflow: 'add-relationship', title: 'Connect tables', when: 'Two tables that need a relationship.', outcome: 'The relationship created with the right direction, and its join checked against one control total.' },
+  { workflow: 'model-hygiene-pass', title: 'Tidy a model', when: 'A quality and AI-readiness pass before a review or release.', outcome: 'Selected quality issues fixed, then the scan checked again.' },
+  { workflow: 'deploy-to-production', title: 'Publish changes', when: 'Reviewed changes ready for a chosen stage.', outcome: 'A reviewed publish to the selected stage, with the result recorded.' },
 ];
 function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, onStartHero, onExplain, onBrowse, onGuided, onGovernance, onOpenRun }: {
   library: WorkflowInfo[] | null; activeRun: WorkflowRunView | null; recentRun: WorkflowRunView | null;
@@ -559,55 +602,67 @@ function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, on
         </button>
       )}
 
-      <div>
-        <h2 className="text-[15px] font-semibold mb-2.5">Start a job</h2>
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-          {HEROES.map((h) => (
-            <HeroCard key={h.workflow} title={h.title} blurb={h.blurb}
+      <header className="sem-wf-pagehead">
+        <div>
+          <div className="sem-wf-kicker">Workflows</div>
+          <h2>Repeatable ways to do a job well</h2>
+        </div>
+      </header>
+
+      <section aria-labelledby="sem-wf-start-jobs">
+        <h3 id="sem-wf-start-jobs" className="text-[15px] font-semibold mb-2.5">Start a job</h3>
+        <div className="sem-wf-job-grid">
+          {HOME_JOBS.map((h) => (
+            <HeroCard key={h.workflow} title={h.title} blurb={(library ?? []).find((w) => w.name === h.workflow)?.whenToUse || h.when} outcome={h.outcome}
               disabled={library != null && !heroExists(h.workflow)}
-              onStart={() => onStartHero(h.workflow)} onExplain={() => onExplain(h.workflow)} />
+              onStart={() => onStartHero(h.workflow)} onExplain={() => onExplain(h.workflow)}
+              careful={h.careful ? () => onExplain(h.careful!) : undefined} />
           ))}
         </div>
-      </div>
+      </section>
 
       <div className="flex items-center gap-3">
-        <button onClick={() => onBrowse()} className="text-[12px] px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>Browse all playbooks ({total})</button>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search playbooks" data-wf-home-search
+        <button onClick={() => onBrowse()} className="sem-btn shrink-0">All workflows ({total})</button>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search workflows" data-wf-home-search
           onKeyDown={(e) => { if (e.key === 'Enter') onBrowse(q.trim()); }}
           className="flex-1 text-[12px] px-3 py-1.5 rounded-lg outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
       </div>
 
       {needle ? (
         hits.length === 0 ? (
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No playbooks match “{q.trim()}”.</div>
+          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No workflows match “{q.trim()}”.</div>
         ) : (
           <div className="flex flex-col gap-1.5">
             {hits.map((w) => (
               <button key={w.name} onClick={() => onExplain(w.name)} className="text-left rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
                 <div className="text-[13px] font-semibold">{w.title || w.name}</div>
-                {w.description && <div className="text-[11.5px] mt-0.5 truncate" style={{ color: 'var(--sem-muted)' }}>{w.description}</div>}
+                {(w.whenToUse || w.description) && <div className="text-[11.5px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>{w.whenToUse || w.description}</div>}
               </button>
             ))}
           </div>
         )
       ) : (
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-          <QuietCard kicker="Guided setup" title="Ready-made playbooks" body="Fill in your details once, preview in plain words, then apply." onClick={onGuided} />
-          <QuietCard kicker="Library" title={`${total} playbooks, ${available} available`} body="Browse, inspect, or turn any playbook on or off." onClick={() => onBrowse()} />
-          <QuietCard kicker="Policy" title={profileTitle} body={enforced ? 'Enforcement on.' : 'Enforcement off; gates are skipped.'} onClick={onGovernance} />
+          <QuietCard kicker="Ready-made setups" title="Choose a project profile" body="Pick a prepared set of workflows, or keep using your own selection." onClick={onGuided} />
+          <QuietCard kicker="Library" title={`${total} workflows, ${available} available`} body="Browse every workflow, inspect its steps, or turn it on or off." onClick={() => onBrowse()} />
+          <QuietCard kicker="Policy" title={profileTitle} body={enforced ? 'Required workflows are on.' : 'Required workflows are off.'} onClick={onGovernance} />
         </div>
       )}
     </div>
   );
 }
-function HeroCard({ title, blurb, disabled, onStart, onExplain }: { title: string; blurb: string; disabled: boolean; onStart: () => void; onExplain: () => void }) {
+function HeroCard({ title, blurb, outcome, disabled, onStart, onExplain, careful }: {
+  title: string; blurb: string; outcome: string; disabled: boolean; onStart: () => void; onExplain: () => void; careful?: () => void;
+}) {
   return (
     <div className="rounded-xl border p-4" style={{ background: 'var(--sem-surface-2)', borderColor: disabled ? 'var(--sem-border)' : 'color-mix(in srgb, var(--sem-accent) 35%, var(--sem-border))', opacity: disabled ? 0.6 : 1 }}>
       <h3 className="text-[13.5px] font-semibold">{title}</h3>
-      <p className="text-[12px] mt-1 mb-2.5" style={{ color: 'var(--sem-muted)' }}>{blurb}</p>
+      <p className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>{blurb}</p>
+      <p className="text-[11.5px] mt-2 mb-2.5"><b>What you end up with:</b> {outcome}</p>
       <div className="flex items-center gap-2">
-        <button disabled={disabled} onClick={onStart} className="text-[12px] px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Start</button>
-        <button disabled={disabled} onClick={onExplain} className="text-[12px] px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50" style={{ color: 'var(--sem-muted)' }}>What it does</button>
+        <button disabled={disabled} onClick={onStart} className="sem-btn sem-btn-primary">Start</button>
+        <button disabled={disabled} onClick={onExplain} className="text-[12px] px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50" style={{ color: 'var(--sem-muted)' }}>Open</button>
+        {careful && <button disabled={disabled} onClick={careful} className="text-[11px] ml-auto disabled:opacity-50" style={{ color: 'var(--sem-accent)' }}>Careful route</button>}
       </div>
     </div>
   );
@@ -626,26 +681,23 @@ function QuietCard({ kicker, title, body, onClick }: { kicker: string; title: st
 // LIBRARY — a browsing task: calm scannable rows with plain-language action chips + the §9a availability
 // toggle. Everything else about a playbook is on its page. Journey-ordered groups; broken files stay listed.
 // ===================================================================================================
-// Journey-ordered groups, keyed by the ACTUAL stock seed ids (Semanticus.Engine/workflows/*.md). A stock id that
-// slips this map falls to DEFAULT_STOCK_GROUP (Build), never Custom — Custom is reserved for model-authored
-// playbooks. Keep this list honest against the seed library; a phantom key (a workflow that does not ship) is worse
-// than an omission because it reads as coverage that is not there.
+// Journey-ordered groups, keyed by the actual stock seed ids (Semanticus.Engine/workflows/*.md). Anything outside
+// the known set lands in Other. Keep this list honest: a phantom key reads as coverage that does not exist.
 const GROUP_OF: Record<string, string> = {
-  'add-relationship': 'Build', 'import-table': 'Build', 'calendar-setup': 'Build',
-  'time-intelligence-variants': 'Build', 'new-measure': 'Build', 'refactor-to-calculation-group': 'Build',
-  'incremental-refresh-setup': 'Data',
-  'check-blast-radius': 'Quality', 'governed-rename': 'Quality', 'model-hygiene-pass': 'Quality',
-  'verified-measure': 'Quality', 'optimize-dax': 'Quality', 'make-ai-ready': 'Quality',
-  'secure-with-rls': 'Security',
-  'deploy-to-production': 'Ship',
+  'new-measure': 'Change a measure', 'verified-measure': 'Change a measure', 'time-intelligence-variants': 'Change a measure', 'refactor-to-calculation-group': 'Change a measure',
+  'optimize-dax': 'Fix a slow measure',
+  'add-relationship': 'Change a relationship',
+  'import-table': 'Change the source or schema', 'calendar-setup': 'Change the source or schema', 'incremental-refresh-setup': 'Change the source or schema',
+  'governed-rename': 'Review a change', 'check-blast-radius': 'Review a change',
+  'secure-with-rls': 'Access rules',
+  'deploy-to-production': 'Publish',
+  'model-hygiene-pass': 'Tidy the model', 'make-ai-ready': 'Tidy the model',
+  'reconcile-saved-tests-sql': 'Reconcile with SQL',
 };
-const CUSTOM_GROUP = 'Custom';
-const DEFAULT_STOCK_GROUP = 'Build';   // any built-in not yet mapped lands in Build, not Custom
-const GROUP_ORDER = ['Design', 'Build', 'Data', 'Quality', 'Security', 'Ship', CUSTOM_GROUP];
-// A stock (built-in) workflow is never "Custom" — if it is missing from the map it gets a sensible default group.
-const groupOf = (w: WorkflowInfo) => GROUP_OF[w.name] ?? (w.source === 'stock' ? DEFAULT_STOCK_GROUP : CUSTOM_GROUP);
+const GROUP_ORDER = ['Change a measure', 'Fix a slow measure', 'Change a relationship', 'Change the source or schema', 'Reconcile with SQL', 'Review a change', 'Access rules', 'Tidy the model', 'Publish', 'Other'];
+const groupOf = (w: WorkflowInfo) => GROUP_OF[w.name] ?? 'Other';
 const matchesFilter = (w: WorkflowInfo, f: string) =>
-  !f || [w.name, w.title, w.description, ...(w.triggers ?? [])].join(' ').toLowerCase().includes(f);
+  !f || [w.name, w.title, w.description, w.whenToUse, ...(w.triggers ?? [])].join(' ').toLowerCase().includes(f);
 
 function LibrarySection({ items, err, availErr, policy, initialFilter, onOpen, onNew, onToggleEnabled }: {
   items: WorkflowInfo[] | null; err: string | null; availErr: string | null; policy: WorkflowPolicy | null;
@@ -666,9 +718,9 @@ function LibrarySection({ items, err, availErr, policy, initialFilter, onOpen, o
       <div className="flex items-center gap-2.5">
         <input value={filter} onChange={(e) => setFilter(e.target.value)} spellCheck={false} data-wf-filter
           onKeyDown={(e) => { if (e.key === 'Escape') setFilter(''); }}
-          placeholder="Filter by title, description, or action"
+          placeholder="Search by title or when to use it"
           className="flex-1 text-[12px] px-3 py-1.5 rounded-lg outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-        <button onClick={onNew} className="text-[12px] px-3 py-1.5 rounded-lg font-semibold shrink-0" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>+ New playbook</button>
+        <button onClick={onNew} className="sem-btn sem-btn-primary shrink-0">+ New workflow</button>
       </div>
       {err && <Banner color="var(--sem-bad)">{err}</Banner>}
       {availErr && <Banner color="var(--sem-warn, #d7a54a)">{availErr}</Banner>}
@@ -709,7 +761,8 @@ function LibraryRow({ w, requiredCount, onOpen, onToggleEnabled }: {
           {broken
             ? <Pill tint="var(--sem-bad)">File error</Pill>
             : <>
-                {w.gated && <Pill tint="var(--sem-accent)">Gated</Pill>}
+                <SourceBadge source={w.source} name={w.name} />
+                <Pill>{w.stepCount} step{w.stepCount === 1 ? '' : 's'}</Pill>
                 {requiredCount > 0 && <Pill>Required for {requiredCount} action{requiredCount === 1 ? '' : 's'}</Pill>}
                 {off && <Pill tint="var(--sem-bad)">Off</Pill>}
                 {offMenu && <Pill tint="var(--sem-warn, #d7a54a)">Hidden now</Pill>}
@@ -718,10 +771,7 @@ function LibraryRow({ w, requiredCount, onOpen, onToggleEnabled }: {
         <div className="text-[11.5px] mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: 'var(--sem-muted)', ...dim }}>
           {broken ? <span>Step could not be read. Open it to repair the file or rebuild it in Author.</span> : (
             <>
-              {w.description && <span className="truncate max-w-[52ch]">{w.description}</span>}
-              {w.triggers.slice(0, 3).map((t) => (
-                <span key={t} className="text-[9.5px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>{opLabel(t)}</span>
-              ))}
+              {(w.whenToUse || w.description) && <span className="max-w-[90ch]">{w.whenToUse || w.description}</span>}
             </>
           )}
         </div>
@@ -732,9 +782,14 @@ function LibraryRow({ w, requiredCount, onOpen, onToggleEnabled }: {
       <div className="shrink-0">
         {broken
           ? <button onClick={onOpen} className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>View error</button>
-          : <AvailabilitySwitch on={!off} label={`Availability: ${w.name}`}
-              title={off ? 'Off: this playbook can’t be started until you turn it back on. Click to turn it on.' : 'On: this playbook can be started. Click to turn it off for this project (it stays listed so you can turn it back on).'}
-              onToggle={() => onToggleEnabled(w.name, off)} />}
+          : (
+            <span className="flex items-center gap-1.5">
+              <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Available in this project</span>
+              <AvailabilitySwitch on={!off} label={`Available in this project: ${w.title || w.name}`}
+                title={off ? 'Off: this workflow can’t be started until you turn it back on. Click to turn it on.' : 'On: this workflow can be started. Click to turn it off for this project (it stays listed so you can turn it back on).'}
+                onToggle={() => onToggleEnabled(w.name, off)} />
+            </span>
+          )}
       </div>
     </div>
   );
@@ -781,14 +836,14 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
             <div className="flex-1 min-w-[260px]">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-[17px] font-semibold" style={off ? { opacity: 0.7 } : undefined}>{title}</h2>
-                {info && <SourceBadge source={info.source} />}
-                {gated && <Pill tint="var(--sem-accent)">Gated</Pill>}
-                {lockedFree && <Pill tint="var(--sem-accent)">Pro to run</Pill>}
+                {info && <SourceBadge source={info.source} name={info.name} />}
+                {gated && <Pill tint="var(--sem-accent)" title="This workflow asks you questions and runs checks as it goes.">Checks as you go</Pill>}
+                {lockedFree && <Pill tint="var(--sem-accent)" title={WORKFLOWS_ARE_PRO}>Pro</Pill>}
                 {off && <Pill tint="var(--sem-warn, #d7a54a)">Off</Pill>}
               </div>
               <div className="text-[11.5px] mt-1 tnum" style={{ color: 'var(--sem-muted)' }}>
                 {info ? `Version ${info.version}` : ''}{def ? ` · ${def.steps.length} step${def.steps.length === 1 ? '' : 's'}` : ''}
-                {def?.strictness ? ` · ${def.strictness === 'hard' ? 'blocking checks' : def.strictness === 'warn' ? 'warning checks' : `${uiLabel(def.strictness).toLowerCase()} checks`}` : ''}
+                {def?.strictness ? ` · checks ${strictnessWords(def.strictness)}` : ''}
                 {terminal ? ' · last run completed' : ''}
               </div>
               {(def?.description || info?.description) && (
@@ -814,14 +869,14 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
             </div>
           </div>
 
-          {startBlocked && <Banner color="var(--sem-warn, #d7a54a)">This playbook is turned off for this project, so it can’t be started. Use the switch above (or on its row in the Library) to turn it back on.</Banner>}
+          {startBlocked && <Banner color="var(--sem-warn, #d7a54a)">This workflow is turned off for this project, so it can’t be started. Use the switch above (or on its row in the Library) to turn it back on.</Banner>}
           {offButRequired && <Banner color="var(--sem-warn, #d7a54a)">Turned off, but a project mandate still requires it ({info?.activeReason || 'required by a policy'}), so it can still be started.</Banner>}
           {offMenu && <Banner color="var(--sem-muted)">Off today’s menu: {info?.activeReason || 'hidden by a project rule'}. This curates the menu; you can still start it, and the run records a note.</Banner>}
           {startErr && <Banner color="var(--sem-accent)">{startErr}</Banner>}
 
           <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)' }}>
             <Panel>
-              <SectionTitle>What this playbook does</SectionTitle>
+              <SectionTitle>What this workflow does</SectionTitle>
               {def?.error ? (
                 <div className="text-[12px] mt-2" style={{ color: 'var(--sem-bad)' }}>{def.error}</div>
               ) : !def ? (
@@ -850,7 +905,7 @@ function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBa
                     ))}
                   </div>
                 ) : (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>No actions require this workflow yet.</div>
+                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>Required for: nothing. No action makes you use this workflow.</div>
                 )}
               </Panel>
               <Panel>
@@ -892,7 +947,7 @@ function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, on
       <div className="h-full flex items-center justify-center p-8">
         <div className="text-center max-w-sm">
           <div className="text-[15px] font-semibold mb-1">No active run</div>
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a playbook from the Library and press Start run. A run appears here whether you or the AI Assistant starts it.</div>
+          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a workflow from the Library and press Start run. A run appears here whether you or your assistant starts it.</div>
           <button onClick={onBrowse} className="text-[12px] font-semibold mt-3" style={{ color: 'var(--sem-accent)' }}>Browse the Library →</button>
         </div>
       </div>
@@ -906,7 +961,7 @@ function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, on
   const switchable = liveRuns.some((r) => r.runId === run.runId) ? liveRuns : [...liveRuns, run];
   return (
     <div className="flex flex-col gap-3 min-w-0">
-      {/* multi-run switcher — when there is more than one run to focus (dual-drive: you + the AI Assistant, plus a
+      {/* multi-run switcher — when there is more than one run to focus (dual-drive: you + your assistant, plus a
           completed run you're still viewing while others run) */}
       {switchable.length > 1 && (
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -938,7 +993,7 @@ function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, on
         {live
           ? <Pill tint="var(--sem-accent)">Live</Pill>
           : <Pill tint={run.status === 'completed' ? 'var(--sem-good)' : 'var(--sem-muted)'}>{uiLabel(run.status)}</Pill>}
-        <Pill>Started by {startedByYou ? 'you' : 'the AI Assistant'}</Pill>
+        <Pill>Started by {startedByYou ? 'you' : 'your assistant'}</Pill>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={onEvidence} disabled={!terminal}
             title={terminal ? 'Export the sealed evidence report' : 'Evidence exports after the run completes or is aborted, so an active run is never presented as final.'}
@@ -1019,10 +1074,10 @@ function GovernanceSection({ library, policy, tier, titleOf, enforcement, profil
       </div>
 
       <div>
-        <h3 className="text-[13.5px] font-semibold mb-1.5">Playbooks</h3>
+        <h3 className="text-[13.5px] font-semibold mb-1.5">Workflows</h3>
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--sem-border)' }}>
           <div className="grid items-center gap-2 px-3.5 py-2 text-[10px] uppercase tracking-wide font-bold border-b" style={{ gridTemplateColumns: 'minmax(0,2fr) 90px minmax(0,1.6fr) minmax(0,1.4fr) 60px', color: 'var(--sem-muted)', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-            <span>Playbook</span><span>On the menu</span><span>Required for</span><span>Hidden when</span><span></span>
+            <span>Workflow</span><span>Available in this project</span><span>Required for</span><span>Hidden when</span><span></span>
           </div>
           {rows.map((w) => {
             const entry = policy?.workflows.find((p) => p.name === w.name) ?? null;
@@ -1037,12 +1092,12 @@ function GovernanceSection({ library, policy, tier, titleOf, enforcement, profil
                 <div className="grid items-center gap-2 px-3.5 py-2.5 text-[12px]" style={{ gridTemplateColumns: 'minmax(0,2fr) 90px minmax(0,1.6fr) minmax(0,1.4fr) 60px', background: 'var(--sem-surface-2)' }}>
                   <span className="font-medium truncate" style={off ? { opacity: 0.6 } : undefined}>{w.title || w.name}</span>
                   <span>
-                    <AvailabilitySwitch on={!off} label={`Availability: ${w.name}`}
+                    <AvailabilitySwitch on={!off} label={`Available in this project: ${w.title || w.name}`}
                       title={off ? 'Off: turn it on to allow runs.' : 'On: click to turn it off for this project.'}
                       onToggle={() => onToggleEnabled(w.name, off)} />
                   </span>
                   <span className="text-[11px]">
-                    {reqOps.length === 0 ? <span style={{ color: 'var(--sem-muted)' }}>None</span> : (
+                    {reqOps.length === 0 ? <span style={{ color: 'var(--sem-muted)' }}>Nothing</span> : (
                       <span className="flex flex-wrap gap-1">
                         {reqOps.map((op) => {
                           const m = bindFor(op);
@@ -1061,7 +1116,7 @@ function GovernanceSection({ library, policy, tier, titleOf, enforcement, profil
                     )}
                   </span>
                   <span className="text-[11px]" style={{ color: w.active === false ? 'var(--sem-warn, #d7a54a)' : 'var(--sem-muted)' }}>
-                    {w.active === false ? (w.activeReason || 'hidden by a rule') : 'Shown now'}
+                    {w.active === false ? (w.activeReason || 'hidden by a rule') : 'Never'}
                   </span>
                   <button onClick={() => setExpanded(isOpen ? null : w.name)} className="text-[11px] font-semibold text-right" style={{ color: 'var(--sem-accent)' }}>{isOpen ? 'Close' : 'Rules'}</button>
                 </div>
@@ -1102,25 +1157,25 @@ function EnforcementCard({ enforced, onSetEnforcement }: { enforced: boolean; on
     <Panel>
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h3 className="text-[13.5px] font-semibold">Model-wide gate enforcement: {enforced ? 'On' : 'Off'}</h3>
+          <h3 className="text-[13.5px] font-semibold">Required workflows: {enforced ? 'On' : 'Off'}</h3>
           <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>Off skips the checks for new runs, so those runs have no verified test results. Review the effect before applying the change.</div>
         </div>
         {enforced ? (
           confirming ? (
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => { onSetEnforcement(true); setConfirming(false); }} className="text-[11.5px] px-2.5 py-1 rounded-md font-semibold" style={{ background: 'var(--sem-warn, #d7a54a)', color: 'var(--sem-on-accent)' }}>Turn off enforcement</button>
+              <button onClick={() => { onSetEnforcement(true); setConfirming(false); }} className="text-[11.5px] px-2.5 py-1 rounded-md font-semibold" style={{ background: 'var(--sem-warn, #d7a54a)', color: 'var(--sem-on-accent)' }}>Turn required workflows off</button>
               <button onClick={() => setConfirming(false)} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Cancel</button>
             </div>
           ) : (
             <Button onClick={() => setConfirming(true)}>Turn off</Button>
           )
         ) : (
-          <Button primary onClick={() => onSetEnforcement(false)}>Turn on</Button>
+          <Button primary onClick={() => onSetEnforcement(false)}>Turn required workflows on</Button>
         )}
       </div>
       {confirming && (
         <div className="mt-3 rounded-md px-3 py-2 text-[11.5px]" style={{ background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 40%, transparent)', color: 'var(--sem-fg)' }}>
-          After this, every gate is skipped across the model and runs record no verified evidence. Per-workflow strictness is ignored until you turn enforcement back on. Existing runs and audit trails are unchanged.
+          After this, required checks are skipped across the model and runs record no verified evidence. Per-workflow strictness is ignored until you turn required workflows back on. Existing runs and audit trails are unchanged.
         </div>
       )}
     </Panel>
@@ -1175,23 +1230,25 @@ function ProfileCard({ profile, tier, onApply }: { profile: WorkflowProfileInfo;
 // AUTHOR — a real authoring destination: the outline + focused-editor designer (workflowdesign.tsx). Entry
 // points: the sidebar, "Edit workflow" on a playbook, and "+ New playbook" from the Library (creation mode).
 // ===================================================================================================
-function AuthorSection({ creating, info, def, onNew, onSaved, onDeleted }: {
+function AuthorSection({ creating, info, def, sessionId, activeRun, onNew, onSaved, onDeleted }: {
   creating: boolean; info: WorkflowInfo | null; def: WorkflowDef | null;
+  sessionId: string | null; activeRun: WorkflowRunView | null;
   onNew: () => void; onSaved: (n: string) => void; onDeleted: () => void;
 }) {
   if (!creating && !info) {
     return (
       <div className="h-full flex items-center justify-center p-8">
         <div className="text-center max-w-sm">
-          <div className="text-[15px] font-semibold mb-1">Author a playbook</div>
+          <div className="text-[15px] font-semibold mb-1">Author a workflow</div>
           <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a workflow from the Library and choose Edit workflow, or start a new one from scratch.</div>
-          <button onClick={onNew} className="text-[12px] px-3 py-1.5 rounded-lg font-semibold mt-3" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>+ New playbook</button>
+          <button onClick={onNew} className="sem-btn sem-btn-primary mt-3">+ New workflow</button>
         </div>
       </div>
     );
   }
   return (
-    <DesignMode key={creating ? 'new' : (info?.name ?? 'edit')} info={creating ? null : info} def={creating ? null : def} creating={creating} layout="outline" onSaved={onSaved} onDeleted={onDeleted} />
+    <DesignMode key={creating ? 'new' : (info?.name ?? 'edit')} info={creating ? null : info} def={creating ? null : def} creating={creating} layout="outline"
+      sessionId={sessionId} activeRun={activeRun} onSaved={onSaved} onDeleted={onDeleted} />
   );
 }
 
@@ -1200,13 +1257,17 @@ function AuthorSection({ creating, info, def, onNew, onSaved, onDeleted }: {
 // Reads from get_workflow_policy (the bindings, filtered to this workflow) and writes with set_workflow_binding —
 // dual-drive with the AI-assistant door, on the same session. Setting hard/warn is Pro (the enforcement is what's
 // paid); reading is free, and CLEARING the last mandate on an action is free too (the engine's rule, mirrored here).
-const PRO_BIND_REASON = 'Requiring an action to route through a workflow is a Pro capability. Free: read the steps and follow the workflow manually, or curate the menu with the availability switch.';
+// One sentence for the whole feature, the same one help.tsx carries. The notices here used to promise free
+// reading, free authoring and free rule-clearing, and every one of those is Pro from 2026-09-15: Workflows
+// is one whole feature, reads included, on both doors.
+const WORKFLOWS_ARE_PRO = 'Workflows is a Semanticus Pro feature. The app still shows any run already going and anything waiting for you.';
+const PRO_BIND_REASON = WORKFLOWS_ARE_PRO;
 const LOCKED_BIND_REASON = 'Locked by committed team policy. Change it in .semanticus/workflow-settings.json via review.';
 
 // A policy lint is either about a REQUIREMENT (binding) or about a `when:` RULE (activation). The two live in
 // separate controls, so split them by their plain-language phrasing to surface each lint under the right control.
 const isActivationLint = (m: string) => /activation rule|a rule shows|a rule hides|but a rule hides it/i.test(m);
-const PRO_ACT_REASON = 'Hiding a workflow when a condition holds is a Pro capability. Free: turn the whole workflow on or off with the switch, or edit the activation list in .semanticus/workflow-settings.json.';
+const PRO_ACT_REASON = WORKFLOWS_ARE_PRO;
 const ACTIVATION_EXAMPLES: { label: string; expr: string }[] = [
   { label: 'On a production workspace', expr: "connection.workspace ~ '*prod*'" },
   { label: 'Off the main branch', expr: "git.branch != 'main'" },
@@ -1306,7 +1367,7 @@ function RequiredForControl({ name, policy, tier, onSetBinding, err, titleOf }: 
       {!isPro && (
         <div className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--sem-muted)' }}>
           <span className="uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Pro</span>
-          Requiring an action (or changing its mode) is Pro. Reading the rules, and clearing the last requirement, are free.
+          {WORKFLOWS_ARE_PRO}
         </div>
       )}
 
@@ -1423,7 +1484,7 @@ function HideWhenControl({ info, policy, tier, onSetActivation, err }: {
           className="flex-1 min-w-[180px] text-[11.5px] px-2 py-1 rounded-md outline-none"
           style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace' }} />
         <button type="button" disabled={applyBlocked}
-          title={!isPro ? PRO_ACT_REASON : !when.trim() ? 'Type a condition first. Use an example below to start.' : 'Save this rule. The views here update at once, and your AI Assistant sees it on its next call.'}
+          title={!isPro ? PRO_ACT_REASON : !when.trim() ? 'Type a condition first. Use an example below to start.' : 'Save this rule. The views here update at once, and your assistant sees it on its next call.'}
           onClick={() => void apply()}
           className="text-[11px] px-2 py-1 rounded-md font-semibold disabled:opacity-45"
           style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
@@ -1442,7 +1503,7 @@ function HideWhenControl({ info, policy, tier, onSetActivation, err }: {
       {!isPro && (
         <div className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--sem-muted)' }}>
           <span className="uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Pro</span>
-          Setting a hide-when rule is Pro. Reading the menu, and clearing a rule, are free.
+          {WORKFLOWS_ARE_PRO}
         </div>
       )}
 
@@ -1470,9 +1531,9 @@ function OverviewStep({ step }: { step: WorkflowStep }) {
   const [open, setOpen] = useState(false);
   const g = step.gate;
   const gateBits = g
-    ? [g.inputs.length ? `${g.inputs.length} question${g.inputs.length === 1 ? '' : 's'}` : null,
-       g.verify.length ? `Checks: ${g.verify.map((v) => uiLabel(v.kind)).join(', ')}` : null,
-       `strictness ${g.strictness || 'inherit'}`].filter(Boolean)
+    ? [g.inputs.length ? `${g.inputs.length} question${g.inputs.length === 1 ? '' : 's'} for you` : null,
+       g.verify.length ? `${g.verify.length} check${g.verify.length === 1 ? '' : 's'}: ${g.verify.map((v) => checkTitle(v.kind).toLowerCase()).join(', ')}` : null,
+       `Checks: ${strictnessWords(g.strictness)}`].filter(Boolean)
     : [];
   return (
     <div className="relative flex items-start gap-3 py-2.5">
@@ -1481,20 +1542,17 @@ function OverviewStep({ step }: { step: WorkflowStep }) {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12.5px] font-semibold">{step.title}</span>
           {g && g.inputs.length + g.verify.length > 0 && (
-            <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)' }}>gate</span>
+            <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" title="This step asks you something and records the answer before the run moves on." style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)' }}>needs you</span>
           )}
         </div>
+        <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>{stepSummary(step.ops, g)}</div>
         {step.ops.length > 0 && (
           <div className="flex items-center gap-1 mt-1.5 flex-wrap">{step.ops.map((op) => <OpChip key={op} op={op} />)}</div>
         )}
         {gateBits.length > 0 && (
           <div className="text-[11px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>{gateBits.join(' · ')}</div>
         )}
-        <button onClick={() => setOpen((o) => !o)} className="mt-1.5 flex items-center gap-1 text-[11px] font-medium" style={{ color: 'var(--sem-muted)' }}>
-          <span className="inline-block transition-transform text-[9px]" style={{ transform: open ? 'rotate(90deg)' : 'none' }}>▶</span>
-          {open ? 'Hide instructions' : 'Instructions'}
-        </button>
-        {open && <Markdown md={step.instructions} className="mt-1.5" />}
+        <AssistantInstructions md={step.instructions} open={open} onToggle={() => setOpen((o) => !o)} />
       </div>
     </div>
   );
@@ -1601,15 +1659,15 @@ function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
           <span className="text-[12.5px] font-semibold" style={{ color: current || done ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{result.title}</span>
           <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: st.color, background: `color-mix(in srgb, ${st.color} 16%, transparent)` }}>{st.label}</span>
           {result.effectiveStrictness && done && (
-            <span className="text-[9.5px]" style={{ color: 'var(--sem-muted)' }} title="Whether this step stopped on failure, warned or skipped its checks">Ran at {stepGateSkipped(result.effectiveStrictness) ? 'skipped (gate off)' : uiLabel(result.effectiveStrictness).toLowerCase()}</span>
+            <span className="text-[9.5px]" style={{ color: 'var(--sem-muted)' }} title="Whether this step stopped on failure, warned, or had its checks turned off">Checks {stepGateSkipped(result.effectiveStrictness) ? 'were turned off' : strictnessWords(result.effectiveStrictness)}</span>
           )}
         </div>
 
         {/* every completed step is reopenable — a clean pass must still be inspectable, not just the notable ones */}
         {done && (
           <>
-            <button onClick={() => setOpen((o) => !o)} className="mt-1 flex items-center gap-1 text-[11px] font-medium" style={{ color: 'var(--sem-muted)' }}>
-              <span className="inline-block transition-transform text-[9px]" style={{ transform: open ? 'rotate(90deg)' : 'none' }}>▶</span>
+            <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1 flex items-center gap-1 text-[11px] font-medium" style={{ color: 'var(--sem-muted)' }}>
+              <Caret open={open} />
               {open ? 'Hide record' : 'Record'}
             </button>
             {open && (
@@ -1655,6 +1713,14 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
   }, [current.providedAnswers]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
+  // The run view carries the gate flattened into questions + verifyKinds, not a GateSpec. Rebuild the shape
+  // stepSummary needs so Runs and the Library detail say exactly the same sentence about the same step.
+  const currentGate: GateSpec = {
+    strictness: current.effectiveStrictness ?? null,
+    inputs: current.questions,
+    verify: current.verifyKinds.map((kind) => ({ kind })),
+  };
 
   const declineIncomplete = current.questions.some((q) => q.required !== 'required' && declined[q.name] && !(reasons[q.name] || '').trim());
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
@@ -1698,7 +1764,7 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
   // a mid-run enforcement flip can't tear a run, so the UI must show what the engine will actually do.
   const gateSkipped = stepGateSkipped(current.effectiveStrictness);
   const strictnessLabel = current.effectiveStrictness && !gateSkipped
-    ? (current.effectiveStrictness === 'hard' ? 'Enforcement on · blocking' : current.effectiveStrictness === 'warn' ? 'Enforcement on · warns' : uiLabel(current.effectiveStrictness))
+    ? (current.effectiveStrictness === 'hard' ? 'Checks must pass' : current.effectiveStrictness === 'warn' ? 'Checks warn only' : `Checks ${strictnessWords(current.effectiveStrictness)}`)
     : null;
 
   return (
@@ -1706,11 +1772,12 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
       {strictnessLabel && (
         <div className="mb-2 inline-block text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>{strictnessLabel}</div>
       )}
-      <Markdown md={current.instructions} />
+      <div className="text-[12px]" style={{ color: 'var(--sem-fg)' }}>{stepSummary(current.ops, currentGate)}</div>
+      <AssistantInstructions md={current.instructions} open={showInstructions} onToggle={() => setShowInstructions((o) => !o)} />
 
       {current.handOff?.gateOff && (
         <div className="mt-3 rounded-md px-2.5 py-2 text-[11.5px]" style={{ background: 'var(--sem-surface)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }}>
-          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>This step hands off to {current.handOff.calleeTitle || 'another playbook'}.</div>
+          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>This step hands off to {current.handOff.calleeTitle || 'another workflow'}.</div>
           <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>Its gate is turned off, so it asks no questions and hands nothing back.{current.handOff.nextStepTitle ? ` ${current.handOff.nextStepTitle} needs those values.` : ''}</div>
           <div className="mt-2 flex gap-2">
             <button type="button" className="rounded-md border px-2 py-1 text-[11px] font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} onClick={() => { setCallGate('on'); void doSubmit('on'); }}>Turn its gate on for this run</button>
@@ -1729,14 +1796,14 @@ function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
           questions with a notice tacked on. Enforced: the gate form (questions + the checks the engine will run). */}
       {gateSkipped ? (
         <div className="mt-3 rounded-md px-2.5 py-2 text-[11.5px]" style={{ background: 'var(--sem-surface)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)', color: 'var(--sem-fg)' }}>
-          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>Gate skipped</div>
-          <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>This step’s gate is off, so its questions and checks are skipped and nothing is recorded as verified for it. Submit to advance the run.</div>
+          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>Checks are turned off for this step</div>
+          <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>It asks you nothing and records nothing as checked. Submit to move the run on.</div>
         </div>
       ) : (
         <>
           {current.questions.length > 0 && (
             <div className="mt-3 flex flex-col gap-3">
-              <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Gate</div>
+              <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>What this step needs from you</div>
               {current.questions.map((q) => (
                 <GateField key={q.name} q={q}
                   value={vals[q.name] ?? ''} declined={!!declined[q.name]} reason={reasons[q.name] ?? ''} error={fieldErr[q.name]}
@@ -1863,7 +1930,7 @@ ${v.detail}` : ''}` : v.detail;
   return (
     <span title={tip} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1"
       style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 34%, transparent)` }}>
-      <span>{glyph}</span> {uiLabel(v.kind)}{v.status === 'unavailable' ? ' (blocked)' : ''}
+      <span aria-hidden>{glyph}</span> {checkTitle(v.kind)}{v.status === 'unavailable' ? ' (blocked)' : ''}
     </span>
   );
 }
@@ -1882,15 +1949,16 @@ function AvailabilitySwitch({ on, label, title, onToggle }: { on: boolean; label
   );
 }
 
-export function SourceBadge({ source }: { source: string }) {
+export function SourceBadge({ source, name }: { source: string; name?: string }) {
   const stock = source === 'stock';
+  const copy = !stock && !!name && name in GROUP_OF;
   return (
     <span className="shrink-0 text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded"
-      title={stock ? 'Built into Semanticus and read-only' : 'A workflow saved with your model'}
+      title={stock ? 'Built into Semanticus and read-only' : copy ? 'Your project copy of a built-in workflow' : 'A workflow saved with this project'}
       style={stock
         ? { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }
         : { color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-      {stock ? 'Built-in' : 'Custom'}
+      {stock ? 'Built-in' : copy ? 'Your copy' : 'Project'}
     </span>
   );
 }
@@ -1914,11 +1982,26 @@ function StatusNode({ status }: { status: string }) {
     </div>
   );
 }
+// The assistant's own instructions, collapsed. They are written for the assistant (tool names, conventions,
+// journey references), so they are never the first thing a person reads — but they must stay reachable.
+export function AssistantInstructions({ md, open, onToggle, className = 'mt-1.5' }: { md: string; open: boolean; onToggle: () => void; className?: string }) {
+  if (!md?.trim()) return null;
+  return (
+    <>
+      <button onClick={onToggle} aria-expanded={open} className={`${className} flex items-center gap-1 text-[11px] font-medium`} style={{ color: 'var(--sem-muted)' }}>
+        <Caret open={open} />
+        Instructions for your assistant
+      </button>
+      {open && <Markdown md={md} className="mt-1.5" />}
+    </>
+  );
+}
+
 export function OpChip({ op, onStage }: { op: string; onStage?: (id: string) => void }) {
-  const label = op === 'export_workflow_evidence' ? 'Evidence report'
-    : op === 'add_plan_item' ? 'Stage it now'
-    : op === 'get_plan' ? 'Open Change Plan'
-    : uiLabel(op);
+  const label = opTitle(op);
+  const [hint, setHint] = useState<string | null>(null);
+  useEffect(() => { let live = true; void opHints().then((m) => { if (live) setHint(m[op] ?? null); }); return () => { live = false; }; }, [op]);
+  const tip = hint ? `${hint} Your assistant does that part.` : 'Your assistant does that part.';
   const clickable = op === 'add_plan_item' || op === 'get_plan';
   const go = async () => {
     if (op === 'get_plan') {
@@ -1936,14 +2019,14 @@ export function OpChip({ op, onStage }: { op: string; onStage?: (id: string) => 
   };
   if (!clickable) {
     return (
-      <span title="The AI Assistant does that part." className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-        <span style={{ color: 'var(--sem-accent)' }}>▸</span> {label}
+      <span title={tip} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+        <span style={{ color: 'var(--sem-accent)' }} aria-hidden>▸</span> {label}
       </span>
     );
   }
   return (
-    <button type="button" onClick={() => void go()} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-      <span style={{ color: 'var(--sem-accent)' }}>▸</span> {label}
+    <button type="button" title={tip} onClick={() => void go()} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      <span style={{ color: 'var(--sem-accent)' }} aria-hidden>▸</span> {label}
     </button>
   );
 }
@@ -1967,8 +2050,7 @@ function ReasonButton({ label, title, onConfirm, danger }: { label: string; titl
   const color = danger ? 'var(--sem-bad)' : 'var(--sem-fg)';
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} title={title} className="text-[12px] px-3 py-1.5 rounded-lg font-medium whitespace-nowrap"
-        style={{ background: 'var(--sem-surface-2)', color, border: '1px solid var(--sem-border)' }}>{label}</button>
+      <button onClick={() => setOpen(true)} title={title} className="sem-btn" style={{ color }}>{label}</button>
     );
   }
   const confirm = async () => {
@@ -2007,8 +2089,7 @@ export function SectionTitle({ children }: { children: React.ReactNode }) {
 export function Button({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {children}
     </button>
   );

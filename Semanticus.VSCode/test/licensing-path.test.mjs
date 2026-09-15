@@ -34,11 +34,14 @@ assert.match(bridge, /function manageLicense\(\)[\s\S]*type: 'manageLicense'/,
   'the bridge must expose a URL-free account action');
 assert.match(pro, /function LicenseButton\(\)[\s\S]*Pro options[\s\S]*Upgrade to Pro/,
   'Studio must show tier-appropriate Pro-page copy');
-assert.match(pro, /onReconnect\(\(\) => \{ tierPromise = null; void fetchTier\(\); \}\)/,
-  'Studio must refresh the tier after activation restarts the engine');
+// Still a refresh on reconnect, but it INVALIDATES first. Dropping the cached promise alone left the old
+// grant published, so between a licence lapsing and the new answer landing every Pro page stayed mounted and
+// kept calling paid operations (Astra, 2026-09-15). The refresh is now three steps and all three matter.
+assert.match(pro, /onReconnect\(\(\) => \{[\s\S]{0,200}?generation\+\+;[\s\S]{0,120}?tierPromise = null;[\s\S]{0,160}?publish\(\{ tier: 'unknown', features: \[\] \}\);[\s\S]{0,80}?void fetchTier\(\);/,
+  'Studio must invalidate the grant, then refresh the tier, after activation restarts the engine');
 assert.match(pro, /function UpsellNotice[\s\S]*onClick=\{manageLicense\}[\s\S]*Upgrade to Pro/,
   'every contextual Pro invitation must contain a direct upgrade action');
-assert.match(app, /<LicenseButton \/>/, 'the licensing pathway must stay ambient in the Studio header');
+assert.doesNotMatch(app, /<LicenseButton \/>/, 'the shell keeps licensing inside Help instead of competing with the five-area navigation');
 assert.match(entitlement, /ManageUrl[^\n]*LicenseEntitlement\.ManageUrl/,
   'the entitlement DTO must carry the engine-owned management URL through both doors');
 assert.match(license, /public const string ManageUrl = "https:\/\/[^"]+";[\s\S]*public const string RenewUrl = ManageUrl/,

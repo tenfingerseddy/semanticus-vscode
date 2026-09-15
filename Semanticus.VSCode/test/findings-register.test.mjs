@@ -554,6 +554,12 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         3954266912: 'Semanticus.VSCode/webview/src/workflowlayout.mjs',
         3954382477: 'Semanticus.VSCode/webview/src/workflowlayout.mjs',
         3954382480: 'Semanticus.Engine/WorkflowUpgrade.cs',
+        3998351876: 'Semanticus.VSCode/package.json',
+        3998351878: 'Semanticus.VSCode/scripts/assistant-pack.mjs',
+        4000562048: 'docs/redesign/task-briefs/UX01.md',
+        4000562051: 'tools/render-redesign-progress.py',
+        4000562055: 'tools/render-redesign-progress.py',
+        4000562058: 'docs/redesign/task-briefs/UX16.md',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {
@@ -839,7 +845,9 @@ const taskRow = (tasks, id) => {
     }
 }
 
-// ---- 20. THE PUBLISHED PAGE DOES NOT CONTRADICT ITS OWN MERGED CLAIM (covers F-076) ----------------
+// ---- 20. THE PUBLISHED PAGE DOES NOT CONTRADICT ITS OWN MERGED CLAIM (covers F-076) -----------------
+// The redesign replaces the dashboard with a view generated from TASKS.md. Keep this historical
+// regression on its archived artifact; later dashboards need not repeat a July milestone forever.
 //
 // F-076 was NOT "the page is inaccurate", which is not a checkable claim and would have made this section
 // theatre. It was a SPLIT-BRAIN page: the stat tiles and the revision footer were moved forward to say
@@ -853,7 +861,7 @@ const taskRow = (tasks, id) => {
 // the record of the fix, so a correct page would fail. The assertion is therefore scoped to everything
 // BEFORE <footer>, which is the page's claim about the present.
 {
-    const page = await readDoc('docs/progress.html');
+    const page = await readDoc('docs/archive/progress-2026-09-06.html');
     const cut = page.indexOf('<footer>');
     assert.notEqual(cut, -1,
         'docs/progress.html has no <footer>, so its current state cannot be told apart from its revision ' +

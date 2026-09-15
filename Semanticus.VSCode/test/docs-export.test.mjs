@@ -75,4 +75,12 @@ const noPersp = renderDoc(dto, { ...allOn, perspectives: false }, DEFAULT_DOC_BR
 assert.doesNotMatch(noPersp.html, /Sales handover/);
 assert.doesNotMatch(noPersp.markdown, /Sales handover/);
 
+// M21: the in-app preview iframe is sandboxed without allow-scripts, so the exported file's filter script
+// logged two console errors every time Model > Docs opened. The export keeps its script; the preview has none.
+assert.match(rendered.html, /<script>function docFilter/, 'the EXPORTED file keeps its own search filter');
+assert.equal(typeof rendered.previewHtml, 'string', 'renderDoc must also return a preview-safe document');
+assert.doesNotMatch(rendered.previewHtml, /<script/i, 'the previewed document must carry no script at all');
+assert.match(rendered.previewHtml, /Sales handover/, 'the preview is the same document, only without the script');
+assert.match(viewSource, /srcDoc=\{rendered\?\.previewHtml/, 'the preview iframe must render the script-free document');
+
 console.log('Docs export provenance, Prep for AI, and perspectives tests passed');

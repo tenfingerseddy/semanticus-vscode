@@ -33,6 +33,14 @@ namespace Semanticus.Engine
         public string CreatedWhen { get; set; }      // ISO-8601
         public bool Enabled { get; set; } = true;
 
+        /// <summary>The Tests-and-queries connection this check was AUTHORED against (the LiveIdentityFor shape,
+        /// "live:" + hash of endpoint|database) and its display label. A RECORD, never a pin: the run still uses
+        /// whichever connection is current, and the evidence says "authored against X, ran against Y" when they
+        /// differ. Null when the check was authored with nothing connected. Stamped at save from the live
+        /// connection when the caller did not supply one, so both doors record it without asking.</summary>
+        public string AuthoredAgainst { get; set; }
+        public string AuthoredAgainstLabel { get; set; }
+
         /// <summary>Optional per-test timing budget in ms. Setting one OPTS the measure into the clear-cache
         /// single-run timing pass; absent = never timed-judged, so the Performance category cannot activate by
         /// surprise (a perf threshold must be declared, not defaulted — hard thing #5).</summary>
@@ -52,7 +60,9 @@ namespace Semanticus.Engine
     /// </summary>
     public static class TestSuiteStore
     {
-        public const int SchemaVersion = 1;
+        // 2 (1.2.0): a recorded run keeps every check's outcome, not only the run's totals. A version-1 line
+        // still loads; it simply has no outcomes, and the reader says so rather than showing an empty run.
+        public const int SchemaVersion = 2;
         public const string SubDir = "tests";
         public const string SuiteFile = "suite.jsonl";
         public const string RunsFile = "runs.jsonl";

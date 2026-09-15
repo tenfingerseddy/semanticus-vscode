@@ -46,7 +46,7 @@ export function deployHeaderState(input: DeployHeaderInput): DeployHeaderState {
     return { line: `Editing ${model} · checking for changes · ${restore}`, resolved: false };
   }
   if (!input.liveBound) {
-    return { line: `Editing ${model} · not connected to a live model · ${restore}`, resolved: true };
+    return { line: `Editing ${model} · no publish destination yet · ${restore}`, resolved: true };
   }
   if (input.previewError) {
     return { line: `Editing ${model} · publishing to ${input.targetName} · could not check for changes · ${restore}`, resolved: true };
@@ -58,6 +58,19 @@ export function deployHeaderState(input: DeployHeaderInput): DeployHeaderState {
     ? 'nothing to publish'
     : input.changeCount === 1 ? '1 change waiting' : `${input.changeCount} changes waiting`;
   return { line: `Editing ${model} · publishing to ${input.targetName} · ${waiting} · ${restore}`, resolved: true };
+}
+
+export type PublishEntryState = 'choose-destination' | 'review' | 'compare';
+
+// What the Publishing card shows below its header. Pure, because the review card must never render without a
+// resolved destination: a confirm with no target invites "Publish to No live target" and "Publish anyway with a
+// reason" against nothing. No destination outranks every other state, so there is one action on offer.
+// "What to publish" is the default view for a resolved destination: the embedded comparison, ticked and ready,
+// with no separate link to reach it.
+export function publishEntryState(input: { canPublish: boolean; publishOpen: boolean }): PublishEntryState {
+  if (!input.canPublish) return 'choose-destination';
+  if (input.publishOpen) return 'review';
+  return 'compare';
 }
 
 export function publishAccountLine(account?: string | null): string {
@@ -108,3 +121,35 @@ export function checkingCopy(targetName: string): string {
   const target = targetName || 'the live model';
   return `Checking ${target} for changes.`;
 }
+
+// A rollback result is read from `applied` and `failedRefs`, never from the absence of an error: the engine returns
+// applied=false with a note when the target already matches the point, and a committed rollback can still carry
+// objects it could not restore. The line claims exactly what happened.
+export type RollbackOutcome = { applied: boolean; failedRefs?: string[] | null; note?: string | null; error?: string | null };
+export function rollbackResultLine(r: RollbackOutcome, target: string, when: string): string {
+  if (r.error) return r.error;
+  if (!r.applied) return r.note || `${target} already matches this restore point. Nothing to roll back.`;
+  const failed = r.failedRefs ?? [];
+  const base = `Restored ${target} to the point from ${when}`;
+  if (failed.length > 0) {
+    const names = failed.slice(0, 3).join(', ') + (failed.length > 3 ? ` and ${failed.length - 3} more` : '');
+    return `${base}, except ${failed.length} object${failed.length === 1 ? '' : 's'} that could not be restored: ${names}. Review changes to see what differs now.`;
+  }
+  return `${base}. Your local model edits are unchanged; review changes to see what differs now.`;
+}
+
+// After a subset publish the grid is re-read. Only a fresh, successful comparison may claim that what is still shown is
+// unpublished; when the re-read fails the write summary stays and the list is marked as possibly out of date.
+export function publishedSubsetLine(input: { count: number; target: string; failed: number; refreshed: boolean }): string {
+  const changes = input.count === 1 ? '1 change' : `${input.count} changes`;
+  const head = `Published ${changes} to ${input.target}.`;
+  const failed = input.failed > 0 ? ` ${input.failed} could not be published.` : '';
+  if (!input.refreshed) return `${head}${failed} The comparison could not be refreshed, so the list below may be out of date. Run Compare again to see what remains.`;
+  return `${head}${failed} The differences still shown are not yet published.`;
+}
+
+// The stage as a person writes it. The registry stores canonical ids, which read like a typo in a sentence
+// ("to Contoso Sales · uat"). A label outside the standard four is somebody's own word, so it prints as typed.
+// Display only: permission decisions still key off the raw label.
+const PUBLISH_STAGE_NAMES: Record<string, string> = { local: 'Local', dev: 'Development', uat: 'UAT', prod: 'Production' };
+export function publishStageName(label: string): string { return PUBLISH_STAGE_NAMES[label.trim().toLowerCase()] ?? label; }

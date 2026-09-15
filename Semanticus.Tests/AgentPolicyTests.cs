@@ -182,17 +182,18 @@ namespace Semanticus.Tests
         [Fact]
         public void An_agent_cannot_change_the_policy()
         {
-            Assert.Throws<InvalidOperationException>(() => AgentPolicyStore.SetPreset("open", "agent", isPro: true));
+            Assert.Throws<InvalidOperationException>(() => AgentPolicyStore.SetPreset("open", "agent"));
             Assert.Throws<InvalidOperationException>(() => AgentPolicyStore.SetEnabled(false, "agent"));
-            Assert.Throws<InvalidOperationException>(() => AgentPolicyStore.SetCell("DeployLive", "prod", "allow", "agent", isPro: true));
+            Assert.Throws<InvalidOperationException>(() => AgentPolicyStore.SetCell("DeployLive", "prod", "allow", "agent"));
         }
 
+        /// <summary>Kane made the whole agent policy matrix free on 2026-09-15. Configuring it is a human-only
+        /// action on any tier, and the kill switch stays free as it always was.</summary>
         [Fact]
-        public void Configuring_the_matrix_needs_Pro_but_the_kill_switch_is_free()
+        public void Configuring_the_matrix_is_free_and_so_is_the_kill_switch()
         {
-            Assert.Throws<Semanticus.Engine.Entitlement.EntitlementException>(() => AgentPolicyStore.SetPreset("open", "human", isPro: false));
-            Assert.Throws<Semanticus.Engine.Entitlement.EntitlementException>(() => AgentPolicyStore.SetCell("DeployLive", "prod", "allow", "human", isPro: false));
-            // ...but a free user can always turn the whole guardrail off (never route around safety).
+            Assert.NotNull(AgentPolicyStore.SetPreset("open", "human"));
+            Assert.NotNull(AgentPolicyStore.SetCell("DeployLive", "prod", "allow", "human"));
             var p = AgentPolicyStore.SetEnabled(false, "human");
             Assert.False(p.Enabled);
         }
@@ -208,10 +209,10 @@ namespace Semanticus.Tests
         [Fact]
         public void A_pro_human_can_switch_preset_and_override_a_cell()
         {
-            AgentPolicyStore.SetPreset("client", "human", isPro: true);
+            AgentPolicyStore.SetPreset("client", "human");
             Assert.Equal("client", AgentPolicyStore.Get().Preset);
 
-            AgentPolicyStore.SetCell("DeployLive", "prod", "ask", "human", isPro: true);   // loosen prod from deny to ask
+            AgentPolicyStore.SetCell("DeployLive", "prod", "ask", "human");   // loosen prod from deny to ask
             var p = AgentPolicyStore.Get();
             Assert.Equal("custom", p.Preset);   // a cell edit means it no longer matches a named preset
             Assert.Equal(GateOutcome.Ask, AgentPolicyGuard.Decide(AgentCapability.DeployLive, "prod", "agent", true, p).Outcome);

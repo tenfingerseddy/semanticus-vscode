@@ -1,100 +1,63 @@
 ---
 name: deploy-to-production
-title: Promote a model to production safely
-description: Review the change like a pull request, gate on a clean BPA and a non-regressed readiness grade, dry-run against the target ALWAYS, then promote through separate stages; the live ops stay consent-gated and the run never bypasses them.
+title: Publish changes
+description: Choose the configured destination, preview the actual change, publish under its current permission gate, and record what happened.
 version: 1
 strictness: hard
+whenToUse: "Use when reviewed model changes are ready for a configured test or production destination. For a risky edit that still needs impact review, use Review a risky change; for a report-dependent rename, use Rename with impact review."
 triggers: [deploy_stage, deploy_live, preview_deploy]
 ---
 
-## Step 1: Review the change as a diff
+## Step 1: Choose the destination and change set
 
-Treat a deploy like a pull request. Run `model_diff` to see the semantic before/after, and
-read the accountable record with `list_verified_edits`; `export_verified_edits` captures it for the change
-log. Nothing proceeds until you have read exactly what changed and confirmed every change is intended: a
-deploy is the wrong moment to discover a surprise edit.
-
-```yaml gate
-ops: [model_diff, list_verified_edits, export_verified_edits]
-inputs:
-  - name: diffReviewed
-    question: "Have you reviewed the full before/after diff (model_diff + verified edits) and confirmed every change is intended?"
-    type: text
-    required: answer-or-decline
-```
-
-## Step 2: Validate: BPA clean, readiness holds, RLS roles tested
-
-This is the hard gate and the full pre-deploy testing stage. Confirm no new best-practice
-violation and no readiness regression versus the start of this run: `bpa_clean` diffs violations against
-the run snapshot, `readiness_rescan` confirms the AI-readiness grade did not fall and no new finding
-appeared. Then validate security before promoting: list the roles with `list_roles` and confirm each has
-been attack-tested. Be honest about the offline limit: `run_dax` cannot impersonate a role (it has no
-role parameter), so prove each role either by simulating its filter with `CALCULATE` over the role's
-filter expression, or by real per-role impersonation against the PUBLISHED model post-deploy. The
-secure-with-rls workflow is where a role is proven to block out-of-scope rows; a promote should not be
-the first time security is checked. RLS never propagates through inactive relationships, and measures
-touching OLS-secured columns error for restricted users, so confirm each role returns the rows it should
-and no more. Fix any regression, or waive with a recorded reason, before moving on.
+Call `model_diff` once and review the changed objects and the verified-edit trail. Name the actual target
+workspace, pipeline stage or live model. Do not invent a dev-to-test-to-prod route when this project has no
+such configured pipeline. A wrong destination or an unexpected local edit stops the run here.
 
 ```yaml gate
-strictness: hard
-ops: [list_roles, run_dax]
-inputs:
-  - name: rlsTested
-    question: "Have you tested every RLS role (and any OLS-secured measures) for correct row/column visibility, so each role sees the rows it should and no more?"
-    type: text
-    required: answer-or-decline
-verify:
-  - kind: readiness_rescan
-    scope: model
-  - kind: bpa_clean
-    scope: model
-```
-
-## Step 3: Preview against the target: dry-run ALWAYS
-
-Never promote blind. Confirm you are pointed at the right endpoint with `connection_status`,
-then run `preview_deploy` and `deploy_gate` to see what WOULD change against the target: a dry run,
-ALWAYS, before any writeback. The preview shows the parameter rebinds the deployment rules will apply and
-any structural drops; read it the way you read Step 1's diff. Do not proceed if the preview shows anything
-you did not intend.
-
-```yaml gate
-ops: [preview_deploy, deploy_gate, connection_status]
-inputs:
-  - name: previewReviewed
-    question: "Have you dry-run the deploy (preview_deploy / deploy_gate) against the target and confirmed the previewed changes and parameter rebinds are correct?"
-    type: text
-    required: answer-or-decline
-```
-
-## Step 4: Promote through the right stage
-
-Separate dev / test / prod workspaces are ESSENTIAL: never publish local dev
-straight to production. Promote one stage at a time with `deploy_stage`, or via CI/CD with `cicd_publish`;
-deployment rules rebind parameters per stage (server/database/environment) so the same model binds to the
-right source in each. `deploy_live` and the live legs are consent- and commit-gated. This workflow surfaces
-them but NEVER bypasses that gate; the XMLA writeback runs dry-run-first (Step 3) and only commits on the
-user's explicit go-ahead. Confirm the target stage below before promoting.
-
-```yaml gate
-ops: [deploy_stage, deploy_live, cicd_publish, deployment_history]
+ops: [model_diff, list_verified_edits]
 inputs:
   - name: targetStage
-    question: "Which stage is this promoting to, and is it the correct NEXT stage (dev→test→prod, not straight to prod)?"
+    question: "Which configured workspace, pipeline stage or live model is the intended destination?"
     type: text
-    required: answer-or-decline
+    required: required
 ```
 
-## Step 5: Record and monitor
+## Step 2: Preview the relevant checks
 
-Close the loop. Read `deployment_history` to confirm the promotion recorded, and `save_model`
-so the deployed state is captured beside the model. Set up refresh success/failure alerting on the target.
-Note the monitoring caveat: usage and refresh telemetry come via the admin monitoring workspace or Log
-Analytics, and Fabric workspace monitoring (2025+) partially supersedes and is MUTUALLY EXCLUSIVE with Log
-Analytics: pick one per workspace, don't wire both. Record what was promoted and to which stage so the
-next deploy has a clean history to diff against.
+Confirm the connection and run `preview_deploy` plus `deploy_gate` against the named target. Review parameter
+rebinding, creates, updates and any blocking findings. If the model has roles, call `list_roles` and perform
+the available role check; if it has none, record that RLS was not applicable. `run_dax` cannot impersonate a
+role, so a simulation is not a published-role proof. Do not call an old readiness or BPA warning a new
+failure without reading the target-specific gate result.
+
+```yaml gate
+ops: [connection_status, preview_deploy, deploy_gate, list_roles, run_dax]
+inputs:
+  - name: previewReviewed
+    question: "What did the target preview and deploy gate show, and which RLS path applies: published role test, offline simulation, or no roles?"
+    type: text
+    required: required
+```
+
+## Step 3: Publish with the configured permission
+
+Use the operation that matches the chosen destination: `deploy_stage` for a pipeline stage, `deploy_live`
+for XMLA metadata writeback, or `cicd_publish` for a configured full-definition publish. These operations
+are dry-run or human-gated as described by their results. Keep the change local when the preview is wrong,
+the gate blocks, or the required target permission is absent. A successful metadata publish is not a data
+refresh or usage-monitoring result.
+
+```yaml gate
+ops: [deploy_stage, deploy_live, cicd_publish]
+```
+
+## Step 4: Record the actual result
+
+Read `deployment_history` when a pipeline was used and call `save_model` when the local recovery point should
+be captured. Record the target, operation, result, permission or human token used, and any required post-
+publish role or refresh check. Mention monitoring only when an actual monitoring result exists; do not imply
+that a history row proved refresh health.
 
 ```yaml gate
 ops: [deployment_history, save_model]

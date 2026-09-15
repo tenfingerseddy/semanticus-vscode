@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
 import { KIND_COLOR, KIND_GLYPH, KIND_LABEL, fieldFacetOptions, makeScope, rankNodeMatches, resolveColor, tableFacetOptions, useFillHeight, type LineageNode, type LineageResult } from './lineagetypes';
 import { MultiSelect } from './lineageslicer';
+import { CANVAS_CHIP_MIN_H, CanvasChip, RowMenu, RowSep, ToolRow, canvasInsetStyle, useToolRow, visibleBottomInset } from './toolrow';
 import { uiLabel } from './copy';
 
 // ===================================================================================================
@@ -20,6 +21,13 @@ import { uiLabel } from './copy';
 
 const NODE_W = 188;
 const NODE_H = 52;
+// React Flow's minimap is a FIXED box (200x150 plus its 1px border) however small the pane gets — its size never
+// tracks the canvas, which is why a short pane turns it from a corner overview into a curtain over the cards. Measured
+// in the built bundle: 202x152. Used only to decide whether it still fits as a corner (see showMiniMap).
+// (Wording note: Tailwind scans the RAW source for class candidates, comments included, so an ordinary English word
+// that happens to be a utility name emits a stray rule into the shipped CSS. This paragraph used one and grew the
+// bundle by a rule that nothing renders. Prefer a synonym in prose whenever a word doubles as a Tailwind class.)
+const MINIMAP_BOX = 202 * 152;
 
 type Dir = 'upstream' | 'downstream';
 interface UnusedLite { ref: string; verdict: string }
@@ -154,7 +162,7 @@ function TreeNode({ data }: NodeProps<Node<CardData>>) {
 const nodeTypes = { lin: TreeNode, more: MoreNode };
 const FANOUT_CAP = 10;   // max children shown per node before a "+N more" tail — keeps any rank readable
 
-function LineageTreeInner({ graph, unusedItems, onOpenImpact }: { graph: LineageResult | null; unusedItems: UnusedLite[] | undefined; onOpenImpact: (ref: string) => void }) {
+function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts, caveat, error }: TreeViewProps) {
   const [root, setRoot] = useState<string | null>(null);
   const [dir, setDir] = useState<Dir>('downstream');
   const [orient, setOrient] = useState<'LR' | 'TB'>('LR');   // horizontal (left→right) or vertical (top→bottom)
@@ -169,6 +177,85 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact }: { graph: Lineage
   const [edges, setEdges] = useEdgesState<Edge>([]);
   const rf = useReactFlow();
   const [fillRef, treeH] = useFillHeight(440);   // the canvas fills the viewport height (dynamic to the window)
+  // The row folds in priority order when it runs out of room: slicers first, then the direction and layout
+  // pair, and only then the view switcher. Expand all, Collapse and Fit never fold - Fit is the control a
+  // person reaches for the moment a resize leaves the tree looking wrong.
+  const row = useToolRow(3);
+  // True once the person has panned/zoomed since the LAST fit — a resize-triggered auto-fit checks this so it never
+  // fights a manual view the person set up on purpose (see doFit / the canvas callback ref below).
+  const interactedSinceFit = useRef(false);
+  const doFit = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+    try { rf.fitView(opts ?? { padding: 0.2, duration: 300 }); } catch { /* not mounted */ }
+    interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
+  }, [rf]);
+  // Fit only once React Flow has MEASURED the cards. `node.measured` is filled on a render pass after the nodes are
+  // set, and a card's height is not known before that — so the single requestAnimationFrame this used to use fitted
+  // against a zero/stale box and left the tree parked below the viewport (measured at 1000x800: the cards sat under
+  // the canvas's bottom edge until Fit was pressed). Poll a few frames, then fit regardless, so a card that never
+  // reports a size cannot mean no fit at all.
+  const fitWhenMeasured = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+    let tries = 0;
+    const tick = () => {
+      const ns = rf.getNodes();
+      const ready = ns.length > 0 && ns.every((n) => (n.measured?.width ?? 0) > 0 && (n.measured?.height ?? 0) > 0);
+      if (ready || tries++ > 30) { doFit(opts); return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [rf, doFit]);
+
+  // Refit when the CANVAS resizes (a narrow pane, a window resize, or a VS Code panel drag) — otherwise the tree keeps
+  // whatever pan/zoom it had for the OLD size and cards end up sitting partly outside the new viewport until Fit is
+  // pressed by hand. Debounced (150ms) so a continuous drag-resize doesn't refit every frame, and gated by
+  // interactedSinceFit so a resize never undoes a view the person panned/zoomed into on purpose.
+  //
+  // The observer is attached from a CALLBACK REF, not a mount effect, and that is the whole fix. The canvas is NOT in
+  // this component's first render: `graph` arrives async, so the first paint is the "Loading the lineage tree…" panel
+  // with no canvas element at all. A `useEffect(..., [])` therefore read a null ref, returned, and — having no deps to
+  // re-run on — never attached an observer for the entire life of that first visit. Measured on the built bundle,
+  // fresh Model > Lineage > Tree at 1440x900 resized to 1000x800: both cards finished outside the canvas (Margin's box
+  // reached x=1186, y=738 against a canvas ending at x=983, y=711), while the identical resize after a Graph→Tree
+  // remount was clean — because a remount renders the canvas on the FIRST render, so the old effect's ref was set.
+  // A callback ref fires the instant the element attaches, whenever that turns out to be. (Same class of bug and the
+  // same remedy as useFillHeight's callback ref in lineagetypes.ts.)
+  const roRef = useRef<ResizeObserver | null>(null);
+  const roTimer = useRef<number | null>(null);
+  const [paneBox, setPaneBox] = useState({ w: 0, h: 0, inset: 0 });
+  // Read the live helpers through refs so the callback ref itself can have EMPTY deps. A ref whose identity changes is
+  // re-invoked by React with null and then the element on every render, which would disconnect/reconnect the observer
+  // (and fire its initial callback) each time — a refit storm dressed up as a resize.
+  const fillRefLive = useRef(fillRef); fillRefLive.current = fillRef;
+  const fitLive = useRef(fitWhenMeasured); fitLive.current = fitWhenMeasured;
+  const canvasRef = useCallback((el: HTMLDivElement | null) => {
+    fillRefLive.current(el);   // useFillHeight still owns the pane's height
+    roRef.current?.disconnect(); roRef.current = null;
+    if (roTimer.current != null) { window.clearTimeout(roTimer.current); roTimer.current = null; }
+    if (!el) { setPaneBox({ w: 0, h: 0, inset: 0 }); return; }
+    // The same observer also reports how far the pane runs behind the page's bottom bar, so the in-canvas chips
+    // can sit clear of the strip nobody can see (see toolrow.tsx).
+    const measure = () => setPaneBox((p) => {
+      const inset = visibleBottomInset(el);
+      return (p.w === el.clientWidth && p.h === el.clientHeight && p.inset === inset) ? p : { w: el.clientWidth, h: el.clientHeight, inset };
+    });
+    measure();
+    const ro = new ResizeObserver(() => {
+      measure();
+      if (roTimer.current != null) window.clearTimeout(roTimer.current);
+      roTimer.current = window.setTimeout(() => { roTimer.current = null; if (!interactedSinceFit.current) fitLive.current({ padding: 0.2, duration: 200 }); }, 150);
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
+  // A stable callback ref is not re-invoked on re-render, so unmount is the only place left to tear the observer down.
+  useEffect(() => () => { roRef.current?.disconnect(); if (roTimer.current != null) window.clearTimeout(roTimer.current); }, []);
+
+  // The minimap is an overview in a CORNER, not a curtain. React Flow draws it at a fixed ~200x150 whatever the pane
+  // is, and fitView spreads the graph across the whole pane, so on a short pane the overlay lands on real cards:
+  // measured on the built bundle at 1000x800 the pane is 966x200 and the 202x152 minimap covers 16% of its width but
+  // 76% of its height, sitting on the Margin card even after a correct Fit. Hide it once it stops being a corner —
+  // when its own box is more than ~12% of the pane's area. Measured either side of that line with room to spare: 6.2%
+  // of the pane at 1440x900 (shown), 15.9% at 1000x800 (hidden). The graph, the zoom Controls and Fit all stay.
+  const showMiniMap = paneBox.w > 0 && paneBox.h > 0 && (MINIMAP_BOX / (paneBox.w * paneBox.h)) <= 0.12;
 
   const nodeByRef = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.ref, n])), [graph]);
   // Kinds present, ordered coarse→fine for the granularity filter (tables → columns → measures → reports → …).
@@ -282,7 +369,7 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact }: { graph: Lineage
     setNodes(rfNodes as Node<CardData>[]);
     setEdges(rfEdges);
     // fit after the DOM updates — only here (structural changes: new root / direction / orient / expand / show-more)
-    requestAnimationFrame(() => { try { rf.fitView({ padding: 0.2, duration: 300 }); } catch { /* not mounted */ } });
+    fitWhenMeasured();
   }, [sig, root, dir, orient, expandedKey, showAllKey, hiddenKindsKey, tablesKey, fieldsKey, cb]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Decoration WITHOUT a relayout/refit: re-apply selection highlight + safe-to-remove verdict onto the existing nodes
@@ -301,111 +388,133 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact }: { graph: Lineage
 
   const rootNode = root ? nodeByRef.get(root) : null;
 
-  if (!graph) return <Panel><Empty>Loading the lineage tree…</Empty></Panel>;
-  if ((graph.nodes?.length ?? 0) === 0) return <Panel><Empty>No objects yet. Open a model.</Empty></Panel>;
+  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the lineage tree…</div>;
+  if ((graph.nodes?.length ?? 0) === 0) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Nothing to trace yet. Open a model first.</div>;
+
+  const searchBox = (
+    <div className="relative">
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search to start from" spellCheck={false}
+        aria-label="Start from a measure, table or column"
+        onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { cb.reroot(matches[0].ref); setSearch(''); } else if (e.key === 'Escape') setSearch(''); }}
+        className="sem-toolrow-input" style={{ width: 168, borderColor: 'var(--sem-accent)' }} />
+      {matches.length > 0 && (
+        <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width: 240, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
+          {matches.map((m) => (
+            <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); cb.reroot(m.ref); setSearch(''); }}
+              className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
+              <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
+              <span className="truncate flex-1">{m.name}</span>
+              {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 80 }}>{m.table}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+  const directionControls = (
+    <>
+      <ToolBtn active={dir === 'upstream'} onClick={() => setDir('upstream')} title="What this is built from">↑ Upstream</ToolBtn>
+      <ToolBtn active={dir === 'downstream'} onClick={() => setDir('downstream')} title="What relies on this">↓ Downstream</ToolBtn>
+      <ToolBtn active={orient === 'LR'} onClick={() => setOrient('LR')} title="Lay the steps out left to right">⇄ Horizontal</ToolBtn>
+      <ToolBtn active={orient === 'TB'} onClick={() => setOrient('TB')} title="Lay the steps out top to bottom">⇅ Vertical</ToolBtn>
+    </>
+  );
+  const sliceControls = (
+    <>
+      <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the tree down to some of the tables" />
+      <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the tree down to certain measures or columns" />
+      {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }} title="Show everything again">Clear</ToolBtn>}
+    </>
+  );
+  // The kinds are a list a model decides the length of, so they are ALWAYS one menu. Spelling eight of them out
+  // is what used to push the tree's controls onto a second row.
+  const kindMenu = kindsPresent.length > 1 ? (
+    <RowMenu label="Show" align="end" badge={hiddenKinds.size || undefined} title="Choose which kinds of thing the tree shows">
+      {kindsPresent.map((k) => {
+        const on = !hiddenKinds.has(k);
+        return (
+          <button key={k} className="sem-btn sem-btn-sm" aria-pressed={on} onClick={() => toggleKind(k)}
+            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)} style={{ opacity: on ? 1 : 0.55 }}>
+            <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
+            {KIND_LABEL[k] ?? k}
+          </button>
+        );
+      })}
+    </RowMenu>
+  ) : null;
 
   return (
-    <Panel className="p-0 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b flex-wrap" style={{ borderColor: 'var(--sem-border)' }}>
-        <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Dependency tree</span>
-        <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>Start from</span>
-        <div className="relative">
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="pick a measure, table or column…" spellCheck={false}
-            onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { cb.reroot(matches[0].ref); setSearch(''); } else if (e.key === 'Escape') setSearch(''); }}
-            className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ width: 230, background: 'var(--sem-bg)', color: 'var(--sem-fg)', border: '1px solid var(--sem-accent)' }} />
-          {matches.length > 0 && (
-            <div className="absolute z-10 mt-1 rounded-md overflow-hidden" style={{ width: 240, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
-              {matches.map((m) => (
-                <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); cb.reroot(m.ref); setSearch(''); }}
-                  className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
-                  <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
-                  <span className="truncate flex-1">{m.name}</span>
-                  {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 80 }}>{m.table}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        {rootNode && (
-          <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }} title="The current starting point. Type above or click a node's “root” button to change it">
-            root:
-            <span style={{ color: resolveColor(KIND_COLOR[rootNode.kind], '#9aa0aa') }}>{KIND_GLYPH[rootNode.kind] ?? '•'}</span>
-            <span className="font-medium truncate" style={{ color: 'var(--sem-fg)', maxWidth: 160 }}>{rootNode.name}</span>
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>direction</span>
-          <ToolBtn active={dir === 'upstream'} onClick={() => setDir('upstream')} title="What this is built from (its sources)">↑ Upstream</ToolBtn>
-          <ToolBtn active={dir === 'downstream'} onClick={() => setDir('downstream')} title="What depends on this (impact)">↓ Downstream</ToolBtn>
-          <span className="w-px h-4 mx-0.5" style={{ background: 'var(--sem-border)' }} />
-          <ToolBtn active={orient === 'LR'} onClick={() => setOrient('LR')} title="Horizontal: ranks flow left → right">⇄ Horizontal</ToolBtn>
-          <ToolBtn active={orient === 'TB'} onClick={() => setOrient('TB')} title="Vertical: ranks flow top → bottom">⇅ Vertical</ToolBtn>
-          <span className="w-px h-4 mx-0.5" style={{ background: 'var(--sem-border)' }} />
-          <ToolBtn onClick={expandAll} title="Reveal the whole chain from the root">Expand all</ToolBtn>
-          <ToolBtn onClick={collapseAll} title="Collapse back to the root">Collapse</ToolBtn>
-          <ToolBtn onClick={() => { try { rf.fitView({ padding: 0.2, duration: 300 }); } catch { /* */ } }}>Fit</ToolBtn>
-        </div>
-      </div>
+    <div className="h-full flex flex-col">
+      {/* ONE tool row. It used to be two: a "Dependency tree" strip with the search box and the layout buttons,
+          and a "slice / show" strip under it. The root, the counts and the model-only caveat are chips inside
+          the canvas now, and the groups fold into menus in priority order before anything can wrap. */}
+      <ToolRow rowRef={row.ref}>
+        {row.level >= 3
+          ? <RowMenu label="Tree" title="Switch to another view of lineage">{modeSwitch}</RowMenu>
+          : modeSwitch}
+        <RowSep />
+        {searchBox}
+        <RowSep />
+        {row.level >= 2
+          ? <RowMenu label="Direction" title="Which way to follow the chain, and how to lay it out">{directionControls}</RowMenu>
+          : directionControls}
+        <RowSep />
+        <ToolBtn onClick={expandAll} title="Open the whole chain from the starting point">Expand all</ToolBtn>
+        <ToolBtn onClick={collapseAll} title="Close everything back to the starting point">Collapse</ToolBtn>
+        <ToolBtn onClick={() => doFit()} title="Fit the whole tree in view">Fit</ToolBtn>
+        <RowSep />
+        {row.level >= 1
+          ? <RowMenu label="Slice" align="end" badge={(selTables.size + selFields.size) || undefined} title="Cut the tree down to part of the model">{sliceControls}</RowMenu>
+          : sliceControls}
+        {kindMenu}
+      </ToolRow>
 
-      {/* Filter bar — SLICE the tree to a subset of tables / specific fields (multi-select), and set GRANULARITY by
-          hiding a kind (+ its branches) to move high-level (tables) → detail (+columns, +measures, +reports). Both
-          reduce cognitive load: pick the corner of the model you care about, see the shape first, then add grain. */}
-      <div className="flex items-center gap-1.5 px-3 py-1 border-b flex-wrap" style={{ borderColor: 'var(--sem-border)' }}>
-        <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>slice</span>
-        <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Prune the tree to a subset of tables" />
-        <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Prune the tree to specific measures / columns" />
-        {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }} title="Clear the slicers">Clear slice</ToolBtn>}
-        {kindsPresent.length > 1 && (
-          <>
-            <span className="w-px h-4 mx-1" style={{ background: 'var(--sem-border)' }} />
-            <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>show</span>
-          {kindsPresent.map((k) => {
-            const on = !hiddenKinds.has(k);
-            return (
-              <button key={k} onClick={() => toggleKind(k)} title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k) + ' nodes'}
-                className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md transition-[transform,filter] duration-100 active:scale-90"
-                style={{ background: on ? 'var(--sem-bg)' : 'transparent', border: '1px solid var(--sem-border)', color: on ? 'var(--sem-fg)' : 'var(--sem-muted)', opacity: on ? 1 : 0.5 }}>
-                <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
-                {KIND_LABEL[k] ?? k}
-              </button>
-            );
-          })}
-          </>
-        )}
-      </div>
-
-      <div ref={fillRef} style={{ height: treeH, position: 'relative' }}>
+      <div ref={canvasRef} style={{ height: treeH, position: 'relative', ...canvasInsetStyle(paneBox.inset) }}>
         <ReactFlow
           nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes}
           onNodeClick={(_, n) => setSelected(n.id)} onPaneClick={() => setSelected(null)}
+          onMove={(evt) => { if (evt) interactedSinceFit.current = true; }}   // evt is null for our own programmatic fitView calls, non-null for a real user drag/wheel
           fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2} maxZoom={2} proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{ type: 'default' }} nodesConnectable={false} elementsSelectable>
           <Background gap={20} color="rgba(140,140,160,0.12)" />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable nodeColor={(n) => resolveColor(KIND_COLOR[(n.data as CardData)?.node?.kind], '#9aa0aa')} maskColor="rgba(0,0,0,0.5)" style={{ background: 'var(--sem-surface-2)' }} />
+          {showMiniMap && <MiniMap pannable zoomable nodeColor={(n) => resolveColor(KIND_COLOR[(n.data as CardData)?.node?.kind], '#9aa0aa')} maskColor="rgba(0,0,0,0.5)" style={{ background: 'var(--sem-surface-2)' }} />}
         </ReactFlow>
-        {nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>Search or pick a root to trace its lineage.</div>}
+        {/* The honesty caveat keeps its own words and its own room. Truncating a warning into a tooltip would
+            hide the very thing it exists to say, so this is the one chip allowed to run to several lines. */}
+        {error && <CanvasChip at="top" tone="bad" note>{error}</CanvasChip>}
+        {!error && caveat && <CanvasChip at="top" tone="warn" note>{caveat}</CanvasChip>}
+        {/* Status and counts, which used to be a label and a chip on the row above. */}
+        <CanvasChip at="start" title={paneBox.h >= CANVAS_CHIP_MIN_H ? undefined : (counts ?? undefined)}>
+          {rootNode
+            ? <span>Starting from <span style={{ color: resolveColor(KIND_COLOR[rootNode.kind], '#9aa0aa') }}>{KIND_GLYPH[rootNode.kind] ?? '•'}</span> <b>{rootNode.name}</b></span>
+            : <span>No starting point picked yet</span>}
+          <span>{dir === 'upstream' ? 'what it is built from' : 'what relies on it'}</span>
+        </CanvasChip>
+        {counts && paneBox.h >= CANVAS_CHIP_MIN_H && !showMiniMap && <CanvasChip at="end">{counts}</CanvasChip>}
+        {nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>Search for a field above, or pick one, to trace it.</div>}
       </div>
-    </Panel>
+    </div>
   );
 }
 
-export function LineageTreeView(props: { graph: LineageResult | null; unusedItems: UnusedLite[] | undefined; onOpenImpact: (ref: string) => void }) {
+export interface TreeViewProps {
+  graph: LineageResult | null;
+  unusedItems: UnusedLite[] | undefined;
+  onOpenImpact: (ref: string) => void;
+  // The Lineage view switcher, owned by lineage.tsx. It leads this view's single tool row.
+  modeSwitch?: React.ReactNode;
+  counts?: string | null;
+  caveat?: string | null;
+  error?: string | null;
+}
+
+export function LineageTreeView(props: TreeViewProps) {
   return <ReactFlowProvider><LineageTreeInner {...props} /></ReactFlowProvider>;
 }
 
 // ---- local primitives (consistent with lineage.tsx) ------------------------------------------
-function Panel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border ${className.includes('p-0') ? '' : 'p-4'} ${className}`} style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
-}
-function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="text-[12px] py-10 text-center" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
-}
+// Every control on the row takes the shared dense scale, so the tool row holds one control height, not three.
 function ToolBtn({ active, onClick, children, title }: { active?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) {
-  return (
-    <button onClick={onClick} title={title} className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-[transform,filter,background-color] duration-100 active:scale-90 active:brightness-125 hover:brightness-110"
-      style={active ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-      {children}
-    </button>
-  );
+  return <button className="sem-btn sem-btn-sm" onClick={onClick} title={title} aria-pressed={active}>{children}</button>;
 }

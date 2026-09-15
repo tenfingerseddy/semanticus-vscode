@@ -81,7 +81,7 @@ const hiddenPalette = new Set(
 for (const command of [
   'semanticus.editMCode', 'semanticus.showLineage', 'semanticus.addToDiagram',
   'semanticus.copyObject', 'semanticus.pasteObject',
-  'semanticus.copyRefToModel', 'semanticus.copyRefObject', 'semanticus.pasteIntoModel',
+  'semanticus.copyFromModel',
   'semanticus.studioGoGroup', 'semanticus.studioGoTab',
 ]) {
   assert.equal(hiddenPalette.has(command), false, `D-142: ${command} must appear in the command palette`);
@@ -125,6 +125,40 @@ for (const name of operationNames) {
   assert.notEqual(shown, name, `the audit trail would show the raw id ${name}`);
 }
 
+// ---- the publish safety check, in plain words (Kane, 2026-09-12) -------------------------------------
+// A record of a publish that went ahead past a red check keeps its destination in ONE place: the sentence the
+// engine wrote into the record's summary. The record's machine-readable evidence carries the check result and
+// never the endpoint, so that sentence has to be read back apart to say the same thing in plain words. Two
+// generations of it exist on real models and both must be understood: the wording Kane read off his own audit
+// trail in July is still stored there and cannot be rewritten after the fact.
+assert.equal(typeof copyModule.readSafetyCheckOverride, 'function', 'copy.ts must export the red-check summary reader');
+const julyRecord = copyModule.readSafetyCheckOverride(
+  'gate RED (19 blocking BPA error(s)): override accepted to deploy to powerbi://api.powerbi.com/v1.0/myorg/ws/Sales');
+assert.ok(julyRecord, 'a record already sitting in a real audit trail must still be understood');
+assert.equal(julyRecord.kind, 'publish');
+assert.equal(julyRecord.problems, '19 blocking problems.');
+assert.equal(julyRecord.destination, 'powerbi://api.powerbi.com/v1.0/myorg/ws/Sales');
+const todayRecord = copyModule.readSafetyCheckOverride(
+  'Red safety check (2 errors to fix before this model can ship. Start with: X.). Published anyway with a written reason, to localhost:2/Blocked');
+assert.ok(todayRecord, 'the wording written from now on must be understood too');
+assert.equal(todayRecord.kind, 'publish');
+assert.equal(todayRecord.destination, 'localhost:2/Blocked');
+assert.equal(todayRecord.problems, '2 errors to fix before this model can ship. Start with: X.');
+const promoted = copyModule.readSafetyCheckOverride(
+  'gate RED (19 blocking BPA error(s)): override accepted to promote Dev→Test');
+assert.equal(promoted.kind, 'promote', 'a stage promotion past a red check is a different sentence');
+assert.equal(promoted.destination, 'Dev→Test');
+assert.equal(copyModule.readSafetyCheckOverride('Applied a 6-item change plan (2 renames).'), null,
+  'an ordinary summary is not a red-check publish');
+assert.equal(copyModule.readSafetyCheckOverride(undefined), null, 'a record with no summary is not a red-check publish');
+// The gloss is display only. It replaces engine vocabulary a person cannot read; it never edits the record.
+assert.equal(typeof copyModule.plainProblems, 'function', 'copy.ts must export the plain wording for what the check found');
+assert.doesNotMatch(copyModule.plainProblems('19 blocking BPA error(s)'), /BPA/, 'the old engine wording must not reach a person');
+assert.equal(copyModule.plainProblems('1 blocking BPA error(s)'), '1 blocking problem.');
+assert.equal(copyModule.plainProblems('3 blocking BPA warning(s)'), '3 blocking problems.');
+assert.equal(copyModule.plainProblems('2 errors and 41 warnings to fix before this model can ship.'),
+  '2 errors and 41 warnings to fix before this model can ship.', 'wording that is already plain is left alone');
+
 // ---- the cheat sheet's footer (D-211 / UX-04) --------------------------------------------------------
 // The footer claimed every listed chord was a normal VS Code keybinding. Several are handled inside the
 // panel itself, so the Keyboard Shortcuts editor cannot rebind them, and the footer has to say which.
@@ -159,9 +193,25 @@ for (const [name, source] of [['history', historySource], ['spec', specSource], 
   assert.doesNotMatch(source, /both update here live|both land here: live|syncs here live|additions appear live with an attribution chip/i,
     `${name} still claims the AI Assistant receives a live push`);
 }
-assert.match(historySource, /AI Assistant sees.*next call/i, 'history must state when the AI Assistant sees a change');
-assert.match(specSource, /AI Assistant sees.*next call/i, 'spec must state when the AI Assistant sees a change');
-assert.match(helpSource, /AI Assistant sees.*next call/i, 'help must state when the AI Assistant sees a change');
+// The copy layer's canonical term for the assistant is "your assistant" (T254). history.tsx and spec.tsx are
+// owned by their feature lanes and still say "AI Assistant", so the honesty check accepts either spelling; what
+// it will not accept is a surface that drops the timing sentence entirely.
+const copySource = readFileSync(resolve(extensionRoot, 'webview/src/copy.ts'), 'utf8');
+const seesOnNextCall = /(?:AI Assistant|your assistant) sees.*next call/i;
+assert.match(historySource, seesOnNextCall, 'history must state when the assistant sees a change');
+assert.match(specSource, seesOnNextCall, 'spec must state when the assistant sees a change');
+assert.match(helpSource, seesOnNextCall, 'help must state when the assistant sees a change');
+assert.match(copySource, seesOnNextCall, 'the shared assistant-sync sentence must state when the assistant sees a change');
+assert.match(helpSource, /ASSISTANT_SYNC_COPY/, 'help must use the shared assistant-sync sentence, not its own copy of it');
+// The two files this lane owns say "your assistant". The only permitted survivals are the literal VS Code command
+// titles from package.json, which a person has to read back off their own command palette.
+for (const [name, source] of [['copy.ts', copySource], ['help.tsx', helpSource]]) {
+  const withoutCommandTitles = source
+    .replaceAll('Semanticus: Connect AI Assistant', '')
+    .replaceAll('Install or Update Assistant Skills', '');
+  assert.doesNotMatch(withoutCommandTitles, /\bAI Assistant\b/,
+    `${name} must call the assistant "your assistant", not "AI Assistant"`);
+}
 
 // The MCP server's one-time instructions are also shipped copy. They must describe the real timing: the VS Code
 // view updates live, while the AI Assistant learns about the edit on its next call (D-203 / GOV-06).

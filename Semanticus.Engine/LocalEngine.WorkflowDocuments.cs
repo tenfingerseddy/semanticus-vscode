@@ -35,14 +35,11 @@ namespace Semanticus.Engine
         private static WorkflowDef ParseWorkflowDocument(string text) =>
             WorkflowParser.Parse(text != null && text.Length > 0 && text[0] == (char)0xfeff ? text.Substring(1) : text);
 
-        private static WorkflowDocumentResult ReadWorkflowDocument(string name, string userDir, string stockDir)
+        private WorkflowDocumentResult ReadWorkflowDocument(string name, string userDir, string stockDir)
         {
-            var userFile = userDir == null ? null : Path.Combine(userDir, name + ".md");
-            var library = userFile != null && File.Exists(userFile) ? "user" : "stock";
-            var file = library == "user" ? userFile : Path.Combine(stockDir, name + ".md");
-            if (!File.Exists(file))
+            if (!ResolveWorkflowLibrary(userDir, stockDir).Files.TryGetValue(name, out var resolved))
                 throw new InvalidOperationException($"Workflow '{name}' not found (list_workflows shows the library).");
-            return DescribeWorkflowDocument(name, library, file, File.ReadAllBytes(file));
+            return DescribeWorkflowDocument(name, resolved.Source, resolved.Path, File.ReadAllBytes(resolved.Path));
         }
 
         private static WorkflowDocumentResult DescribeWorkflowDocument(string name, string library, string file, byte[] bytes)
@@ -57,7 +54,7 @@ namespace Semanticus.Engine
             var error = def.Error;
             if (error == null && !string.Equals(def.Name, name, StringComparison.Ordinal))
                 error = $"frontmatter name '{def.Name}' must equal the workflow name '{name}' (it is the file identity).";
-            return new WorkflowDocumentResult
+            var result = new WorkflowDocumentResult
             {
                 Name = name, Library = library, Path = Path.GetFullPath(file), ExactText = text, ByteHash = WorkflowByteHash(bytes),
                 Metadata = new WorkflowDocumentMetadata
@@ -68,10 +65,13 @@ namespace Semanticus.Engine
                     Parses = error == null, ParseError = error,
                 },
             };
+            if (error == null) result.EditModel = WorkflowDocumentPatcher.Project(text, def);
+            return result;
         }
 
         public async Task<WorkflowDocumentResult> GetWorkflowDocumentAsync(string name, string sessionId = null)
         {
+            RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, stockDir) = WorkflowDirs(context);
@@ -84,9 +84,182 @@ namespace Semanticus.Engine
             finally { context.WorkflowGate.Release(); }
         }
 
+        public async Task<WorkflowEditPreviewResult> PreviewWorkflowEditAsync(string name, string expectByteHash,
+            string expectPath, string editsJson, string draftText = null, bool create = false, string sessionId = null)
+        {
+            RequireProFeature();
+            name = ValidateWorkflowDocumentName(name);
+            var context = _sessions.CurrentContext;
+            var (userDir, stockDir) = WorkflowDirs(context);
+            WorkflowDocumentResult current = null;
+            string source;
+            await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!WorkflowPreviewContextIsCurrent(context, sessionId))
+                    return PreviewRefusal(name, "conflict", "The model changed before this workflow preview landed. Keep your draft and retry against the current model.",
+                        null, draftText, "stale_session");
+                lock (WorkflowDocumentLock)
+                {
+                    if (create)
+                    {
+                        if (!string.IsNullOrWhiteSpace(expectPath) || !string.IsNullOrWhiteSpace(expectByteHash))
+                            return PreviewRefusal(name, "conflict", "A create preview does not take a saved path or byte hash.", null,
+                                draftText, "create_identity");
+                        if (userDir == null)
+                            return PreviewRefusal(name, "conflict", "No project is open to hold a new workflow.", null,
+                                draftText, "no_project");
+                        if (File.Exists(Path.Combine(userDir, name + ".md")))
+                        {
+                            current = ReadWorkflowDocument(name, userDir, stockDir);
+                            return PreviewRefusal(name, "conflict", "A project workflow with this name already exists. Nothing was written.",
+                                current, draftText, "create_collision");
+                        }
+                        source = draftText ?? EmptyWorkflowDraft(name);
+                    }
+                    else
+                    {
+                        current = ReadWorkflowDocument(name, userDir, stockDir);
+                        source = draftText ?? current.ExactText;
+                        if (string.IsNullOrWhiteSpace(expectPath))
+                            return PreviewRefusal(name, "conflict", "expectPath is required from the saved workflow document.", current, source, "stale_path");
+                        if (!string.Equals(expectPath, current.Path, StringComparison.Ordinal))
+                            return PreviewRefusal(name, "conflict", "The workflow now resolves to a different file. Keep your draft and review the current saved file.", current, source, "stale_path");
+                        if (string.IsNullOrWhiteSpace(expectByteHash))
+                            return PreviewRefusal(name, "conflict", "expectByteHash is required from the saved workflow document.", current, source, "stale_content");
+                        if (!string.Equals(expectByteHash, current.ByteHash, StringComparison.Ordinal))
+                            return PreviewRefusal(name, "conflict", "The workflow changed on disk. Keep your draft and reconcile it with the current saved file.", current, source, "stale_content");
+                    }
+                }
+            }
+            finally { context.WorkflowGate.Release(); }
+
+            var patch = WorkflowDocumentPatcher.Apply(name, source, editsJson, create);
+            if (!WorkflowPreviewContextIsCurrent(context, sessionId))
+                return PreviewRefusal(name, "conflict", "The model changed while this workflow preview was being prepared. Keep your draft and retry against the current model.",
+                    null, source, "stale_session");
+            if (patch.ErrorCode != null)
+            {
+                var outcome = patch.ErrorCode is "unpreservable_spelling" or "source_map_mismatch"
+                    or "ambiguous_duplicate" or "template_source_only" ? "unpreservable" : "invalid";
+                var issue = new WorkflowEditIssue
+                {
+                    Code = patch.ErrorCode, Severity = "error", Target = patch.Target ?? "workflow",
+                    Field = patch.Field, Message = patch.Error,
+                };
+                return new WorkflowEditPreviewResult
+                {
+                    Name = name, Outcome = outcome, CanApply = false, Reason = patch.Error,
+                    Document = current, ProposedText = patch.Text,
+                    ProposedByteHash = TryWorkflowByteHash(patch.Text),
+                    Diff = WorkflowDocumentPatcher.Diff(name, source, patch.Text),
+                    EditModel = patch.Model, Issues = new[] { issue }, KeyChanges = patch.KeyChanges.ToArray(),
+                };
+            }
+
+            byte[] bytes;
+            try { bytes = WorkflowDocumentUtf8.GetBytes(patch.Text); }
+            catch (EncoderFallbackException)
+            {
+                return PreviewRefusal(name, "invalid", "The proposed draft is not valid Unicode for UTF-8. Nothing was written.",
+                    current, patch.Text, "invalid_unicode");
+            }
+            var hash = WorkflowByteHash(bytes);
+            var before = current?.ExactText ?? source;
+            var noChange = current != null && string.Equals(hash, current.ByteHash, StringComparison.Ordinal)
+                || current == null && string.Equals(patch.Text, source, StringComparison.Ordinal) && string.Equals(source, EmptyWorkflowDraft(name), StringComparison.Ordinal);
+            if (noChange)
+                return new WorkflowEditPreviewResult
+                {
+                    Name = name, Outcome = "no_change", CanApply = false,
+                    Reason = "The requested edit already has these exact bytes. Nothing was written.",
+                    Document = current, ProposedText = patch.Text, ProposedByteHash = hash, Diff = "",
+                    EditModel = patch.Model, KeyChanges = patch.KeyChanges.ToArray(),
+                };
+
+            var candidate = ParseWorkflowDocument(patch.Text);
+            candidate.Source = create ? "user" : current.Library;
+            candidate.FilePath = create ? Path.Combine(userDir, name + ".md") : current.Path;
+            var library = LoadWorkflowDefs();
+            library.RemoveAll(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+            library.Add(candidate);
+            var check = await CheckWorkflowDefAsync(candidate, library).ConfigureAwait(false);
+            var issues = check.Findings.Select(f => new WorkflowEditIssue
+            {
+                Code = "admission_" + f.Severity, Severity = f.Severity == "warn" ? "warning" : f.Severity,
+                Target = "workflow", Message = f.Message,
+            }).ToArray();
+            var warnings = issues.Any(i => i.Severity == "warning");
+            await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!WorkflowPreviewContextIsCurrent(context, sessionId))
+                    return PreviewRefusal(name, "conflict", "The model changed while this workflow preview was being prepared. Keep your draft and retry against the current model.",
+                        null, source, "stale_session");
+            }
+            finally { context.WorkflowGate.Release(); }
+            var stock = !create && current.Library != "user";
+            var result = new WorkflowEditPreviewResult
+            {
+                Name = name, Outcome = stock ? "stock_read_only" : "ready", CanApply = !stock,
+                RequiresReview = warnings,
+                Reason = stock
+                    ? "Stock workflows are read-only. Create an exact project copy before applying this preview."
+                    : warnings ? "The draft is valid and has warnings to review before saving."
+                    : "The draft is valid and ready to save through the existing exact-text writer.",
+                Document = current, ProposedText = patch.Text, ProposedByteHash = hash,
+                Diff = WorkflowDocumentPatcher.Diff(name, before, patch.Text), EditModel = patch.Model,
+                Issues = issues, KeyChanges = patch.KeyChanges.ToArray(),
+            };
+            if (!stock)
+                result.SuggestedNextAction = create
+                    ? new WorkflowEditNextAction
+                    {
+                        Op = "save_workflow", Why = "Create this reviewed draft without replacing an existing project file.",
+                        Args = new WorkflowEditApplyArgs { Name = name, Markdown = patch.Text, CreateOnly = true, SessionId = sessionId },
+                    }
+                    : new WorkflowEditNextAction
+                    {
+                        Op = "edit_workflow_document", Why = "Apply these reviewed exact bytes through the saved path and hash fence.",
+                        Args = new WorkflowEditApplyArgs
+                        {
+                            Name = name, ExpectByteHash = current.ByteHash, ExpectPath = current.Path,
+                            ExactText = patch.Text, SessionId = sessionId,
+                        },
+                    };
+            return result;
+        }
+
+        private bool WorkflowPreviewContextIsCurrent(SessionContext context, string sessionId) =>
+            ReferenceEquals(_sessions.CurrentContext, context)
+            && (sessionId == null || string.Equals(context.Session?.Id, sessionId, StringComparison.Ordinal));
+
+        private static WorkflowEditPreviewResult PreviewRefusal(string name, string outcome, string reason,
+            WorkflowDocumentResult current, string draft, string code) => new WorkflowEditPreviewResult
+        {
+            Name = name, Outcome = outcome, CanApply = false, Reason = reason, Document = current,
+            ProposedText = draft, ProposedByteHash = TryWorkflowByteHash(draft), Diff = "",
+            Issues = new[] { new WorkflowEditIssue { Code = code, Severity = "error", Target = "workflow", Message = reason } },
+        };
+
+        private static string TryWorkflowByteHash(string text)
+        {
+            if (text == null) return null;
+            try { return WorkflowByteHash(WorkflowDocumentUtf8.GetBytes(text)); }
+            catch (EncoderFallbackException) { return null; }
+        }
+
+        private static string EmptyWorkflowDraft(string name)
+        {
+            var lf = ((char)10).ToString();
+            return "---" + lf + "schemaVersion: 2" + lf + "name: " + name + lf
+                + "title: New workflow" + lf + "version: 1" + lf + "---" + lf;
+        }
+
         public async Task<WorkflowDocumentEditResult> EditWorkflowDocumentAsync(string name, string expectByteHash,
             string exactText, string expectPath, string origin, string sessionId = null)
         {
+            RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, stockDir) = WorkflowDirs(context);

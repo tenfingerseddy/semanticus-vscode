@@ -16,7 +16,7 @@ namespace Semanticus.Tests
         private static async Task<(LocalEngine engine, SessionManager sessions)> NewModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("RoleSecurity", 1604);
             return (engine, sessions);
         }

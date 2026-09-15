@@ -374,6 +374,57 @@ namespace Semanticus.Tests
             Assert.True(ConnectionRegistry.Forget(labelled.Id, "human"));  // the human can
         }
 
+        // ---- A remembered target always has a readable name (Kane, 2026-09-15). His Connections list titled a row
+        // "Contoso%20Fabric%20Monitoring" (the Contoso name stands in for the real tenant's, which the public-mirror
+        // gate refuses): a WORKSPACE-level record with no dataset, so every surface fell through to
+        // the encoded last segment of the endpoint. Two separate facts fix that, and both live here. ----
+
+        // FIRST fact: when an open DOES resolve a dataset, that dataset name is recorded as the model name even when
+        // the caller passed none. The two live-open call sites already pass it; doing it at the registry instead means
+        // every caller — including remember_xmla_connection, which is how Kane's row got in — gets the same record, so
+        // the UI door and the agent door read ONE name off ONE record.
+        [Fact]
+        public void A_resolved_dataset_becomes_the_model_name_when_the_caller_names_none()
+        {
+            var rec = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring", "Sales");
+            Assert.Equal("Sales", rec.ModelName);
+            Assert.Equal("Sales", ConnectionRegistry.Find(rec.Id).ModelName);
+        }
+
+        // A caller that names the model keeps its friendlier name; the dataset default never overwrites one.
+        [Fact]
+        public void A_caller_supplied_model_name_survives_the_dataset_default()
+        {
+            var rec = ConnectionRegistry.Remember("xmla", "powerbi://x/ws", "Sales", "Sales / Gold");
+            Assert.Equal("Sales / Gold", rec.ModelName);
+            Assert.Equal("Sales / Gold", ConnectionRegistry.Remember("xmla", "powerbi://x/ws", "Sales").ModelName);   // a later unnamed connect keeps it
+        }
+
+        // SECOND fact: a workspace-only record has NO dataset to borrow, so the registry invents nothing — storage
+        // stays honest — and the readable name is derived from the endpoint's workspace segment at display time.
+        [Fact]
+        public void A_workspace_only_record_keeps_no_model_name_and_reads_its_workspace_off_the_endpoint()
+        {
+            var rec = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring", null);
+            Assert.Null(rec.ModelName);
+            Assert.Equal("Contoso Fabric Monitoring", ConnectionRegistry.WorkspaceNameFromEndpoint(rec.Endpoint));
+        }
+
+        // Only a TRAILING /myorg/<name> segment is the workspace, and malformed percent-encoding yields no name at all
+        // rather than the raw undecoded segment — showing "Bad%ZZ" as a name is the very defect being fixed. Mirrors
+        // the webview helper of the same name so one endpoint reads as one string on both doors.
+        [Theory]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring", "Contoso Fabric Monitoring")]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Contoso%20%5BTest%5D", "Contoso [Test]")]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Sales/", "Sales")]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Sales/extra", null)]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Bad%ZZ", null)]
+        [InlineData("localhost:51234", null)]
+        [InlineData("", null)]
+        [InlineData(null, null)]
+        public void The_workspace_name_helper_decodes_only_a_trailing_workspace_segment(string endpoint, string expected)
+            => Assert.Equal(expected, ConnectionRegistry.WorkspaceNameFromEndpoint(endpoint));
+
         [Fact]
         public void A_local_file_is_remembered_as_its_own_kind()
         {

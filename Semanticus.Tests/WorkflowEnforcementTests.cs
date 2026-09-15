@@ -13,9 +13,10 @@ namespace Semanticus.Tests
     /// The model-wide workflow-ENFORCEMENT toggle (Kane's "pro mode" button): a user doing a quick task can
     /// turn gate enforcement off wholesale without editing any workflow file. Pinned here: the global mode
     /// tops the WHOLE strictness resolution (above per-gate 'hard' — the stock seeds carry those, so anything
-    /// weaker would be a dead switch); off ⇒ gated workflows list as un-gated, start FREE (enforcement is what's
-    /// paid), and gates are skipped with the honest note; the settings write merges (per-workflow overrides
-    /// survive); and the run freezes the mode at start (a mid-run toggle can't tear a run).
+    /// weaker would be a dead switch); off ⇒ gated workflows list as un-gated and gates are skipped with the honest
+    /// note; the settings write merges (per-workflow overrides survive); and the run freezes the mode at start (a
+    /// mid-run toggle can't tear a run). Every test here holds Pro: since 2026-09-15 the whole workflow area is Pro,
+    /// so the toggle changes checks, never price.
     /// </summary>
     public sealed class WorkflowEnforcementTests
     {
@@ -64,22 +65,24 @@ inputs:
             Assert.Equal("hard", WorkflowRunner.EffectiveStrictness(new WorkflowDef(), null, null, null)); // engine default
         }
 
-        // ---- the toggle end-to-end: list flips, free start, gate skipped honestly ----------------------------------
+        // ---- the toggle end-to-end: list flips, gate skipped honestly ----------------------------------------------
 
+        /// <summary>Kane's 2026-09-15 line moved the whole workflow area into Pro, so this toggle no longer buys a
+        /// free start. What it still does is the subject here: it flips the library's Gated badge and turns a hard
+        /// gate into an honestly recorded skip.</summary>
         [Fact]
-        public async Task Enforcement_off_ungates_the_library_frees_the_start_and_skips_the_gate()
+        public async Task Enforcement_off_ungates_the_library_and_skips_the_gate()
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);   // FREE tier on purpose
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
                 {
-                    // Enforced by default: the per-gate 'hard' gates it, so a free start is refused.
+                    // Enforced by default: the per-gate 'hard' gates it, so the library card says so.
                     var before = (await engine.ListWorkflowsAsync()).First(w => w.Name == "gated-toggle");
                     Assert.True(before.Gated);
-                    await Assert.ThrowsAsync<EntitlementException>(() => engine.StartWorkflowAsync("gated-toggle", "human"));
 
                     // Toggle off: reported honestly, library re-lists un-gated.
                     var off = await engine.SetWorkflowEnforcementAsync("off", "human");
@@ -88,7 +91,7 @@ inputs:
                     var after = (await engine.ListWorkflowsAsync()).First(w => w.Name == "gated-toggle");
                     Assert.False(after.Gated);
 
-                    // A free start now succeeds, and the gate is SKIPPED with the honest note — not silently passed.
+                    // The gate is now SKIPPED with the honest note, not silently passed.
                     var run = await engine.StartWorkflowAsync("gated-toggle", "human");
                     var done = await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", "{}", "human");   // no answers needed: gate off
                     Assert.Equal("completed", done.Status);
@@ -115,7 +118,7 @@ inputs:
             var settingsFile = Path.Combine(ws, ".semanticus", "workflow-settings.json");
             File.WriteAllText(settingsFile, "{ \"workflows\": { \"gated-toggle\": { \"strictness\": \"warn\" } } }");
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -178,7 +181,7 @@ inputs:
                 .Concat(new byte[] { 0xFF }).ToArray();
             File.WriteAllBytes(settingsFile, corrupt);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -208,7 +211,7 @@ inputs:
             File.WriteAllText(settingsFile, "{ \"workflows\": { \"gated-toggle\": { \"strictness\": \"warn\" } } }",
                 System.Text.Encoding.Unicode);   // UTF-16LE with BOM
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -240,7 +243,7 @@ inputs:
                 .Concat(System.Text.Encoding.ASCII.GetBytes("rn\" } } }")).ToArray();
             File.WriteAllBytes(settingsFile, corrupt);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -277,7 +280,7 @@ inputs:
                 .Concat(System.Text.Encoding.Unicode.GetBytes("rn\" } } }")).ToArray();
             File.WriteAllBytes(settingsFile, corrupt);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -321,7 +324,7 @@ inputs:
                 .Concat(enc.GetBytes("rn\" } } }")).ToArray();
             File.WriteAllBytes(settingsFile, corrupt);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -346,7 +349,7 @@ inputs:
             var valid = bom.Concat(enc.GetBytes("{ \"workflows\": { \"gated-toggle\": { \"strictness\": \"warn\" } } }")).ToArray();
             File.WriteAllBytes(settingsFile, valid);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)

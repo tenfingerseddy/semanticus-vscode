@@ -72,7 +72,7 @@ namespace Semanticus.Tests
 
         private async Task<ReconcileRunResult> Run(string preset, string origin)
         {
-            AgentPolicyStore.SetPreset(preset, "human", isPro: true);
+            AgentPolicyStore.SetPreset(preset, "human");
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             var bim = Bim();
             try

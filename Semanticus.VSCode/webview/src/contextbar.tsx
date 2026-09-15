@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useConnection, type ModelConnectionContext, type SessionInfo } from './connection';
 import type { ConnectionStatus } from './wire';
 import type { ModelRef } from './compare';
+import type { HubView } from './connectionshub';
 
 // The Studio footer answers the roles users otherwise conflate:
 //   what am I EDITING · what answers TESTS/QUERIES · where will I PUBLISH?
@@ -19,13 +20,19 @@ import type { ModelRef } from './compare';
 
 const norm = (x?: string) => (x || '').trim().toLowerCase().replace(/[\\/]+$/, '');
 const basename = (p?: string) => { const t = (p || '').replace(/[\\/]+$/, ''); const i = Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')); return i >= 0 ? t.slice(i + 1) : t; };
-// A readable end for a long XMLA endpoint: its final path segment (the workspace name), else the host.
-const shortEndpoint = (ep?: string) => {
+// A readable end for a long XMLA endpoint: its final path segment (the workspace name), else the host. DECODED: this
+// result is used as a NAME, and a workspace whose name has spaces in it is stored percent-encoded, so taking the
+// segment verbatim printed an address where a name belongs (Kane, 2026-09-15 — the Connections hub had the same
+// defect in its own helper). A malformed escape keeps the text as stored: a poor name, but the only hint there is.
+// Top-level so the naming contract test can extract and RUN it rather than only match the source.
+function shortEndpoint(ep?: string): string {
   const t = (ep || '').replace(/[\\/]+$/, ''); if (!t) return '';
-  const seg = t.slice(t.lastIndexOf('/') + 1);
+  const raw = t.slice(t.lastIndexOf('/') + 1);
+  let seg = raw;
+  try { seg = decodeURIComponent(raw); } catch { seg = raw; }
   if (seg && !seg.includes(':') && !seg.includes('.')) return seg;
   try { return new URL(t.replace(/^powerbi:\/\//, 'https://')).host || seg || t; } catch { return seg || t; }
-};
+}
 
 // Are we editing and querying provably the SAME live instance? Only claim it when we can prove it from the attached
 // query engine's data source (a local file path can never equal a localhost query source, so this stays false there —
@@ -85,11 +92,34 @@ export function compareSeedFromSession(s: SessionInfo, conn: ConnectionStatus | 
 
 // A full-width FOOTER pinned to the bottom of the Studio panel. Each identity is its own keyboard-reachable drawer
 // shortcut; Review changes is deliberately separate so changing a connection never reads like publishing. Only the
-// sync chip is tinted. Every segment truncates so long paths/endpoints cannot push the final action off-screen.
+// sync chip is tinted. Names wrap when room is tight; secondary hints yield before a model identity disappears.
+// THREE roles, not four: the Reference slot left this bar on 2026-09-14. It is not a role of the session the way
+// editing, testing and publishing are, it read as a fourth thing to configure before you could start, and it was
+// the widest of the four while being the one almost nobody set. The engine keeps its reference slot, and the way
+// in becomes an action ("Copy from another model...") rather than a permanent seat in the footer.
 // State comes from the shared connection context (the single source of truth), NOT an App prop — an App-held copy went
 // stale on attach/disconnect (those don't fire model/didChange) and left the footer disagreeing with the live tabs.
-export function ContextBar({ onConnections, onReview }: { onConnections: () => void; onReview: () => void }) {
+// Under 900px the three roles, the pill and Review changes stop fitting on one line. Tests is the slot that folds:
+// it is the one people set once and read least, and the pill beside it is already about querying, so the fact has
+// a natural home in that pill's tooltip. The breakpoint is written in TWO places on purpose and they must stay
+// equal — the stylesheet hides the button, this decides what the tooltip then has to say.
+const FOLD_TESTS_BELOW = '(max-width: 899px)';
+function useTestsFolded(): boolean {
+  const [folded, setFolded] = useState(() => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(FOLD_TESTS_BELOW).matches : false));
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const query = window.matchMedia(FOLD_TESTS_BELOW);
+    const apply = () => setFolded(query.matches);
+    apply();
+    query.addEventListener('change', apply);
+    return () => query.removeEventListener('change', apply);
+  }, []);
+  return folded;
+}
+
+export function ContextBar({ onConnections, onReview }: { onConnections: (section?: HubView) => void; onReview: () => void }) {
   const { session, conn, context } = useConnection();
+  const testsFolded = useTestsFolded();
   if (!session?.sessionId) return null;
   const s = session;
   const editing = context?.editing;
@@ -105,37 +135,39 @@ export function ContextBar({ onConnections, onReview }: { onConnections: () => v
   const publishSub = publishing?.available ? 'XMLA destination' : 'choose before publishing';
   const v = syncVerdict(s, conn);
   const warn = v.tone === 'warn';
+  // Folded, the pill carries the Tests fact so nothing about the session becomes unreadable at a narrow width.
+  const pillTitle = testsFolded ? `${v.detail} Tests: ${queryMain} (${querySub}).` : v.detail;
   const kicker = { color: 'var(--sem-muted)', fontSize: 9, letterSpacing: '0.06em' } as const;
-  const segment = 'flex items-baseline gap-1.5 min-w-0 px-1.5 py-1 rounded outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--sem-accent)] hover:bg-[color:var(--sem-surface-2)]';
+  const segment = 'connection-role flex items-baseline gap-1.5 min-w-0 px-1.5 py-1 rounded outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--sem-accent)] hover:bg-[color:var(--sem-surface-2)]';
 
   return (
-    <div className="flex items-center gap-1.5 w-full px-2.5 text-left shrink-0" style={{ minHeight: 38, background: 'var(--sem-surface)', color: 'var(--sem-fg)', borderTop: '1px solid var(--sem-border)' }}>
-      <button type="button" data-testid="connections-editing" onClick={onConnections} title="Choose what to edit" className={segment}>
+    <div className="studio-contextbar flex items-center gap-1.5 w-full px-2.5 text-left shrink-0" style={{ minHeight: 34, background: 'var(--sem-surface)', color: 'var(--sem-fg)', borderTop: '1px solid var(--sem-border)' }}>
+      <button type="button" data-testid="connections-editing" onClick={() => onConnections('open')} title="Choose what to edit" className={segment}>
         <span className="uppercase font-semibold shrink-0" style={kicker}>Editing</span>
-        <span className="text-[12px] font-medium truncate min-w-0" title={editing?.source}>{editMain}</span>
+        <span className="connection-value text-[12px] font-medium truncate min-w-0" title={editing?.source}>{editMain}</span>
         {s.hasUnsavedChanges && <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-warn)' }}>● unsaved</span>}
-        <span className="text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{editSub}</span>
+        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{editSub}</span>
       </button>
-      <span className="text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
-      <button type="button" data-testid="connections-querying" onClick={onConnections} title="Choose the model used for tests and queries" className={segment}>
+      <span className="connection-separator text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
+      <button type="button" data-testid="connections-querying" onClick={() => onConnections('setup')} title="Choose the model used for tests and queries" className={segment}>
         <span className="uppercase font-semibold shrink-0" style={kicker}>Tests</span>
-        <span className="text-[12px] font-medium truncate min-w-0" style={{ color: connected ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{queryMain}</span>
-        <span className="text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{querySub}</span>
+        <span className="connection-value text-[12px] font-medium truncate min-w-0" style={{ color: connected ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{queryMain}</span>
+        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{querySub}</span>
       </button>
-      <span className="text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
-      <button type="button" data-testid="connections-publishing" onClick={onConnections} title="Choose the live model that will receive published changes" className={segment}>
+      <span className="connection-separator text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
+      <button type="button" data-testid="connections-publishing" onClick={() => onConnections('setup')} title="Choose the live model that will receive published changes" className={segment}>
         <span className="uppercase font-semibold shrink-0" style={kicker}>Publish to</span>
-        <span className="text-[12px] font-medium truncate min-w-0" style={{ color: publishing?.available ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{publishMain}</span>
-        <span className="text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{publishSub}</span>
+        <span className="connection-value text-[12px] font-medium truncate min-w-0" style={{ color: publishing?.available ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{publishMain}</span>
+        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{publishSub}</span>
       </button>
-      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium shrink-0 max-w-[46%]"
+      <span className={`connection-sync${warn ? ' connection-sync-warn' : ''} flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium shrink-0 max-w-[46%]`}
         style={warn
           ? { background: 'color-mix(in srgb, var(--sem-warn) 18%, transparent)', color: 'var(--sem-warn)', border: '1px solid color-mix(in srgb, var(--sem-warn) 45%, transparent)' }
           : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
         <span className="shrink-0">{warn ? '!' : '●'}</span>
-        <span className="truncate" title={v.detail}>{warn ? v.detail : v.label}</span>
+        <span className="truncate" title={pillTitle}>{warn ? v.detail : v.label}</span>
       </span>
-      <button type="button" onClick={onReview} title="Review differences before updating a test model or publishing" className="ml-auto text-[11px] font-semibold shrink-0 rounded px-2 py-1" style={{ color: 'var(--sem-accent)' }}>Review changes →</button>
+      <button type="button" onClick={onReview} title="Review differences before updating a test model or publishing" className="connection-review ml-auto text-[11px] font-semibold shrink-0 rounded px-2 py-1" style={{ color: 'var(--sem-accent)' }}>Review changes →</button>
     </div>
   );
 }

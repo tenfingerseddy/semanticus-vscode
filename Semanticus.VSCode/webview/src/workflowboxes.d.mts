@@ -13,6 +13,7 @@ export function isLossy(def: unknown): boolean;
 
 export interface BoxesStepView {
   id: string;
+  key?: string;
   order: number;
   number: number;
   title: string;

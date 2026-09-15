@@ -6,8 +6,9 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    /// <summary>Verified Mode — the human-controlled Pro toggle. Turning it ON is Pro-gated; when ON, a mutating DAX
-    /// edit must validate before it commits (v1 verification floor — invalid DAX refused). All deterministic + offline.</summary>
+    /// <summary>Verified Mode: the human-controlled safety toggle, free for everyone since 2026-09-15. When ON, a
+    /// mutating DAX edit must validate before it commits (v1 verification floor: invalid DAX refused). All
+    /// deterministic + offline.</summary>
     public sealed class VerifiedModeTests
     {
         private sealed class Fake : IEntitlement
@@ -35,19 +36,26 @@ namespace Semanticus.Tests
             return "table:" + ms[0].Table;   // a real, resolvable table so a create test can't pass for the wrong reason
         }
 
+        /// <summary>The toggle used to stop here on free. The free tier gets the whole floor now, not just the flag:
+        /// the mode turns on, reports itself available, and a free invalid-DAX edit is refused by it.</summary>
         [Fact]
-        public async Task Free_cannot_enable_verified_mode()
+        public async Task Free_enables_verified_mode_and_gets_the_verification_floor()
         {
             using var e = await OpenAsync(pro: false);
-            await Assert.ThrowsAsync<EntitlementException>(() => e.SetVerifiedModeAsync(true, "human"));
-            Assert.False((await e.GetVerifiedModeAsync()).Enabled);   // stayed off (thrown before the flip)
+            var state = await e.SetVerifiedModeAsync(true, "human");
+            Assert.True(state.Enabled);
+            Assert.True(state.Available);
+            Assert.True((await e.GetVerifiedModeAsync()).Enabled);
+
+            var r = await FirstMeasureRefAsync(e);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => e.SetDaxAsync(r, "SUM(", "agent"));
         }
 
         [Fact]
         public async Task Free_may_disable_verified_mode()
         {
             using var e = await OpenAsync(pro: false);
-            var r = await e.SetVerifiedModeAsync(false, "human");   // turning OFF is always allowed
+            var r = await e.SetVerifiedModeAsync(false, "human");
             Assert.False(r.Enabled);
         }
 

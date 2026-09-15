@@ -41,6 +41,12 @@ namespace Semanticus.Engine
         public string[] VerifyGroupBy { get; set; }    // SUMMARIZECOLUMNS matrix for the equivalence gate (set_dax only)
         public string[] VerifyFilters { get; set; }
         public string Note { get; set; }               // apply/verify result note
+        /// <summary>delete_if_unused only. The report basis this removal was REVIEWED against, as one comparable
+        /// string (see LocalEngine.ReportScopeSignature). Apply refuses a removal whose basis has moved: the
+        /// person read an answer about one set of reports and is applying against another. Deliberately blind to
+        /// the model revision and to the time of a reading, so an ordinary model edit or an honest re-read of the
+        /// same selection is not a changed basis.</summary>
+        public string ReviewedScope { get; set; }
         public Semanticus.Analysis.GroundingBundle Grounding { get; set; } // for AI items
 
         /// <summary>A shallow field-copy. BuildView clones every item so a broadcast/returned view is an

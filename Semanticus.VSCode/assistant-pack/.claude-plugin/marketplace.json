@@ -8,7 +8,7 @@
       "name": "semanticus",
       "source": "./plugins/semanticus",
       "description": "Use Semanticus to understand, edit, test and publish Power BI and Fabric semantic models.",
-      "version": "1.1.3"
+      "version": "1.2.0"
     }
   ]
 }

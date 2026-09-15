@@ -98,8 +98,9 @@ namespace Semanticus.Tests
 
         // ---- end-to-end diff + apply subset (offline, supplied source schema) ----------------------
 
-        // A minimal injectable entitlement (mirrors EntitlementGateTests.Fake) — lets a test pin the FREE tier
-        // explicitly (independent of the CI env), to prove apply_schema_update is ungated for any item count.
+        // A minimal injectable entitlement (mirrors EntitlementGateTests.Fake) that lets a test pin the tier
+        // explicitly, independent of the CI env. Power Query (get_source_schema / diff_schema /
+        // apply_schema_update) became Pro on 2026-09-15, so the diff+apply subject runs entitled.
         private sealed class Ent : IEntitlement
         {
             public bool IsPro { get; }
@@ -111,7 +112,7 @@ namespace Semanticus.Tests
         public async Task Diff_then_apply_accepted_subset_is_one_undoable_change()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);   // apply_schema_update is free — a >1-item subset needs no Pro
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);   // Power Query is Pro; the subject is the diff+apply
             try
             {
                 await engine.CreateModelAsync("SchemaSyncTest", 1604);
@@ -173,7 +174,7 @@ namespace Semanticus.Tests
         public async Task Source_read_on_a_non_sql_table_fails_gracefully_without_throwing()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);   // the subject is the graceful read, not the gate
             try
             {
                 await engine.CreateModelAsync("OfflineTest", 1604);
@@ -195,22 +196,23 @@ namespace Semanticus.Tests
             finally { engine.Dispose(); }
         }
 
-        // ---- apply_schema_update is FREE — any number of items (no Pro gate; docs/monetization) ----
-        // Kane's monetization call: schema updates are free like the single-edit column ops and the reads
-        // (get_source_schema / diff_schema). The FREE tier can apply a MULTI-ITEM (bulk) subset, not just one.
+        // ---- apply_schema_update is gated by FEATURE, never by item count ----
+        // Power Query is Pro since 2026-09-15, so the tier decides whether you may update a schema at all. What
+        // is still pinned is that SIZE decides nothing: the entitled caller applies a multi-item (bulk) subset
+        // and a single change on exactly the same terms, and the free caller is refused the same way for both.
 
         [Fact]
-        public async Task Free_tier_may_apply_a_bulk_schema_subset_and_a_single_change()
+        public async Task Bulk_and_single_schema_updates_are_the_same_gate_not_a_size_gate()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Ent(false));   // explicitly FREE — no gate to trip
+            var engine = new LocalEngine(sessions, new Ent(true));
             try
             {
-                await engine.CreateModelAsync("SchemaFree", 1604);
+                await engine.CreateModelAsync("SchemaTier", 1604);
                 var tableRef = await engine.CreateImportTableAsync("Sales", "let Source = Sql.Database(\"srv\",\"db\"), t = Source{[Schema=\"dbo\",Item=\"Sales\"]}[Data] in t", "human");
                 await engine.CreateColumnAsync(tableRef, "Amount", "Decimal", null, "human");
 
-                // A >1-item accepted subset (the bulk primitive) applies successfully on FREE — no throw.
+                // A >1-item accepted subset (the bulk primitive) applies with no extra condition on its size.
                 var two = new[]
                 {
                     new SchemaUpdateItem { Change = "TypeChanged", Column = "Amount", DataType = "Double" },
@@ -222,12 +224,34 @@ namespace Semanticus.Tests
                 Assert.True(cols.ContainsKey("CustomerId"));
                 Assert.Equal("Double", cols["Amount"].DataType);
 
-                // ...and a single accepted change is likewise free.
+                // ...and a single accepted change goes through the identical path.
                 var one = new[] { new SchemaUpdateItem { Change = "Added", Column = "CustomerName", DataType = "String" } };
                 Assert.True((await engine.ApplySchemaUpdateAsync(tableRef, one, "human")).Changed);
                 Assert.Contains("CustomerName", (await engine.ListColumnsAsync()).Where(c => c.Table == "Sales").Select(c => c.Name));
             }
             finally { engine.Dispose(); }
+
+            var freeSessions = new SessionManager();
+            var free = new LocalEngine(freeSessions, new Ent(false));
+            try
+            {
+                await free.CreateModelAsync("SchemaFree", 1604);
+                var tableRef = await free.CreateImportTableAsync("Sales", "let Source = Sql.Database(\"srv\",\"db\"), t = Source{[Schema=\"dbo\",Item=\"Sales\"]}[Data] in t", "human");
+                await free.CreateColumnAsync(tableRef, "Amount", "Decimal", null, "human");
+
+                // One item or two, the free tier meets the same sentence: the refusal is about the feature.
+                var one = new[] { new SchemaUpdateItem { Change = "Added", Column = "CustomerName", DataType = "String" } };
+                var two = new[]
+                {
+                    new SchemaUpdateItem { Change = "TypeChanged", Column = "Amount", DataType = "Double" },
+                    new SchemaUpdateItem { Change = "Added", Column = "CustomerId", DataType = "Int64" },
+                };
+                var single = await Assert.ThrowsAsync<EntitlementException>(() => free.ApplySchemaUpdateAsync(tableRef, one, "human"));
+                var bulk = await Assert.ThrowsAsync<EntitlementException>(() => free.ApplySchemaUpdateAsync(tableRef, two, "human"));
+                Assert.Contains("Power Query is a Semanticus Pro feature.", single.Message);
+                Assert.Equal(single.Message, bulk.Message);
+            }
+            finally { free.Dispose(); }
         }
     }
 }

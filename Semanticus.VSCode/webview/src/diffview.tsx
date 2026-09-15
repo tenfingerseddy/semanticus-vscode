@@ -345,12 +345,13 @@ export function DiffView({ diff, leftLabel, rightLabel, selected, onSelectedChan
   return (
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-2 text-[12px]">
-        {/* mode switcher — same affordance as Lineage's force/DAG/tree segmented control */}
-        <div className="inline-flex rounded-md overflow-hidden" style={{ border: '1px solid var(--sem-border)' }}>
+        {/* mode switcher — the shared segment, same as the DAX Lab mode pair and the result-view tabs. It
+            used to fill the selected mode with the accent, which made a view switch shout louder than the
+            Publish button sitting above it. */}
+        <div className="sem-seg" role="group" aria-label="Model diff view mode">
           {MODES.map((m) => (
-            <button key={m.id} onClick={() => changeMode(m.id)} title={m.hint}
-              className="px-2.5 py-1 text-[12px] font-medium"
-              style={{ background: mode === m.id ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: mode === m.id ? 'var(--sem-on-accent)' : 'var(--sem-fg)', borderRight: m.id === 'review' ? '1px solid var(--sem-border)' : undefined }}>
+            <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => changeMode(m.id)} title={m.hint}
+              className="sem-seg-item">
               {m.label}
             </button>
           ))}

@@ -101,8 +101,11 @@ namespace Semanticus.Tests
             Assert.Equal(ApprovalLedger.RootOverride, _dir);
         }
 
+        // Tests and Saved reports became one whole Pro feature on 2026-09-15, reads included, so list_tests and
+        // list_test_runs are Pro reads now: the free tier is refused outright instead of getting an empty list with
+        // a teaching note. Still a read either way: neither the answer nor the refusal may move the revision.
         [Fact]
-        public async Task Test_definitions_and_history_are_publicly_readable_with_an_honest_free_tier_boundary()
+        public async Task Test_definitions_and_history_are_pro_reads_that_never_advance_the_revision()
         {
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new Tier(pro: true), _dir);
@@ -133,11 +136,10 @@ namespace Semanticus.Tests
             using var freeEngine = new LocalEngine(freeSessions, new Tier(pro: false), _dir);
             await freeEngine.CreateModelAsync("FreeHistory", 1604);
             freeSessions.Current.SourcePath = Path.Combine(_dir, "free-history.bim");
-            var free = await ReadOnlyAsync(freeSessions, () => McpToolsTesting.ListTestRuns(freeEngine));
-            Assert.Empty(free.Runs);
-            Assert.Contains("history and drift trends are Pro", free.Note, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("run_tests", free.Note, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Running the suite", free.Note, StringComparison.OrdinalIgnoreCase);
+            await AssertReadOnlyFailureAsync<EntitlementException>(freeSessions,
+                () => McpToolsTesting.ListTestRuns(freeEngine), "Tests is a Semanticus Pro feature");
+            await AssertReadOnlyFailureAsync<EntitlementException>(freeSessions,
+                () => McpToolsTesting.ListTests(freeEngine), "Unlock Pro from Pro Plans and Support");
         }
 
         private static async Task<T> ReadOnlyAsync<T>(SessionManager sessions, Func<Task<T>> action)

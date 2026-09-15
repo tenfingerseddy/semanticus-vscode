@@ -92,15 +92,13 @@ namespace Semanticus.Tests
                 run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", Step1Answers(target), "human");
                 run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-2",
                     "{\"baselineCapture\":{\"declined\":true,\"reason\":\"No live query model is connected\"}}", "human");
-                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-3",
-                    "{\"replayInterview\":{\"declined\":true,\"reason\":\"No current-model Interview pack was scheduled\"}}", "human");
+                // Step 3 replays the saved checks and asks the reviewer nothing; the engine result is the evidence.
+                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-3", "{}", "human");
                 var replay = run.Steps[2].VerifyResults.Single(x => x.Kind == "tests_replay");
                 Assert.Equal("passed", replay.Status);
                 Assert.Contains("coverage", replay.Detail);
                 run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-4",
                     "{\"decision\":\"Proceed to reviewed implementation\",\"residualRisk\":\"Report bindings were explicitly excluded\"}", "human");
-                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-5",
-                    "{\"certificateDelivery\":\"Save with model\"}", "human");
 
                 Assert.Equal("completed", run.Status);
                 var artifact = await engine.ExportWorkflowEvidenceAsync(run.RunId);

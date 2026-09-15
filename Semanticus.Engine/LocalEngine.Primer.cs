@@ -235,6 +235,7 @@ namespace Semanticus.Engine
 
         public Task<PrimerDocument> GetPrimerAsync()
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;   // ONE capture: identity, sidecar and the name read agree on the model
             return GetPrimerCoreAsync(context, PrimerLocusFor(context));
         }
@@ -336,6 +337,7 @@ namespace Semanticus.Engine
 
         public async Task<PrimerDocument> SetPrimerAsync(string markdown, string origin)
         {
+            RequireProFeature();
             PrimerContract.Validate(markdown);
             var context = _sessions.CurrentContext;
             var session = context.Session ?? throw new InvalidOperationException("Open a model before writing its Primer.");
@@ -374,9 +376,7 @@ namespace Semanticus.Engine
         {
             var primer = await GetPrimerCoreAsync(context, locus);
             if (context.Session == null)
-                return new PrimerSuggestionList { IsPro = _entitlement?.IsPro == true, Note = "Open a model to review Primer suggestions." };
-            if (_entitlement?.IsPro != true)
-                return new PrimerSuggestionList { IsPro = false, Note = "Suggested Primer updates are a Pro feature. You can still read and edit the Primer manually." };
+                return new PrimerSuggestionList { IsPro = true, Note = "Open a model to review Primer suggestions." };
 
             // The shape fingerprint here is the INSIGHT-recall key (KnowledgeStore scoping), not the primer's
             // filename identity — insights are deliberately shape-scoped, primers provenance-scoped.
@@ -417,8 +417,6 @@ namespace Semanticus.Engine
 
         private async Task<PrimerSuggestionDecision> DecidePrimerSuggestionAsync(string id, bool accept, string origin)
         {
-            if (_entitlement?.IsPro != true)
-                return new PrimerSuggestionDecision { Changed = false, Note = "Suggested Primer updates are a Pro feature. Edit the Primer manually to make this change without Pro." };
             if (string.IsNullOrWhiteSpace(id)) throw new InvalidOperationException("Choose a Primer suggestion to accept or reject.");
             // ONE context, captured BEFORE the suggestion is located: the suggestion lookup, the primer write, the
             // state read and the state write all derive from the same identity, so the pair (primer file,
@@ -455,7 +453,13 @@ namespace Semanticus.Engine
                 await WriteSuggestionStateAsync(state, suggestionFile);
             }
             finally { _primerGate.Release(); }
-            if (accept) primer = await GetPrimerCoreAsync(context, locus);
+            // Deciding a suggestion is FREE and stays free: the queue is the free half of Model notes. The
+            // document itself is the PAID half, and get_model_primer refuses a free read of this exact file, so
+            // returning it here was that same read through a side entrance (Astra B1, reproduced on the real RPC
+            // pipe and on MCP stdio). The decision and its note are the whole free answer; the Primer rides along
+            // only where Model notes is actually granted.
+            if (accept && Entitlement.FeatureGrants.Grants(_entitlement, Entitlement.ProFeature.ModelCreate))
+                primer = await GetPrimerCoreAsync(context, locus);
             _sessions.Bus.PublishActivity(new ActivityEvent
             {
                 Kind = accept ? "accept_primer_suggestion" : "reject_primer_suggestion",

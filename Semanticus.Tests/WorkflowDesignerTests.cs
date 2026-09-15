@@ -46,7 +46,7 @@ inputs:
             var ws = Path.Combine(Path.GetTempPath(), "smx-wfdesign-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
             var sessions = new SessionManager();
-            return (new LocalEngine(sessions, new Free(), ws), sessions, ws);
+            return (new LocalEngine(sessions, TestEntitlements.Pro, ws), sessions, ws);
         }
 
         [Fact]

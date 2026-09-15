@@ -10,8 +10,8 @@ namespace Semanticus.Tests
     /// <summary>
     /// Find &amp; Replace Phase 3 (bulk replace as a Change Plan) + the Phase 2 preview. Pins the engine-level
     /// guarantees both doors share: propose_replace emits the RIGHT KIND of item per MatchClass, NEVER emits a
-    /// text edit over a DAX reference (the hard block, now at plan scale), rides apply_plan's EXISTING Pro gate
-    /// (bulk = Pro, one-at-a-time = free), and a bulk apply is ONE undoable transaction.
+    /// text edit over a DAX reference (the hard block, now at plan scale), rides apply_plan at any size on any tier
+    /// (the bulk gate went away on 2026-09-15), and a bulk apply is ONE undoable transaction.
     /// </summary>
     public sealed class ReplacePlanTests
     {
@@ -160,10 +160,10 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- the Pro gate (the EXISTING apply_plan chokepoint — no new gate) --------------------------------
+        // ---- the tier (apply_plan is the same op at every size now) -----------------------------------------
 
         [Fact]
-        public async Task Free_tier_applies_one_replace_item_but_a_bulk_apply_is_refused()
+        public async Task Free_tier_applies_a_bulk_replace_and_one_undo_puts_it_back()
         {
             var (engine, table, _) = await OpenAsync(pro: false);
             using (engine)
@@ -177,17 +177,16 @@ namespace Semanticus.Tests
                 var approved = view.Items.Where(i => i.Status == "approved").Select(i => i.Id).ToArray();
                 Assert.Equal(2, approved.Length);
 
-                // Bulk (both items) is the Pro primitive — refused BEFORE any mutation on free.
-                await Assert.ThrowsAsync<EntitlementException>(() => engine.ApplyPlanAsync(Array.Empty<string>(), "human"));
-                var untouched = (await engine.GetObjectPropertiesAsync(aRef)).First(p => p.Name == "Description").Value;
-                Assert.Equal("gate RP_Gate a", untouched);
+                // Both items in one shot: this used to be the paid half of find-and-replace.
+                var all = await engine.ApplyPlanAsync(Array.Empty<string>(), "human");
+                Assert.Equal(2, all.AppliedCount);
+                Assert.Equal("gate RP_Won a", (await engine.GetObjectPropertiesAsync(aRef)).First(p => p.Name == "Description").Value);
+                Assert.Equal("gate RP_Won b", (await engine.GetObjectPropertiesAsync(bRef)).First(p => p.Name == "Description").Value);
 
-                // One item at a time stays free, and each single apply is undoable.
-                var one = await engine.ApplyPlanAsync(new[] { approved[0] }, "human");
-                Assert.Equal(1, one.AppliedCount);
+                // The free tier gets the same atomicity the paid one had: ONE undo reverts the whole batch.
                 await engine.UndoAsync("human");
                 Assert.Equal("gate RP_Gate a", (await engine.GetObjectPropertiesAsync(aRef)).First(p => p.Name == "Description").Value);
-                Assert.Equal("approved", (await engine.GetPlanAsync()).Items.Single(i => i.Id == approved[0]).Status);
+                Assert.Equal("gate RP_Gate b", (await engine.GetObjectPropertiesAsync(bRef)).First(p => p.Name == "Description").Value);
             }
         }
 
@@ -249,7 +248,7 @@ namespace Semanticus.Tests
                 var ren = Assert.Single(view.Items, i => i.Kind == "rename");
                 Assert.Single(view.Items, i => i.Kind == "set_description" && i.Status == "approved");
 
-                // Renames are opt-in: approve it explicitly, then apply the whole plan in one shot (Pro).
+                // Renames are opt-in: approve it explicitly, then apply the whole plan in one shot.
                 await engine.SetPlanItemAsync(ren.Id, null, true, "human");
                 var report = await engine.ApplyPlanAsync(null, "human");
                 Assert.Equal(2, report.AppliedCount);
@@ -327,7 +326,9 @@ namespace Semanticus.Tests
             var sessions = new SessionManager();
             try
             {
-                var engine = new LocalEngine(sessions, new Fake(pro: false));
+                // M partitions live in Power Query, one of the four Pro features, so the subject here needs the tier:
+                // set_m and get_partition_m both refuse on free now. The item-kind routing is what this pins.
+                var engine = new LocalEngine(sessions, new Fake(pro: true));
                 await engine.OpenAsync(path);
 
                 var view = await engine.ProposeReplaceAsync(
@@ -342,7 +343,7 @@ namespace Semanticus.Tests
                 Assert.Equal("proposed", (await engine.SetPlanItemAsync(it.Id, it.After, null, "human")).Items.Single(x => x.Id == it.Id).Status);
 
                 await engine.SetPlanItemAsync(it.Id, null, true, "human");
-                var report = await engine.ApplyPlanAsync(new[] { it.Id }, "human");   // single item — free
+                var report = await engine.ApplyPlanAsync(new[] { it.Id }, "human");
                 Assert.Equal(1, report.AppliedCount);
                 Assert.Contains("RPM_Swapped", await engine.GetPartitionMAsync(it.ObjectRef));
 

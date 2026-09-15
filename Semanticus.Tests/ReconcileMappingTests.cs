@@ -12,7 +12,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Review_detects_the_measures_source_table_and_keeps_overrides_explicit()
         {
-            var engine = new LocalEngine(new SessionManager());
+            var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.CreateModelAsync("Mapping", 1604);
@@ -45,7 +45,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Review_refuses_to_guess_when_a_measure_reaches_two_sql_sources()
         {
-            var engine = new LocalEngine(new SessionManager());
+            var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.CreateModelAsync("AmbiguousMapping", 1604);
@@ -72,7 +72,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Connection_test_without_coordinates_teaches_the_missing_input_without_network_io()
         {
-            var engine = new LocalEngine(new SessionManager());
+            var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.CreateModelAsync("NoSqlMapping", 1604);

@@ -25,10 +25,22 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
+        // duplicate_object is FREE, so the ordinary paste tests stay on a free engine: a gate wrongly added to
+        // copy/paste must fail here.
         private static async Task<(LocalEngine engine, SessionManager sessions)> NewModelAsync()
         {
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, new Fake(false));
+            await engine.CreateModelAsync("Dup", 1604);
+            return (engine, sessions);
+        }
+
+        // For the cases whose FIXTURE needs an Advanced Modelling object (calculation groups and items, field
+        // parameters, roles). Those creates are Pro since 2026-09-15; the paste under test is still the free one.
+        private static async Task<(LocalEngine engine, SessionManager sessions)> NewProModelAsync()
+        {
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, new Fake(true));
             await engine.CreateModelAsync("Dup", 1604);
             return (engine, sessions);
         }
@@ -130,7 +142,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Field_parameter_duplicates_as_a_calculated_table_with_its_parameter_marker()
         {
-            var (engine, sessions) = await NewModelAsync();
+            var (engine, sessions) = await NewProModelAsync();
             using (engine)
             {
                 var t = await engine.CreateTableAsync("Sales", "human");
@@ -164,7 +176,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Calculation_group_duplicates_with_its_items()
         {
-            var (engine, _) = await NewModelAsync();
+            var (engine, _) = await NewProModelAsync();
             using (engine)
             {
                 var g = await engine.CreateCalculationGroupAsync("Time Intelligence", "human");
@@ -201,7 +213,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Calculation_item_duplicates_in_place_and_pastes_onto_another_group()
         {
-            var (engine, _) = await NewModelAsync();
+            var (engine, _) = await NewProModelAsync();
             using (engine)
             {
                 var g1 = await engine.CreateCalculationGroupAsync("G1", "human");
@@ -221,7 +233,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Calculation_item_paste_onto_a_plain_table_refuses_and_teaches()
         {
-            var (engine, _) = await NewModelAsync();
+            var (engine, _) = await NewProModelAsync();
             using (engine)
             {
                 var g1 = await engine.CreateCalculationGroupAsync("G1", "human");
@@ -276,7 +288,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Measure_paste_onto_a_non_table_target_refuses_and_teaches()
         {
-            var (engine, _) = await NewModelAsync();
+            var (engine, _) = await NewProModelAsync();   // the role in the fixture is Advanced Modelling
             using (engine)
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");

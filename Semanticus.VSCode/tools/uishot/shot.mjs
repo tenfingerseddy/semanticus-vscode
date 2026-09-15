@@ -39,12 +39,10 @@ const webRoot = resolve(__dir, '..', '..');          // Semanticus.VSCode/ (so /
 // Keep this in the same reading order as App.tsx: intent groups first, then the three standalone
 // surfaces. `all` is the product-wide visual gate, so an omitted/renamed tab would be a silent coverage hole.
 const STUDIO_TABS = [
-  'Diagram', 'Search', 'Lineage', 'Data', 'Storage',
-  'Model Spec', 'Advanced Modelling', 'M Code', 'DAX Lab', 'Change Plan',
-  'AI Readiness', 'Best practices',
-  'Tests', 'Evidence',
-  'Deploy', 'Permissions', 'Docs',
-  'Primer', 'Workflows', 'Edit History',
+  'Overview', 'Diagram', 'Lineage', 'Find and replace', 'Data', 'Size by table',
+  'Model Spec', 'Advanced Modelling', 'Power Query', 'Docs', 'Model notes',
+  'DAX Lab', 'Tests', 'Model quality', 'AI understanding', 'Results',
+  'Proposed', 'History', 'Published', 'Workflows', 'Permissions',
 ];
 const PROPGRID_SCENARIOS = ['model', 'measure', 'multi', 'column', 'formatexpr', 'lowcl', 'staledraft', 'error', 'empty'];
 // The Connections HUB inventory: the four sections, Work locally, the signed-out (stale) identity, the shared
@@ -59,6 +57,8 @@ const CONNECTION_HUB_STATES = [
   { target: 'studio', variant: 'Diagram', hub: 'switch', out: join(__dir, 'shots', 'studio-connections-switch.png') },
   { target: 'studio', variant: 'Diagram', hub: 'create', out: join(__dir, 'shots', 'studio-connections-create.png') },
   { target: 'studio', variant: 'Diagram', hub: 'open-unsaved', out: join(__dir, 'shots', 'studio-connections-open-unsaved.png') },
+  { target: 'studio', variant: 'Diagram', hub: 'recovery', out: join(__dir, 'shots', 'studio-connections-recovery.png') },
+  { target: 'studio', variant: 'Diagram', hub: 'local-failure', out: join(__dir, 'shots', 'studio-connections-local-failure.png') },
   { target: 'studio', variant: 'Diagram', hub: 'add', out: join(__dir, 'shots', 'studio-connections-add.png') },
   { target: 'connections', variant: 'standalone', out: join(__dir, 'shots', 'connections-standalone.png') },
   // A <900px narrow capture: the Open view must collapse to a single readable flow with ONE outer scrollbar (no nested).
@@ -154,7 +154,10 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       if (process.env.UISHOT_SPEC) params.set('spec', process.env.UISHOT_SPEC);   // Spec inline editor: 'measureless' | 'measuregroup' | 'norel' edge-state fixtures
       if (process.env.UISHOT_STATE) params.set('state', process.env.UISHOT_STATE);   // seed persisted webview state (JSON), e.g. '{"input:lab.viz":"matrix"}'
       if (process.env.UISHOT_DAX) params.set('dax', process.env.UISHOT_DAX);   // DAX Lab: cap = announce a capped result; hang = leave Run in flight so Stop is visible
-      if (hub) params.set('conn', '1');   // Connections hub review states show a connected query model + a live footer behind the overlay
+      if (process.env.UISHOT_HOME) params.set('home', process.env.UISHOT_HOME); // Model home: loading, error, empty or nomodel
+      if (process.env.UISHOT_ENGINE) params.set('engine', process.env.UISHOT_ENGINE); // 'down' → the host holds NO engine, so every request answers "Engine not connected." and Studio shows its recovery panel
+      if (hub && hub !== 'local-failure') params.set('conn', '1');   // failure state starts without an active local query so its retry action is available
+      if (hub) params.set('hub', hub);   // the recovery state uses the same real hub with a deterministic RPC failure seam
       if (hub === 'create' || hub === 'open-unsaved') params.set('dirty', '1');   // unsaved-work consent for create and open
       const q = params.toString() ? `?${params.toString()}` : '';
       const url = `http://127.0.0.1:${port}/tools/uishot/harness.html${q}#${encodeURIComponent(variant)}`;
@@ -200,7 +203,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
           if (!ok) throw new Error(`Connections hub could not find the "${text}" action`);
           if (expect) await page.waitForFunction((t) => (document.body.textContent || '').includes(t), { timeout: 15000 }, expect);
         };
-        if (hub === 'setup') await clickNav('setup', 'Each role is explicit');
+        if (hub === 'setup') await clickNav('setup', 'Current setup');
         else if (hub === 'accounts') await clickNav('accounts', 'Other authentication methods');
         else if (hub === 'history') await clickNav('history', 'All activity');
         else if (hub === 'work') {
@@ -228,6 +231,77 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
           const ok = await page.evaluate(() => { const b = document.querySelector('[data-testid="hub-row-open"]'); if (b) b.click(); return !!b; });
           if (!ok) throw new Error('Connections hub could not find an Open row');
           await page.waitForFunction(() => (document.body.textContent || '').includes('Opening another model throws those changes away unless you save first'), { timeout: 15000 });
+        } else if (hub === 'recovery') {
+          // A real remembered XMLA Query action fails once through the RPC seam. The component must retain the target
+          // and query purpose, show the saved-account choice, and retry with the selected profile without changing the
+          // tenant default or the dirty editing session. Capture the failure before the explicit retry.
+          const row = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[data-testid="hub-model-row"]')].find((x) => (x.textContent || '').includes('Finance'));
+            if (b) b.click();
+            return !!b;
+          });
+          if (!row) throw new Error('Connections recovery could not find the Finance remembered model');
+          const query = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'));
+            if (b) b.click();
+            return !!b;
+          });
+          if (!query) throw new Error('Connections recovery could not find Query this model');
+          await page.waitForSelector('[data-testid="hub-account-dialog"][data-purpose="query"]', { timeout: 15000 });
+          await page.waitForSelector('[data-testid="hub-account-recovery"]', { timeout: 15000 });
+          await page.waitForSelector('[data-testid="hub-sign-in-again"]', { timeout: 15000 });
+          await page.screenshot({ path: out.replace(/\.png$/u, '-failure.png'), fullPage: false });
+          const assert = (await import('node:assert/strict')).default;
+          const failed = await page.evaluate(() => structuredClone(window.__uishotRecovery));
+          assert.equal(failed.connectCalls.length, 1, 'the first query attempt must fail once');
+          assert.equal(failed.targetId, 'cn1', 'recovery must retain the remembered target');
+          assert.equal(failed.purpose, 'query', 'recovery must retain the Query purpose');
+          assert.equal(failed.defaultBefore, 'pf1', 'the fixture starts with Kane as the tenant default');
+          assert.equal(failed.sessionBefore.hasUnsavedChanges, true, 'the fixture includes a dirty editing session');
+          assert.match(await page.$eval('[data-testid="hub-account-error"]', (el) => el.textContent || ''), /Authentication failed for all authenticators/, 'the chooser must show the real RPC failure cause');
+          assert.match(await page.$eval('[data-testid="hub-sign-in-again"]', (el) => el.textContent || ''), /Sign in again/, 'the failed profile must keep an explicit sign-in-again action');
+          await page.evaluate(() => document.querySelector('[data-testid="hub-use-for-open"]')?.click());
+          await page.waitForFunction(() => !document.querySelector('[data-testid="hub-account-dialog"]'), { timeout: 15000 });
+          const recovered = await page.evaluate(() => structuredClone(window.__uishotRecovery));
+          assert.equal(recovered.connectCalls.length, 2, 'the explicit saved-profile choice must retry exactly once');
+          assert.equal(recovered.connectCalls[1][5], false, 'saved-profile retry must not force a new sign-in');
+          assert.equal(recovered.connectCalls[1][6], 'pf2', 'retry must carry the selected saved profile');
+          assert.equal(recovered.connectCalls[1][7], false, 'per-query retry must not change the tenant default');
+          assert.equal(recovered.connectCalls[1][8], null, 'saved-profile retry must not invent a login hint');
+          assert.equal(recovered.successes.length, 1, 'the host seam must return one successful retry result');
+          assert.equal(recovered.successes[0].profileId, 'pf2', 'the successful result must belong to the selected profile');
+          assert.equal(recovered.defaultBefore, 'pf1', 'the remembered default identity remains the same');
+          assert.equal(recovered.sessionReads.every((s) => s.sessionId === recovered.sessionBefore.sessionId
+            && s.modelName === recovered.sessionBefore.modelName && s.hasUnsavedChanges === true), true,
+            'the editing session identity and local edits remain unchanged');
+          console.log('  Recovery: real cause and sign-in-again action shown; successful host result closed the chooser with pf2');
+        } else if (hub === 'local-failure') {
+          // A local desktop Query failure is ordinary operational feedback. It must keep the selected target and its
+          // Query action available for retry, without opening the Microsoft account chooser.
+          const row = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[data-testid="hub-model-row"]')].find((x) => (x.textContent || '').includes('Contoso local test'));
+            if (b) b.click();
+            return !!b;
+          });
+          if (!row) throw new Error('Connections local-failure case could not find the local model');
+          const query = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'));
+            if (b) b.click();
+            return !!b;
+          });
+          if (!query) throw new Error('Connections local-failure case could not find Query this model');
+          await page.waitForFunction(() => (document.body.textContent || '').includes('The local model at localhost:51000 is not ready.'), { timeout: 15000 });
+          await page.screenshot({ path: out.replace(/\.png$/u, '-failure.png'), fullPage: false });
+          const assert = (await import('node:assert/strict')).default;
+          const failed = await page.evaluate(() => structuredClone(window.__uishotLocalFailure));
+          assert.equal(failed.calls.length, 1, 'the local Query attempt must fail once');
+          assert.equal(failed.calls[0][0], 'localhost:51000', 'the local failure must retain the local target');
+          assert.equal(await page.$('[data-testid="hub-account-dialog"]'), null, 'a local failure must not open Microsoft account recovery');
+          assert.ok(await page.$('[data-testid="hub-outcome"]'), 'the selected local target must retain its retry action');
+          await page.evaluate(() => [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'))?.click());
+          await page.waitForFunction(() => window.__uishotLocalFailure.calls.length === 2, { timeout: 15000 });
+          assert.equal(await page.$('[data-testid="hub-account-dialog"]'), null, 'a local retry must stay outside Microsoft account recovery');
+          console.log('  Local failure: target stayed selected, cause stayed readable, and Query remained retryable');
         } else if (hub === 'add') {
           // Open "Add a published model" and select Service identity so the tenant field + the live setup preflight render.
           const ok = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').includes('Published model') && (x.textContent || '').includes('XMLA endpoint once')); if (b) b.click(); return !!b; });
@@ -258,7 +332,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
         await page.evaluate(() => document.querySelector('[data-testid="compare-workspace-picker"]')?.click());
         await new Promise((r) => setTimeout(r, 500));
       }
-      if (variant.toLowerCase() === 'diagram') {
+      if (variant.toLowerCase() === 'diagram' && !hub) {
         await page.waitForSelector('.react-flow__node', { timeout: 15000 });
         await page.waitForSelector('.react-flow__edge', { timeout: 15000 });
       }
@@ -412,6 +486,119 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
         await new Promise((r) => setTimeout(r, 700));
       }
       await new Promise((r) => setTimeout(r, 1200));
+      if ((process.env.UISHOT_WF || '').startsWith('editor')) {
+        const assert = (await import('node:assert/strict')).default;
+        const mode = (process.env.UISHOT_WF || '').split('-')[1] || 'steps';
+        const button = async (label) => {
+          await page.waitForFunction((text) => [...document.querySelectorAll('button')]
+            .some((item) => item.textContent.trim() === text && !item.disabled), { timeout: 15000 }, label);
+          await page.evaluate((text) => [...document.querySelectorAll('button')]
+            .find((item) => item.textContent.trim() === text).click(), label);
+        };
+        const setValue = async (selector, value) => page.$eval(selector, (field, next) => {
+          const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(proto, 'value').set.call(field, next);
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+        await page.waitForSelector('.sem-wf-editor[data-wf-view="steps"]', { timeout: 15000 });
+        if (mode === 'forms') {
+          await page.$eval('.sem-wf-gate', (element) => element.scrollIntoView({ block: 'start' }));
+          await page.waitForFunction(() => [...document.querySelectorAll('input')].some((field) => field.value === 'Continue?')
+            && [...document.querySelectorAll('select option')].some((option) => option.textContent === 'bpa_clean'));
+          console.log('  Workflow editor: rich question and check fields rendered');
+        } else if (mode === 'canvas') {
+          await button('Canvas');
+          await page.waitForSelector('[data-wf-canvas="true"] .react-flow__node', { timeout: 15000 });
+          assert.equal(await page.$$eval('[data-wf-canvas-step]', (items) => items.length), 2);
+          await page.click('[data-wf-canvas-step="1"]');
+          await page.waitForSelector('[data-wf-step-form="finish"]');
+          assert.deepEqual(await page.$$eval('.sem-wf-form-actions button', (items) => items.slice(0, 2).map((item) => item.textContent.trim())), ['Move left', 'Move right']);
+          assert.equal(await page.$$eval('[data-wf-canvas="true"] .react-flow__edge-text', (items) => items.length), 0);
+          console.log('  Workflow editor: Canvas opened and selected the shared second step');
+        } else if (mode === 'source') {
+          await button('Source');
+          await page.waitForSelector('textarea[aria-label="Workflow source"]', { timeout: 15000 });
+          const before = await page.$eval('textarea[aria-label="Workflow source"]', (field) => field.value);
+          await setValue('textarea[aria-label="Workflow source"]', before.replace('title: Loop and hand-off', 'title: Loop and hand-off revised'));
+          await button('Steps');
+          await page.waitForSelector('.sem-wf-editor[data-wf-view="steps"]');
+          await button('Workflow settings');
+          assert.equal(await page.$eval('.sem-wf-form-card input', (field) => field.value), 'Loop and hand-off revised');
+          await button('Undo draft');
+          await page.waitForFunction(() => document.querySelector('.sem-wf-form-card input')?.value === 'Loop and hand-off');
+          await button('Redo');
+          await page.waitForFunction(() => document.querySelector('.sem-wf-form-card input')?.value === 'Loop and hand-off revised');
+          await button('Source');
+          assert.match(await page.$eval('textarea[aria-label="Workflow source"]', (field) => field.value), /title: Loop and hand-off revised/);
+          console.log('  Workflow editor: Source edit projected into Steps and remained in the shared draft');
+        } else if (mode === 'stock') {
+          await page.waitForFunction(() => document.body.textContent.includes('Built-in') && document.body.textContent.includes('Copy to this project'));
+          assert.equal(await page.$eval('.sem-wf-form-card input', (field) => field.matches(':disabled')), true);
+          await button('Source');
+          assert.equal(await page.$eval('textarea[aria-label="Workflow source"]', (field) => field.readOnly), true);
+          await button('Steps');
+          await page.waitForSelector('.sem-wf-editor[data-wf-view="steps"]');
+          console.log('  Workflow editor: built-in Steps and Source stayed read-only');
+        } else if (mode === 'copy') {
+          assert.equal(await page.$eval('.sem-wf-form-card input', (field) => field.matches(':disabled')), true);
+          await button('Copy to this project');
+          await page.waitForFunction(() => document.body.textContent.includes('Project copy created. You can edit it now.'));
+          assert.equal(await page.$eval('.sem-wf-form-card input', (field) => field.matches(':disabled')), false);
+          assert.equal(await page.evaluate(() => window.__workflowDocument.calls.find((call) => call.method === 'saveWorkflow').params[3]), true);
+          assert.equal(await page.evaluate(() => window.__workflowDocument.calls.find((call) => call.method === 'saveWorkflow').params[4]), 'uishot');
+          console.log('  Workflow editor: exact built-in copy preserved createOnly and session identity');
+        } else if (mode === 'v1') {
+          await button('Add step after');
+          await page.waitForFunction(() => document.body.textContent.includes('2. New step'));
+          await button('Save workflow');
+          await page.waitForSelector('[aria-label="Save workflow preview"]');
+          const previewCall = await page.evaluate(() => structuredClone(window.__workflowDocument.calls.filter((call) => call.method === 'previewWorkflowEdit').at(-1)));
+          const operations = JSON.parse(previewCall.params[3]);
+          assert.equal(operations[0].op, 'stabilize_step_ids');
+          assert.equal(operations[1].op, 'add_step');
+          await page.waitForFunction(() => document.body.textContent.includes('Step ids are made stable so steps can move safely.'));
+          console.log('  Workflow editor: v1 stayed editable and stabilized IDs before a structural edit');
+        } else if (mode === 'preview' || mode === 'warning' || mode === 'apply' || mode === 'conflict') {
+          const title = '.sem-wf-form-card input';
+          await setValue(title, 'Review every table carefully');
+          await page.waitForFunction(() => document.body.textContent.includes('Unsaved draft.'));
+          if (mode === 'conflict') await page.evaluate(() => {
+            const fixture = window.__workflowDocument;
+            fixture.set(fixture.document.exactText + String.fromCharCode(10) + 'External edit', 'user', true, false);
+          });
+          await button('Save workflow');
+          await page.waitForSelector('[aria-label="Save workflow preview"]');
+          const previewCall = await page.evaluate(() => structuredClone(window.__workflowDocument.calls.filter((call) => call.method === 'previewWorkflowEdit').at(-1)));
+          assert.equal(previewCall.params[0], 'loop-handoff');
+          assert.equal(previewCall.params[6], 'uishot');
+          assert.equal(JSON.parse(previewCall.params[3])[0].op, 'set_field');
+          if (mode === 'conflict') {
+            await page.waitForFunction(() => document.body.textContent.includes('Choose Reload saved file to drop your draft'));
+            assert.equal(await page.$eval('[data-wf-step-form="review"] input', (field) => field.value), 'Review every table carefully');
+            await button('Review current file');
+            await page.waitForFunction(() => document.body.textContent.includes('External edit'));
+            await page.waitForFunction(() => document.body.textContent.includes('Read the newer saved file. Keep my draft then checks your draft against it.'));
+            assert.equal(await page.$$eval('button', (items) => items.some((item) => item.textContent.trim() === 'Keep my draft')), true);
+            console.log('  Workflow editor: conflict kept the draft and exposed the current exact file');
+          } else if (mode === 'apply') {
+            await button('Apply');
+            await page.waitForFunction(() => document.body.textContent.includes('Workflow saved.'));
+            const editCall = await page.evaluate(() => structuredClone(window.__workflowDocument.calls.filter((call) => call.method === 'editWorkflowDocument').at(-1)));
+            assert.match(editCall.params[3], /\/project\/\.semanticus\/workflows\/loop-handoff\.md$/);
+            assert.equal(editCall.params[4], 'human');
+            assert.equal(editCall.params[5], 'uishot');
+            assert.match(await page.evaluate(() => window.__workflowDocument.document.exactText), /workflow editor preview: set_field/);
+            console.log('  Workflow editor: serialized preview applied through the guarded exact writer');
+          } else if (mode === 'warning') {
+            await page.waitForFunction(() => document.body.textContent.includes('Add a clearer description before sharing this workflow.'));
+            console.log('  Workflow editor: warning rendered inline in the save preview');
+          } else {
+            await page.waitForFunction(() => document.body.textContent.includes('Ready to save. Only the lines below change.'));
+            console.log('  Workflow editor: serialized engine preview rendered before apply');
+          }
+        }
+        if (errors.length) throw new Error('Workflow editor browser errors: ' + errors.join('; '));
+      }
       if ((process.env.UISHOT_WF || '').startsWith('document')) {
         const assert = (await import('node:assert/strict')).default;
         const sourceField = '#workflow-source';
@@ -831,8 +1018,8 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       + (expectedNotices.length ? `  [${expectedNotices.length} expected sandbox notices]` : ''));
     if (errors.length) errors.slice(0, 6).forEach((e) => console.log('      ' + e));
   } catch (error) {
-    if ((process.env.UISHOT_WF || '').startsWith('document')) {
-      console.error('  Document failure:', ...errors);
+    if (/^(document|editor)/.test(process.env.UISHOT_WF || '')) {
+      console.error('  Workflow document failure:', ...errors);
       console.error(await page.evaluate(() => document.body.innerText.slice(-5000)));
       await page.screenshot({ path: out });
     }
@@ -859,6 +1046,14 @@ if (a.toLowerCase() === 'all') {
          .map((j) => ({ ...j, out: j.out || defaultOut(j.target, j.variant) }));
 } else if (a.toLowerCase() === 'connections') {
   jobs = [...CONNECTION_HUB_STATES];   // just the Connections hub states (sections, work-locally, stale identity, switch, standalone)
+} else if (a.toLowerCase() === 'connections-recovery') {
+  jobs = [CONNECTION_HUB_STATES.find((j) => j.hub === 'recovery')];
+} else if (a.toLowerCase() === 'connections-local-failure') {
+  jobs = [CONNECTION_HUB_STATES.find((j) => j.hub === 'local-failure')];
+} else if (a.toLowerCase() === 'connections-state') {
+  const state = CONNECTION_HUB_STATES.find((j) => j.hub === (b || 'open'));
+  if (!state) throw new Error(`Unknown Connections state: ${b}`);
+  jobs = [state];
 } else if (a.toLowerCase() === 'studio') {
   const variant = b || 'Diagram';
   jobs = [{ target: 'studio', variant, out: c ? outOf(c) : defaultOut('studio', variant) }];
@@ -879,9 +1074,13 @@ if (needsStudio && !existsSync(join(webRoot, 'media', 'studio', 'studio.js'))) {
 mkdirSync(join(__dir, 'shots'), { recursive: true });
 const server = await startServer();
 const port = server.address().port;
+const browserExecutable = findBrowser();
 const browser = await puppeteer.launch({
-  executablePath: findBrowser(), headless: 'shell',
-  args: ['--no-sandbox', '--disable-gpu', '--force-color-profile=srgb', '--hide-scrollbars'],
+  executablePath: browserExecutable,
+  // chrome-headless-shell accepts the shell mode. Arch's full Chromium fallback needs the normal headless
+  // switch or the DevTools connection closes before the first page can load.
+  headless: browserExecutable.endsWith('/chromium') ? true : 'shell',
+  args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--force-color-profile=srgb', '--hide-scrollbars'],
 });
 let failed = 0;
 try {

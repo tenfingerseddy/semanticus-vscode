@@ -25,10 +25,12 @@ namespace Semanticus.Tests
         }
 
         // CreateModelAsync builds a Power-BI-mode model (pbiDatasetModel:true) — the valid target for field params.
+        // Pro: field parameters are Advanced Modelling since 2026-09-15, so a free engine would refuse at the entry
+        // and the structure guards below would never be reached.
         private static async Task<(LocalEngine engine, SessionManager sessions)> NewPbiModelAsync(int cl = 1604)
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false));
+            var engine = new LocalEngine(sessions, new Fake(true));
             await engine.CreateModelAsync("FP", cl);
             return (engine, sessions);
         }
@@ -190,7 +192,7 @@ namespace Semanticus.Tests
         public async Task Refused_on_a_non_power_bi_or_low_cl_model()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false));
+            var engine = new LocalEngine(sessions, new Fake(true));       // Pro, so the model guard is what refuses
             using (engine)
             {
                 await engine.OpenAsync(TestModels.FindBim());             // AdventureWorks — an Analysis Services .bim

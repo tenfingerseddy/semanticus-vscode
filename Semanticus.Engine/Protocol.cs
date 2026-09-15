@@ -110,8 +110,8 @@ namespace Semanticus.Engine
 
     /// <summary>The deterministic health delta ONE committed mutation caused — "spell-check for your model"
     /// (docs/product-innovation-brainstorm.md §4; harness-engineering §3 ground-truth feedback made ambient).
-    /// Computed once per commit at the single construction point (<c>HealthDeltaProbe</c>, where the SOFT Pro
-    /// gate lives) and delivered to BOTH doors: the human chip rides <see cref="ChangeNotification.Health"/>;
+    /// Computed once per commit at the single construction point (<c>HealthDeltaProbe</c>), for every tier, and
+    /// delivered to BOTH doors: the human chip rides <see cref="ChangeNotification.Health"/>;
     /// the agent block is appended to the mutating MCP tool result. OMIT-WHEN-QUIET (P-Efficiency): the whole
     /// object is null unless the grade LETTER moved, a net-new Warning+ finding landed on a touched object, or
     /// the blast radius is &gt; 0 — and each field is null when it carries nothing, so the wire form stays terse.</summary>
@@ -423,7 +423,7 @@ namespace Semanticus.Engine
         public int FunctionCount { get; set; }
     }
 
-    /// <summary>Result of daxlib_install — the bulk primitive (Pro). One atomic, undoable transaction installs the
+    /// <summary>Result of daxlib_install (Advanced Modelling, Pro). One atomic, undoable transaction installs the
     /// package's UDFs (and any dependencies, deps-first); <see cref="Skipped"/> are functions that already existed
     /// (when replaceExisting=false). <see cref="Warning"/> surfaces non-fatal notes (version conflict / cycle break).</summary>
     public sealed class DaxLibInstallResult
@@ -875,6 +875,11 @@ namespace Semanticus.Engine
         public bool DiskDiverged { get; set; }
         public int Tables { get; set; }
         public int Measures { get; set; }
+        /// <summary>The model's TOM compatibility level (1400, 1604, 1702 and so on); 0 when no model is open.
+        /// Carried on this FREE read on purpose: raising the level is free and needs a free control, and every
+        /// other carrier of the number (get_spec, list_calendars, get_doc_model) is a Pro read under the
+        /// feature line Kane set on 2026-09-15.</summary>
+        public int CompatibilityLevel { get; set; }
         public bool LiveBound { get; set; }        // opened from a live XMLA model (open_live) — deploy_live can push back to source
         public string LiveEndpoint { get; set; }   // the bound XMLA endpoint (null when not live-bound)
         public string LiveDatabase { get; set; }   // the bound dataset/database (null when not live-bound)

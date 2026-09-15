@@ -85,6 +85,43 @@ ROW(
 )";
         }
 
+        /// <summary>The unmatched many-side key values behind an orphan count: one row per DISTINCT key value the
+        /// fact side uses that the lookup side does not have, with how many fact rows carry it, biggest first. The
+        /// predicate is character-for-character the one <see cref="OrphanRowsQuery"/> counts, so the list and the
+        /// count can never disagree. Two hundred rows of the same key value tell a person nothing; which values are
+        /// missing, and how much data hangs off each, is the answer they came for.
+        ///
+        /// It asks for ONE MORE row than the cap on purpose: that is how "these are all of them" is told apart from
+        /// "this is the top of a longer list", which a bare TOPN(cap) cannot say.
+        ///
+        /// VALUES({key}) sits outside any CALCULATE, so the FILTER's row context does not narrow it and the
+        /// comparison is against the whole key population (the same reasoning as the six probes above).</summary>
+        public static string UnmatchedRowsQuery(string manyTable, string manyColumn, string oneTable, string oneColumn, int cap)
+        {
+            Require(manyTable, nameof(manyTable));
+            Require(manyColumn, nameof(manyColumn));
+            Require(oneTable, nameof(oneTable));
+            Require(oneColumn, nameof(oneColumn));
+            var many = QuoteTable(manyTable);
+            var fk = ColumnRef(manyTable, manyColumn);
+            var key = ColumnRef(oneTable, oneColumn);
+            var ask = (cap <= 0 ? 200 : cap) + 1;
+            return
+$@"EVALUATE
+TOPN(
+    {ask},
+    ADDCOLUMNS(
+        FILTER(
+            VALUES({fk}),
+            NOT ISBLANK({fk}) && NOT( {fk} IN VALUES({key}) )
+        ),
+        ""UnmatchedRows"", CALCULATE( COUNTROWS( {many} ) )
+    ),
+    [UnmatchedRows], DESC
+)";
+        }
+
+
         // MANY-side rows whose FK is blank — legitimate in many models, reported as information (never a Fail).
         public static string BlankForeignKeysQuery(string manyTable, string manyColumn)
         {

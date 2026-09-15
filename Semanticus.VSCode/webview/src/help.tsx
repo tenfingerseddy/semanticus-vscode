@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { runHostCommand } from './bridge';
+import { ASSISTANT_SYNC_COPY, EDIT_ACTION_COPY, SAFETY_CHECK_COPY, SESSION_STATE_COPY } from './copy';
 
 // ===================================================================================================
 // Per-tab in-context help — the USER GUIDE (Studio v2). A '?' in the header opens a slide-over with
@@ -21,7 +23,44 @@ interface TabHelp {
   seeAlso?: SeeAlso[];    // entries with a tab id render as clickable jumps
 }
 
+const ACTION_HELP_TITLES = new Set(['Model Spec', 'Power Query', 'Proposed changes', 'Published changes', 'Workflows']);
+
+function SharedStateHelp() {
+  return <SectionBlock s={{
+    h: 'When a page cannot continue',
+    bullets: [
+      `Loading: ${SESSION_STATE_COPY.loading.detail}`,
+      `Empty: ${SESSION_STATE_COPY.empty.detail} ${SESSION_STATE_COPY.empty.action}.`,
+      `No live endpoint: ${SESSION_STATE_COPY.noLiveConnection.detail}`,
+      `Stale results: ${SESSION_STATE_COPY.staleQuery.detail}`,
+      `No permission: ${SESSION_STATE_COPY.noPermission.detail}`,
+      `Error: ${SESSION_STATE_COPY.error.detail}`,
+      `Success: ${SESSION_STATE_COPY.success.detail}`,
+    ],
+  }} />;
+}
+
+function SharedActionHelp() {
+  return <SectionBlock s={{
+    h: 'What the action words mean',
+    bullets: [EDIT_ACTION_COPY.apply, EDIT_ACTION_COPY.save, EDIT_ACTION_COPY.publish, EDIT_ACTION_COPY.restore],
+  }} />;
+}
+
 const HELP: Record<string, TabHelp> = {
+  "modelhome": {
+    "title": "Overview",
+    "lead": "See the model at a glance, select an object, then continue in the complete tool for the job.",
+    "start": [
+      "Choose a table here or select an object in the native Model tree.",
+      "Use the named actions for that object, or choose Diagram, Lineage, or Find and replace for the whole model.",
+      "Use Back to return with the same object and work in context."
+    ],
+    "sections": [
+      { "h": "Model facts", "bullets": ["Counts and table rows come from the open model. Loading, failures, and a model with no tables are shown separately."] },
+      { "h": "Object actions", "bullets": ["Actions open the existing full tools. Editing a formula opens the native DAX editor in VS Code."] }
+    ]
+  },
   "diagram": {
     "title": "Diagram",
     "lead": "See how your tables connect. Arrange the map and create or edit the links between tables.",
@@ -56,12 +95,12 @@ const HELP: Record<string, TabHelp> = {
     ]
   },
   "search": {
-    "title": "Search",
+    "title": "Find and replace",
     "lead": "Find names, descriptions and formulas across the model. Review replacements before changing anything.",
     "start": [
       "Type at least two characters in the search box.",
       "Select a result to find the item and its settings. Turn on Include DAX & M to search formulas and data-loading code.",
-      "To change text, enter a replacement and preview one result, or use Replace all to prepare a Change Plan."
+      "To change text, enter a replacement and preview one result, or use Replace all to collect the edits under Changes > Proposed."
     ],
     "sections": [
       {
@@ -74,19 +113,19 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Review replacements",
         "bullets": [
-          "Replace all prepares changes for review in Change Plan. It does not apply them immediately.",
+          "Replace all collects the edits under Changes > Proposed for review. It does not apply them immediately.",
           "Check each proposed change. Some fields are read-only or need a dedicated editor; the result explains why they cannot be replaced here."
         ]
       }
     ]
   },
   "lineage": {
-    "title": "Lineage & Impact",
-    "lead": "See what a calculation uses and what relies on it. Check the likely effect of changing or removing a field.",
+    "title": "Lineage",
+    "lead": "See what a calculation uses and what relies on it. Check what a change would affect, and find what nothing uses any more.",
     "start": [
-      "Find a measure or column using the search box.",
-      "Use Tree to follow its inputs, or Impact to see what depends on it.",
-      "Check Published reports before treating an unused field as a removal candidate."
+      "Find a measure or column using the search box, then pick it.",
+      "Read the card: what uses it in the model, what was found in the reports that were checked, and which saved checks to run after changing it.",
+      "Choose reports once. Impact and the cleanup list both count only the reports that were read."
     ],
     "sections": [
       {
@@ -94,15 +133,23 @@ const HELP: Record<string, TabHelp> = {
         "bullets": [
           "Graph draws the connections. Click connected items to follow the chain; Clear pins resets the selection.",
           "Tree shows dependencies as a list. Upstream means the inputs an item uses. Downstream means the items that use it.",
-          "Impact lists the calculations and relationships a change could affect."
+          "Impact answers two questions from one page: what uses this field, and what can I clean up. Tick Show cleanup candidates for the second one."
         ]
       },
       {
-        "h": "Interpret removal advice",
+        "h": "Choose the reports",
         "bullets": [
-          "A field with no model dependencies may still be used by a report. Published reports adds the report usage that Semanticus can inspect.",
-          "Read the coverage and uncertainty notes with each result. Missing report access or an expression that could not be understood leaves an information gap.",
-          "Review the listed dependents before deleting. The result covers the sources that were checked, not every possible external consumer."
+          "Choosing a report saves it with the model. It is not read until you check it, and it comes back as not checked when you reopen the model.",
+          "Signing in to read a published report asks for permission that can also edit reports. Semanticus uses it only to read.",
+          "A report that could not be fully read is said so, and its uncertainty stays in the answer. Report folders on this computer need no sign-in."
+        ]
+      },
+      {
+        "h": "Read a removal answer",
+        "bullets": [
+          "Nothing here is called safe. A group says what was established: no use found in these checks, still used, or needs checking.",
+          "A report that was not checked could still use one of these. Check more reports to narrow that gap.",
+          "Propose removal adds a proposal to Changes. The field stays in the model until you apply it there, and the apply step checks the same model and the same reports again first."
         ]
       }
     ]
@@ -144,7 +191,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "Inspect intermediate values and save a change",
         "bullets": [
           "Debug records values from EVALUATEANDLOG(expression, \"label\") in a query. Log each measure adds logging for selected measures. No captured output means there is no debug result to inspect.",
-          "To keep a formula, edit the measure in the Model list or use a Change Plan. A local edit does not update the live test model until you publish it."
+          "To keep a formula, edit the measure in the Model list or collect it under Changes > Proposed. A local edit does not update the live test model until you publish it."
         ]
       }
     ],
@@ -179,13 +226,13 @@ const HELP: Record<string, TabHelp> = {
         "h": "If no rows appear",
         "bullets": [
           "Check the Testing connection at the bottom of Studio and any message above the preview. A model opened from a file can be edited without having a live server to query.",
-          "Use DAX Lab to ask a specific question or filter the data. Use M Code to change how data is loaded at the next refresh."
+          "Use Calculations > DAX Lab to ask a specific question or filter the data. Use Model > Power Query to change how data is loaded at the next refresh."
         ]
       }
     ]
   },
   "stats": {
-    "title": "Storage",
+    "title": "Size by table",
     "lead": "Find the tables and columns using the most model memory. Review opportunities to reduce their size.",
     "start": [
       "Connect the model you want to measure, then choose Scan storage.",
@@ -239,10 +286,11 @@ const HELP: Record<string, TabHelp> = {
         "h": "Build and continue",
         "bullets": [
           "Build into model adds the reviewed objects as one undoable model change. It does not publish or load source data.",
-          "Review the build result, then use Diagram and Tests to check the model. Publish is a separate action in Deploy."
+          "Review the build result, then use Model > Diagram and Checks > Tests to check the model. Publishing is a separate action under Changes > Published."
         ]
       }
-    ]
+    ],
+    "pro": "Create in Model is a Semanticus Pro feature. Editing measures, columns and relationships stays free."
   },
   "advmodels": {
     "title": "Advanced Modelling",
@@ -275,10 +323,11 @@ const HELP: Record<string, TabHelp> = {
           "Create a role, choose its members and set its filters. An empty row filter does not restrict rows. Test roles against a live model to check what they actually expose."
         ]
       }
-    ]
+    ],
+    "pro": "Create in Model is a Semanticus Pro feature. Editing measures, columns and relationships stays free."
   },
   "mcode": {
-    "title": "M Code",
+    "title": "Power Query",
     "lead": "Edit Power Query steps that load and transform data. Changes take effect when the model is refreshed.",
     "start": [
       "Choose a table and the query or shared expression you want to edit.",
@@ -309,22 +358,23 @@ const HELP: Record<string, TabHelp> = {
           "Hybrid mode combines stored data with live queries for the newest rows. The page shows whether the model supports it."
         ]
       }
-    ]
+    ],
+    "pro": "Create in Model is a Semanticus Pro feature. Editing measures, columns and relationships stays free."
   },
   "optimize": {
-    "title": "Change Plan",
+    "title": "Proposed changes",
     "lead": "Review proposed edits together before applying them. See each change and choose which ones to keep.",
     "start": [
-      "Choose Analyse model, or send findings here from AI Readiness or Best practices.",
+      "Choose Analyse model, or send findings here from Checks > AI understanding or Checks > Model quality.",
       "Review the before-and-after values. Fill in missing text and select the items you want.",
-      "Apply the selected changes and read the result. Use Edits if you need to undo an applied batch."
+      "Apply the selected changes and read the result. Use Changes > History if you need to undo an applied batch."
     ],
     "sections": [
       {
         "h": "Prepare a plan",
         "bullets": [
           "A plan is a list of proposed changes. Creating or editing the plan does not change the model.",
-          "Your AI Assistant can work on the same plan. Its changes appear here. The AI Assistant sees your changes on its next call.",
+          "Your assistant can work on the same plan. Its changes appear here. Your assistant sees your changes on its next call.",
           "Needs content means a value still needs to be written, such as a useful business description. Ask AI prepares a prompt for your own assistant."
         ]
       },
@@ -338,19 +388,18 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Save the result",
         "bullets": [
-          "An applied batch becomes one entry in Edits and can be undone together. Saving to a file and publishing to a live model are separate actions."
+          "An applied batch becomes one entry under Changes > History and can be undone together. Saving to a file and publishing to a live model are separate actions."
         ]
       }
-    ],
-    "pro": "Reviewing plans is free. Applying a batch in one step is Pro; individual edits remain available on Free."
+    ]
   },
   "readiness": {
-    "title": "AI Readiness",
+    "title": "AI understanding",
     "lead": "Find missing context and model settings that can make AI answers less useful. Review the findings and improve them.",
     "start": [
       "Read the grade, coverage notes and most important findings.",
       "Open a finding to see the affected item and the suggested change.",
-      "Apply a supported fix, write the missing explanation, or collect changes in a Change Plan."
+      "Apply a supported fix, write the missing explanation, or collect changes under Changes > Proposed."
     ],
     "sections": [
       {
@@ -366,7 +415,7 @@ const HELP: Record<string, TabHelp> = {
         "bullets": [
           "Apply makes the offered model change. Review it first. Ask AI copies a prompt containing the relevant model context for your own assistant.",
           "Descriptions should explain business meaning, not just repeat a field name. Tests can check whether important business questions get the expected answers.",
-          "Waive means accept a finding without fixing it. The reason is recorded and the finding remains visible. Remove the waiver when it should count again."
+          "Accept finding means you accept it without fixing it, so the check counts as overridden. The reason is recorded and the finding stays visible. Reopen it when it should count again."
         ]
       },
       {
@@ -377,7 +426,6 @@ const HELP: Record<string, TabHelp> = {
         ]
       }
     ],
-    "pro": "Single fixes and individual waivers are free. Bulk fixes and waiving a whole rule are Pro.",
     "seeAlso": [
       {
         "label": "Check known business answers",
@@ -386,12 +434,12 @@ const HELP: Record<string, TabHelp> = {
     ]
   },
   "bpa": {
-    "title": "BPA: Best Practice Analyzer",
+    "title": "Model quality",
     "lead": "Check the model for common design, naming and performance issues. Review each finding before deciding how to address it.",
     "start": [
       "Read the findings and select an affected item.",
       "Use its suggested fix or Ask AI for help with a change that needs judgement.",
-      "Review several changes in a Change Plan, or accept an intentional exception with a recorded reason."
+      "Review several changes under Changes > Proposed, or accept an intentional exception with a recorded reason."
     ],
     "sections": [
       {
@@ -405,7 +453,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "Fix or accept a finding",
         "bullets": [
           "Fix applies the offered change. Ask AI prepares a prompt for your own assistant. Review as a plan collects proposed fixes before you apply them.",
-          "Waive accepts a finding with a reason and keeps it visible. Waive rule accepts that rule throughout the model. You can reverse a waiver later."
+          "Accept finding records a reason and keeps the finding visible, so the check counts as overridden. Accept for the whole model accepts that rule everywhere. You can reopen it later."
         ]
       },
       {
@@ -415,43 +463,43 @@ const HELP: Record<string, TabHelp> = {
           "Custom rules are saved with the model. Reusing a standard rule ID replaces that rule; the preview explains this before you save."
         ]
       }
-    ],
-    "pro": "Single fixes and individual waivers are free. Bulk fixes and waiving a whole rule are Pro."
+    ]
   },
   "tests": {
     "title": "Tests",
-    "lead": "Check that calculations return expected answers, tables connect correctly and access rules behave as intended.",
+    "lead": "Check that calculations return the answers you trust, and that tables connect and count correctly.",
     "start": [
-      "Choose a live test model. Select New test to save an answer you already trust, or run the built-in relationship and access checks.",
-      "Choose whether to run everything, the current section or selected tests.",
-      "Read passed, failed and untested results. Use Run + record to keep a complete run, or Report to review and export it."
+      "Choose a live test model. Select New check to save an answer you already trust. Relationships and table row counts are checked on every run.",
+      "Run all enabled checks, or open the arrow beside it to run one group or only the checks you ticked.",
+      "Read the one status line, then open any row that differs. Record it keeps the run in History; Report reads or exports it."
     ],
     "sections": [
       {
-        "h": "Choose a useful test",
+        "h": "Choose a useful check",
         "bullets": [
-          "A known-answer test compares a calculation with a value you trust. Use an independent business report or source calculation for the expected value.",
-          "A source comparison, also called reconciliation, checks model results against a SQL query. It needs both the model connection and access to the source SQL server.",
-          "Model Interview saves business questions and expected answers. Include meaningful product, customer, region and time examples, not only different months."
+          "A trusted answer compares a calculation with a number you know is right. Use an independent business report or source calculation for that number.",
+          "Compare with source checks the same number against SQL you accept as the truth. It needs the model connection and a saved SQL source.",
+          "A table row count compares the rows in a model table with the rows in its source table. Map the table to a SQL source once."
         ]
       },
       {
         "h": "Connect to source data",
         "bullets": [
-          "For a SQL comparison, review the suggested source, then enter the server, database and sign-in method. Your model connection alone does not provide SQL access.",
+          "Save a SQL source once in Connections, with its server, database and sign-in. Every check and table mapping can then pick it by name. Your model connection alone does not provide SQL access.",
           "Review generated SQL before accepting it. A query based on the same faulty logic as the model is not an independent check."
         ]
       },
       {
         "h": "Read the outcome",
         "bullets": [
-          "Passed means the check ran and met its expected result. Failed means it found a difference or problem. Untested or skipped means there is no result to rely on.",
-          "A partial run covers only your chosen tests and does not receive a whole-model grade. If the model changes, run tests again before relying on the old results.",
-          "Relationship checks look for data that does not join as expected. Security checks review saved filters and visibility settings. They do not sign in as each user or prove live row access."
+          "Pass means the check ran and met the answer you trust. Differs means it found a difference. Could not check means there is no result to rely on, which is not the same as a failure.",
+          "A partial run covers only what you asked for and gets no whole-model grade. Every row that did not run keeps its own earlier result and date.",
+          "Relationship checks look for rows that do not join, lookup values that are not unique, and column types that do not work together.",
+          "Counts differ on a table means matching snapshots were not confirmed, so on its own it does not prove missing rows."
         ]
       }
     ],
-    "pro": "Running checks is free. Recording a complete run and exporting reports are Pro.",
+    "pro": "Tests is a Semanticus Pro feature. Model quality and AI understanding still check your whole model for free.",
     "seeAlso": [
       {
         "label": "Review saved reports",
@@ -464,7 +512,7 @@ const HELP: Record<string, TabHelp> = {
     ]
   },
   "evidence": {
-    "title": "Evidence",
+    "title": "Saved reports",
     "lead": "Review saved test and workflow reports. See what was checked, when it ran and which model it describes.",
     "start": [
       "Select a saved report from the list.",
@@ -489,18 +537,19 @@ const HELP: Record<string, TabHelp> = {
     ],
     "seeAlso": [
       {
-        "label": "Run model tests",
+        "label": "Run the model checks",
         "tab": "tests"
       },
       {
         "label": "Run a workflow",
         "tab": "workflows"
       }
-    ]
+    ],
+    "pro": "Saved reports is part of Tests, a Semanticus Pro feature. Model quality and AI understanding still check your whole model for free."
   },
   "deploy": {
-    "title": "Deploy",
-    "lead": "Publish reviewed changes to a live model, restore an earlier version or move a model between release stages.",
+    "title": "Published changes",
+    "lead": "Review changes for a live destination, publish them, restore an earlier version or move a model between release stages.",
     "start": [
       "Check the destination and account, then select Publish to review the proposed changes.",
       "Read the change list and any failed checks. Confirm only when the destination and changes are the ones you intend.",
@@ -510,9 +559,9 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Save and publish are different",
         "bullets": [
-          "Save keeps your local model or editor changes. Publish sends model design changes to the live destination used by reports.",
+          "Save keeps your local model or editor changes. Publish sends reviewed model design changes to the live destination used by reports.",
           "The editing model, test model and publishing destination can differ. The bottom bar identifies each one.",
-          "Choose what to publish opens a comparison so you can review selected changes."
+          "On Changes > Published, the What to publish mode shows a comparison so you can review selected changes first."
         ]
       },
       {
@@ -530,7 +579,8 @@ const HELP: Record<string, TabHelp> = {
           "Publishing changes model definitions. It does not refresh the data. Local Undo does not reverse a completed write to the live server."
         ]
       }
-    ]
+    ],
+    "pro": "Advanced publishing is a Semanticus Pro feature. Publish, Promote, compare and restore points stay free."
   },
   "compare": {
     "title": "Review changes",
@@ -560,7 +610,7 @@ const HELP: Record<string, TabHelp> = {
   },
   "permissions": {
     "title": "Permissions",
-    "lead": "Choose what your AI Assistant may do without asking and review requests waiting for your decision.",
+    "lead": "Choose what your assistant may do without asking and review requests waiting for your decision.",
     "start": [
       "Read the current setting and the actions listed in the permission table.",
       "Choose a preset or adjust the allowed actions for each environment.",
@@ -585,7 +635,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Choose the amount of control",
         "bullets": [
-          "The main switch turns these assistant permission checks on or off. Workflow checks are managed separately in Workflows → Governance.",
+          "The main switch turns these assistant permission checks on or off. Workflow checks are managed separately in Workflows > Governance.",
           "These settings help prevent accidental actions through Semanticus. They do not replace the access rights of the account connected to your data."
         ]
       }
@@ -621,11 +671,12 @@ const HELP: Record<string, TabHelp> = {
           "Check the preview before sharing. The document reflects the model state used to generate it."
         ]
       }
-    ]
+    ],
+    "pro": "Create in Model is a Semanticus Pro feature. Editing measures, columns and relationships stays free."
   },
   "history": {
-    "title": "Edits",
-    "lead": "See changes made by you and your AI Assistant. Undo recent model edits or review the saved audit record.",
+    "title": "History",
+    "lead": "See changes made by you and your assistant. Undo recent model edits or review the saved audit record.",
     "start": [
       "Find the change you want to inspect in the timeline.",
       "Use Undo last to reverse the latest change, or Redo to restore an undone change.",
@@ -636,7 +687,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "Undo model edits",
         "bullets": [
           "The timeline is shared by you and your assistant. Undo to here reverses the chosen change and every later change, not just one item in the middle.",
-          "A batch, such as an applied Change Plan, is one timeline entry and is undone together.",
+          "A batch, such as an applied set of proposed changes, is one timeline entry and is undone together.",
           "This timeline covers the current session. Local Undo does not reverse every remote action, such as publishing to a server."
         ]
       },
@@ -649,7 +700,6 @@ const HELP: Record<string, TabHelp> = {
         ]
       }
     ],
-    "pro": "The timeline, undo and redo are free. Exporting the audit trail is Pro."
   },
   "workflows": {
     "title": "Workflows",
@@ -661,6 +711,14 @@ const HELP: Record<string, TabHelp> = {
     ],
     "sections": [
       {
+        "h": "Edit a workflow",
+        "bullets": [
+          "Steps, Canvas and Source show one shared draft. Change the draft in the view that suits the job, then use Save workflow to review the complete proposed file before writing it.",
+          "Preview shows the full-context difference and any warnings. If the saved file changed, reload it or review the current file before keeping your draft.",
+          "Built-in workflows are read-only. Copy one into the project before editing it. Saved workflow files can also be edited through your assistant with the same preview and current-file checks."
+        ]
+      },
+      {
         "h": "Find your way around",
         "bullets": [
           "Home offers starting tasks. Library lists saved workflows. Runs shows work in progress and past results.",
@@ -671,7 +729,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Understand a step",
         "bullets": [
-          "An action is a task the model tools can carry out. Instructions explain what to do. A gate is a check attached to a step.",
+          "An action is a task the model tools can carry out. Instructions explain what to do. A check runs at a step and records whether it passed, failed or was not checked.",
           "A required check can stop the run when it fails. A warning records the problem and allows progress. Off skips that check. Read the result rather than treating a submitted answer as a passed test.",
           "Skipping or stopping a run keeps the recorded outcome; it does not turn an incomplete check into a pass."
         ]
@@ -686,12 +744,12 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Use project controls",
         "bullets": [
-          "In Governance, choose a project profile to load its workflow settings. Review the resulting controls, including required workflows and whether checks are enforced.",
-          "Turning enforcement off skips checks for new runs. Runs already underway keep the setting they started with. This is separate from assistant permissions."
+          "In Governance, choose a project profile to load its workflow settings. Review the resulting controls, including which workflows are required and whether their checks have to pass.",
+          "The switch labelled Required workflows in Governance turns required checks off for new runs, so those runs record nothing as passed. Runs already underway keep the setting they started with. This is separate from assistant permissions."
         ]
       }
     ],
-    "pro": "Reading, designing and following workflows manually is free. Running workflows with enforced checks is Pro.",
+    "pro": "Workflows is a Semanticus Pro feature. The app still shows any run already going and anything waiting for you.",
     "seeAlso": [
       {
         "label": "Review saved reports",
@@ -704,8 +762,8 @@ const HELP: Record<string, TabHelp> = {
     ]
   },
   "knowledge": {
-    "title": "Primer",
-    "lead": "Keep the business context that helps you and your AI Assistant understand this model.",
+    "title": "Model notes",
+    "lead": "Keep the business context that helps you and your assistant understand this model.",
     "start": [
       "Read the model overview and saved business context.",
       "Add or correct definitions, important calculations and known issues.",
@@ -713,9 +771,9 @@ const HELP: Record<string, TabHelp> = {
     ],
     "sections": [
       {
-        "h": "What a Primer is",
+        "h": "What model notes are",
         "bullets": [
-          "A Primer is a short introduction to the model. Explain what it covers, what common terms mean and which calculations people should use.",
+          "Model notes are a short introduction to the model. Explain what it covers, what common terms mean and which calculations people should use.",
           "Write for someone new to the project. For example, define whether revenue includes tax or whether customer counts include inactive accounts."
         ]
       },
@@ -730,7 +788,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Use saved lessons and workflows",
         "bullets": [
-          "Insights are saved lessons. Edit their text and search terms, or adjust their importance. Review a suggested Primer addition before selecting Accept.",
+          "Insights are saved lessons. Edit their text and search terms, or adjust their importance. Review a suggested addition to your model notes before selecting Accept.",
           "Learned workflows are reusable processes saved from earlier work. Check confirms that the definition can be read; Replay check tries the saved examples without changing the model.",
           "Recall searches for lessons relevant to your next task. Delete saved knowledge removes lessons from future use for the chosen scope; it keeps the stored history."
         ]
@@ -745,7 +803,8 @@ const HELP: Record<string, TabHelp> = {
         "label": "Write a full model document",
         "tab": "docs"
       }
-    ]
+    ],
+    "pro": "Create in Model is a Semanticus Pro feature. Editing measures, columns and relationships stays free."
   },
   "dataagent": {
     "title": "Data Agent",
@@ -773,13 +832,13 @@ const HELP: Record<string, TabHelp> = {
         ]
       }
     ],
-    "pro": "Automatically adding the open model as a source is Pro. Manually configuring a source remains available on Free."
+    "pro": "Advanced publishing is a Semanticus Pro feature, and the Data Agent lives inside it. Publish, Promote, compare and restore points stay free."
   }
 };
 
 // ---------------------------------------------------------------------------------------------------
-// "Where do I…?" — the task → location index. Much of authoring is NATIVE VS Code (the Model tree,
-// the Properties view, the palette), and users look in Studio first — this is the map. Keep entries
+// "Where do I…?" is the task-to-location index. Much of authoring is in native VS Code (the Model tree,
+// the Properties view and the palette), so users look in Studio first. Keep entries
 // verified against package.json/extension.ts.
 // ---------------------------------------------------------------------------------------------------
 
@@ -788,14 +847,14 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
   {
     group: 'Start here',
     items: [
-      { q: 'I am new to Semanticus. Where should I begin?', a: 'Open a model from the Semanticus sidebar. Read Primer for its business context, explore Diagram, then select a calculation in the Model list. Each Studio page has Getting started steps and a detailed Help guide.', tab: 'knowledge' },
+      { q: 'I am new to Semanticus. Where should I begin?', a: 'Open a model from the Semanticus sidebar. Read Model > Model notes for its business context, explore Model > Diagram, then select a calculation in the Model list. Each Studio page has Getting started steps and a detailed Help guide.', tab: 'knowledge' },
       { q: 'What is the difference between editing, testing and publishing?', a: 'Editing changes your working model. Testing asks a live model for answers. Publishing sends reviewed changes to a live destination. These can be different models; check the bottom bar and use Connections to change them.' },
       { q: 'Can I work without a live connection?', a: 'Yes. Open model files to inspect and edit their structure, formulas and descriptions. Running queries, measuring performance and testing real answers needs a live model with data.' },
-      { q: 'Give my AI Assistant the Semanticus guides', a: 'Run Semanticus: Install or Update Assistant Skills from the VS Code command palette. Choose your assistant, then refresh or restart it if needed. These guides use your existing Semanticus connection.' },
-      { q: 'Test a business answer against a number I trust', a: 'Tests → New test. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
-      { q: 'Compare model results with source data', a: 'Tests → New test → source comparison. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
-      { q: 'Review saved test and workflow reports', a: 'Evidence lists the reports saved with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
-      { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests. Workflow requirements are a separate choice under Workflows → Governance.', tab: 'permissions' },
+      { q: 'Give my assistant the Semanticus guides', a: 'Run Semanticus: Install or Update Assistant Skills from the VS Code command palette. Choose your assistant, then refresh or restart it if needed. These guides use your existing Semanticus connection.' },
+      { q: 'Test a business answer against a number I trust', a: 'Checks > Tests > New test. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
+      { q: 'Compare model results with source data', a: 'Checks > Tests > New test > source comparison. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
+      { q: 'Review saved test and workflow reports', a: 'Checks > Results lists the reports saved with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
+      { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests. Workflow requirements are a separate choice under Workflows > Governance.', tab: 'permissions' },
     ],
   },
   {
@@ -805,10 +864,10 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'DAX and filter context', a: 'DAX is the formula language for model calculations. Filter context is the set of values used for an answer, such as sales for a particular product, region and year.', tab: 'daxlab' },
       { q: 'Power Query, M and partition', a: 'Power Query prepares data for loading. M is its formula language. A partition is a section of a model table with its own loading query.', tab: 'mcode' },
       { q: 'XMLA endpoint, SQL server and tenant', a: 'An endpoint is a connection address. XMLA connects to a semantic model; SQL connects to source tables. A tenant identifies the Microsoft organisation your account signs into.' },
-      { q: 'Workflow, gate and project profile', a: 'A workflow is a saved sequence of steps. A gate is a check attached to a step. A project profile saves which workflows are available or required and how their checks apply.', tab: 'workflows' },
-      { q: 'Evidence, coverage and reconciliation', a: 'Evidence is the recorded result of a check. Coverage says what was checked and what was left out. Reconciliation compares model results with an independent source answer.', tab: 'tests' },
-      { q: 'BPA, finding and waiver', a: 'BPA means Best Practice Analyzer. A finding is an issue raised by a check. A waiver records your decision to accept that issue without fixing it.', tab: 'bpa' },
-      { q: 'MCP and assistant skills', a: 'MCP is the connection that lets your AI Assistant use Semanticus tools. A skill is a guide that helps it choose and use those tools for a task.' },
+      { q: 'Workflow, check and project profile', a: 'A workflow is a saved sequence of steps. A check runs at a step and records whether it passed, failed or was not checked. A project profile saves which workflows are available or required and how their checks apply.', tab: 'workflows' },
+      { q: 'Evidence, coverage and reconciliation', a: 'Evidence is the recorded result of a check, kept under Checks > Results. Coverage says what was checked and what was left out. Reconciliation compares model results with an independent source answer.', tab: 'tests' },
+      { q: 'Model quality, finding and override', a: 'Model quality runs the Best Practice Analyzer (BPA) rules over the model. A finding is an issue raised by a check. An override records your decision to accept that issue without fixing it.', tab: 'bpa' },
+      { q: 'MCP and assistant skills', a: 'MCP is the connection that lets your assistant use Semanticus tools. A skill is a guide that helps it choose and use those tools for a task.' },
     ],
   },
   {
@@ -826,46 +885,50 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     ],
   },
   {
-    group: 'Build & analyze (Studio)',
+    group: 'Model and Calculations (Studio)',
     items: [
-      { q: 'Field parameters, calc groups, calendars, perspectives, RLS/OLS, DaxLib', a: 'Advanced Modelling: six guided builders (also reachable from the Model view "…" → Advanced Modelling submenu).', tab: 'advmodels' },
-      { q: 'Try a calculation and see which filters affect its answer', a: 'DAX Lab: Visual or Query mode against a live engine.', tab: 'daxlab' },
-      { q: 'Check whether two DAX formulas return the same answers', a: 'DAX Lab → Verify. Choose relevant fields, compare both formulas and read which contexts were checked.', tab: 'daxlab' },
-      { q: 'Benchmark cold vs warm', a: 'DAX Lab → Performance → "Cold / Warm".', tab: 'daxlab' },
-      { q: 'Edit M / applied steps / incremental refresh', a: 'M Code (or right-click a table → "Edit M Code").', tab: 'mcode' },
-      { q: 'Preview table rows', a: 'Data tab (or right-click a table → "Preview Data").', tab: 'data' },
-      { q: 'Find what depends on a field / what\'s safe to remove', a: 'Lineage & Impact (or right-click → "Show Lineage & Impact").', tab: 'lineage' },
-      { q: 'See where storage goes', a: 'Storage: "Scan storage" against a live engine, for ranked consumers + opportunities.', tab: 'stats' },
+      { q: 'Field parameters, calc groups, calendars, perspectives, RLS/OLS, DaxLib', a: 'Model > Advanced Modelling holds six guided builders. They are also on the Model view "…" menu.', tab: 'advmodels' },
+      { q: 'Try a calculation and see which filters affect its answer', a: 'Calculations > DAX Lab, in Visual or Query mode against a live model.', tab: 'daxlab' },
+      { q: 'Check whether two DAX formulas return the same answers', a: 'Calculations > DAX Lab > Verify. Choose relevant fields, compare both formulas and read which contexts were checked.', tab: 'daxlab' },
+      { q: 'Compare a first run with a repeat run', a: 'Calculations > DAX Lab > Performance, then Cold / Warm.', tab: 'daxlab' },
+      { q: 'Edit the load steps or incremental refresh', a: 'Model > Power Query, or right-click a table and choose Edit M Code.', tab: 'mcode' },
+      { q: 'Preview table rows', a: 'Model > Data, or right-click a table and choose Preview Data.', tab: 'data' },
+      { q: 'Find what depends on a field, and what nothing uses any more', a: 'Model > Lineage > Impact, or right-click an object and choose Show Lineage & Impact.', tab: 'lineage' },
+      { q: 'See which tables use the most memory', a: 'Model > Size by table. Choose Scan storage against a live model to rank the largest tables and columns.', tab: 'stats' },
       { q: 'Refresh a partition', a: 'Model tree → expand the table → right-click the partition → "Refresh Partition…" (pick a refresh type, dry-run, confirm).' },
     ],
   },
   {
-    group: 'Improve & ship',
+    group: 'Checks, Changes and Workflows (Studio)',
     items: [
-      { q: 'Score & fix AI readiness', a: 'AI Readiness: one-click safe fixes, ready AI prompts for the rest.', tab: 'readiness' },
-      { q: 'Best-practice violations', a: 'Best practices (BPA): fix one finding, apply a batch with Pro or review changes in a Change Plan.', tab: 'bpa' },
-      { q: 'Review a batch of changes before applying', a: 'Change Plan: approve per item, apply as one undoable step.', tab: 'optimize' },
-      { q: 'Publish the open model to a live workspace', a: 'Press the Publish chip in the status bar, or Ship > Deploy > Publish. One card names the changes, then you confirm. Ctrl+S never publishes.', tab: 'deploy' },
-      { q: 'Compare model versions and combine selected changes', a: 'Deploy → Choose what to publish can review any two supported model sources.', tab: 'deploy' },
+      { q: 'Score and fix how well AI understands the model', a: 'Checks > AI understanding. Apply a safe fix in one click, or copy a ready prompt for the rest.', tab: 'readiness' },
+      { q: 'Find design, naming and performance problems', a: 'Checks > Model quality. Fix one finding, apply a batch with Pro, or send the changes to Changes > Proposed for review.', tab: 'bpa' },
+      { q: 'Review a batch of changes before applying', a: 'Changes > Proposed. Keep or reject each item, then apply the rest as one undoable step.', tab: 'optimize' },
+      { q: 'Publish the open model to a live workspace', a: 'Press Publish in the header. It is the one publish button in the app. The review names the destination and changes, then you confirm. Ctrl+S never publishes.', tab: 'deploy' },
+      { q: SAFETY_CHECK_COPY.helpQuestion, a: `${SAFETY_CHECK_COPY.explainer} ${SAFETY_CHECK_COPY.helpTail}`, tab: 'history' },
+      { q: 'Compare model versions and combine selected changes', a: 'Changes > Published > What to publish can review any two supported model sources.', tab: 'deploy' },
       { q: 'Copy objects from another model', a: 'The Reference Model view (side bar): "Set Reference Model…", then right-click → "Copy into Open Model" (or Ctrl+C there, Ctrl+V in the Model tree).' },
-      { q: 'Generate documentation', a: 'Docs: compose, brand, print to PDF, plus the authored narrative layer.', tab: 'docs' },
-      { q: 'Ship a Fabric Data Agent', a: 'Deploy → Advanced → Data Agent: scope from this model, teach it, publish.', tab: 'dataagent' },
+      { q: 'Generate documentation', a: 'Model > Docs. Compose the guide, brand it, add your own explanations, then print to PDF.', tab: 'docs' },
+      { q: 'Publish a Fabric Data Agent', a: 'Changes > Published > Advanced > Data Agent: choose the model data, add its guidance, review the changes and publish.', tab: 'dataagent' },
+      { q: 'Edit a workflow', a: 'Workflows > Author. Steps, Canvas and Source edit one shared draft. Save workflow opens a full preview before the saved file changes.', tab: 'workflows' },
+      { q: 'Recover a workflow after the file changed', a: 'Workflows > Author. Choose Reload saved file to start from the newer file, or Review current file to compare it with your draft before keeping your work.', tab: 'workflows' },
+      { q: 'Check a workflow before running it', a: 'Workflows > Author. Read the workflow checks and warnings, then start a run only after the steps and answers match the task.', tab: 'workflows' },
     ],
   },
   {
-    group: 'AI Assistant & safety',
+    group: 'Your assistant and safety',
     items: [
-      { q: 'Connect the AI Assistant to this model', a: 'Command palette → "Semanticus: Connect AI Assistant" writes the connection settings. Refresh or restart your assistant so it reads them. Keep Semanticus open in VS Code.' },
-      { q: 'See what the AI Assistant changed', a: 'Edit History: every change attributed on one timeline; "Undo to here" rolls back.', tab: 'history' },
-      { q: 'Undo / redo', a: 'Edit History buttons, or the palette: "Semanticus: Undo" / "Semanticus: Redo". A batch undoes as one step. Publishing to a live server is a separate action and is not reversed by local Undo. Publishing to a live server is a separate action and is not reversed by local Undo. Publishing to a live server is a separate action and is not reversed by local Undo.', tab: 'history' },
-      { q: 'Run a verified playbook', a: 'Workflows: gated steps verified with evidence; free to read, Pro to run enforced.', tab: 'workflows' },
-      { q: 'Turn workflow enforcement off for a quick task', a: 'Workflows → Governance → Enforcement. Off skips checks for new runs. Existing runs keep their original setting.', tab: 'workflows' },
-      { q: 'Save business context and lessons from earlier work', a: 'Primer: the model guide, saved insights, reusable workflows and a search for relevant notes.', tab: 'knowledge' },
-      { q: 'Accept a finding without hiding it', a: 'Waive it (reason required) on AI Readiness or BPA; it stays surfaced forever under "⊘ Waived (accepted)".', tab: 'readiness' },
+      { q: 'Connect your assistant to this model', a: 'Command palette > "Semanticus: Connect AI Assistant" writes the connection file. Nothing is connected until you refresh or restart your assistant so it reads that file. Keep Semanticus open in VS Code.' },
+      { q: 'See what your assistant changed', a: 'Changes > History names every change by who made it on one timeline. Undo to here reverses it.', tab: 'history' },
+      { q: 'Undo or redo a change', a: 'Use the buttons on Changes > History, or the palette commands "Semanticus: Undo" and "Semanticus: Redo". A batch undoes as one step. Publishing to a live server is separate and is not reversed by local Undo.', tab: 'history' },
+      { q: 'Run a verified playbook', a: 'Workflows runs steps whose checks record evidence. Workflows is a Pro feature.', tab: 'workflows' },
+      { q: 'Turn workflow checks off for a quick task', a: 'Workflows > Governance > Required workflows. Off means new runs skip their required checks and record nothing as passed. Runs already underway keep their original setting.', tab: 'workflows' },
+      { q: 'Save business context and lessons from earlier work', a: 'Model > Model notes holds the model guide, saved insights, reusable workflows and a search over your notes.', tab: 'knowledge' },
+      { q: 'Accept a finding without fixing it', a: 'Use Accept finding on Checks > AI understanding or Checks > Model quality. A reason is required, and the finding stays visible as overridden.', tab: 'readiness' },
     ],
   },
   {
-    group: 'Setup & housekeeping',
+    group: 'Setup and housekeeping',
     items: [
       { q: 'Open or connect a model', a: '"Semanticus: Open Model…" (tree toolbar or palette): a file (.bim/TMDL/PBIP), a running Power BI Desktop, or an XMLA endpoint (recent connections remembered).' },
       { q: 'Search the whole model', a: '"Semanticus: Find in Model" (the search icon on the Model view): names, descriptions and DAX.' },
@@ -903,6 +966,8 @@ function TabGuide({ h, onGo }: { h: TabHelp; onGo?: (tab: string) => void }) {
       <div className="text-[12.5px]" style={{ color: 'var(--sem-fg)' }}>{h.lead}</div>
       <GettingStarted steps={h.start} />
       {h.sections.map((s, i) => <SectionBlock key={i} s={s} />)}
+      <SharedStateHelp />
+      {ACTION_HELP_TITLES.has(h.title) && <SharedActionHelp />}
       {h.pro && (
         <div className="text-[11px] rounded-md px-2.5 py-2" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
           <span className="font-semibold" style={{ color: 'var(--sem-accent)' }}>Pro · </span>{h.pro}
@@ -971,39 +1036,178 @@ function GettingStarted({ steps }: { steps: string[] }) {
   </ol>;
 }
 
-/** Keep the purpose visible; longer instructions expand only when the user needs them. */
-export function PageGuide({ tab }: { tab: string }) {
+/**
+ * The page notes, behind the ⓘ at the end of the area row. This used to be an always-open block (PageGuide) under
+ * the breadcrumb, which spent 59px above every page on a sentence most people read once. Same words, same steps,
+ * on request. Keyboard contract matches the header menus: Enter or Space opens, Escape closes and puts focus back
+ * on the ⓘ, a click outside closes.
+ */
+export function PageNotesButton({ tab }: { tab: string }) {
   const guide = HELP[tab];
-  if (!guide) return null;
-  return <aside aria-label="Page guidance" className="shrink-0 px-4 py-2 border-b max-h-[30vh] overflow-auto" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-    <p className="m-0 text-[12px] leading-relaxed" style={{ color: 'var(--sem-muted)' }}>{guide.lead}</p>
-    <details key={tab} className="mt-1 text-[12px]">
-      <summary className="cursor-pointer w-fit font-medium" style={{ color: 'var(--sem-accent)' }}>Getting started</summary>
-      <div className="mt-2 max-w-4xl"><GettingStarted steps={guide.start} /></div>
-      <p className="m-0 mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Open Help above for more detail, related tasks and explanations of common terms.</p>
-    </details>
-  </aside>;
-}
-
-export function HelpButton({ tab, onGo, onShortcuts }: { tab: string; onGo?: (tab: string) => void; onShortcuts?: () => void }) {
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'tab' | 'where'>('tab');
-  const h = HELP[tab];
-  const go = onGo ? (t: string) => { setOpen(false); onGo(t); } : undefined;
-  // Esc closes the slide-over (part of the keyboard suite — every Studio overlay closes on Escape).
+  const wrap = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    const outside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', outside);
+    return () => document.removeEventListener('mousedown', outside);
+  }, [open]);
+  useEffect(() => { if (open) popRef.current?.focus(); }, [open]);
+  // The notes close when the page changes under them: the sentence would be about the page you just left.
+  useEffect(() => { setOpen(false); }, [tab]);
+  // Escape is a CANCEL: focus goes back to the button you opened, ring and all, so the keyboard keeps its place.
+  const closeAndReturnFocus = () => { setOpen(false); buttonRef.current?.focus(); };
+  // TAB STAYS IN THE DIALOG. Astra, 2026-09-14: Space to open, one Tab, then Escape left focus in the tool
+  // BEHIND the notes, so Escape belonged to that tool and the notes were stranded over the canvas with no
+  // keyboard way out. Reproduced on Overview, Diagram and Lineage. This is a small dialog, so the ring cycles
+  // dialog -> its own stops -> dialog and never reaches the page behind it.
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    const stops = [...(popRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])') ?? [])];
+    if (stops.length === 0) { popRef.current?.focus(); return; }
+    const at = stops.indexOf(document.activeElement as HTMLElement);
+    if (at === -1) { (e.shiftKey ? stops[stops.length - 1] : stops[0]).focus(); return; }
+    const next = at + (e.shiftKey ? -1 : 1);
+    if (next < 0 || next >= stops.length) popRef.current?.focus(); else stops[next].focus();
+  };
+  // And if focus leaves anyway (a script, a click, anything the trap cannot see), the notes go with it rather
+  // than outliving the keyboard. A window losing focus is not a person leaving the notes, so that case stays.
+  const closeOnFocusLeaving = (e: React.FocusEvent) => {
+    if (!open) return;
+    const next = e.relatedTarget as Node | null;
+    if (wrap.current?.contains(next)) return;
+    if (!next && !document.hasFocus()) return;
+    setOpen(false);
+  };
+  return <div ref={wrap} className="studio-page-notes-wrap relative shrink-0" onBlur={closeOnFocusLeaving}>
+    <button ref={buttonRef} type="button" className="studio-page-notes" aria-haspopup="dialog" aria-expanded={open}
+      aria-label="Page notes" title={guide ? `What this page is for, and how to start: ${guide.title}` : 'What this page is for'}
+      onClick={() => setOpen((v) => !v)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); }
+        else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+      }}>i</button>
+    {open && <div ref={popRef} tabIndex={-1} role="dialog" aria-label="Page notes" className="studio-page-notes-pop absolute right-0 top-full z-50 mt-1"
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); } else trapTab(e); }}>
+      {/* Kane, 2026-09-14: the guide's words MOVE, they are not rewritten. The lead sentence, the numbered steps
+          and the closing line are the same strings the open guide block showed, and the heading still reads
+          "Getting started" rather than being uppercased by CSS into something a screen reads differently. */}
+      {guide ? <>
+        <p className="m-0 text-[12px] leading-relaxed" style={{ color: 'var(--sem-muted)' }}>{guide.lead}</p>
+        <div className="mt-2 text-[12px] font-medium" style={{ color: 'var(--sem-accent)' }}>Getting started</div>
+        <div className="mt-2 max-w-4xl"><GettingStarted steps={guide.start} /></div>
+        <p className="m-0 mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Open Help above for more detail, related tasks and explanations of common terms.</p>
+      </> : <p className="m-0 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No notes for this page yet. Open Help above for the rest of the guide.</p>}
+      {/* A way out that is not a key. It is also what the Tab trap cycles to, so the ring always has somewhere
+          to go inside the dialog instead of falling onto the page behind it. */}
+      <div className="mt-2 flex justify-end">
+        <button type="button" className="studio-page-notes-close" onClick={closeAndReturnFocus}>Close</button>
+      </div>
+    </div>}
+  </div>;
+}
+
+/** One row of the Help menu. `section` starts a new named group directly above the row. */
+interface HelpItem { id: string; label: string; note?: string; section?: string; title?: string; run: () => void; }
+
+// Help is a small menu, not one button with one destination. The page guide keeps first place, the shortcuts
+// sheet stops being a footnote inside the guide, and "Something wrong?" gives a stuck engine a visible way out
+// of Studio (Restart engine was Command-Palette-only, which is not a place a person looks when nothing responds).
+export function HelpButton({ tab, onGo, onShortcuts, onTextSize }: {
+  tab: string; onGo?: (tab: string) => void; onShortcuts?: () => void;
+  onTextSize?: (direction: 'smaller' | 'larger' | 'reset') => void;
+}) {
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const [view, setView] = useState<'tab' | 'where'>('tab');
+  const h = HELP[tab];
+  const wrap = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const go = onGo ? (t: string) => { setGuideOpen(false); onGo(t); } : undefined;
+  // Esc closes the slide-over (part of the keyboard suite — every Studio overlay closes on Escape).
+  useEffect(() => {
+    if (!guideOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setGuideOpen(false); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
+  }, [guideOpen]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', outside);
+    return () => document.removeEventListener('mousedown', outside);
   }, [open]);
+  useEffect(() => { if (open) setHighlight(0); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (highlight >= 0) itemRefs.current[highlight]?.focus(); else menuRef.current?.focus();
+  }, [open, highlight]);
+  const closeAndReturnFocus = () => { setOpen(false); buttonRef.current?.focus(); };
+
+  const items: HelpItem[] = [];
+  items.push({ id: 'page', label: 'Help for this page', note: h?.title,
+    title: h ? `Guide: the ${h.title} tab (and “Where do I…?”)` : 'Help for this page',
+    run: () => { setView('tab'); setGuideOpen(true); } });
+  if (onShortcuts) items.push({ id: 'shortcuts', label: 'Keyboard shortcuts', note: '?',
+    title: 'Every key you can press in Studio', run: onShortcuts });
+  // The same control as Ctrl and the wheel, for anyone who would rather not scroll for it. Between 80% and 130%.
+  if (onTextSize) {
+    items.push({ id: 'textsize-smaller', label: 'Smaller', note: 'Ctrl+scroll', section: 'Text size',
+      title: 'Make everything in Studio a step smaller, down to 80%', run: () => onTextSize('smaller') });
+    items.push({ id: 'textsize-larger', label: 'Larger', note: 'Ctrl+scroll',
+      title: 'Make everything in Studio a step bigger, up to 130%', run: () => onTextSize('larger') });
+    items.push({ id: 'textsize-reset', label: 'Reset', note: 'Ctrl+0',
+      title: 'Put Studio back to its normal size', run: () => onTextSize('reset') });
+  }
+  items.push({ id: 'restart', label: 'Restart engine', section: 'Something wrong?',
+    title: 'Start the Semanticus engine again. It asks first if you have unsaved edits.',
+    run: () => runHostCommand('semanticus.restartEngine') });
+
+  const pick = (item: HelpItem, fromKeyboard: boolean) => {
+    setOpen(false);
+    item.run();
+    if (fromKeyboard) buttonRef.current?.focus(); else buttonRef.current?.blur();
+  };
+
   return (
-    <>
-      <button onClick={() => { setView('tab'); setOpen(true); }} title={h ? `Guide: the ${h.title} tab (and “Where do I…?”)` : 'Help'} aria-label="Help"
+    <div ref={wrap} className="relative shrink-0">
+      <button ref={buttonRef} type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Help"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); }
+          else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+        }}
+        title={h ? `Guide: the ${h.title} tab, shortcuts and repairs` : 'Help, shortcuts and repairs'}
         className="h-6 px-2 rounded-md flex items-center justify-center text-[12px] font-semibold shrink-0"
         style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>Help</button>
       {open && (
-        <div className="fixed inset-0 z-50" onClick={() => setOpen(false)} style={{ background: 'rgba(0,0,0,0.35)' }}>
+        <div ref={menuRef} tabIndex={-1} role="menu" aria-label="Help" className="studio-chip-menu absolute right-0 top-full z-50 mt-1"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h2) => (h2 + 1 + items.length) % items.length); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h2) => (h2 <= 0 ? items.length : h2) - 1); }
+            else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const it = items[highlight]; if (it) pick(it, true); }
+            else if (e.key === 'Tab') { setOpen(false); }
+          }}>
+          {items.map((item, i) => <Fragment key={item.id}>
+            {item.section && <div className="studio-chip-menu-heading">{item.section}</div>}
+            <button ref={(el) => { itemRefs.current[i] = el; }} role="menuitem" type="button" title={item.title}
+              className={i === highlight ? 'is-highlighted' : undefined}
+              onMouseEnter={() => setHighlight(i)} onClick={() => pick(item, false)}>
+              <span>{item.label}</span>
+              {item.note && <span className="studio-chip-menu-note">{item.note}</span>}
+            </button>
+          </Fragment>)}
+        </div>
+      )}
+      {guideOpen && (
+        <div className="fixed inset-0 z-50" onClick={() => setGuideOpen(false)} style={{ background: 'rgba(0,0,0,0.35)' }}>
           <div onClick={(e) => e.stopPropagation()} className="absolute top-0 right-0 h-full flex flex-col"
             style={{ width: 460, maxWidth: '92vw', background: 'var(--sem-surface)', borderLeft: '1px solid var(--sem-border)', boxShadow: '-8px 0 24px rgba(0,0,0,0.4)' }}>
             <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: 'var(--sem-border)' }}>
@@ -1015,23 +1219,23 @@ export function HelpButton({ tab, onGo, onShortcuts }: { tab: string; onGo?: (ta
                 <button onClick={() => setView('where')} className="px-2 py-0.5 text-[11px]"
                   style={{ background: view === 'where' ? 'var(--sem-surface-2)' : 'transparent', color: view === 'where' ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>Where do I…?</button>
               </div>
-              <button onClick={() => setOpen(false)} aria-label="Close help" className="text-[14px]" style={{ color: 'var(--sem-muted)' }}>✕</button>
+              <button onClick={() => setGuideOpen(false)} aria-label="Close help" className="text-[14px]" style={{ color: 'var(--sem-muted)' }}>✕</button>
             </div>
             <div className="flex-1 overflow-auto px-4 py-3">
               {view === 'tab'
                 ? (h ? <TabGuide h={h} onGo={go} /> : <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No guide for this view yet. Try “Where do I…?”.</div>)
                 : <WhereIndex onGo={go} />}
               <div className="text-[10px] mt-3 pt-2 border-t flex items-center gap-2" style={{ color: 'var(--sem-muted)', borderColor: 'var(--sem-border)' }}>
-                <span>Your AI Assistant can do everything here too, on the same live model.</span>
+                <span>Your assistant can use this same Semanticus session through MCP. {ASSISTANT_SYNC_COPY}</span>
                 {onShortcuts && (
                   <button className="ml-auto underline whitespace-nowrap" style={{ color: 'var(--sem-accent)' }}
-                    onClick={() => { setOpen(false); onShortcuts(); }}>Keyboard shortcuts (?)</button>
+                    onClick={() => { setGuideOpen(false); onShortcuts(); }}>Keyboard shortcuts (?)</button>
                 )}
               </div>
             </div>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

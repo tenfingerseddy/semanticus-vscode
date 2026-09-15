@@ -18,11 +18,11 @@ namespace Semanticus.Tests
     ///    "inconclusive" — never a guess.
     ///  • CAPTURE: FABLE-a cone-skip (an edit's impact cone decides which measures get VALUES; the
     ///    expression snapshot always lands, even OFFLINE), host-attached opt-in (tests stay clean),
-    ///    dry-run suppressed, silent skip on free.
+    ///    dry-run suppressed.
     ///  • STORE: vitals.jsonl append/read round-trip, retention prune (reported, not silent), corrupt
     ///    lines counted not thrown.
-    ///  • GATE (soft, Kane's line): free tier gets Status="pro" + a plain invitation — NEVER a throw,
-    ///    and ambient capture writes NOTHING.
+    ///  • TIER (Kane, 2026-09-15): there is no gate here any more. The whole number time-machine is free,
+    ///    so the free tier gets the same answers Pro does and ambient capture writes for everyone.
     /// </summary>
     public sealed class ValueBlameTests
     {
@@ -352,26 +352,35 @@ namespace Semanticus.Tests
             Assert.Equal("save_model", hist.Points[1].CheckpointOp);
         }
 
-        // ================================ the soft Pro gate + ambient capture ================================
+        // ================================ the free tier + ambient capture ================================
 
+        // The soft gate is gone. ProGateRemovalTests proves the status is no longer "pro"; this proves the
+        // stronger thing: on the SAME history the free tier reads the SAME answer Pro reads above, and its
+        // checkpoint writes the record the free tier used to skip silently.
         [Fact]
-        public async Task Free_tier_gets_status_pro_with_the_invitation_and_never_throws_and_writes_nothing()
+        public async Task Free_tier_gets_the_same_blame_history_and_ambient_capture_as_pro()
         {
             var bim = TempCopyOfFixture();
             var sm = new SessionManager();
             using var e = new LocalEngine(sm, new Fake(pro: false)) { AmbientVitalsEnabled = true };
             await e.OpenAsync(bim);
+            VitalsStore.Append(VitalsFile(bim), Rec(1, "apply_plan", "2026-07-01T10:00:00Z", null, Meas("h1", "1", 10.0)));
+            VitalsStore.Append(VitalsFile(bim), Rec(2, "save_model", "2026-07-01T11:00:00Z", null, Meas("h1", "1", null, hasValue: false)));
 
             var blame = await e.BlameValueAsync(M, null, null, "agent");
-            Assert.Equal("pro", blame.Status);
-            Assert.Equal("pro", blame.Verdict);
-            Assert.Contains("free", blame.Note);             // the invitation names the free manual alternative
+            Assert.Equal("ok", blame.Status);
+            Assert.NotEqual("pro", blame.Verdict);
 
-            var hist = await e.ListValueHistoryAsync(M, null);
-            Assert.Equal("pro", hist.Status);
+            var hist = await e.ListValueHistoryAsync(M, null);   // the same two points the Pro test above reads
+            Assert.Equal("ok", hist.Status);
+            Assert.Equal(2, hist.Points.Length);
+            Assert.Equal("10", hist.Points[0].Value);
+            Assert.Null(hist.Points[1].Value);
 
-            await e.SaveAsync(null, "bim");                  // a checkpoint moment on the FREE tier...
-            Assert.False(File.Exists(VitalsFile(bim)), "free-tier ambient capture must write NOTHING (silent skip)");
+            await e.SaveAsync(null, "bim");                      // a checkpoint moment on the FREE tier...
+            var (recs, bad) = VitalsStore.Read(VitalsFile(bim), null);
+            Assert.Equal(0, bad);
+            Assert.Equal(3, recs.Count);                         // ...writes, exactly as it does on Pro
         }
 
         [Fact]

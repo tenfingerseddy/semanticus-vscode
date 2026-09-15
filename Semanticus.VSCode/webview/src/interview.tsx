@@ -9,10 +9,7 @@ import { rpc } from './bridge';
 // (Correct | Refused | SilentlyWrong | Unverified) never appears as user copy, and neither does a rule id.
 
 interface RunRecord { when?: string; outcome?: string; detail?: string; fixRuleId?: string; fixHint?: string }
-export interface SuiteInterviewEvidence extends RunRecord {
-  questionId?: string; question?: string; tier?: string; replayStatus?: 'replayed' | 'chat-only';
-  previousOutcome?: string; changed?: boolean;
-}
+
 interface Question {
   id: string; question: string; tier: string; scope: string; seedSource?: string;
   expectedValue?: string; expectedMatrix?: string[][]; expectRefusal?: boolean; lastRun?: RunRecord;
@@ -55,7 +52,7 @@ const TIER_NOTE: Record<string, string> = {
   refusal: 'should be safely declined',
 };
 
-export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteEvidence?: SuiteInterviewEvidence[]; suiteNote?: string; onNew?: () => void }) {
+export function InterviewCard({ onNew }: { onNew?: () => void }) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [otherModel, setOtherModel] = useState<Question[]>([]);          // #157: packs authored against a different model
   const [unattributed, setUnattributed] = useState<Question[]>([]);      // #157: legacy packs with no model binding
@@ -67,7 +64,6 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
   const [pinning, setPinning] = useState<string | null>(null);   // which question's "expected answer" input is open
   const [pinValue, setPinValue] = useState('');                  // the pasted trusted / Copilot answer being edited
   const [pinBusy, setPinBusy] = useState(false);
-  const suiteById = useMemo(() => new Map(suiteEvidence.filter((x) => x.questionId).map((x) => [x.questionId!, x])), [suiteEvidence]);
 
   async function load() {
     try {
@@ -111,8 +107,8 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
   // The engine keeps questions append-only, so pinning re-saves the SAME question carrying the trusted value
   // (add_interview_question), then retires the prior copy. A value question keeps its query; a paraphrase keeps
   // both phrasings AND now gets a trusted answer, which is what lets the interview catch an answer that is
-  // consistent-but-wrong. Add-then-delete order is deliberate: if the save is refused (saving is part of Pro),
-  // the original stays exactly as it was and the reason is shown.
+  // consistent-but-wrong. Add-then-delete order is deliberate: if the save is refused for any reason, the
+  // original stays exactly as it was and the reason is shown.
   async function savePin(q: Question) {
     const value = pinValue.trim();
     if (!value) { setError('Enter the answer this question should return (a number, or the word BLANK for no value).'); return; }
@@ -149,30 +145,27 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
 
       {error && <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{error}</div>}
       <div className="mt-2 rounded-md border px-2.5 py-1.5 text-[10px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>
-        Evidence only. Running tests automatically re-checks saved number and paraphrase questions. Safe-decline questions are checked in an AI chat.
-        Those outcomes appear in the report but never change its grade or coverage.
+        Evidence only. Ask a question again here to re-check it. Safe-decline questions are checked in an AI chat.
+        These outcomes never change a test grade or coverage.
       </div>
-      {suiteNote && <div className="mt-2 text-[11px]" style={{ color: suiteEvidence.some((x) => x.changed) ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>{suiteNote}</div>}
       {note && <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-warn)' }}>{note}</div>}
       {seedCount > 0 && (
         <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
           {seedCount} ready-made question{seedCount === 1 ? '' : 's'} could be added from your verified answers and the built-in
-          hard set. Ask your AI Assistant to review and save the keepers; every number is confirmed with you before it becomes the trusted answer.
+          hard set. Ask your assistant to review and save the keepers; every number is confirmed with you before it becomes the trusted answer.
         </div>
       )}
 
       {questions.length === 0 ? (
         <div className="mt-2 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-          No questions saved yet. Add one with New question. You can also ask the AI Assistant to draft one; you review it before it is saved.
-          One-off checks are free; saving questions is part of Pro.
+          No questions saved yet. Add one with New question. You can also ask your assistant to draft one; you review it before it is saved.
         </div>
       ) : (
         <div className="mt-2 flex flex-col gap-1">
           {questions.map((q) => {
-            const contract = suiteById.get(q.id);
-            // A just-completed Tests replay wins over the persisted last observation, while an explicit Ask action
-            // wins over both. Chat-only evidence intentionally falls back to its last real assistant observation.
-            const run = fresh[q.id] ?? (contract?.replayStatus === 'replayed' ? contract : q.lastRun);
+            // An explicit Ask in this session wins over the persisted last observation. Nothing replays these
+            // questions in the background any more: a Tests run stopped doing that in 1.2.0.
+            const run = fresh[q.id] ?? q.lastRun;
             const oc = run?.outcome ? OUTCOME[run.outcome] ?? UNKNOWN_OUTCOME : null;
             const isBusy = busy.has(q.id);
             return (
@@ -198,7 +191,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
                     // has no assistant to ask, so replaying it here could only ever say "couldn't check" and
                     // would overwrite a meaningful earlier result. Graded from chat instead.
                     <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-muted)' }}
-                      title="This one checks that the AI safely declines to answer. Re-grade it from a chat with your AI Assistant.">
+                      title="This one checks that the AI safely declines to answer. Re-grade it from a chat with your assistant.">
                       Graded in chat
                     </span>
                   ) : (
@@ -219,13 +212,6 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
                 {run?.outcome === 'Unverified' && run.detail && (
                   <div className="mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{plain(run.detail)}</div>
                 )}
-                {contract?.replayStatus === 'replayed' && (
-                  <div className="mt-1 text-[10px]" style={{ color: contract.changed ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>
-                    Replayed with this Tests run · {contract.changed
-                      ? `changed from ${contract.previousOutcome ? (OUTCOME[contract.previousOutcome] ?? UNKNOWN_OUTCOME).label : 'the previous result'}`
-                      : contract.previousOutcome ? 'unchanged' : 'first observation'}
-                  </div>
-                )}
 
                 {/* Bring-your-own answer: pin the number this question SHOULD return (from Copilot, or what you
                     know is right) so every future edit is re-checked against it. Not offered for "safely declined"
@@ -239,7 +225,7 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
                         placeholder="Paste the expected / Copilot answer (a number, or BLANK)"
                         className="flex-1 text-[11px] px-2 py-1 rounded-md"
                         style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-                      <IBtn disabled={pinBusy} onClick={() => void savePin(q)} title="Save this as the trusted answer (part of Pro)">
+                      <IBtn disabled={pinBusy} onClick={() => void savePin(q)} title="Save this as the trusted answer">
                         {pinBusy ? 'Saving…' : 'Save'}
                       </IBtn>
                       <IBtn disabled={pinBusy} onClick={() => setPinning(null)} title="Cancel">Cancel</IBtn>
@@ -276,9 +262,9 @@ export function InterviewCard({ suiteEvidence = [], suiteNote, onNew }: { suiteE
   );
 }
 
-// AI Readiness keeps only the latest behavioral signal. The full question pack and actions live in Tests,
-// while this chip preserves the readiness narrative without creating a second evidence surface.
-export function InterviewSummaryChip({ onOpen }: { onOpen: () => void }) {
+// AI understanding keeps the latest behavioral signal. It is a SUMMARY, not a link: interview evidence left
+// the Tests page in 1.2.0, so a link through to that page would land somewhere that no longer holds it.
+export function InterviewSummaryChip() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -292,16 +278,15 @@ export function InterviewSummaryChip({ onOpen }: { onOpen: () => void }) {
   const latest = [...observed].sort((a, b) => Date.parse(b.lastRun?.when ?? '') - Date.parse(a.lastRun?.when ?? ''))[0]?.lastRun;
   const outcome = latest?.outcome ? OUTCOME[latest.outcome] ?? UNKNOWN_OUTCOME : null;
   return (
-    <button onClick={onOpen} className="self-start rounded-full border px-3 py-1.5 text-left"
+    <div className="self-start rounded-full border px-3 py-1.5 text-left"
       style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)', color: 'var(--sem-fg)' }}
-      title="Open the full Model Interview evidence in Tests">
+      title="What your saved questions last answered">
       <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>Model Interview</span>
       <span className="mx-2" style={{ color: 'var(--sem-border)' }}>·</span>
       <span className="text-[11px]">{failed ? 'Evidence unavailable' : questions.length === 0 ? 'No saved questions' : `${observed.length} of ${questions.length} observed`}</span>
       <span className="mx-2" style={{ color: 'var(--sem-border)' }}>·</span>
       <span className="text-[11px] font-medium" style={{ color: outcome?.color ?? 'var(--sem-muted)' }}>{outcome ? `Latest: ${outcome.label}` : 'Latest: not asked yet'}</span>
-      <span className="ml-2 text-[11px]" style={{ color: 'var(--sem-accent)' }}>View in Tests ›</span>
-    </button>
+    </div>
   );
 }
 
@@ -334,15 +319,14 @@ function plain(detail: string): string {
   if (detail.startsWith('offline'))
     return 'No live connection. Connect to a running model to check this answer.';
   if (detail.includes('abstained'))
-    return 'This gets graded from a chat with your AI Assistant. It checks that the AI declines instead of making a number up.';
+    return 'This gets graded from a chat with your assistant. It checks that the AI declines instead of making a number up.';
   return detail;
 }
 
 function IBtn({ children, onClick, disabled, title }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
   return (
     <button title={title} onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap shrink-0"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm shrink-0">
       {children}
     </button>
   );

@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { usePersistedState } from './hooks';
 import { rpc, onDidChange, onActivity } from './bridge';
 import { CompareView, type CompareSeed, type ModelDiff } from './compare';
 import { useConnection } from './connection';
 import { openConnectionsOnView } from './connectionshub';
 import { compareSeedFromSession } from './contextbar';
-import { uiLabel } from './copy';
+import { AccountPicker } from './accountpicker';
+import { ProBadge, useFeature, PENDING_ACCESS } from './pro';
+import { ProPreview } from './propreview';
+import { defaultSignInMode, isInteractiveSignIn, signInProblem, uiLabel } from './copy';
 import {
   checkingCopy, deployHeaderState, fabricGitWorkspaceMessage, nothingToPublishCopy, previewFailedCopy,
-  publishAccountLine, publishButtonLabel,
+  publishAccountLine, publishButtonLabel, publishEntryState, rollbackResultLine, publishStageName,
 } from './publishcopy';
 
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased). The semantic model diff (ModelDiff) +
@@ -45,11 +49,34 @@ type AdvancedView = 'delivery' | 'dataagent';
 
 // One release decision surface: review and push the working copy, restore a guarded snapshot, promote between stages,
 // or open the less-common delivery and Data Agent tools. The same engine operations remain available to both doors.
-export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvanced = 'delivery', restoreTarget, onRestoreConsumed, publishNonce = 0 }: {
+// ── Can we reach the publish destination? ──────────────────────────────────────────────────────────────
+// A publish needs a DESTINATION, not a query connection, so the header keeps naming the destination even with
+// no live model attached. But it used to offer an enabled Publish and a full-looking comparison while nothing
+// had actually been read from that destination (M17, walkthrough 2026-09-14). The Published page's own
+// comparison is the one thing that really talks to the destination, so it publishes what it found here and the
+// header's single Publish button reads it. Unknown (null) means we have not tried: Publish stays enabled.
+// A flag, not a name. The Published page resolves its destination label from the connection registry, which
+// loads a beat after the first comparison can fail, so carrying a name here printed the half-resolved one
+// ('Contoso') in a header that says 'Contoso Sales'. The header names the destination; this only says reachable.
+type PublishReach = { unreachable: true } | null;
+let reachState: PublishReach = null;
+const reachListeners = new Set<(value: PublishReach) => void>();
+function setPublishReach(next: PublishReach): void {
+  if (!!reachState === !!next) { reachState = next; return; }
+  reachState = next;
+  reachListeners.forEach((listener) => { try { listener(next); } catch { /* isolate a view */ } });
+}
+export function usePublishReach(): PublishReach {
+  const [value, setValue] = useState(reachState);
+  useEffect(() => { reachListeners.add(setValue); setValue(reachState); return () => { reachListeners.delete(setValue); }; }, []);
+  return value;
+}
+
+export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvanced = 'delivery', restoreTarget, onRestoreConsumed, publishNonce = 0, onPublishConsumed }: {
   seed?: CompareSeed | null; dataAgent?: ReactNode; initialMode?: DeployMode; initialAdvanced?: AdvancedView;
   restoreTarget?: { id: string; endpoint: string; database: string; nonce: number } | null;
   onRestoreConsumed?: () => void;
-  publishNonce?: number;
+  publishNonce?: number; onPublishConsumed?: (nonce: number) => void;
 }) {
   const { session, conn, context, openConnections } = useConnection();
   const [mode, setMode] = useState<DeployMode>(initialMode);
@@ -57,6 +84,17 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   // and re-opening Deploy does not re-force stale Roll back on every remount.
   const [adopted, setAdopted] = useState<{ id: string; endpoint: string; database: string } | null>(null);
   const [advancedView, setAdvancedView] = useState<AdvancedView>(initialAdvanced);
+  // ONLY the Advanced mode is gated. Publish, Promote, compare and restore points stay free, so this grant
+  // touches nothing else on the page. The Advanced button keeps its place and wears the pill; pressing it
+  // lands on the preview, which is where the feature explains itself.
+  //
+  // Three states, and the live body needs the third one: `=== 'granted'`, never `!== 'denied'`. With
+  // getEntitlement in flight the first version mounted the real Advanced panels and a press on Data Agent
+  // called listDataAgents (Astra, 2026-09-15). An unanswered plan is not an unlocked one.
+  const advancedGrant = useFeature('publishedAdvanced');
+  const advancedLocked = advancedGrant === 'denied';
+  const advancedPending = advancedGrant === 'unknown';
+  const advancedOpen = advancedGrant === 'granted';
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [diff, setDiff] = useState<ModelDiff | null>(null);
   const [connections, setConnections] = useState<ConnectionRecord[]>([]);
@@ -64,6 +102,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const [restoreId, setRestoreId] = useState('');
   const [restorePreview, setRestorePreview] = useState<RollbackResult | null>(null);
   const [restoreResult, setRestoreResult] = useState<RollbackResult | null>(null);
+  const [restoreNote, setRestoreNote] = useState<string | null>(null);   // the plain result line for a confirmed restore
   const [restoreBusy, setRestoreBusy] = useState<'load' | 'preview' | 'confirm' | null>(null);
   const [restoreErr, setRestoreErr] = useState<string | null>(null);
   const [gate, setGate] = useState<DeployGate | null>(null);
@@ -76,6 +115,20 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const [stages, setStages] = useState<Record<string, PipelineStage[]>>({});
   const [selPipe, setSelPipe] = useState<string | null>(null);
   const [pipeErr, setPipeErr] = useState<string | null>(null);
+  // WHO signs in for the Fabric reads and the promote itself. Promote used to hard-code the Azure command
+  // line, so a computer that has never run it could only fail (Kane, 2026-09-14). An empty pick means "not
+  // chosen yet": the effective mode then comes from the account the publish destination was really opened
+  // with, and falls back to a browser sign-in. Reading it this way, rather than seeding the persisted
+  // value, means a destination that resolves AFTER this page mounts still decides the starting choice.
+  const [pickedMode, setPickedMode] = usePersistedState<string>('promote.authMode', '');
+  const [promoteTenant, setPromoteTenant] = usePersistedState<string>('promote.tenantId', '');
+  const signInMode = pickedMode || defaultSignInMode(context?.publishing);
+  const promoteTenantId = promoteTenant.trim() || null;
+  const modePickerRef = useRef<HTMLSelectElement>(null);
+  // Which panel is holding a person at a sign-in step, or null. A flag, not a boolean, because Fabric Git
+  // and CI·CD·Publish render side by side under Advanced: one shared boolean would put "Signing you in…"
+  // on both pickers at once while only one of them was really doing anything.
+  const [signingIn, setSigningIn] = useState<string | null>(null);
   // Promote (preview + gated deploy) + history
   const [srcSel, setSrcSel] = useState('');
   const [tgtSel, setTgtSel] = useState('');
@@ -85,6 +138,15 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const [overrideReason, setOverrideReason] = useState('');   // required when override is ON — the engine refuses a blank one
   const [history, setHistory] = useState<DeploymentHistoryEntry[] | null>(null);
   // Fabric Git (workspace ⇄ git)
+  // Its own choice of who signs in, remembered under its own key. Every Fabric Git call used to hard-code
+  // the Azure command line, so on a computer that has never run it (Kane's laptop, 2026-09-15) Status could
+  // only print a red line about a command he does not have. Same starting rule as Promote: the way the
+  // publish destination was really opened, falling back to a browser sign-in.
+  const [fgPicked, setFgPicked] = usePersistedState<string>('fabricgit.authMode', '');
+  const [fgTenant, setFgTenant] = usePersistedState<string>('fabricgit.tenantId', '');
+  const fgSignInMode = fgPicked || defaultSignInMode(context?.publishing);
+  const fgTenantId = fgTenant.trim() || null;
+  const fgPickerRef = useRef<HTMLSelectElement>(null);
   const [fgWs, setFgWs] = useState('');
   const [fgLoadedWs, setFgLoadedWs] = useState('');   // the id the loaded status/conn belong to — guards a wrong-target write
   const [fgConn, setFgConn] = useState<FabricGitConnection | null>(null);
@@ -98,16 +160,23 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const [cicdWs, setCicdWs] = useState('');
   const [scaffold, setScaffold] = useState<CicdScaffold | null>(null);
   const [scaffoldOpen, setScaffoldOpen] = useState<string | null>(null);
+  // The publish half of this panel is the only half that signs in: cicd_generate just writes files
+  // (EngineRpcTarget.cs cicdGenerate takes no authMode at all), so the picker sits over the publish rows.
+  const [pubPicked, setPubPicked] = usePersistedState<string>('cicdpublish.authMode', '');
+  const [pubTenant, setPubTenant] = usePersistedState<string>('cicdpublish.tenantId', '');
+  const pubSignInMode = pubPicked || defaultSignInMode(context?.publishing);
+  const pubTenantId = pubTenant.trim() || null;
+  const pubPickerRef = useRef<HTMLSelectElement>(null);
   const [pubWs, setPubWs] = useState('');
   const [pubItem, setPubItem] = useState('');
   const [pubResult, setPubResult] = useState<CicdPublishResult | null>(null);
   const [pubPending, setPubPending] = useState<CicdPublishResult | null>(null);   // dry-run preview awaiting Confirm
-  const [cicdErr, setCicdErr] = useState<string | null>(null);
+  const [cicdErr, setCicdErr] = useState<string | null>(null);   // the scaffold half: file problems, never sign-in
+  const [pubErr, setPubErr] = useState<string | null>(null);     // the publish half, which does sign in
   const timer = useRef<number | undefined>(undefined);
   // Editing the workspace id invalidates a loaded preview — clear it so the gated buttons hide until Status reloads.
   const fgEditWs = (v: string) => { setFgWs(v); setFgStatus(null); setFgConn(null); setFgResult(null); setFgErr(null); setFgPending(null); };
   const [publishOpen, setPublishOpen] = useState(false);
-  const [selective, setSelective] = useState(false);
   const [preview, setPreview] = useState<LivePublishReport | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
@@ -164,7 +233,11 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     finally { setPreviewBusy(false); }
   }
   function openPublish() {
-    setMode('push'); setPublishOpen(true); setSelective(false); setPublishResult(null); setDeleteRefs([]);
+    // No resolved destination means there is nothing to review against: stay on the choose-a-destination panel
+    // rather than opening a confirm that would name "No live target" and offer to publish anyway.
+    setPublishResult(null); setDeleteRefs([]);
+    if (!canPublish) { setPublishOpen(false); return; }
+    setPublishOpen(true);
     void loadPreview([]);
   }
   function toggleDelete(ref: string) {
@@ -181,7 +254,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
       if (res.committed) {
         const dest = res.database || targetName;
         const n = res.totalChanges ?? 0;
-        setPublishResult(`Published ${n} change${n === 1 ? '' : 's'} to ${dest}.`);
+        setPublishResult(`Published ${n} change${n === 1 ? '' : 's'} to ${dest}. Your local model edits are unchanged.`);
         setPublishOpen(false); setPreview(null); setPublishNeedReason(false); setPublishOverride(''); setDeleteRefs([]);
         await loadRestorePoints();   // the push just wrote a restore point — the header + snapshot counts must follow it now
       } else setPreviewErr(res.error || 'Publish made no changes.');
@@ -193,7 +266,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   }
   useEffect(() => {
     if (!publishNonce) return;
-    openPublish();
+    openPublish(); onPublishConsumed?.(publishNonce);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publishNonce]);
 
@@ -210,7 +283,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   }
   async function previewRollback() {
     if (!restoreId) return;
-    setRestoreBusy('preview'); setRestoreErr(null); setRestoreResult(null);
+    setRestoreBusy('preview'); setRestoreErr(null); setRestoreResult(null); setRestoreNote(null);
     try {
       const r = await rpc<RollbackResult>('rollbackPush', restoreId, false, null, 'human');
       setRestorePreview(r); if (r.error) setRestoreErr(r.error);
@@ -220,10 +293,18 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   async function confirmRollback() {
     if (!restoreId || !restorePreview) return;
     setRestoreBusy('confirm'); setRestoreErr(null);
+    // Name the point BEFORE the write: loadRestorePoints() below replaces the list the label is read from.
+    const point = restorePoints.find((p) => p.id === restoreId);
+    const restored = point?.database || point?.endpoint || targetName;
+    const when = point?.capturedUtc ? relativeTime(point.capturedUtc) : 'the saved point';
     try {
       const r = await rpc<RollbackResult>('rollbackPush', restoreId, true, null, 'human');
       setRestorePreview(null); setRestoreResult(r); if (r.error) setRestoreErr(r.error);
+      setRestoreNote(rollbackResultLine(r, restored, when));
       await loadRestorePoints();
+      // The published model just moved, so any comparison on screen is stale. Re-check it when the review card is
+      // open, otherwise drop it so the header returns to "click Publish to review changes".
+      if (publishOpen) await loadPreview(deleteRefs); else setPreview(null);
     } catch (e) { setRestoreErr(String((e as Error).message ?? e)); }
     finally { setRestoreBusy(null); }
   }
@@ -243,74 +324,97 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const pull = () => run('pull', async () => { const r = await rpc<GitActionResult>('gitPull', 'human'); if (!r.ok) setErr(r.error || 'pull failed'); else if (r.modelReloadNeeded) setErr('The files on disk changed. Reload the model to match the files.'); });
   const checkGate = () => run('gate', async () => setGate(await rpc<DeployGate>('deployGate', null)));
 
-  async function loadPipelines() {
-    setBusy('pipelines'); setPipeErr(null);
+  // `mode` is passed in rather than read off state, so the Sign in action can retry with the browser
+  // sign-in in the same tick it switches to it.
+  async function loadPipelines(mode: string = signInMode) {
+    setBusy('pipelines'); setPipeErr(null); setSigningIn(isInteractiveSignIn(mode) ? 'promote' : null);
     try {
-      const ps = await rpc<DeploymentPipeline[]>('listDeploymentPipelines', 'azcli');
+      const ps = await rpc<DeploymentPipeline[]>('listDeploymentPipelines', mode, promoteTenantId);
       setPipelines(ps);
       if (ps.length) {   // surface the first pipeline's stages straight away
         setSelPipe(ps[0].id);
-        const s = await rpc<PipelineStage[]>('getPipelineStages', ps[0].id, 'azcli');
+        const s = await rpc<PipelineStage[]>('getPipelineStages', ps[0].id, mode, promoteTenantId);
         setStages((m) => ({ ...m, [ps[0].id]: s }));
       }
     } catch (e) { setPipeErr(String((e as Error).message ?? e)); }
-    finally { setBusy(null); }
+    finally { setBusy(null); setSigningIn(null); }
+  }
+  // Pressing Sign in retries the read the browser way, which is the one way that works with nothing set up
+  // on the computer. It also becomes the remembered choice, so the next press does not fail the same way.
+  function signInAndRetry() {
+    setPickedMode('interactive');
+    void loadPipelines('interactive');
   }
   async function selectPipeline(id: string) {
     setSelPipe(id); setPipeErr(null);
     if (stages[id]) return;
     setBusy('stages');
-    try { const s = await rpc<PipelineStage[]>('getPipelineStages', id, 'azcli'); setStages((m) => ({ ...m, [id]: s })); }
+    try { const s = await rpc<PipelineStage[]>('getPipelineStages', id, signInMode, promoteTenantId); setStages((m) => ({ ...m, [id]: s })); }
     catch (e) { setPipeErr(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   }
   // Preview = a dry-run deploy (deploys nothing). From the HUMAN door, so a prod preview surfaces the confirmToken.
-  const doPreview = () => run('preview', async () => { setPipeErr(null); setOverride(false); setOverrideReason(''); setReport(await rpc<DeployStageReport>('deployStage', selPipe, srcSel, tgtSel, null, note || null, false, null, false)); });
+  const doPreview = () => run('preview', async () => { setPipeErr(null); setOverride(false); setOverrideReason(''); setReport(await rpc<DeployStageReport>('deployStage', selPipe, srcSel, tgtSel, null, note || null, false, null, false, signInMode, promoteTenantId, 'human', null)); });
   const doDeploy = () => run('deploy', async () => {
     // forceOverride now needs an overrideReason (the engine refuses a bare toggle). deployStage's positional args are
     // (pipeline, src, tgt, items, note, commit, confirmToken, forceOverride, authMode, tenantId, origin, overrideReason)
     // — so the reason is the 12th; pass authMode/tenantId/origin explicitly to reach it. null when the toggle is off.
     const reason = override ? overrideReason.trim() || null : null;
-    const r = await rpc<DeployStageReport>('deployStage', selPipe, srcSel, tgtSel, null, note || null, true, report?.confirmToken ?? null, override, 'azcli', null, 'human', reason);
+    const r = await rpc<DeployStageReport>('deployStage', selPipe, srcSel, tgtSel, null, note || null, true, report?.confirmToken ?? null, override, signInMode, promoteTenantId, 'human', reason);
     setReport(r); if (r.error) setPipeErr(r.error);
   });
-  const loadHistory = () => run('history', async () => { setPipeErr(null); setHistory(await rpc<DeploymentHistoryEntry[]>('deploymentHistory', selPipe, 'azcli')); });
+  const loadHistory = () => run('history', async () => { setPipeErr(null); setHistory(await rpc<DeploymentHistoryEntry[]>('deploymentHistory', selPipe, signInMode, promoteTenantId)); });
 
   // Fabric Git: read the workspace's connection + status. Commit (workspace→git) / Update (git→workspace) are a
   // genuine TWO-STEP confirm — a first click runs the engine's commit=false dry-run (writes nothing) and shows the
   // plan; only an explicit "Confirm" click sends commit=true. The reads now report failures on the DTO .error
   // (the engine no longer throws across the door), so we surface that in the panel-local fgErr.
-  const fgLoad = () => run('fgload', async () => {
+  // Every call here carries the account picked at the top of the panel. `fgMode` is an argument rather than
+  // read off state, so Sign in can retry with the browser sign-in in the same tick it switches to it.
+  const fgReadStatus = (fgMode: string = fgSignInMode) => run('fgload', async () => {
     setFgErr(null); setFgResult(null); setFgPending(null); setFgStatus(null); setFgConn(null);
     const missing = fabricGitWorkspaceMessage(fgWs);
     if (missing) { setFgErr(missing); return; }
     const ws = fgWs.trim();
-    const conn = await rpc<FabricGitConnection>('fabricGitConnection', ws, 'azcli');
-    const st = await rpc<FabricGitStatus>('fabricGitStatus', ws, 'azcli');
-    if (conn.error || st.error) { setFgErr(conn.error || st.error || 'Fabric Git read failed.'); return; }
-    setFgConn(conn); setFgStatus(st); setFgLoadedWs(ws);
+    setSigningIn(isInteractiveSignIn(fgMode) ? 'fabricgit' : null);
+    try {
+      const conn = await rpc<FabricGitConnection>('fabricGitConnection', ws, fgMode, fgTenantId);
+      const st = await rpc<FabricGitStatus>('fabricGitStatus', ws, fgMode, fgTenantId);
+      if (conn.error || st.error) { setFgErr(conn.error || st.error || 'Fabric Git read failed.'); return; }
+      setFgConn(conn); setFgStatus(st); setFgLoadedWs(ws);
+    } finally { setSigningIn(null); }
   });
+  // Sign in only ever repeats a READ. Nothing on this page commits to a workspace, and nothing overwrites a
+  // model, because a button said Sign in: a write that failed on the sign-in keeps its own Confirm step, and
+  // the person presses that themselves once they are in.
+  function fgSignInAndRetry() {
+    setFgPicked('interactive');
+    void fgReadStatus('interactive');
+  }
   // Step 1: dry-run preview (commit=false) — surfaces the pending change count/plan, mutates nothing.
   const fgPreview = (action: 'commit' | 'update') => run(action === 'commit' ? 'fgcommit' : 'fgupdate', async () => {
     setFgErr(null); setFgResult(null);
     const ws = fgWs.trim();
     const r = action === 'commit'
-      ? await rpc<FabricGitResult>('fabricGitCommit', ws, null, null, false, 'azcli')
-      : await rpc<FabricGitResult>('fabricGitUpdate', ws, 'PreferRemote', false, false, 'azcli');
+      ? await rpc<FabricGitResult>('fabricGitCommit', ws, null, null, false, fgSignInMode, fgTenantId)
+      : await rpc<FabricGitResult>('fabricGitUpdate', ws, 'PreferRemote', false, false, fgSignInMode, fgTenantId);
     if (r.error) { setFgErr(r.error); return; }
     setFgPending({ action, plan: r.plan || '', conflicts: r.conflicts });
   });
-  // Step 2: the confirmed live write (commit=true).
+  // Step 2: the confirmed live write (commit=true). A failure KEEPS the pending step: the two-step used to
+  // be thrown away on any error, so a sign-in that failed here left the person with a red line and no way
+  // back to the Confirm they had already earned.
   const fgConfirm = () => run('fgconfirm', async () => {
     if (!fgPending) return;
     setFgErr(null);
     const ws = fgWs.trim();
     const r = fgPending.action === 'commit'
-      ? await rpc<FabricGitResult>('fabricGitCommit', ws, null, null, true, 'azcli')
-      : await rpc<FabricGitResult>('fabricGitUpdate', ws, 'PreferRemote', false, true, 'azcli');
+      ? await rpc<FabricGitResult>('fabricGitCommit', ws, null, null, true, fgSignInMode, fgTenantId)
+      : await rpc<FabricGitResult>('fabricGitUpdate', ws, 'PreferRemote', false, true, fgSignInMode, fgTenantId);
+    if (r.error) { setFgErr(r.error); return; }
     setFgPending(null); setFgResult(r);
-    if (r.error) setFgErr(r.error);
-    else { const st = await rpc<FabricGitStatus>('fabricGitStatus', ws, 'azcli'); if (!st.error) setFgStatus(st); }
+    const st = await rpc<FabricGitStatus>('fabricGitStatus', ws, fgSignInMode, fgTenantId);
+    if (!st.error) setFgStatus(st);
   });
 
   // CI·CD — generate the fabric-cicd scaffold (write=false returns contents; write=true lands them in the repo).
@@ -320,17 +424,27 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     setScaffold(r); if (r.error) setCicdErr(r.error);
   });
   // Publish is a real two-step like Fabric Git: a Plan click dry-runs (enumerates parts, POSTs nothing) → Confirm publishes.
-  const pubPreview = () => run('pubprev', async () => {
-    setCicdErr(null); setPubResult(null);
-    const r = await rpc<CicdPublishResult>('cicdPublish', pubWs.trim() || null, pubItem.trim() || null, false, 'azcli');
-    if (r.error) { setCicdErr(r.error); return; }
-    setPubPending(r);
+  const pubPreview = (pubMode: string = pubSignInMode) => run('pubprev', async () => {
+    setPubErr(null); setPubResult(null);
+    setSigningIn(isInteractiveSignIn(pubMode) ? 'cicd' : null);
+    try {
+      const r = await rpc<CicdPublishResult>('cicdPublish', pubWs.trim() || null, pubItem.trim() || null, false, pubMode, pubTenantId);
+      if (r.error) { setPubErr(r.error); return; }
+      setPubPending(r);
+    } finally { setSigningIn(null); }
   });
+  // Sign in repeats the PLAN, which is the engine's dry run and posts nothing. The confirmed publish is a
+  // full overwrite of somebody's model, so it stays where it belongs: behind the person's own second click.
+  function pubSignInAndRetry() {
+    setPubPicked('interactive');
+    void pubPreview('interactive');
+  }
   const pubConfirm = () => run('pubconf', async () => {
-    setCicdErr(null);
-    if (!pubWs.trim() || !pubItem.trim()) { setCicdErr('Workspace id and item id are required to publish.'); return; }
-    const r = await rpc<CicdPublishResult>('cicdPublish', pubWs.trim(), pubItem.trim(), true, 'azcli');
-    setPubPending(null); setPubResult(r); if (r.error) setCicdErr(r.error);
+    setPubErr(null);
+    if (!pubWs.trim() || !pubItem.trim()) { setPubErr('Workspace id and item id are required to publish.'); return; }
+    const r = await rpc<CicdPublishResult>('cicdPublish', pubWs.trim(), pubItem.trim(), true, pubSignInMode, pubTenantId);
+    if (r.error) { setPubErr(r.error); return; }   // keep the pending plan, so Confirm survives a failed sign-in
+    setPubPending(null); setPubResult(r);
   });
   // The Deploy button mirrors the engine's gate: needs a fresh preview, and for prod the confirmToken the preview
   // surfaced. When overriding a failing gate, the engine requires a typed reason — so gate that here too.
@@ -379,7 +493,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
   const target = connections.find((c) => c.id === context?.publishing?.connectionId) ?? connections.find((c) => norm(c.endpoint) === norm(visibleEndpoint)
     && (!visibleDatabase || !c.database || norm(c.database) === norm(visibleDatabase)));
   const targetName = target?.modelName || target?.database || visibleDatabase || (visibleEndpoint ? visibleEndpoint.slice(visibleEndpoint.lastIndexOf('/') + 1) : 'No live target');
-  const targetLabel = target?.label || (endpoint ? 'treated as production' : null);
+  const targetLabel = target?.label ? publishStageName(target.label) : (endpoint ? 'treated as production' : null);
   const lastRestore = restorePoints[0]?.capturedUtc ? relativeTime(restorePoints[0].capturedUtc) : 'none';
   const liveBound = !!session?.liveBound;
   // A local working copy is not live-bound (the engine keeps LiveOrigin null for it by the open_live/open_local
@@ -395,47 +509,64 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
     previewError: previewErr,
     lastRestore,
   });
+  // A new model, or a new destination, means we have not tried to read it yet: never carry a stale refusal over.
+  useEffect(() => { setPublishReach(null); }, [session?.sessionId, context?.publishing?.connectionId]);
   const account = context?.publishing?.account || session?.currentAccount;
+  const entry = publishEntryState({ canPublish, publishOpen });
 
   return (
     <div className="h-full overflow-auto" style={{ color: 'var(--sem-fg)' }}>
       <div className="sem-evidence-page pt-3 flex flex-col gap-3">
         <div className="rounded-lg p-4" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-[16px] font-semibold m-0">Deploy</h2>
-            {targetLabel && <Badge color={target?.label ? 'var(--sem-muted)' : 'var(--sem-warn)'}>{targetLabel}</Badge>}
-            <button type="button" data-testid="publish-button" onClick={openPublish} disabled={!canPublish || previewBusy || publishBusy}
-              title={canPublish ? 'Review changes, then publish to the live model' : 'Open a live model to publish'}
-              className="ml-auto px-3 py-1.5 rounded-md text-[12px] font-semibold disabled:opacity-50"
-              style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: '1px solid var(--sem-accent)' }}>Publish</button>
+            <h2 className="text-[16px] font-semibold m-0">Publishing</h2>
+            {/* No destination means no stage to label: the fallback endpoint would be the query connection, not a publish target. */}
+            {canPublish && targetLabel && <Badge color={target?.label ? 'var(--sem-muted)' : 'var(--sem-warn)'}>{targetLabel}</Badge>}
+            {/* No Publish button here. The header's Publish… is the app's ONE publish action; pressing it while you
+                are on this page opens the review in place through the publish route seed, and with no destination it
+                lands on the choose-a-destination card below. A second button here made people hunt for the right one. */}
           </div>
           <div className="text-[13px] mt-1" data-testid="deploy-header" style={{ color: 'var(--sem-fg)' }}>{header.line}</div>
+          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+            Publishing writes your reviewed changes to the destination. Your local model edits stay unchanged.
+          </div>
           <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>
             Ctrl+S saves what is in front of you. It never publishes.
             <button type="button" onClick={() => { openConnectionsOnView('setup'); openConnections(); }} className="underline ml-1">Change publish destination</button>
           </div>
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <ModeBtn active={mode === 'push'} onClick={() => { setMode('push'); setSelective(false); }}>Publish</ModeBtn>
+            <ModeBtn active={mode === 'push'} onClick={() => setMode('push')}>What to publish</ModeBtn>
             <ModeBtn active={mode === 'rollback'} onClick={() => setMode('rollback')}>Roll back</ModeBtn>
             <ModeBtn active={mode === 'promote'} onClick={() => setMode('promote')}>Promote</ModeBtn>
-            <ModeBtn active={mode === 'advanced'} onClick={() => setMode('advanced')}>Advanced</ModeBtn>
-            {mode === 'push' && <button type="button" className="ml-auto text-[12px] underline" style={{ color: 'var(--sem-muted)', background: 'none', border: 0 }}
-              onClick={() => { setSelective(true); setPublishOpen(false); }}>Choose what to publish</button>}
+            <ModeBtn active={mode === 'advanced'} onClick={() => setMode('advanced')}>Advanced<ProBadge show={advancedLocked} /></ModeBtn>
           </div>
         </div>
         {publishResult && <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-good) 12%, transparent)', color: 'var(--sem-good)', border: '1px solid var(--sem-border)' }}>{publishResult}</div>}
-        {mode === 'push' && publishOpen && <PublishConfirm preview={preview} busy={previewBusy || publishBusy} error={previewErr}
+        {mode === 'push' && entry === 'choose-destination' && (
+          <div className="rounded-lg p-4" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
+            <div className="text-[14px] font-semibold">No publish destination yet</div>
+            <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>Choose where this model publishes, then review the changes that would go there.</div>
+            {/* The one action on the page: the head button is hidden in this state so there is a single Choose destination. */}
+            <button type="button" onClick={() => { openConnectionsOnView('setup'); openConnections(); }}
+              className="mt-3 px-3 py-1.5 rounded-md text-[12px] font-semibold"
+              style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: '1px solid var(--sem-accent)' }}>Choose destination</button>
+          </div>
+        )}
+        {/* The review sits above the mode content, so pressing Publish from Roll back or Promote does not throw away
+            where you were. */}
+        {entry === 'review' && <PublishConfirm preview={preview} busy={previewBusy || publishBusy} error={previewErr}
           targetName={targetName} endpoint={endpoint || ''} account={account} needReason={publishNeedReason} reason={publishOverride}
           gate={publishGate} deleteRefs={deleteRefs} onToggleDelete={toggleDelete}
           onReason={setPublishOverride} onConfirm={() => void confirmPublish(publishNeedReason ? publishOverride : undefined)}
           onCancel={() => { setPublishOpen(false); setPublishNeedReason(false); setDeleteRefs([]); }} />}
-        {mode === 'push' && !publishOpen && !selective && <div className="text-[12px] px-1" style={{ color: 'var(--sem-muted)' }}>Press Publish to review the changes that will go live.</div>}
-        {mode === 'push' && selective && <CompareView key={session?.sessionId ?? 'none'} seed={reviewSeed} embedded />}
+        {mode === 'push' && entry === 'compare' && <CompareView key={session?.sessionId ?? 'none'} seed={reviewSeed} embedded
+          destinationName={targetName}
+          onTargetRead={(state) => setPublishReach(state.ok ? null : { unreachable: true })} />}
         {mode === 'rollback' && <RollbackPanel points={restorePoints} selectedId={restoreId}
-          onSelect={(id) => { setRestoreId(id); setRestorePreview(null); setRestoreResult(null); setRestoreErr(null); }}
-          preview={restorePreview} result={restoreResult} error={restoreErr} busy={restoreBusy}
+          onSelect={(id) => { setRestoreId(id); setRestorePreview(null); setRestoreResult(null); setRestoreErr(null); setRestoreNote(null); }}
+          preview={restorePreview} result={restoreResult} resultNote={restoreNote} error={restoreErr} busy={restoreBusy}
           onPreview={previewRollback} onConfirm={confirmRollback} onReload={loadRestorePoints} />}
-        {mode === 'advanced' && <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
+        {mode === 'advanced' && advancedOpen && <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
           <div className="text-[11px] mb-2" style={{ color: 'var(--sem-muted)' }}>Connect source control, sync a Fabric workspace, set up automated delivery or publish a Data Agent.</div>
           <div className="flex items-center gap-2 flex-wrap">
             <ModeBtn active={advancedView === 'delivery'} onClick={() => setAdvancedView('delivery')}>Delivery tools</ModeBtn>
@@ -445,10 +576,21 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
       </div>
       {err && <Banner tone="bad">{err}</Banner>}
 
-      {mode === 'advanced' && advancedView === 'dataagent' && dataAgent}
+      {/* Advanced, on a plan that does not reach it. Rendered in place, so Publish, Promote, compare and
+          restore points are still one click away on the row above. Nothing below this line mounts. */}
+      {mode === 'advanced' && advancedLocked && (
+        <div className="sem-evidence-page"><ProPreview tool="deploy-advanced" embedded /></div>
+      )}
+      {/* And while the plan has not answered: neither the panels nor the upsell, because neither is true yet. */}
+      {mode === 'advanced' && advancedPending && (
+        <div className="sem-evidence-page pt-3 text-[12px]" role="status" data-testid="advanced-checking"
+          style={{ color: 'var(--sem-muted)' }}><span className="sem-spin" /> {PENDING_ACCESS}</div>
+      )}
+
+      {mode === 'advanced' && advancedOpen && advancedView === 'dataagent' && dataAgent}
 
       {/* ── SOURCE CONTROL ───────────────────────────────────────────── */}
-      {mode === 'advanced' && advancedView === 'delivery' && <Panel title="Source Control" sub="local git + model versioning">
+      {mode === 'advanced' && advancedOpen && advancedView === 'delivery' && <Panel title="Source Control" sub="local git + model versioning">
         {!status?.isRepo ? (
           <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>{status?.note || 'Open a model that lives in a git repository.'}</div>
         ) : (
@@ -496,17 +638,23 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
 
       {/* ── DEPLOYMENT PIPELINE (Fabric — read-only discovery this phase) ───────────── */}
       {mode === 'promote' && <Panel title="Promote" sub="Move a model between development, test and production stages.">
-        {pipeErr && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{pipeErr}</div>}
+        <div className="mb-2">
+          <AccountPicker ref={modePickerRef} mode={signInMode} onMode={setPickedMode}
+            tenantId={promoteTenant} onTenantId={setPromoteTenant}
+            hint={signingIn === 'promote' ? 'Signing you in…' : undefined} />
+        </div>
+        <AccountProblem error={pipeErr} testId="promote" onSignIn={signInAndRetry} onChooseAccount={() => modePickerRef.current?.focus()} />
         {pipelines === null ? (
           <>
-            <div className="text-[12px] mb-2" style={{ color: 'var(--sem-muted)' }}>
-              Load the stages you can access, choose the source and target, then preview the exact item changes and readiness gate.
-              Listing signs you in with your own identity. Nothing is promoted until the separate Deploy confirmation.
+            <div className="text-[12px] mb-2 max-w-[74ch]" style={{ color: 'var(--sem-muted)' }}>
+              <p className="m-0">A pipeline is a set of stages a model moves through, usually development, then test, then production. Promoting copies the model from one stage to the next so the same work is tested before people rely on it.</p>
+              <p className="m-0 mt-1.5">Nothing is listed yet because this page has not looked for your pipelines. It signs you in the way you picked above and only reads. Nothing is promoted until you confirm on the next page.</p>
+              <p className="m-0 mt-1.5">If the list comes back empty, either you have no pipelines or your account cannot see them. Someone who administers your workspace can add you.</p>
             </div>
-            <Btn onClick={loadPipelines} busy={busy === 'pipelines'}>List Fabric pipelines</Btn>
+            <Btn onClick={() => loadPipelines()} busy={busy === 'pipelines'}>Find my pipelines</Btn>
           </>
         ) : pipelines.length === 0 ? (
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No deployment pipelines you can access. <button className="underline" onClick={loadPipelines}>Refresh</button></div>
+          <div className="text-[12px] max-w-[74ch]" style={{ color: 'var(--sem-muted)' }}>No pipelines this account can see. Either none have been set up, or this account has not been added to them. Try a different account above, or ask whoever administers your workspace, then <button className="underline" onClick={() => loadPipelines()}>look again</button>.</div>
         ) : (
           <>
             <div className="flex flex-wrap gap-1.5 mb-2">
@@ -517,7 +665,7 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
                   {p.displayName}
                 </button>
               ))}
-              <button className="text-[11px] px-2 py-0.5 rounded" onClick={loadPipelines} style={{ color: 'var(--sem-muted)' }}>↻</button>
+              <button className="text-[11px] px-2 py-0.5 rounded" onClick={() => loadPipelines()} title="Look for pipelines again" style={{ color: 'var(--sem-muted)' }}>↻</button>
             </div>
             {selPipe && (stages[selPipe] === undefined ? (
               <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading stages…</div>
@@ -573,13 +721,20 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
       </Panel>}
 
       {/* ── FABRIC GIT (workspace ⇄ git) ───────────────────────────── */}
-      {mode === 'advanced' && advancedView === 'delivery' && <Panel title="Fabric Git" sub="sync a workspace ⇄ git (Azure DevOps / GitHub)">
+      {mode === 'advanced' && advancedOpen && advancedView === 'delivery' && <Panel title="Fabric Git" sub="sync a workspace ⇄ git (Azure DevOps / GitHub)">
+        <div className="mb-2">
+          <AccountPicker ref={fgPickerRef} mode={fgSignInMode} onMode={setFgPicked}
+            tenantId={fgTenant} onTenantId={setFgTenant}
+            hint={signingIn === 'fabricgit' ? 'Signing you in…' : undefined} />
+        </div>
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <input value={fgWs} onChange={(e) => fgEditWs(e.target.value)} placeholder="workspace id"
             style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 250 }} />
-          <Btn onClick={fgLoad} busy={busy === 'fgload'}>Status</Btn>
+          <Btn onClick={() => fgReadStatus()} busy={busy === 'fgload'}>Status</Btn>
         </div>
-        {fgErr && <div className="text-[12px] mb-1 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{fgErr}</div>}
+        {/* The answer to Status belongs under Status, where the connection and the change list also land.
+            Above the box would push the id a person just typed down the page every time a read failed. */}
+        <AccountProblem error={fgErr} testId="fabricgit" onSignIn={fgSignInAndRetry} onChooseAccount={() => fgPickerRef.current?.focus()} />
         {fgConn && (
           <div className="text-[12px] mb-1 flex items-center gap-2 flex-wrap">
             <Badge color={fgConn.state === 'ConnectedAndInitialized' ? 'var(--sem-good)' : fgConn.state === 'Connected' ? 'var(--sem-warn)' : 'var(--sem-bad)'}>{uiLabel(fgConn.state, 'Unknown')}</Badge>
@@ -621,11 +776,13 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
           </div>
         )}
         {fgResult && !fgPending && <div className="text-[11px] mt-1" style={{ color: fgResult.error ? 'var(--sem-bad)' : 'var(--sem-good)' }}>{fgResult.error || fgResult.plan}</div>}
-        <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>Commit pushes the workspace to git; Update overwrites workspace items with the git version. Each click previews first (dry-run); a second Confirm runs the live write.</div>
+        <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>Commit pushes the workspace to git; Update overwrites workspace items with the git version. Each click previews first (dry-run); a second Confirm runs the live write. Every one of them signs you in the way you picked above.</div>
       </Panel>}
 
       {/* ── CI·CD · PUBLISH ─────────────────────────────────────────── */}
-      {mode === 'advanced' && advancedView === 'delivery' && <Panel title="CI·CD · Publish" sub="git source-of-truth → workspace (fabric-cicd)">
+      {mode === 'advanced' && advancedOpen && advancedView === 'delivery' && <Panel title="CI·CD · Publish" sub="git source-of-truth → workspace (fabric-cicd)">
+        {/* Scaffold problems only. They are never sign-in problems: cicd_generate writes files and makes no
+            Fabric call, so it has no account to fail on. The publish half keeps its own line, below. */}
         {cicdErr && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{cicdErr}</div>}
 
         {/* Generate the fabric-cicd CI scaffold (pure file authoring — no live write). */}
@@ -667,13 +824,21 @@ export function DeployView({ seed, dataAgent, initialMode = 'push', initialAdvan
 
         {/* Publish the OPEN model's on-disk definition to a workspace — a gated, two-step live write. */}
         <div className="text-[11px] font-semibold uppercase tracking-wide mt-3 mb-1" style={{ color: 'var(--sem-muted)' }}>Publish (Items API · full overwrite)</div>
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <input value={pubWs} onChange={(e) => { setPubWs(e.target.value); setPubPending(null); setPubResult(null); }} placeholder="workspace id"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 200 }} />
-          <input value={pubItem} onChange={(e) => { setPubItem(e.target.value); setPubPending(null); setPubResult(null); }} placeholder="semantic-model item id"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 200 }} />
-          <Btn onClick={pubPreview} busy={busy === 'pubprev'}>Plan</Btn>
+        {/* The picker sits over the publish rows, not over the whole panel: Generate CI above only writes
+            files on this computer and never signs anyone in, so a control there would promise otherwise. */}
+        <div className="mb-2">
+          <AccountPicker ref={pubPickerRef} mode={pubSignInMode} onMode={setPubPicked}
+            tenantId={pubTenant} onTenantId={setPubTenant}
+            hint={signingIn === 'cicd' ? 'Signing you in…' : undefined} />
         </div>
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <input value={pubWs} onChange={(e) => { setPubWs(e.target.value); setPubPending(null); setPubResult(null); setPubErr(null); }} placeholder="workspace id"
+            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 200 }} />
+          <input value={pubItem} onChange={(e) => { setPubItem(e.target.value); setPubPending(null); setPubResult(null); setPubErr(null); }} placeholder="semantic-model item id"
+            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '2px 8px', fontSize: 12, width: 200 }} />
+          <Btn onClick={() => pubPreview()} busy={busy === 'pubprev'}>Plan</Btn>
+        </div>
+        <AccountProblem error={pubErr} testId="cicd" onSignIn={pubSignInAndRetry} onChooseAccount={() => pubPickerRef.current?.focus()} />
         {pubPending && (
           <div className="mt-1 rounded p-2 text-[12px]" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-warn)' }}>
             <div style={{ color: 'var(--sem-muted)' }}>{pubPending.plan}</div>
@@ -783,15 +948,14 @@ function ConfirmRow({ k, children }: { k: string; children: ReactNode }) {
     </div>
   );
 }
+// Segmented, not filled: the mode row only switches what you are looking at, so it must not compete with the one
+// filled control that actually writes.
 function ModeBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return <button onClick={onClick} className="px-3 py-1.5 rounded-md text-[12px] font-medium"
-    style={active
-      ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: '1px solid var(--sem-accent)' }
-      : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>{children}</button>;
+  return <button type="button" onClick={onClick} aria-pressed={active} className="sem-btn">{children}</button>;
 }
-function RollbackPanel({ points, selectedId, onSelect, preview, result, error, busy, onPreview, onConfirm, onReload }: {
+function RollbackPanel({ points, selectedId, onSelect, preview, result, resultNote, error, busy, onPreview, onConfirm, onReload }: {
   points: RestorePointRecord[]; selectedId: string; onSelect: (id: string) => void; preview: RollbackResult | null;
-  result: RollbackResult | null; error: string | null; busy: 'load' | 'preview' | 'confirm' | null;
+  result: RollbackResult | null; resultNote?: string | null; error: string | null; busy: 'load' | 'preview' | 'confirm' | null;
   onPreview: () => void; onConfirm: () => void; onReload: () => void;
 }) {
   const point = points.find((p) => p.id === selectedId);
@@ -800,7 +964,7 @@ function RollbackPanel({ points, selectedId, onSelect, preview, result, error, b
     <div className="rounded-lg p-3" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-[13px] font-semibold">Roll back</span>
-        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Choose a saved version and review the changes before restoring it.</span>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Restores the published model to a saved point. Your local copy does not change; the comparison updates afterwards.</span>
       </div>
       {error && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>{error}</div>}
       {points.length === 0 ? (
@@ -833,7 +997,7 @@ function RollbackPanel({ points, selectedId, onSelect, preview, result, error, b
           </div>
         </div>
       )}
-      {result && !preview && <div className="mt-2 text-[12px] rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-' + (result.error ? 'bad' : 'good') + ') 12%, transparent)', color: result.error ? 'var(--sem-bad)' : 'var(--sem-good)' }}>{result.error || result.note || `Restored ${result.restored}, removed ${result.removed}.`}</div>}
+      {result && !preview && <div className="mt-2 text-[12px] rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-' + (result.error ? 'bad' : !result.applied ? 'muted' : (result.failedRefs?.length ?? 0) > 0 ? 'warn' : 'good') + ') 12%, transparent)', color: result.error ? 'var(--sem-bad)' : !result.applied ? 'var(--sem-fg)' : (result.failedRefs?.length ?? 0) > 0 ? 'var(--sem-warn)' : 'var(--sem-good)' }}>{result.error || resultNote || result.note || `Restored ${result.restored}, removed ${result.removed}.`}</div>}
     </div>
   );
 }
@@ -853,11 +1017,36 @@ function Panel({ title, sub, children }: { title: string; sub?: string; children
 }
 function Btn({ children, onClick, primary, busy, disabled, title }: { children: React.ReactNode; onClick: () => void; primary?: boolean; busy?: boolean; disabled?: boolean; title?: string }) {
   return (
-    <button onClick={onClick} disabled={busy || disabled} title={title}
-      className="px-2.5 py-1 rounded text-[12px] font-medium disabled:opacity-50"
-      style={{ background: primary ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: primary ? 'var(--sem-on-accent)' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+    <button onClick={onClick} disabled={busy || disabled} title={title} className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {busy ? '…' : children}
     </button>
+  );
+}
+// A failed Fabric call, in words, with the one thing that fixes it. Shared by Promote, Fabric Git and the
+// CI·CD publish, which is why it is no longer called PromoteProblem.
+//
+// All three used to print whatever came back from the sign-in straight into a red line. What Kane read on
+// his own laptop was "Please run 'az login' to set up account", once above the paragraph explaining what a
+// pipeline is and again under the Fabric Git workspace box, with no control that could act on it. The plain
+// line comes from the shared map in copy.ts; the raw text survives only for a failure the map does not
+// recognise, because a person with an unknown failure still needs something to pass on.
+function AccountProblem({ error, testId, onSignIn, onChooseAccount }: {
+  error: string | null; testId: string; onSignIn: () => void; onChooseAccount: () => void;
+}) {
+  if (!error) return null;
+  const problem = signInProblem(error);
+  const act = problem.fix === 'signIn' ? onSignIn : problem.fix === 'chooseAccount' ? onChooseAccount : null;
+  return (
+    <div className="text-[12px] mb-2 rounded px-2 py-2 max-w-[74ch]" data-testid={`${testId}-problem`}
+      style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>
+      <div>{problem.lead}</div>
+      {problem.detail && <div className="mt-1" style={{ color: 'var(--sem-muted)' }}>{problem.detail}</div>}
+      {act && problem.fixLabel && (
+        <div className="mt-2" data-testid={`${testId}-signin-fix`}>
+          <Btn onClick={act}>{problem.fixLabel}</Btn>
+        </div>
+      )}
+    </div>
   );
 }
 function Chip({ children }: { children: React.ReactNode }) {

@@ -52,6 +52,7 @@ DryRunTests.cs
 DualDriveUndoTests.cs
 DuplicateObjectTests.cs
 EngineBrokerTests.cs
+EntitlementContractTests.cs
 EntitlementGateTests.cs
 EntitlementVerifierTests.cs
 EquivalenceMultiShapeTests.cs
@@ -65,6 +66,7 @@ FabricSpecPublicDoorTests.cs
 FieldParameterTests.cs
 FormatTemplatesTests.cs
 FreeMcpSurfaceTests.cs
+FreeSessionContractTests.cs
 GitPublicOperationTests.cs
 HardMeasureWorkflowTests.cs
 HarnessFixTests.cs
@@ -92,6 +94,7 @@ LoopbackIntakeRefusalTests.cs
 MarkDateTableTests.cs
 McpAnswerContractTests.cs
 McpAttachTests.cs
+McpDescriptionTierTests.cs
 McpSessionTargetingTests.cs
 MeasureFaithfulFidelityTests.cs
 MeasureReconcilerTests.cs
@@ -106,6 +109,9 @@ PersistentSignInTests.cs
 PerspectiveTests.cs
 PlanVerifyGateTests.cs
 PrimerTests.cs
+ProFeatureGateTests.cs
+ProFeatureMapTests.cs
+ProGateRemovalTests.cs
 ProbeMeasureTests.cs
 PropertyGridPrefillTests.cs
 PublicMetadataWriteMcpTests.cs
@@ -125,6 +131,7 @@ ReadinessRefsParityTests.cs
 ReadinessScopedScanTests.cs
 ReadinessSecurityAwarenessTests.cs
 ReadinessStarShapeTests.cs
+ReconcileContractTests.cs
 RecordedLiveTarget.cs
 RecordedLiveTargetTests.cs
 ReconcileGateTests.cs
@@ -136,6 +143,8 @@ RenameLsdlCascadeTests.cs
 ReplacePlanTests.cs
 ReplayCheckTests.cs
 ReportDefinitionReaderTests.cs
+ReportScopeRejectionTests.cs
+ReportScopeTests.cs
 RestorePointTests.cs
 ResultContractTests.cs
 ReviewFenceTests.cs
@@ -156,13 +165,23 @@ SkillDebtSafetyTests.cs
 SkillNamingTests.cs
 SnapshotCleanupTests.cs
 SpecCardinalityTests.cs
+SqlSourceDoorTests.cs
+SqlSourceProbeTests.cs
+SqlSourceRegistryTests.cs
+SqlSourceResolutionTests.cs
+SqlSourceUsageTests.cs
+TableMappingListTests.cs
 TableRowCountTests.cs
+TableSourceMappingTests.cs
+TestEntitlements.cs
 TestEnvironment.cs
 TestHealthAnalyzerTests.cs
 TestModels.cs
 TestObjectIdentityStoreTests.cs
 TestReportExportTests.cs
 TestReportRendererTests.cs
+TestsFixesTests.cs
+TestsRedesignTests.cs
 TestSuiteCascadeTests.cs
 TestSuiteCoverageTests.cs
 TestSuiteStoreTests.cs

@@ -51,7 +51,10 @@ namespace Semanticus.Tests
                 $"failure text must name a recovery op / next step (contract §1) — bare verdict was: \"{message}\"");
         }
 
-        private static async Task<LocalEngine> FreshAsync(bool pro = false, int cl = 1701)
+        // ENTITLED BY DEFAULT since 2026-09-15. The subject here is failure TEXT, and Pro is four whole features
+        // now: on a free engine half these ops refuse at the entry with the entitlement sentence, so the message
+        // under test is never reached. The tier is not what this suite pins, so it holds all four features.
+        private static async Task<LocalEngine> FreshAsync(bool pro = true, int cl = 1701)
         {
             var engine = new LocalEngine(new SessionManager(), new Fake(pro));
             await engine.CreateModelAsync("ContractTest", cl);
@@ -201,9 +204,8 @@ namespace Semanticus.Tests
         }
 
         // 16) data-agent reads validate ids and return a teaching DTO error (not a throw) naming the discovery ops.
-        // The write half runs on a PRO engine: since 2026-07-07 every data-agent write gates at the top, so a
-        // free engine gets the entitlement refusal (its own teaching message, pinned in DataAgentTests) before
-        // the id validation this test pins.
+        // The WHOLE Data agent family is Pro since 2026-09-15, reads included, so the engine holds the feature and
+        // the id validation this test pins is actually reached (the refusal itself is pinned in DataAgentTests).
         [Fact]
         public async Task Data_agent_missing_ids_teach_recovery()
         {
@@ -213,8 +215,7 @@ namespace Semanticus.Tests
             var get = await engine.GetDataAgentAsync("ws", "", "azcli", null);
             AssertTeachesRecovery(get.Error);
             Assert.Contains("list_data_agents", get.Error);          // agent-id path additionally names list_data_agents
-            var pro = await FreshAsync(pro: true);
-            var create = await pro.CreateDataAgentAsync("", "Agent", null, false, "azcli", null, "human");
+            var create = await engine.CreateDataAgentAsync("", "Agent", null, false, "azcli", null, "human");
             Assert.Equal("error", create.Status);
             AssertTeachesRecovery(create.Message);                   // the DTO carries the recovery on .Message
         }

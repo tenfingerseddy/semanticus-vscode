@@ -12,16 +12,49 @@ namespace Semanticus.Engine.Lineage
         public string ObjectRef { get; set; }
         public string Intent { get; set; } = "change";              // change | rename | remove | restructure
         public string Scope { get; set; } = "modelAndReports";      // model | modelAndReports
+        /// <summary>Optional LOCAL report folders, folded into the model's report scope for this one call. The
+        /// normal path is to choose reports once (set_report_scope) and read them (check_reports); this stays for a
+        /// caller that has a local folder in hand.</summary>
         public string[] ReportPaths { get; set; } = Array.Empty<string>();
+    }
+
+    /// <summary>What this answer was actually checked against. Named, so no surface has to invent it.</summary>
+    public sealed class ImpactCheckedScope
+    {
+        /// <summary>The model the answer was traversed against, by name.</summary>
+        public string Model { get; set; }
+        public ReportScopeReport[] Reports { get; set; } = Array.Empty<ReportScopeReport>();
+        public int ReportsChecked { get; set; }
+        public int ReportsListed { get; set; }
+        public string CheckedWhenUtc { get; set; }
+        /// <summary>Everything this check does NOT establish, one plain sentence each.</summary>
+        public string[] Gaps { get; set; } = Array.Empty<string>();
     }
 
     public sealed class ImpactCoverageArea
     {
-        public string Area { get; set; }                             // model | reports | saved-tests | interview
+        public string Area { get; set; }                             // model | reports | saved-tests
         public string Status { get; set; }                           // complete | excluded | scoped | incomplete | unknown | planned
         public int Checked { get; set; }
         public int Unknown { get; set; }
         public string Detail { get; set; }
+    }
+
+    /// <summary>Where in ONE visual the field shows up. Astra: hiding the raw visual type by dropping every
+    /// detail was not the repair asked for. The type is translated here; the id stays for a person who needs it.</summary>
+    public sealed class ImpactVisualHit
+    {
+        public string Page { get; set; }
+        /// <summary>The visual's own title when the report has one, else null.</summary>
+        public string Visual { get; set; }
+        /// <summary>The kind of visual in words ("Bar chart"), never the report's raw type token.</summary>
+        public string VisualKind { get; set; }
+        /// <summary>The raw type token, kept for a person who asks for the detail. Never a headline.</summary>
+        public string VisualKindId { get; set; }
+        /// <summary>Which of the affected things this visual shows: the field itself, or something that depends
+        /// on it. That distinction is the whole point of showing the detail.</summary>
+        public string[] UsedRefs { get; set; } = Array.Empty<string>();
+        public bool ViaDependent { get; set; }
     }
 
     public sealed class ImpactReportHit
@@ -30,12 +63,14 @@ namespace Semanticus.Engine.Lineage
         public string Name { get; set; }
         public int Visuals { get; set; }
         public string[] UsedRefs { get; set; } = Array.Empty<string>();
+        /// <summary>The pages and visuals the field appears on. Restored after the first build dropped them.</summary>
+        public ImpactVisualHit[] Details { get; set; } = Array.Empty<ImpactVisualHit>();
     }
 
     public sealed class ImpactReplayCheck
     {
         public string Id { get; set; }
-        public string Kind { get; set; }                             // ambient-suite | saved-test | interview-question
+        public string Kind { get; set; }                             // ambient-suite | saved-test
         public string Title { get; set; }
         public string TargetRef { get; set; }
         public string Reason { get; set; }
@@ -68,6 +103,11 @@ namespace Semanticus.Engine.Lineage
         public ImpactCoverageArea[] Coverage { get; set; } = Array.Empty<ImpactCoverageArea>();
         public string[] Unknowns { get; set; } = Array.Empty<string>();
         public string Summary { get; set; }
+        /// <summary>The report half of the answer, said honestly: what was found in the reports that were read,
+        /// and what was not read. Null only when the caller asked for model-only scope.</summary>
+        public string ReportSummary { get; set; }
+        /// <summary>What this answer was checked against: the model, the named reports with state and time, gaps.</summary>
+        public ImpactCheckedScope Checked { get; set; }
         public ImpactNextAction SuggestedNextAction { get; set; }
     }
 
@@ -76,7 +116,7 @@ namespace Semanticus.Engine.Lineage
         private const int CheckCap = 100;
 
         public static ImpactAssessmentResult Build(Model model, ImpactAssessmentRequest request,
-            ReportAnalysisResult reports, TestSuiteInfo tests, InterviewListResult interview)
+            ReportAnalysisResult reports, TestSuiteInfo tests, ReportScopeResult scope, bool savedChecksArePro = false)
         {
             if (model == null) throw new ArgumentNullException(nameof(model));
             request ??= new ImpactAssessmentRequest();
@@ -84,15 +124,15 @@ namespace Semanticus.Engine.Lineage
             if (objectRef.Length == 0)
                 throw new ArgumentException("impact_assessment needs objectRef. Run search_model or get_lineage, then retry with a returned ref.");
             var intent = NormalizeIntent(request.Intent);
-            var scope = NormalizeScope(request.Scope);
-            if (scope == "model" && (request.ReportPaths?.Any(p => !string.IsNullOrWhiteSpace(p)) ?? false))
+            var scopeName = NormalizeScope(request.Scope);
+            if (scopeName == "model" && (request.ReportPaths?.Any(p => !string.IsNullOrWhiteSpace(p)) ?? false))
                 throw new ArgumentException("scope='model' deliberately excludes reports. Omit reportPaths, or retry with scope='modelAndReports'.");
 
             var impact = LineageGraph.Impact(model, objectRef);
             var affected = new HashSet<string>(impact.Impacted.Select(x => x.Ref), StringComparer.OrdinalIgnoreCase) { impact.Root };
-            var reportHits = BuildReportHits(reports, affected);
-            var unknowns = BuildUnknowns(intent, scope, reports, tests, interview);
-            var checks = BuildChecks(affected, tests, interview);
+            var reportHits = BuildReportHits(reports, affected, impact.Root);
+            var unknowns = BuildUnknowns(intent, scopeName, reports, tests, scope, savedChecksArePro);
+            var checks = BuildChecks(affected, tests);
             var relevantSavedTests = checks.Count(x => x.Kind == "saved-test");
             var knownReplay = checks.Count(x => x.Kind != "ambient-suite");
             var knownImpact = impact.Impacted.Length > 0 || reportHits.Length > 0;
@@ -100,15 +140,16 @@ namespace Semanticus.Engine.Lineage
                 : knownImpact || knownReplay > 0 ? "NeedsReview"
                 : unknowns.Count > 0 ? "Unknown"
                 : "Verified";
+            var modelName = string.IsNullOrWhiteSpace(model.Database?.Name) ? model.Name : model.Database.Name;
 
             return new ImpactAssessmentResult
             {
                 ObjectRef = impact.Root,
                 ObjectName = impact.RootName,
                 ObjectKind = impact.RootKind,
-                ModelName = string.IsNullOrWhiteSpace(model.Database?.Name) ? model.Name : model.Database.Name,
+                ModelName = modelName,
                 Intent = intent,
-                Scope = scope,
+                Scope = scopeName,
                 Verdict = verdict,
                 ModelImpact = impact,
                 ReportImpact = reportHits,
@@ -116,9 +157,19 @@ namespace Semanticus.Engine.Lineage
                 VisualsImpacted = reportHits.Sum(x => x.Visuals),
                 ReplayChecks = checks.Take(CheckCap).ToArray(),
                 ReplayChecksOmitted = Math.Max(0, checks.Count - CheckCap),
-                Coverage = BuildCoverage(scope, reports, tests, interview, relevantSavedTests),
+                Coverage = BuildCoverage(scopeName, reports, tests, relevantSavedTests, savedChecksArePro),
                 Unknowns = unknowns.ToArray(),
-                Summary = Summary(verdict, intent, impact, reportHits, knownReplay, unknowns.Count),
+                Summary = Summary(intent, impact),
+                ReportSummary = scopeName == "model" ? null : ReportSummary(impact, reportHits, scope),
+                Checked = new ImpactCheckedScope
+                {
+                    Model = modelName,
+                    Reports = scopeName == "model" ? Array.Empty<ReportScopeReport>() : (scope?.Reports ?? Array.Empty<ReportScopeReport>()),
+                    ReportsChecked = scopeName == "model" ? 0 : (scope?.Checked ?? 0),
+                    ReportsListed = scopeName == "model" ? 0 : (scope?.Listed ?? 0),
+                    CheckedWhenUtc = scopeName == "model" ? null : scope?.CheckedWhenUtc,
+                    Gaps = unknowns.ToArray(),
+                },
                 SuggestedNextAction = NextAction(request, impact, checks, unknowns),
             };
         }
@@ -140,7 +191,17 @@ namespace Semanticus.Engine.Lineage
             throw new ArgumentException("Unknown scope '" + value + "'. Use model or modelAndReports.");
         }
 
-        private static ImpactReportHit[] BuildReportHits(ReportAnalysisResult reports, HashSet<string> affected)
+        /// <summary>A report's own type token in words. "barChart" is the report format's word, not a person's.</summary>
+        internal static string PlainVisualKind(string visualType)
+        {
+            if (string.IsNullOrWhiteSpace(visualType)) return "Visual";
+            var spaced = System.Text.RegularExpressions.Regex.Replace(visualType.Trim(), "(?<=[a-z0-9])(?=[A-Z])", " ");
+            spaced = spaced.Replace('_', ' ').Replace('-', ' ');
+            spaced = System.Text.RegularExpressions.Regex.Replace(spaced, "\\s+", " ").Trim();
+            return spaced.Length == 0 ? "Visual" : char.ToUpperInvariant(spaced[0]) + spaced.Substring(1).ToLowerInvariant();
+        }
+
+        private static ImpactReportHit[] BuildReportHits(ReportAnalysisResult reports, HashSet<string> affected, string root)
         {
             if (reports?.Reports == null) return Array.Empty<ImpactReportHit>();
             var hits = new List<ImpactReportHit>();
@@ -149,21 +210,40 @@ namespace Semanticus.Engine.Lineage
                 var used = (report.UsedRefs ?? Array.Empty<string>()).Where(affected.Contains)
                     .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
                 if (used.Length == 0) continue;
-                var visuals = (report.Visuals ?? Array.Empty<ReportVisualUsage>())
-                    .Count(v => (v.UsedRefs ?? Array.Empty<string>()).Any(affected.Contains));
-                hits.Add(new ImpactReportHit { Path = report.Path, Name = report.Name, Visuals = visuals, UsedRefs = used });
+                var touching = (report.Visuals ?? Array.Empty<ReportVisualUsage>())
+                    .Where(v => (v.UsedRefs ?? Array.Empty<string>()).Any(affected.Contains)).ToArray();
+                hits.Add(new ImpactReportHit
+                {
+                    Path = report.Path, Name = report.Name, Visuals = touching.Length, UsedRefs = used,
+                    Details = touching.Take(200).Select(v =>
+                    {
+                        var shown = (v.UsedRefs ?? Array.Empty<string>()).Where(affected.Contains).ToArray();
+                        return new ImpactVisualHit
+                        {
+                            Page = v.Page,
+                            Visual = v.Visual,
+                            VisualKind = PlainVisualKind(v.VisualType),
+                            VisualKindId = v.VisualType,
+                            UsedRefs = shown,
+                            // The field itself, or only something downstream of it. A person deleting a column
+                            // needs to know a visual shows it THROUGH a measure, not directly.
+                            ViaDependent = shown.Length > 0 && !shown.Contains(root, StringComparer.OrdinalIgnoreCase),
+                        };
+                    }).ToArray(),
+                });
             }
             return hits.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
-        private static List<ImpactReplayCheck> BuildChecks(HashSet<string> affected, TestSuiteInfo tests, InterviewListResult interview)
+        // The automatic suite checks structure. It does NOT prove security, and the old title said it did.
+        private static List<ImpactReplayCheck> BuildChecks(HashSet<string> affected, TestSuiteInfo tests)
         {
             var checks = new List<ImpactReplayCheck>
             {
                 new ImpactReplayCheck
                 {
-                    Id = "ambient-suite", Kind = "ambient-suite", Title = "Relationships, table integrity and security",
-                    Reason = "Run the ambient suite after the change to catch structural and security regressions.",
+                    Id = "ambient-suite", Kind = "ambient-suite", Title = "Relationships and table integrity",
+                    Reason = "Run the automatic checks after the change to catch structural problems.",
                 },
             };
             foreach (var test in tests?.Definitions ?? Array.Empty<TestDefinition>())
@@ -172,55 +252,47 @@ namespace Semanticus.Engine.Lineage
                 checks.Add(new ImpactReplayCheck
                 {
                     Id = test.Id, Kind = "saved-test", Title = test.Title, TargetRef = test.TargetRef,
-                    Reason = "Its bound measure is the change root or inside the transitive blast radius.",
+                    Reason = "This check is bound to something on this list. Run it after the change.",
                 });
             }
-            foreach (var q in interview?.Questions ?? Array.Empty<InterviewQuestion>())
-                checks.Add(new ImpactReplayCheck
-                {
-                    Id = q.Id, Kind = "interview-question", Title = q.Question,
-                    Reason = "Interview questions are not dependency-indexed yet, so replay the current model's pack rather than guessing which question is unaffected.",
-                });
             return checks;
         }
 
-        private static List<string> BuildUnknowns(string intent, string scope, ReportAnalysisResult reports,
-            TestSuiteInfo tests, InterviewListResult interview)
+        // Every gap, as a sentence a person can act on. The report half comes from the model's own report scope,
+        // so the page and the assistant read the same account of what was and was not checked.
+        private static List<string> BuildUnknowns(string intent, string scopeName, ReportAnalysisResult reports,
+            TestSuiteInfo tests, ReportScopeResult scope, bool savedChecksArePro)
         {
             var unknowns = new List<string>();
-            if (scope == "modelAndReports")
+            if (savedChecksArePro)
+                unknowns.Add("Saved checks were not looked at, because Tests is a Semanticus Pro feature. Any check bound to something on this list is missing from it.");
+            if (scopeName == "modelAndReports")
             {
-                if (reports == null)
-                    unknowns.Add("Published-report usage was not checked. Supply local PBIR reportPaths, or review Published reports in Lineage.");
-                else
-                {
-                    if (reports.ReportsRead == 0) unknowns.Add("No supplied report definition was readable, so report impact is unknown.");
-                    if (reports.ReportsUnreadable > 0) unknowns.Add($"{reports.ReportsUnreadable} supplied report definition(s) could not be read.");
-                    var unresolved = reports.Reports?.Sum(x => x.Unresolved) ?? 0;
-                    if (unresolved > 0) unknowns.Add($"{unresolved} report field reference(s) could not be matched to the open model.");
-                    unknowns.Add("Only the supplied report definitions were checked; reports outside that set may still use the object.");
-                }
+                if (scope != null && scope.Gaps.Length > 0) unknowns.AddRange(scope.Gaps);
+                else if (reports == null) unknowns.Add("Reports have not been checked. Choose reports to check this against.");
+                else unknowns.Add("Only the reports listed here were checked. A report that is not on this list can still use this field.");
+                var unresolved = reports?.Reports?.Sum(x => x.Unresolved) ?? 0;
+                if (unresolved > 0)
+                    unknowns.Add(unresolved + " thing" + (unresolved == 1 ? "" : "s") + " a report shows could not be matched to this model, so its use is not fully known.");
             }
-            if ((intent == "rename" || intent == "remove" || intent == "restructure"))
-                unknowns.Add("Free-form M text and external bindings are not reference-fixed by the TOM dependency graph; review them before applying this structural change.");
+            if (intent == "rename" || intent == "remove" || intent == "restructure")
+                unknowns.Add("Data-loading steps written by hand, and anything outside this model that reads it, are not part of this check. Look at those before making a structural change.");
             if ((tests?.UnreadableLines ?? 0) > 0)
-                unknowns.Add($"{tests.UnreadableLines} saved Test definition line(s) were unreadable and could not be scheduled for replay.");
-            if ((interview?.Questions?.Length ?? 0) > 0)
-                unknowns.Add("Model Interview questions are not dependency-indexed; the assessment schedules the whole current-model pack for replay.");
+                unknowns.Add(tests.UnreadableLines + " saved check" + (tests.UnreadableLines == 1 ? "" : "s") + " could not be read, so " + (tests.UnreadableLines == 1 ? "it was" : "they were") + " left out of this list.");
             return unknowns;
         }
 
-        private static ImpactCoverageArea[] BuildCoverage(string scope, ReportAnalysisResult reports,
-            TestSuiteInfo tests, InterviewListResult interview, int relevantSavedTests)
+        private static ImpactCoverageArea[] BuildCoverage(string scopeName, ReportAnalysisResult reports,
+            TestSuiteInfo tests, int relevantSavedTests, bool savedChecksArePro)
         {
             var coverage = new List<ImpactCoverageArea>
             {
-                new ImpactCoverageArea { Area = "model", Status = "complete", Checked = 1, Detail = "TOM dependencies and structural references were traversed transitively." },
+                new ImpactCoverageArea { Area = "model", Status = "complete", Checked = 1, Detail = "Everything in the model that uses it was traced, step by step." },
             };
-            if (scope == "model")
-                coverage.Add(new ImpactCoverageArea { Area = "reports", Status = "excluded", Detail = "The caller explicitly requested model-only scope." });
+            if (scopeName == "model")
+                coverage.Add(new ImpactCoverageArea { Area = "reports", Status = "excluded", Detail = "The caller asked for the model on its own." });
             else if (reports == null)
-                coverage.Add(new ImpactCoverageArea { Area = "reports", Status = "unknown", Unknown = 1, Detail = "No report definitions were supplied." });
+                coverage.Add(new ImpactCoverageArea { Area = "reports", Status = "unknown", Unknown = 1, Detail = "No report has been checked yet." });
             else
             {
                 var unresolved = reports.Reports?.Sum(x => x.Unresolved) ?? 0;
@@ -228,43 +300,100 @@ namespace Semanticus.Engine.Lineage
                 {
                     Area = "reports", Status = reports.ReportsRead > 0 && reports.ReportsUnreadable == 0 && unresolved == 0 ? "scoped" : "incomplete",
                     Checked = reports.ReportsRead, Unknown = reports.ReportsUnreadable + unresolved,
-                    Detail = "Coverage is limited to the supplied PBIR definitions; it never claims tenant-wide completeness.",
+                    Detail = "Only the reports on this model's list were read. It never claims to cover every report.",
                 });
             }
             coverage.Add(new ImpactCoverageArea
             {
-                Area = "saved-tests", Status = (tests?.UnreadableLines ?? 0) == 0 ? "planned" : "incomplete",
+                Area = "saved-tests",
+                Status = savedChecksArePro ? "unknown" : (tests?.UnreadableLines ?? 0) == 0 ? "planned" : "incomplete",
                 Checked = relevantSavedTests, Unknown = tests?.UnreadableLines ?? 0,
-                Detail = "Relevant current-model saved Tests are selected by their bound target ref.",
-            });
-            coverage.Add(new ImpactCoverageArea
-            {
-                Area = "interview", Status = (interview?.Questions?.Length ?? 0) == 0 ? "complete" : "planned",
-                Checked = interview?.Questions?.Length ?? 0,
-                Detail = (interview?.Questions?.Length ?? 0) == 0 ? "No current-model Interview questions exist." : "The whole current-model pack is scheduled because question dependencies are not indexed.",
+                Detail = savedChecksArePro
+                    ? "Saved checks were not read: Tests is a Semanticus Pro feature."
+                    : "Saved checks are picked by the thing they are bound to. Nothing here runs them.",
             });
             return coverage.ToArray();
         }
 
-        private static string Summary(string verdict, string intent, ImpactResult impact, ImpactReportHit[] reports,
-            int replay, int unknowns)
+        // The answer, as a sentence. Not a verdict word, not a count of "known impacts": the thing a person asked.
+        internal static string Summary(string intent, ImpactResult impact)
         {
-            var known = impact.Impacted.Length + reports.Length;
-            if (verdict == "Broken") return $"The requested {intent} has {known} known impact(s); removal is not safe as proposed.";
-            if (verdict == "NeedsReview") return $"The requested {intent} has {known} known impact(s) and {replay} saved check(s) to replay before applying it.";
-            if (verdict == "Unknown") return $"No known impact was found, but {unknowns} coverage gap(s) prevent a clear result.";
-            return "No impact was found within the explicitly declared model-only scope.";
+            var name = impact.RootName;
+            var parts = new List<string>();
+            void Add(int n, string one, string many) { if (n > 0) parts.Add(n + " " + (n == 1 ? one : many)); }
+            Add(impact.Measures, "measure", "measures");
+            Add(impact.Columns, "column", "columns");
+            Add(impact.Tables, "table", "tables");
+            Add(impact.Relationships, "relationship", "relationships");
+            Add(impact.Other, "other thing", "other things");
+            if (parts.Count == 0) return "Nothing in the model uses " + name + ".";
+            var list = parts.Count == 1 ? parts[0] : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[parts.Count - 1];
+            return intent == "remove"
+                ? "Deleting " + name + " would break " + list + "."
+                : name + " is used by " + list + ".";
+        }
+
+        // The report half. Never a clean "no use" when something was not read, and never a claim about reports
+        // that do not contain the field. Every sentence here is pinned by docs/report-scope-sentences.json, which
+        // the page's own formatter is held to independently: Astra's ruling 2 found the two doors already meaning
+        // different things about a stale reading, which no amount of shared vocabulary fixes on its own.
+        internal static string ReportSummary(ImpactResult impact, ImpactReportHit[] hits, ReportScopeResult scope)
+        {
+            var name = impact.RootName;
+            var listed = scope?.Listed ?? 0;
+            var checkedCount = scope?.Checked ?? 0;
+            var partly = scope?.CouldNotBeFullyChecked ?? 0;
+            var notChecked = scope?.NotChecked ?? 0;
+            var needs = scope?.NeedsChecking ?? 0;
+            if (listed == 0) return "Report use is unknown. No reports have been chosen for this model yet.";
+            // A reading the model has moved past is NOT a reading that never happened: it has its own sentence and
+            // its own next step, and the page says exactly this.
+            if (checkedCount == 0 && partly == 0 && needs > 0)
+                return "Report use needs checking again. The model changed after "
+                    + (needs == 1 ? "1 listed report was" : needs + " listed reports were") + " read.";
+            if (checkedCount == 0 && partly == 0)
+                return "Report use is unknown. The chosen reports still need checking.";
+
+            var tail = new List<string>();
+            if (notChecked > 0) tail.Add((notChecked == 1 ? "1 listed report was" : notChecked + " listed reports were") + " not checked");
+            if (partly > 0) tail.Add((partly == 1 ? "1 listed report" : partly + " listed reports") + " could not be fully checked");
+            if (needs > 0) tail.Add((needs == 1 ? "1 listed report needs" : needs + " listed reports need") + " checking again");
+            var suffix = tail.Count == 0 ? "" : " " + string.Join("; ", tail) + ".";
+
+            if (hits.Length == 0)
+            {
+                var read = scope.Reports.Where(r => r.State == ReportScopeStates.Checked).Select(r => r.Name).ToArray();
+                return "No use of " + name + " or the things that depend on it was found in the "
+                    + (checkedCount == 1 ? "1 report checked" : checkedCount + " reports checked")
+                    + (read.Length > 0 ? " (" + JoinNames(read) + ")" : "") + "." + suffix;
+            }
+            // Name the reports that ACTUALLY contain it. Naming every checked report here told a person that a
+            // report which does not use the field does use it, which is the opposite of the intended reassurance.
+            var others = checkedCount - hits.Length;
+            var otherSentence = others <= 0 ? ""
+                : " The other " + (others == 1 ? "checked report does" : others + " checked reports do") + " not use it.";
+            return name + " or something that depends on it appears in "
+                + (hits.Length == 1 ? "1 checked report" : hits.Length + " checked reports")
+                + " (" + JoinNames(hits.Select(h => h.Name).ToArray()) + ")." + otherSentence + suffix;
+        }
+
+        private static string JoinNames(string[] names)
+        {
+            if (names.Length == 0) return "";
+            if (names.Length == 1) return names[0];
+            if (names.Length <= 4) return string.Join(", ", names.Take(names.Length - 1)) + " and " + names[names.Length - 1];
+            return string.Join(", ", names.Take(3)) + " and " + (names.Length - 3) + " more";
         }
 
         private static ImpactNextAction NextAction(ImpactAssessmentRequest request, ImpactResult impact,
             List<ImpactReplayCheck> checks, List<string> unknowns)
         {
-            if (unknowns.Any(x => x.StartsWith("Published-report usage", StringComparison.Ordinal)))
+            if (unknowns.Any(x => x.StartsWith("Reports have not been checked", StringComparison.Ordinal)))
                 return new ImpactNextAction
                 {
-                    Op = "impact_assessment",
-                    Args = $"objectRef='{impact.Root}', intent='{NormalizeIntent(request.Intent)}', scope='modelAndReports', reportPaths=[<PBIR paths>]",
-                    Reason = "Repeat the assessment with the report definitions that form the intended review scope.",
+                    Op = "check_reports",
+                    Args = "ids=[] (every report chosen for this model), consent=true for published reports",
+                    Reason = "Choose the reports this model should be checked against, then read them, so the answer covers reports too.",
                 };
             if (impact.Measures > 0)
                 return new ImpactNextAction
@@ -275,7 +404,7 @@ namespace Semanticus.Engine.Lineage
             return new ImpactNextAction
             {
                 Op = "run_tests", Args = "persist=false",
-                Reason = checks.Count > 1 ? "Run the ambient suite and the scheduled saved checks before editing." : "Establish the current structural and security baseline before editing.",
+                Reason = checks.Count > 1 ? "Run the automatic checks and the saved checks on this list before editing." : "Establish the current structural baseline before editing.",
             };
         }
     }

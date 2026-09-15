@@ -26,7 +26,13 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
+        // The grid itself is free, so it is exercised on a free engine on purpose: a gate wrongly added to
+        // get_properties or set_property must fail here.
         private static LocalEngine NewEngine() => new LocalEngine(new SessionManager(), new Fake(false));
+
+        // Only for the function test: functions are Advanced Modelling (Pro) since 2026-09-15, and the subject
+        // there is the compatibility-level message, which sits behind the feature gate.
+        private static LocalEngine NewProEngine() => new LocalEngine(new SessionManager(), new Fake(true));
 
         [Fact]
         public async Task Model_properties_are_addressable_editable_and_undoable_through_the_shared_grid_surface()
@@ -77,7 +83,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Create_function_below_1702_points_at_the_property_not_an_op()
         {
-            using var engine = NewEngine();
+            using var engine = NewProEngine();
             await engine.CreateModelAsync("Udf", 1604);
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => engine.CreateFunctionAsync("NewFunction", "(x: INT64) => x", "human"));

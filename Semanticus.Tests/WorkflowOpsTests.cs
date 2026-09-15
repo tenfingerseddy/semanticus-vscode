@@ -57,29 +57,44 @@ Finish up.
             return (new LocalEngine(sessions, ent, ws), sessions, ws);
         }
 
+        /// <summary>Since 2026-09-15 the whole workflow area is Pro, the library read included, so a free caller is
+        /// refused at list, read and start alike. What used to be free (an ungated playbook) is Pro too now, because
+        /// the gate is on the feature and not on the individual workflow's strictness.</summary>
         [Fact]
-        public async Task Library_reads_are_free_but_starting_an_enforced_workflow_is_pro()
+        public async Task The_whole_workflow_library_is_pro_and_the_refusal_stays_clean()
         {
-            var (e, _, ws) = Make(new Free());
+            var (free, _, ws) = Make(new Free());
             try
             {
-                var list = await e.ListWorkflowsAsync();                       // free door, no session open
-                Assert.Contains(list, w => w.Name == "gated" && w.Gated);
-                Assert.Contains(list, w => w.Name == "advice" && !w.Gated);
-                Assert.Contains("Ask things.", (await e.GetWorkflowAsync("gated")).Steps[0].Instructions);
+                var listed = await Assert.ThrowsAsync<EntitlementException>(() => free.ListWorkflowsAsync());
+                Assert.StartsWith("Workflows is a Semanticus Pro feature.", listed.Message);
+                await Assert.ThrowsAsync<EntitlementException>(() => free.GetWorkflowAsync("gated"));
 
-                var gated = await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("gated", "human"));
+                var gated = await Assert.ThrowsAsync<EntitlementException>(() => free.StartWorkflowAsync("gated", "human"));
                 Assert.Contains("Pro feature", gated.Message);
                 Assert.DoesNotContain("start_workflow", gated.Message);
                 Assert.DoesNotContain("get_workflow", gated.Message);
                 Assert.DoesNotContain("SEMANTICUS_LICENSE", gated.Message);
                 Assert.DoesNotContain("~/.semanticus", gated.Message);
 
-                // an ungated workflow runs free — what's paid is enforcement, not the playbook
-                var run = await e.StartWorkflowAsync("advice", "human");
+                // the ungated playbook is refused by the same one sentence, so the copy never implies a per-workflow price
+                var advice = await Assert.ThrowsAsync<EntitlementException>(() => free.StartWorkflowAsync("advice", "human"));
+                Assert.Equal(gated.Message, advice.Message);
+            }
+            finally { free.Dispose(); Directory.Delete(ws, true); }
+
+            var (pro, _, proWs) = Make(new Pro());
+            try
+            {
+                var list = await pro.ListWorkflowsAsync();                      // Pro door, no session open
+                Assert.Contains(list, w => w.Name == "gated" && w.Gated);
+                Assert.Contains(list, w => w.Name == "advice" && !w.Gated);
+                Assert.Contains("Ask things.", (await pro.GetWorkflowAsync("gated")).Steps[0].Instructions);
+
+                var run = await pro.StartWorkflowAsync("advice", "human");
                 Assert.Equal("step-1", run.CurrentStep.StepId);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { pro.Dispose(); Directory.Delete(proWs, true); }
         }
 
         [Fact]
@@ -117,7 +132,9 @@ call:
 ```
 ");
             var sessions = new SessionManager();
-            var e = new LocalEngine(sessions, new Free(), ws);
+            var e = new LocalEngine(sessions, new Pro(), ws);   // the library read is Pro now, so the card needs Pro to be seen
+            var freeSessions = new SessionManager();
+            var free = new LocalEngine(freeSessions, new Free(), ws);
             try
             {
                 var list = await e.ListWorkflowsAsync();
@@ -126,9 +143,12 @@ call:
                 Assert.True(child.Gated);
                 Assert.True(parent.Gated);   // the card follows the call graph, same as start
                 Assert.True((await e.GetWorkflowPolicyAsync()).Workflows.Single(w => w.Name == "ungated-parent").Gated);
-                await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("ungated-parent", "human"));
+
+                // Gated is a marker about the callee's checks, never about the tier: free is refused whatever it says.
+                var refused = await Assert.ThrowsAsync<EntitlementException>(() => free.StartWorkflowAsync("ungated-parent", "human"));
+                Assert.StartsWith("Workflows is a Semanticus Pro feature.", refused.Message);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { free.Dispose(); freeSessions.Dispose(); e.Dispose(); sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
         [Fact]
@@ -163,10 +183,11 @@ call:
         [Fact]
         public async Task Definitions_hot_reload_and_settings_relax_the_gate()
         {
-            var (e, _, ws) = Make(new Free());
+            var (e, _, ws) = Make(new Pro());
             try
             {
-                // the settings file relaxes the gated workflow to off → it runs FREE (hot-read, no restart)
+                // the settings file relaxes the gated workflow to off, so its inputs stop being demanded (hot-read,
+                // no restart). Strictness is about the checks, never about the tier: the whole area is Pro either way.
                 File.WriteAllText(Path.Combine(ws, ".semanticus", "workflow-settings.json"),
                     "{ \"workflows\": { \"gated\": { \"strictness\": \"off\" } } }");
                 Assert.False((await e.ListWorkflowsAsync()).Single(w => w.Name == "gated").Gated);

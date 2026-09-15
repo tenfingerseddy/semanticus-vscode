@@ -153,9 +153,9 @@ namespace Semanticus.Tests
 
         // ---- write guards ----
 
-        // The 2026-07-07 gate line (Kane): EVERY data-agent write is Pro — create/update/publish/delete, dry-run
-        // included — while reads (list/get) stay free. The gate throws at the very top, so a free call never gets
-        // a request summary for a write it can't finish, and nothing is ever sent.
+        // The 2026-09-15 line (Kane): the WHOLE Data agent tab is Pro, reads included, because Pro is four whole
+        // features now. The gate still throws at the very top, so a free call never gets a request summary for a
+        // write it can't finish, and nothing is ever sent.
         [Fact]
         public async Task All_data_agent_writes_are_pro_gated_dry_run_included()
         {
@@ -169,13 +169,20 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Reads_stay_free_no_gate_throw()
+        public async Task Reads_are_pro_now_and_run_once_the_tier_grants_them()
         {
             using var free = new LocalEngine(new SessionManager(), new Fake(pro: false));
-            // Reachable on the free tier (no EntitlementException): the missing-id refusal proves the read ran —
-            // asserted on empty ids so the test never acquires a token or goes live.
-            Assert.Contains("workspaceId", (await free.ListDataAgentsAsync("", "azcli", null)).Error);
-            Assert.Contains("agentId", (await free.GetDataAgentAsync("", "", "azcli", null)).Error);
+            // list/get used to be the free half of this tab. A whole feature is Pro now, so both refuse at the top
+            // with the one feature sentence, before an id is ever read.
+            var listed = await Assert.ThrowsAsync<EntitlementException>(() => free.ListDataAgentsAsync("", "azcli", null));
+            Assert.StartsWith("Data agent is a Semanticus Pro feature.", listed.Message);
+            await Assert.ThrowsAsync<EntitlementException>(() => free.GetDataAgentAsync("", "", "azcli", null));
+
+            // On Pro the read really runs: the missing-id refusal proves it, and empty ids keep the test off the
+            // network (no token acquired, nothing live).
+            using var pro = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            Assert.Contains("workspaceId", (await pro.ListDataAgentsAsync("", "azcli", null)).Error);
+            Assert.Contains("agentId", (await pro.GetDataAgentAsync("", "", "azcli", null)).Error);
         }
 
         [Fact]

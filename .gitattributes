@@ -12,3 +12,11 @@
 
 # The assistant pack records content hashes, so its installed bytes must match on every platform.
 Semanticus.VSCode/assistant-pack/** text eol=lf
+
+# Workflow definitions are pinned by a hash of their bytes (LocalEngine.Workflows.cs WorkflowRevision), and the
+# v1.1.3 compatibility copies must stay byte-exact to the baseline on every platform. A CRLF checkout would change
+# every hash and fail Shipped_v1_1_3_compatibility_files_are_byte_exact on Windows.
+Semanticus.Engine/workflows/** text eol=lf
+Semanticus.Engine/workflows-compat/** text eol=lf
+# The frozen v7 fixture is compared byte-wise with its own rename; keep it LF like the shipped workflows.
+Semanticus.Tests/fixtures/verified-measure-frozen/** text eol=lf

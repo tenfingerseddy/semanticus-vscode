@@ -14,9 +14,8 @@ namespace Semanticus.Engine
     /// The Model Interview ops (docs/product-innovation-brainstorm.md §1) — dual-drive like everything else.
     /// GOLDEN RULE 1 holds hard: the engine only EXECUTES the recorded DAX, COMPARES against the recorded oracle,
     /// SCORES deterministically (Interview.cs), and STORES outcomes; the user's Claude authors the questions and
-    /// the DAX attempts via the /interview-model skill. FREE/PRO (Kane, locked 2026-07-07): list + one-off
-    /// run_interview are free; add_interview_question (persisting to the pack) is Pro — mirroring "verify free,
-    /// enforce paid".
+    /// the DAX attempts via the /interview-model skill. All of it is free, add_interview_question included
+    /// (Kane 2026-09-15).
     /// </summary>
     public sealed partial class LocalEngine
     {
@@ -349,10 +348,6 @@ namespace Semanticus.Engine
             string[] groupBy, string[] filters, string expectedValue, string expectedMatrixJson,
             bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin, string id = null)
         {
-            Entitlement.EntitlementGuard.RequirePro(_entitlement,
-                "add_interview_question (saving a question to the model's interview pack, so it replays as a regression check)",
-                "One-off checks stay free: run_interview grades any inline question without saving it, and list_interview_questions reads the saved pack.");
-
             var q = new InterviewQuestion
             {
                 Question = (question ?? "").Trim(),
@@ -745,101 +740,6 @@ namespace Semanticus.Engine
                 });
             }
             return shape;
-        }
-
-        // ---- Tests behavioral-contract replay (evidence only; T71 forbids grading integration) ------------
-
-        internal sealed class InterviewEvidenceReplay
-        {
-            public InterviewEvidence[] Evidence { get; set; } = Array.Empty<InterviewEvidence>();
-            public string Note { get; set; }
-        }
-
-        /// <summary>Replay the open model's saved value/paraphrase questions inside run_tests. Outcomes are current,
-        /// timestamped evidence but never enter TestHealthAnalyzer; refusal questions need an assistant attempt and
-        /// therefore remain explicitly chat-only. One broken/unavailable question cannot abort the rest of the suite.</summary>
-        internal async Task<InterviewEvidenceReplay> ReplayInterviewEvidenceForTestsAsync(string origin)
-        {
-            var file = InterviewScopeFile("project");
-            var (all, skipped) = InterviewStore.Materialize(file, "project");
-            var (mine, other, unattributed) = PartitionByAttribution(all);
-            if (mine.Count == 0)
-                return new InterviewEvidenceReplay
-                {
-                    Note = "No saved behavioral questions belong to the open model."
-                        + (other.Count + unattributed.Count > 0 ? $" {other.Count + unattributed.Count} question(s) for another or unattributed model were not replayed." : "")
-                        + (skipped > 0 ? $" {skipped} unreadable interview-store line(s) were skipped." : ""),
-                };
-
-            var capturedContext = _sessions.CurrentContext;
-            var capturedSession = capturedContext.Session;
-            var capturedLive = capturedContext.Live;
-            var currentName = capturedSession == null ? null : await ReadModelNameAsync(capturedSession);
-            var evidence = new List<InterviewEvidence>();
-            var right = 0; var wrong = 0; var unverified = 0; var chatOnly = 0; var changed = 0;
-            foreach (var q in mine)
-            {
-                var previous = q.LastRun?.Outcome;
-                if (q.Tier == "refusal")
-                {
-                    chatOnly++;
-                    evidence.Add(new InterviewEvidence
-                    {
-                        QuestionId = q.Id, Question = q.Question, Tier = q.Tier, ReplayStatus = "chat-only",
-                        PreviousOutcome = previous, Outcome = q.LastRun?.Outcome, When = q.LastRun?.When,
-                        Detail = "Safe-decline questions grade an assistant response, not model DAX, so run_tests does not fabricate an answer. Ask it in Model Interview.",
-                    });
-                    continue;
-                }
-
-                var when = DateTime.UtcNow.ToString("o");
-                InterviewRunResult run;
-                try
-                {
-                    run = await RunInterviewCoreAsync(q, abstained: false, attemptDax: null, execOrigin: origin ?? "human",
-                        capturedSession: capturedSession, capturedLive: capturedLive, currentModelName: currentName, enforceExecTarget: true);
-                }
-                catch (Exception ex)
-                {
-                    run = new InterviewRunResult { QuestionId = q.Id, Question = q.Question, Tier = q.Tier, Outcome = InterviewScoring.Unverified, Detail = "The contract could not run: " + ex.Message };
-                }
-                var didChange = previous != null && !string.Equals(previous, run.Outcome, StringComparison.Ordinal);
-                if (didChange) changed++;
-                switch (run.Outcome)
-                {
-                    case InterviewScoring.Correct: right++; break;
-                    case InterviewScoring.SilentlyWrong: wrong++; break;
-                    default: unverified++; break;
-                }
-                evidence.Add(new InterviewEvidence
-                {
-                    QuestionId = q.Id, Question = q.Question, Tier = q.Tier, ReplayStatus = "replayed",
-                    Outcome = run.Outcome, PreviousOutcome = previous, Changed = didChange, Detail = run.Detail, When = when,
-                });
-                // Offline evidence belongs to THIS suite run, but must not overwrite the last real live observation.
-                if (capturedLive != null)
-                {
-                    await _interviewGate.WaitAsync();
-                    try
-                    {
-                        InterviewStore.Append(file, new InterviewStore.Delta
-                        {
-                            Op = "record-run", Id = q.Id, When = when, Origin = "tests",
-                            Outcome = run.Outcome, Detail = run.Detail, ResolvedFixRuleId = run.FixRuleId, ResolvedFixHint = run.FixHint,
-                        });
-                    }
-                    finally { _interviewGate.Release(); }
-                }
-            }
-
-            return new InterviewEvidenceReplay
-            {
-                Evidence = evidence.ToArray(),
-                Note = $"Behavioral contracts are evidence only: replayed {right + wrong + unverified}, right {right}, confidently wrong {wrong}, could not check {unverified}, chat-only {chatOnly}, changed since last observation {changed}."
-                    + (capturedLive == null ? " Offline, so DAX contracts could not execute and prior live outcomes were not overwritten." : "")
-                    + (other.Count + unattributed.Count > 0 ? $" {other.Count + unattributed.Count} question(s) for another or unattributed model were not replayed." : "")
-                    + (skipped > 0 ? $" {skipped} unreadable interview-store line(s) were skipped." : ""),
-            };
         }
 
         // ---- deploy-gate advisory leg (informs, NEVER blocks) ----------------------------------------------

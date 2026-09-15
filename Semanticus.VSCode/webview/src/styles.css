@@ -6,6 +6,18 @@
   /* Page geometry is job-shaped: report/review pages opt into the centered measure; tools stay full width. */
   --sem-page-gutter: 28px;
   --sem-page-max: 1420px;
+  /* ONE control scale for every button and segmented control in Studio. Tools used to each pick their own
+     padding (4/8 in the header, 6/10 on Model home, px-3 py-1.5 in ten local Btn components), so the same
+     action looked like a different control on every page. Sizes are heights, not paddings, so a control
+     holding an icon and one holding text still line up on the same row. */
+  --sem-control-h: 28px;
+  --sem-control-h-sm: 24px;
+  --sem-control-pad: 0 10px;
+  --sem-control-pad-sm: 0 8px;
+  --sem-control-radius: 6px;
+  --sem-control-font: 12px;
+  --sem-control-font-sm: 11px;
+  --sem-control-weight: 600;
   --sem-bg: var(--vscode-editor-background, #1e1e1e);
   --sem-fg: var(--vscode-editor-foreground, var(--vscode-foreground, #ddd));
   /* subtle neutral (Slate) lift so surfaces read as a designed app, not default gray — never a brand-colour wash */
@@ -26,6 +38,16 @@
      unknown can never read as pass-ish or fail-ish. Derived from theme vars so light themes follow. */
   --sem-nv: color-mix(in srgb, var(--sem-muted) 62%, var(--sem-bg) 38%);
   --sem-rel: #2ED47A;   /* active 1-way relationship lines — Signal green, distinct from the orange bi-di + grey inactive */
+  /* The two query engines. They are always shown side by side (the Performance split bar, the timing
+     figures, the storage stat table), so they must never be the same hue: --sem-good used to resolve to the
+     SAME hex as --sem-accent, which painted one green twice and read as a single bar. FE keeps the Signal
+     green because the formula engine is the part the query itself spends. SE takes the dictionary blue
+     already used for storage in Size by table, so an engine is one colour everywhere in Studio.
+     The -on- tokens are the ink for text sitting ON that fill; each is picked for contrast per theme. */
+  --sem-engine-fe: #2ED47A;
+  --sem-on-engine-fe: #06210f;   /* 8.8:1 on the Signal green */
+  --sem-engine-se: #5b8ff9;      /* same dictionary blue as VPAQ_COMPONENT_COLORS.dict */
+  --sem-on-engine-se: #04182e;   /* 5.7:1 on the dictionary blue */
   /* Diff palette — DELIBERATELY NOT the brand Signal green. In a diff body, green must read as "added", not
      "the primary action / verified", so additions use a forest diff-green distinct from --sem-accent (see the
      Model Diff view decision). Removals use a diff-red slightly deeper than --sem-bad so the two never blur.
@@ -36,6 +58,11 @@
   --sem-diff-del: #F85149;
   --sem-diff-del-bg: color-mix(in srgb, #F85149 15%, transparent);
   --sem-diff-del-word: color-mix(in srgb, #F85149 32%, transparent);
+  --sem-t-fast: 120ms;
+  --sem-t-base: 180ms;
+  --sem-t-slow: 260ms;
+  --sem-ease-out: cubic-bezier(.2,.7,.2,1);
+  --sem-ease-in-out: cubic-bezier(.4,0,.2,1);
 }
 /* Light VS Code themes: darken the green so thin accents and accent-coloured text stay legible on a light surface. */
 body.vscode-light, body.vscode-high-contrast-light {
@@ -43,6 +70,12 @@ body.vscode-light, body.vscode-high-contrast-light {
   --sem-accent-soft: color-mix(in srgb, #12A45A 16%, transparent);
   --sem-good: #12A45A;
   --sem-rel: #159B57;
+  /* The dictionary blue is too pale to sit on a light surface, so the storage engine darkens the same way
+     the green does, and its ink flips to white to keep the segment label legible. */
+  --sem-engine-fe: #12A45A;
+  --sem-on-engine-fe: #06210f;   /* 5.3:1 on the darkened green */
+  --sem-engine-se: #1F5FCC;
+  --sem-on-engine-se: #ffffff;   /* 5.9:1 on the darkened blue */
   /* Darker, higher-contrast diff hues for light surfaces (GitHub-light lineage). */
   --sem-diff-add: #1A7F37;
   --sem-diff-add-bg: color-mix(in srgb, #1A7F37 13%, transparent);
@@ -78,39 +111,302 @@ body {
 @media (max-width: 1100px) {
   :root { --sem-page-gutter: 20px; }
 }
+/* The workbench (non-report) container. Same horizontal gutter as .sem-evidence-page so a tool page and a
+   report page have their left/right content edges on the same line when you switch between them. */
+.sem-tool-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 16px var(--sem-page-gutter) 24px;
+}
 @media (max-width: 720px) {
   :root { --sem-page-gutter: 12px; }
   .sem-evidence-page { padding-top: 16px; padding-bottom: 32px; }
+  .sem-tool-page { padding-top: 12px; padding-bottom: 20px; }
 }
+
+/* ---- The shared control system -----------------------------------------------------------------
+   .sem-btn is every ordinary button. .sem-btn-primary is the filled accent one, and a page head gets at
+   most one of them. .sem-btn-sm is the dense row/toolbar size. .sem-seg wraps a set of .sem-seg-item
+   buttons whose selected state is carried by aria-pressed, so the look and the accessible state cannot
+   drift apart. These are unlayered, so they win over utility classes left on a call site. */
+.sem-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-sizing: border-box;
+  height: var(--sem-control-h);
+  padding: var(--sem-control-pad);
+  border: 1px solid var(--sem-border);
+  border-radius: var(--sem-control-radius);
+  background: var(--sem-surface-2);
+  color: var(--sem-fg);
+  font-size: var(--sem-control-font);
+  font-weight: var(--sem-control-weight);
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--sem-t-fast) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out), opacity var(--sem-t-fast) var(--sem-ease-out);
+}
+.sem-btn:disabled { opacity: .4; }
+.sem-btn-primary { background: var(--sem-accent); border-color: var(--sem-accent); color: var(--sem-on-accent); }
+/* A full-size button can also be a pressed mode switch (the Published mode row). The pressed look lives on
+   the scale, not on the call site, so switching modes cannot quietly re-size the row. It is an outline, not
+   a fill: only the one action that writes gets the filled accent. */
+.sem-btn[aria-pressed="true"] { color: var(--sem-accent); border-color: var(--sem-accent); }
+.sem-btn-sm { height: var(--sem-control-h-sm); padding: var(--sem-control-pad-sm); font-size: var(--sem-control-font-sm); }
+.sem-seg {
+  display: inline-flex; align-items: center; gap: 2px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--sem-border);
+  border-radius: calc(var(--sem-control-radius) + 2px);
+  background: var(--sem-surface);
+}
+.sem-seg-item {
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
+  height: var(--sem-control-h-sm);
+  padding: var(--sem-control-pad-sm);
+  border: 0;
+  border-radius: var(--sem-control-radius);
+  background: transparent;
+  color: var(--sem-muted);
+  font-size: var(--sem-control-font);
+  font-weight: var(--sem-control-weight);
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--sem-t-fast) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out);
+}
+.sem-seg-item[aria-pressed="true"] { background: var(--sem-surface-2); color: var(--sem-fg); box-shadow: inset 0 0 0 1px var(--sem-accent); }
+
+/* A tab strip is NOT a segment, so it cannot be .sem-seg-item: a tab says aria-current="page" rather than
+   aria-pressed, it carries a busy glyph and an unseen dot positioned against its own box, and it has no
+   segment wrapper to sit inside. What it shares is the geometry, which is the part that kept drifting: the
+   primary area row takes the full step and the sub-tab row under it takes the dense one, so the two rows
+   hold the same 28/24 relationship the rest of Studio already uses. Colour stays at the call site, because
+   a selected tab is a wash and a selected segment is a ring, and those are different signals. */
+.sem-tab {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
+  height: var(--sem-control-h-sm);
+  padding: var(--sem-control-pad-sm);
+  border: 0;
+  border-radius: var(--sem-control-radius);
+  background: transparent;
+  color: var(--sem-muted);
+  font-size: var(--sem-control-font);
+  font-weight: var(--sem-control-weight);
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--sem-t-fast) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out);
+}
+/* The primary row reads one step louder on purpose; 13px is its own size, not a control-scale token. */
+.sem-tab-lg { height: var(--sem-control-h); padding: var(--sem-control-pad); font-size: 13px; }
+
+/* The lineage / diagram overview inset was an unlabelled dark rectangle with two green bars in it, which
+   reads as a broken image. It gets an edge and a name. */
+.react-flow__minimap { border: 1px solid var(--sem-border); border-radius: 6px; overflow: visible; }
+.react-flow__minimap::before {
+  content: 'Map';
+  position: absolute; left: 0; top: -15px;
+  font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--sem-muted);
+}
+
+/* A result grid wider than its box gets a scrollbar you can see, not an overlay one that appears only once
+   you have already guessed the last column is cut off. */
+.sem-grid-scroll { scrollbar-width: thin; scrollbar-color: var(--sem-border) transparent; }
+.sem-grid-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.sem-grid-scroll::-webkit-scrollbar-track { background: var(--sem-surface); }
+.sem-grid-scroll::-webkit-scrollbar-thumb { background: var(--sem-border); border-radius: 5px; border: 2px solid var(--sem-surface); }
+.sem-grid-scroll::-webkit-scrollbar-thumb:hover { background: var(--sem-muted); }
+.sem-grid-scroll::-webkit-scrollbar-corner { background: var(--sem-surface); }
 
 /* New entries in the Watch-Claude feed flash once so you SEE the change land. */
 @keyframes sem-flash-kf {
   0%   { box-shadow: 0 0 0 2px var(--sem-accent); background: var(--sem-accent-soft); }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-.sem-flash { animation: sem-flash-kf 1.1s ease-out 1; }
+.sem-flash { animation: sem-flash-kf 1.1s var(--sem-ease-out) 1; }
+@media (prefers-reduced-motion: reduce) { .sem-flash { animation: none; } }
+body.vscode-reduce-motion .sem-flash { animation: none; }
 
-/* Studio header overflow (D-164): when a second editor group narrows the panel, Primer / Workflows / Edits
-   collapse into a More button instead of vanishing behind a thin scrollbar. */
-.studio-chrome {
-  container-type: inline-size;
-  container-name: studio-chrome;
-  min-width: 0;
-  overflow: visible;
-}
+/* Header folding. A container query at a fixed 1500px used to hide the utilities and the model name, so a 1440
+   window never showed Find a tool or Connections even though they fitted. The fold is MEASURED now:
+   useHeaderFold in App.tsx observes the header, works out what actually overflows, and writes data-fold. Levels are
+   CUMULATIVE and follow contract v1.3 section 2 — identity detail, then the utilities into More, then the run chip,
+   and the five areas last. Publish and Help never fold. data-fold="measure" is the one-frame state the hook reads
+   its natural widths in; it shows everything, More included. */
+.studio-chrome { min-width: 0; overflow: visible; }
+.studio-identity { max-width: 210px; font-size: 12.5px; line-height: 15px; flex-shrink: 0; }
+.studio-identity > div:last-child:not(:first-child) { color: var(--sem-muted); font-size: 9.5px; }
 .studio-more { display: none; }
-@container studio-chrome (max-width: 1100px) {
-  .studio-title { display: none; }
-  .studio-groups { display: none; }
-  .studio-standalone { display: none !important; }
-  .studio-more { display: inline-flex; }
-}
+/* The areas nav shrinks (min-w-0) before it folds, and shrinking a flex box does NOT shrink what is inside it:
+   at a 769px header the five segments went on painting past the nav's right edge and over the actions next to
+   them, so the middle of Workflows opened More. Clipping keeps every painted pixel inside the box the layout
+   gave it. overflow: hidden rather than clip, because measureHeaderFold reads groups.scrollWidth and only a
+   scroll container reports the honest content width. */
+.studio-groups { overflow: hidden; }
+.studio-utilities { display: flex; align-items: center; gap: 4px; }
+.compact-areas { display: none; }
+.studio-chrome[data-fold="measure"] .studio-more { display: inline-flex; }
+
+/* 1 — the model identity detail goes first: the name beside the brand and the source line under it. */
+.studio-chrome:is([data-fold="1"], [data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-model-identity,
+.studio-chrome:is([data-fold="1"], [data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-identity > div:last-child:not(:first-child) { display: none; }
+
+/* 2 — Find a tool and Connections move into More. */
+.studio-chrome:is([data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-utilities { display: none; }
+.studio-chrome:is([data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-more { display: inline-flex; }
+.studio-chrome:is([data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-groups { margin-left: 2px; }
+.studio-chrome:is([data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-groups > button { padding-left: 8px; padding-right: 8px; }
+.studio-chrome:is([data-fold="2"], [data-fold="3"], [data-fold="4"]) .studio-actions { gap: 4px; }
+
+/* 3 — the run chip shortens. FOLD_CHIP_WIDTH in App.tsx must match this max-width. */
+.studio-chrome:is([data-fold="3"], [data-fold="4"]) .studio-run-chip { max-width: 95px; }
+.studio-chrome:is([data-fold="3"], [data-fold="4"]) .studio-groups > button { padding-left: 6px; padding-right: 6px; }
+
+/* 4 — only on a genuinely narrow header: the five areas move into the compact menu and the brand stands alone. */
+.studio-chrome[data-fold="4"] .studio-identity { display: none; }
+.studio-chrome[data-fold="4"] .studio-groups { display: none; }
+.studio-chrome[data-fold="4"] .compact-areas { display: grid; border-bottom: 1px solid var(--sem-border); padding-bottom: 4px; margin-bottom: 4px; }
 
 /* Tab-bar busy affordance: a subtle monochrome ring that spins while a converted surface (Lineage / DAX Lab /
    Storage) has an op running on ANOTHER tab. Self-defined so it never depends on a utility-class animation. */
 @keyframes sem-spin-kf { to { transform: rotate(360deg); } }
 .sem-spin { animation: sem-spin-kf 0.8s linear infinite; transform-origin: center; }
-@media (prefers-reduced-motion: reduce) { .sem-spin { animation-duration: 2s; } }
+@media (prefers-reduced-motion: reduce) { :root { --sem-t-fast: 0ms; --sem-t-base: 0ms; --sem-t-slow: 0ms; } .sem-spin { animation-duration: 2s; } }
+body.vscode-reduce-motion { --sem-t-fast: 0ms; --sem-t-base: 0ms; --sem-t-slow: 0ms; }
+
+/* Header controls ride the shared control scale at the dense size, so Publish, Connections, Help and the
+   run chip are all the same height and radius as a .sem-btn-sm elsewhere in Studio. */
+.studio-header-action, .studio-publish, .studio-run-chip { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: var(--sem-control-h-sm); padding: var(--sem-control-pad-sm); border-radius: var(--sem-control-radius); font-size: var(--sem-control-font); font-weight: var(--sem-control-weight); line-height: 1; color: var(--sem-fg); background: var(--sem-surface-2); border: 1px solid var(--sem-border); transition: background var(--sem-t-fast) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out); }
+.studio-publish, .sem-primary { color: var(--sem-on-accent) !important; background: var(--sem-accent) !important; border-color: var(--sem-accent) !important; }
+/* A Publish you cannot press must not look pressable: it is disabled while the destination cannot be reached. */
+.studio-header-action:disabled, .studio-publish:disabled { opacity: .45; cursor: not-allowed; }
+/* Contract v1.5, the compact top. The header is ONE 40px row on every page. The two publish facts used to hang
+   under the row's right end as a caption, which spent 19px of header on every page for a fact that does not change
+   while you work; they are the Publish… tooltip and the bottom bar's Publish to slot now. min-height, not height,
+   because fold level 4 puts the five areas on a second line inside this same header. */
+header.studio-chrome { min-height: 40px; padding-block: 0; }
+.studio-publish-block { position: relative; display: flex; align-items: center; }
+
+/* Contract v1.5: ONE 34px line. Editing, Tests, Publish to, the sync pill, Review changes. The bar used to stack
+   onto two, three and four rows as the window narrowed, which made the bottom of Studio a different height on every
+   machine; now the roles stay on the line and the narrowest one FOLDS instead (see the 899px rule below). Each role
+   keeps its name and value on one line and truncates, rather than wrapping the bar taller. */
+.studio-contextbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto; row-gap: 2px; align-items: center; padding-block: 2px; }
+.studio-contextbar .connection-role { flex-wrap: nowrap; text-align: left; gap: 0 6px; align-items: baseline; }
+.studio-contextbar .connection-value { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.studio-contextbar .connection-separator { display: none; }
+.studio-contextbar .connection-sync { max-width: none; }
+/* The unsaved warning is the one thing still allowed a second line, and only while unsaved edits exist. */
+.studio-contextbar .connection-sync-warn { grid-column: 1 / -1; grid-row: 2; justify-self: start; max-width: 100%; margin-top: 1px; }
+.studio-contextbar .connection-review { justify-self: end; }
+@media (max-width: 1600px) { .studio-contextbar .connection-hint { display: none; } }
+/* Under 900px Tests folds away and its fact moves into the pill's tooltip (FOLD_TESTS_BELOW in contextbar.tsx
+   states the same breakpoint and writes that tooltip). Two roles then share the width with the pill. */
+@media (max-width: 899px) {
+  .studio-contextbar { grid-template-columns: repeat(2, minmax(0, 1fr)) auto auto; }
+  .studio-contextbar [data-testid="connections-querying"] { display: none; }
+}
+/* The chip reads left to right, so a shortened one must lose its TAIL. Centred, it was cut at both ends and the
+   1000-wide header read "d a measure · step". The label owns the ellipsis; the dot is the first span only. */
+.studio-run-chip { display: flex; align-items: center; justify-content: flex-start; gap: 6px; max-width: 230px; overflow: hidden; white-space: nowrap; font-size: 10.5px; }
+.studio-run-chip > span:first-child { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--sem-accent); box-shadow: 0 0 0 3px var(--sem-accent-soft); }
+.studio-run-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-chooser-menu { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); width: min(590px, 76vw); max-height: 70vh; overflow: auto; padding: 8px; border: 1px solid var(--sem-border); border-radius: 9px; background: var(--sem-surface); box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+.tool-chooser-menu section { display: flex; flex-direction: column; min-width: 0; padding: 5px; }
+.tool-chooser-heading { padding: 3px 7px; color: var(--sem-muted); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.tool-chooser-menu button, .compact-menu button { border: 0; border-radius: 5px; padding: 5px 7px; text-align: left; color: var(--sem-fg); background: transparent; font-size: 11.5px; }
+.tool-chooser-menu button:hover, .tool-chooser-menu button[aria-current="page"], .compact-menu button:hover, .compact-menu button[aria-current="page"] { background: var(--sem-accent-soft); }
+.compact-menu { display: grid; min-width: 150px; padding: 5px; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-surface); box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+.compact-menu > span { margin: 4px 0; border-top: 1px solid var(--sem-border); }
+@keyframes sem-menu-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+/* Contract v1.5, row two. ONE 40px row on every page, holding what used to be the breadcrumb row (34px) and the
+   page guide (59px): Back only when there is somewhere to go back to, the area name, then the area's segment strip
+   or the name of the page you are on, then the page notes behind ⓘ. It is chrome, not page content, so the strip
+   can no longer scroll away at any scroll position on any page (M23, kept and strengthened). */
+.studio-arearow { min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 var(--sem-page-gutter); border-bottom: 1px solid var(--sem-border); color: var(--sem-muted); font-size: 12px; overflow: visible; }
+.studio-arearow-area { font-weight: 600; white-space: nowrap; }
+.studio-arearow-tool { color: var(--sem-fg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* There is deliberately no rule here for the route object. It is not on this row in any form: the page already
+   names what it was opened with, so a copy of that on the row was the same fact twice (Kane, 2026-09-15). */
+/* The ⓘ rides the shared dense control scale, so it is the same 24px circle as every other small control. */
+.studio-page-notes-wrap { margin-left: auto; }
+.studio-page-notes { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: var(--sem-control-h-sm); height: var(--sem-control-h-sm); border-radius: 50%; font-size: var(--sem-control-font); font-weight: 700; font-style: italic; line-height: 1; color: var(--sem-muted); background: var(--sem-surface-2); border: 1px solid var(--sem-border); }
+.studio-page-notes:hover, .studio-page-notes[aria-expanded="true"] { color: var(--sem-fg); background: var(--sem-accent-soft); }
+.studio-page-notes-pop { width: min(420px, 88vw); max-height: 60vh; overflow: auto; padding: 12px 14px; border: 1px solid var(--sem-border); border-radius: 9px; background: var(--sem-surface); box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+/* The dialog's own way out, and the one stop its Tab trap cycles to. Quiet: this is a note, not a decision. */
+.studio-page-notes-close { padding: 3px 10px; border: 1px solid var(--sem-border); border-radius: 6px; background: var(--sem-surface-2); color: var(--sem-fg); font-size: 11.5px; }
+.studio-page-notes-close:hover { background: var(--sem-accent-soft); }
+@media (prefers-reduced-motion: reduce) { .studio-page-notes-pop { animation: none; } }
+body.vscode-reduce-motion .studio-page-notes-pop { animation: none; }
+/* The one line a text-size change says about itself, for a second, low and out of the way. A reset that changes
+   nothing says nothing at all — that decision lives in useStudioZoom, not here. */
+.studio-zoom-toast { position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 60; padding: 5px 12px; border: 1px solid var(--sem-border); border-radius: 999px; background: var(--sem-surface); color: var(--sem-fg); font-size: 11.5px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.35); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+@media (prefers-reduced-motion: reduce) { .studio-zoom-toast { animation: none; } }
+body.vscode-reduce-motion .studio-zoom-toast { animation: none; }
+/* The strip lives on a fixed-height row now, so it can never WRAP: a second line of segments would make row two a
+   different height from rows one and three, which is the whole thing this contract buys. It shrinks and scrolls
+   instead, with a thin scrollbar so a segment pushed off the end is still reachable. */
+/* overflow-y: hidden is not decoration. overflow-x: auto alone makes the box scrollable on BOTH axes, so an
+   absolutely positioned child (the Create menu, until 2026-09-14) gave the strip a vertical scrollbar beside
+   its horizontal one and a browser then scrolled the row to reveal whatever was focused inside it. */
+.area-tabs { display: flex; flex-wrap: nowrap; gap: 3px; margin: 0; padding: 3px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-surface); }
+.area-tabs button { transition: background var(--sem-t-base) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out); }
+/* Portalled to the Studio root and PLACED (left/top from anchorUnder), so no scroll container can clip it or
+   move the row under it. It is inside the zoomed root, so these are the root's own CSS pixels. */
+.area-tabs-create-menu { position: fixed; z-index: 60; display: flex; flex-direction: column; min-width: 172px; padding: 4px; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-surface); box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+.area-tabs-create-menu button { display: block; width: 100%; border: 0; border-radius: 5px; padding: 5px 7px; text-align: left; color: var(--sem-fg); background: transparent; font-size: 11.5px; }
+.area-tabs-create-menu button:hover, .area-tabs-create-menu button[aria-current="page"], .area-tabs-create-menu button.is-highlighted { background: var(--sem-accent-soft); }
+
+/* The two header chip menus (Your assistant, Help). One shape for both, so the header reads as one system: a
+   row is a label on the left and an optional plain note on the right (a count, a state, a key). Same highlight
+   contract as the Create segment's menu, because the keyboard contract is the same. */
+.studio-chip-menu { display: flex; flex-direction: column; min-width: 204px; padding: 4px; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-surface); box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: sem-menu-in var(--sem-t-fast) var(--sem-ease-out); }
+.studio-chip-menu button { display: flex; align-items: baseline; gap: 12px; width: 100%; border: 0; border-radius: 5px; padding: 5px 7px; text-align: left; color: var(--sem-fg); background: transparent; font-size: 11.5px; }
+.studio-chip-menu button > span:first-child { flex: 1 1 auto; min-width: 0; }
+.studio-chip-menu button:hover, .studio-chip-menu button.is-highlighted { background: var(--sem-accent-soft); }
+.studio-chip-menu-note { flex: 0 0 auto; color: var(--sem-muted); font-size: 10px; }
+.studio-chip-menu-heading { margin-top: 4px; padding: 5px 7px 3px; border-top: 1px solid var(--sem-border); color: var(--sem-muted); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.pagehead { display: flex; justify-content: space-between; gap: 20px; align-items: end; flex-wrap: wrap; margin-bottom: 18px; }
+.pagehead h1 { margin: 3px 0; font-size: 22px; line-height: 1.2; font-weight: 600; }
+.pagehead p { margin: 0; color: var(--sem-muted); max-width: 70ch; }
+.pagehead-actions, .object-action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Model home and the object-action panels take the standard control size straight from the tokens, so their
+   buttons match a .sem-btn rendered by any tool. */
+.pagehead button, .object-actions button, .model-table button, .model-home-links button, .model-home-state button, .model-empty-shell button { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: var(--sem-control-h); padding: var(--sem-control-pad); border: 1px solid var(--sem-border); border-radius: var(--sem-control-radius); background: var(--sem-surface-2); color: var(--sem-fg); font-size: var(--sem-control-font); font-weight: var(--sem-control-weight); line-height: 1; }
+.page-kicker { color: var(--sem-muted); font-size: 11px; font-weight: 600; letter-spacing: .1em; }
+.model-summary { display: flex; gap: 18px; color: var(--sem-muted); font-size: 12px; margin-bottom: 9px; }
+.model-home-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 16px; }
+.model-home-links button, .object-action-also button { height: auto; padding: 2px 0; border: 0; background: transparent; color: var(--sem-accent); font-weight: 500; }
+.object-actions { border: 1px solid var(--sem-border); border-radius: 10px; padding: 14px 16px; background: var(--sem-surface); display: flex; gap: 18px; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 16px; animation: sem-action-in var(--sem-t-fast) var(--sem-ease-out); }
+.object-action-title { min-width: 140px; }
+.object-action-content { display: grid; gap: 7px; }
+.object-action-also { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--sem-muted); font-size: 11px; }
+@keyframes sem-action-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.model-list { border: 1px solid var(--sem-border); border-radius: 10px; overflow: hidden; }
+.model-list-head, .model-table { display: grid; grid-template-columns: minmax(160px, 1fr) 120px 105px 105px auto; align-items: center; gap: 12px; padding: 9px 14px; }
+.model-list-head { background: var(--sem-surface-2); color: var(--sem-muted); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.model-table { border-top: 1px solid var(--sem-border); color: var(--sem-muted); font-size: 12px; }
+.model-table.is-selected { background: var(--sem-accent-soft); box-shadow: inset 3px 0 0 var(--sem-accent); }
+.model-table.is-selected > button:first-child { font-weight: 650; }
+.model-list-note { margin: 10px 0 6px; color: var(--sem-muted); font-size: 11.5px; }
+.model-table > button:first-child { height: auto; justify-content: flex-start; text-align: left; border: 0; padding: 0; background: transparent; color: var(--sem-fg); }
+.model-empty, .model-home-state { display: grid; gap: 4px; padding: 24px; border: 1px dashed var(--sem-border); color: var(--sem-muted); }
+.model-home-state { grid-template-columns: auto 1fr; align-items: center; margin-bottom: 16px; }
+.model-home-state > span:last-child { grid-column: 2; }
+.model-home-state button { grid-column: 2; width: fit-content; }
+.model-home-state .sem-spin { width: 12px; height: 12px; border: 2px solid var(--sem-border); border-top-color: var(--sem-accent); border-radius: 50%; }
+.model-home-error { border-color: color-mix(in srgb, var(--sem-bad) 55%, var(--sem-border)); }
+.model-empty strong, .model-home-state strong { color: var(--sem-fg); }
+.model-empty-shell { padding: 24px; border: 1px dashed var(--sem-border); border-radius: 10px; }
+.search-scope { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--sem-border); border-radius: 8px; padding: 7px 10px; background: var(--sem-surface); color: var(--sem-muted); font-size: 11.5px; }
+.search-scope strong { color: var(--sem-fg); }
+.search-scope button { color: var(--sem-accent); font-weight: 600; }
+button:focus-visible { outline: 2px solid var(--sem-accent); outline-offset: 2px; }
+@media (max-width: 900px) { .model-list-head { display: none; } .model-table { grid-template-columns: minmax(120px, 1fr) auto; } .model-table span { display: none; } .tool-chooser-menu { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }
+
 
 /* React Flow (ER diagram) — follow the VS Code theme instead of its light default. */
 .react-flow { background: var(--sem-bg); }
@@ -148,3 +444,379 @@ body {
    without changing Outline. */
 .sem-wf-boxes { min-width: 0; max-width: 100%; overflow-x: hidden; overflow-wrap: anywhere; word-break: break-word; }
 .sem-wf-boxes .tnum, .sem-wf-boxes code { overflow-wrap: anywhere; }
+.sem-wf-pagehead { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.sem-wf-pagehead h2 { margin: 2px 0 0; font-size: 22px; line-height: 1.25; font-weight: 600; }
+.sem-wf-pagehead p { margin: 6px 0 0; max-width: 70ch; color: var(--sem-muted); }
+.sem-wf-kicker { color: var(--sem-muted); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.sem-wf-job-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1120px) { .sem-wf-job-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .sem-wf-job-grid { grid-template-columns: 1fr; } }
+
+/* ---- THE AUTHOR CANVAS IS THE PAGE ---------------------------------------------------------------
+   Kane, on the Yoga, 2026-09-15: "The canvas editor is too small to be useful." It was a 569 by 340 box
+   at 1366x768, with about 190px of stacked header rows above it and the step editor holding the right
+   half of the page whether or not a step was selected. Now: one 40px header row, the canvas fills the
+   rest of the page, and the step editor is a drawer that exists only while a step is chosen.
+
+   The height chain is the whole trick, and every link has to hold: the Workflows page is a flex column
+   at least as tall as its scroll region (.sem-wf-author-page), the editor grows into it
+   (.sem-wf-editor[data-wf-view="canvas"]), the stage grows into the editor, and the canvas grows into
+   the stage. Drop min-height:0 anywhere along it and a flex child refuses to shrink, the page grows a
+   scrollbar, and the canvas is back to being a fixed box. */
+/* Steps and Source are columns that may be taller than the window, so the page is only given a FLOOR.
+   Canvas is a picture that must fit the window exactly, so there the page is given a definite height:
+   measured 2026-09-15, min-height alone let the drawer's own 2435px of form stretch the stage and the
+   canvas with it, which is the fixed-box problem again wearing a different hat. */
+.sem-wf-author-page { min-height: 100%; }
+.sem-wf-author-page:has(.sem-wf-editor[data-wf-view="canvas"]) { height: 100%; }
+.sem-wf-editor { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.sem-wf-editor[data-wf-view="canvas"] { flex: 1; min-height: 0; }
+
+.sem-wf-author-head {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+  box-sizing: border-box; min-height: 40px; padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--sem-border); border-radius: 10px; background: var(--sem-surface);
+}
+.sem-wf-author-title { min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.sem-wf-author-state { flex-shrink: 0; color: var(--sem-good); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.sem-wf-author-state.dirty { color: var(--sem-warn); }
+.sem-wf-author-run { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: var(--sem-accent-soft); color: var(--sem-accent); font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+.sem-wf-author-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; margin-left: auto; }
+.sem-wf-author-notices { display: flex; flex-direction: column; gap: 8px; }
+
+.sem-wf-canvas-stage {
+  position: relative; display: flex; flex: 1; min-width: 0; min-height: 0;
+  overflow: hidden; border: 1px solid var(--sem-border); border-radius: 10px; background: var(--sem-surface-2);
+}
+.sem-wf-canvas { position: relative; flex: 1; min-width: 0; min-height: 0; outline: none; background: var(--sem-surface-2); }
+.sem-wf-canvas:focus-visible { outline: 2px solid var(--sem-accent); outline-offset: -2px; }
+/* The tools float ON the canvas, the way the Diagram's do. A row above it would cost 34px of picture on
+   every screen to hold four controls that fit in the corner. */
+.sem-wf-canvas-tools { position: absolute; z-index: 6; top: 10px; left: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: calc(100% - 24px); }
+.sem-wf-canvas-tool-sep { width: 1px; height: 18px; margin: 0 3px; background: var(--sem-border); }
+.sem-wf-canvas-idchip { display: inline-flex; align-items: center; height: var(--sem-control-h-sm); padding: 0 9px; border: 1px solid var(--sem-border); border-radius: var(--sem-control-radius); background: var(--sem-surface); color: var(--sem-muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+
+/* Above the tool chips (z-index 6): under 1100px the drawer lies OVER the canvas, and at 1000x700 the
+   chips were drawn on top of the drawer's own header, which read "OF 4" with its first two words buried. */
+.sem-wf-drawer {
+  position: relative; z-index: 8;
+  display: flex; flex: 0 0 440px; width: 440px; min-height: 0; flex-direction: column;
+  border-left: 1px solid var(--sem-border); background: var(--sem-surface);
+  animation: sem-wf-drawer-in var(--sem-t-base) var(--sem-ease-out);
+}
+@keyframes sem-wf-drawer-in { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.sem-wf-drawer-head { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; border-bottom: 1px solid var(--sem-border); }
+.sem-wf-drawer-id { min-width: 0; overflow: hidden; color: var(--sem-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sem-wf-drawer-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; margin-left: auto; }
+.sem-wf-drawer-icon { width: var(--sem-control-h-sm); padding: 0; justify-content: center; }
+.sem-wf-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.sem-wf-drawer-title { margin: 0 0 10px; font-size: 15px; font-weight: 700; }
+/* The drawer header already names the step, its id and everything you can do to it, so the form's own
+   title row would be a second copy of all three inside a 440px column. */
+.sem-wf-drawer-body .sem-wf-form-title, .sem-wf-drawer-body .sem-wf-id-help { display: none; }
+.sem-wf-drawer-body .sem-wf-form-card { padding: 0; border: 0; background: transparent; }
+.sem-wf-drawer-body .sem-wf-field-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* Full screen. The parts it hides belong to four components in three other lanes, so it is one attribute
+   on the body and one block of rules here: no other component changes, and nothing is left behind if the
+   page unmounts while it is on. */
+body[data-studio-fullscreen="workflow-canvas"] .studio-chrome,
+body[data-studio-fullscreen="workflow-canvas"] .studio-arearow,
+body[data-studio-fullscreen="workflow-canvas"] .studio-contextbar,
+body[data-studio-fullscreen="workflow-canvas"] aside:has(button[data-section]),
+body[data-studio-fullscreen="workflow-canvas"] .sem-wf-author-head,
+body[data-studio-fullscreen="workflow-canvas"] .sem-wf-author-page > :not(.sem-wf-editor) { display: none !important; }
+body[data-studio-fullscreen="workflow-canvas"] .studio-root > main { padding-bottom: 0; }
+body[data-studio-fullscreen="workflow-canvas"] .sem-wf-author-page { gap: 0; padding: 0; }
+body[data-studio-fullscreen="workflow-canvas"] .sem-wf-canvas-stage { border: 0; border-radius: 0; }
+.sem-wf-form-title, .sem-wf-preview-head { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
+.sem-wf-form-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.sem-wf-form-lock { min-width: 0; border: 0; margin: 0; padding: 0; }
+.sem-wf-form-lock:disabled { opacity: 0.82; }
+.sem-wf-notice { display: block; color: var(--sem-good); font-size: 11.5px; }
+.sem-wf-steps-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; }
+.sem-wf-outline { position: sticky; top: 0; display: flex; flex-direction: column; gap: 3px; padding: 12px; border: 1px solid var(--sem-border); border-radius: 10px; background: var(--sem-surface); }
+.sem-wf-outline button { overflow: hidden; padding: 7px 8px; border-radius: 6px; color: var(--sem-muted); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.sem-wf-outline button.active { background: var(--sem-accent-soft); color: var(--sem-fg); font-weight: 650; }
+.sem-wf-form-card, .sem-wf-preview { min-width: 0; padding: 14px 16px; border: 1px solid var(--sem-border); border-radius: 10px; background: var(--sem-surface); }
+.sem-wf-form-title h3, .sem-wf-create h2 { margin: 2px 0 0; font-size: 17px; font-weight: 650; }
+.sem-wf-form-title p, .sem-wf-create p, .sem-wf-preview-head p { margin: 3px 0 0; max-width: 70ch; color: var(--sem-muted); font-size: 11.5px; }
+.sem-wf-form-title small, .sem-wf-id-help { color: var(--sem-muted); font-size: 10.5px; }
+.sem-wf-id-help { margin: 7px 0 12px; }
+.sem-wf-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 12px; }
+.sem-wf-field, .sem-wf-create label { display: flex; min-width: 0; flex-direction: column; gap: 4px; color: var(--sem-muted); font-size: 11px; }
+.sem-wf-field-wide { grid-column: 1 / -1; }
+.sem-wf-input { box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--sem-border); border-radius: 6px; outline: none; background: var(--sem-surface-2); color: var(--sem-fg); font-size: 12px; }
+textarea.sem-wf-input { min-height: 72px; resize: vertical; font-family: inherit; line-height: 1.45; }
+.sem-wf-input:disabled { opacity: .68; }
+.sem-wf-restriction { color: var(--sem-warn); font-size: 10.5px; }
+.sem-wf-readonly { display: flex; flex-direction: column; gap: 4px; color: var(--sem-muted); font-size: 11px; }
+.sem-wf-readonly b { color: var(--sem-fg); font-size: 12px; }
+.sem-wf-option, .sem-wf-gate, .sem-wf-advanced { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--sem-border); }
+.sem-wf-option-head { display: flex; align-items: center; gap: 8px; }
+.sem-wf-option-body { margin: 8px 0 0 32px; }
+.sem-wf-option-body > small { display: block; margin-top: 5px; color: var(--sem-muted); }
+.sem-wf-switch { position: relative; width: 25px; height: 15px; border-radius: 999px; background: var(--sem-border); }
+.sem-wf-switch span { position: absolute; top: 3px; left: 3px; width: 9px; height: 9px; border-radius: 50%; background: var(--sem-muted); transition: transform var(--sem-t-fast) var(--sem-ease-out); }
+.sem-wf-switch[aria-checked="true"] { background: var(--sem-accent-soft); }
+.sem-wf-switch[aria-checked="true"] span { background: var(--sem-accent); transform: translateX(10px); }
+.sem-wf-disclosure { margin-top: 12px; color: var(--sem-accent); font-size: 11.5px; font-weight: 650; }
+.sem-wf-nested { margin-top: 9px; padding: 10px; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-surface-2); }
+.sem-wf-map-row { display: grid; grid-template-columns: minmax(100px, .5fr) minmax(160px, 1fr) auto; gap: 7px; align-items: center; margin-top: 6px; }
+.sem-wf-map-row button, .sem-wf-item-actions button, .sem-wf-op-editor button { color: var(--sem-accent); font-size: 10.5px; }
+.sem-wf-item-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; }
+.sem-wf-item-actions button:disabled { opacity: .35; }
+.sem-wf-op-editor { display: flex; flex-direction: column; gap: 7px; margin-top: 5px; }
+.sem-wf-op-editor > div > small, .sem-wf-op-picker-head p { color: var(--sem-muted); font-size: 11px; }
+/* The browsable action picker (question > shelf > action). It sits inline under the chips rather than in
+   a popover, so ticking several actions never fights the form scroll. */
+.sem-wf-op-picker { display: flex; flex-direction: column; gap: 8px; padding: 11px; border: 1px solid color-mix(in srgb, var(--sem-accent) 45%, var(--sem-border)); border-radius: 8px; background: var(--sem-surface-2); }
+.sem-wf-op-picker-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.sem-wf-op-picker-head b { color: var(--sem-fg); font-size: 12.5px; }
+.sem-wf-op-picker-head p { margin: 3px 0 0; max-width: 62ch; }
+.sem-wf-op-tree { max-height: 320px; overflow-y: auto; border: 1px solid var(--sem-border); border-radius: 7px; background: var(--sem-surface); }
+.sem-wf-op-empty { margin: 0; padding: 10px 11px; color: var(--sem-muted); font-size: 11.5px; }
+.sem-wf-op-question + .sem-wf-op-question { border-top: 1px solid var(--sem-border); }
+.sem-wf-op-editor .sem-wf-op-head { display: flex; width: 100%; align-items: baseline; gap: 7px; padding: 7px 10px; color: var(--sem-fg); font-size: 11.5px; text-align: left; }
+.sem-wf-op-editor .sem-wf-op-head b { font-weight: 650; }
+.sem-wf-op-editor .sem-wf-op-head .tnum { margin-left: auto; color: var(--sem-muted); font-size: 10px; }
+.sem-wf-op-editor .sem-wf-op-shelf-head { padding: 5px 10px 5px 22px; color: var(--sem-muted); }
+.sem-wf-op-editor .sem-wf-op-choice { display: flex; width: 100%; align-items: flex-start; gap: 7px; padding: 5px 10px 6px 34px; color: var(--sem-fg); font-size: 11px; text-align: left; }
+.sem-wf-op-editor .sem-wf-op-choice:hover { background: var(--sem-accent-soft); }
+.sem-wf-op-editor .sem-wf-op-choice[aria-pressed="true"] { background: var(--sem-accent-soft); }
+.sem-wf-op-tick { width: 11px; color: var(--sem-accent); font-size: 11px; }
+.sem-wf-op-choice-text { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.sem-wf-op-choice-text b { color: var(--sem-fg); font-size: 11.5px; font-weight: 650; }
+.sem-wf-op-choice-text code { color: var(--sem-muted); font-size: 10px; }
+.sem-wf-op-choice-text small { color: var(--sem-muted); font-size: 10.5px; }
+.sem-wf-word-budget { color: var(--sem-muted); font-size: 10.5px; }
+.sem-wf-preview { display: flex; flex-direction: column; gap: 9px; border-color: color-mix(in srgb, var(--sem-accent) 45%, var(--sem-border)); }
+.sem-wf-preview-note { padding: 7px 9px; border-radius: 6px; background: var(--sem-accent-soft); font-size: 11.5px; }
+.sem-wf-diff, .sem-wf-current-source, .sem-wf-current-file pre { max-height: 330px; overflow: auto; margin: 0; padding: 11px; border-radius: 7px; background: var(--sem-bg); color: var(--sem-fg); white-space: pre; font: 11.5px/1.5 var(--vscode-editor-font-family, monospace); }
+.sem-wf-diff .add { display: inline; color: var(--sem-diff-add); background: var(--sem-diff-add-bg); }
+.sem-wf-diff .del { display: inline; color: var(--sem-diff-del); background: var(--sem-diff-del-bg); }
+.sem-wf-source { box-sizing: border-box; width: 100%; min-height: 540px; margin-top: 10px; padding: 12px; resize: vertical; border: 1px solid var(--sem-border); border-radius: 8px; outline: none; background: var(--sem-surface-2); color: var(--sem-fg); font: 12px/1.55 var(--vscode-editor-font-family, monospace); tab-size: 2; }
+.sem-wf-current-file { margin-top: 10px; }
+.sem-wf-create { display: flex; max-width: 560px; flex-direction: column; align-items: flex-start; gap: 12px; }
+.sem-wf-create label { width: 100%; }
+.sem-wf-editor button:focus-visible, .sem-wf-editor input:focus-visible, .sem-wf-editor textarea:focus-visible, .sem-wf-editor select:focus-visible { outline: 2px solid var(--sem-accent); outline-offset: 2px; }
+/* Under 1100px a 440px column and a canvas cannot both be readable, so the drawer stops taking width from
+   the canvas and lies over it instead. The canvas keeps the page, and closing the drawer gives it back. */
+@media (max-width: 1100px) {
+  .sem-wf-drawer { position: absolute; top: 0; right: 0; bottom: 0; flex: none; width: min(440px, 100%); box-shadow: -8px 0 24px rgba(0, 0, 0, .35); }
+}
+@media (max-width: 820px) { .sem-wf-steps-layout { grid-template-columns: 1fr; } .sem-wf-outline { position: static; } .sem-wf-field-grid { grid-template-columns: 1fr; } .sem-wf-field-wide { grid-column: 1; } }
+@media (prefers-reduced-motion: reduce) { .sem-wf-switch span { transition-duration: 0ms; } .sem-wf-drawer { animation: none; } }
+
+/* ---- Model Overview (the landing page) --------------------------------------------------------
+   Four table-kind colours, used by BOTH the composition band and the row dots. They are the same
+   four the Diagram paints a table with, so one kind is one colour everywhere in Studio: a table that
+   is amber in the diagram is amber here. Storage component colours are not repeated here; those come
+   straight from echart.tsx so the row bars and Size by table's bars stay one palette. */
+:root {
+  --sem-kind-data: var(--sem-accent);
+  --sem-kind-date: var(--sem-warn);
+  --sem-kind-calc: #17B3A3;
+  --sem-kind-fp: #9B7EDE;
+}
+.overview { max-width: var(--sem-page-max); margin-inline: auto; }
+.overview-hero { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: end; padding: 2px 2px 18px; }
+.overview-hero h1 { margin: 4px 0 8px; font-size: 34px; line-height: 1.05; letter-spacing: -.02em; text-wrap: balance; }
+.overview-hero p { max-width: 62ch; margin: 0; color: var(--sem-muted); font-size: 14px; }
+.overview-hero p b { color: var(--sem-fg); font-weight: 600; }
+.overview-facts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.overview-fact { min-width: 122px; padding: 10px 12px; border: 1px solid var(--sem-border); border-radius: 10px; background: var(--sem-surface); }
+.overview-fact-n { font-size: 22px; font-weight: 700; line-height: 1.1; letter-spacing: -.02em; }
+.overview-fact-l { margin-top: 2px; color: var(--sem-muted); font-size: 11.5px; }
+.overview-fact-quiet .overview-fact-n { display: flex; align-items: center; height: 24px; }
+/* The Raise compatibility level tile. Wider than a number tile because it carries a sentence and a button,
+   and it only exists while the level is actually blocking something. */
+.overview-fact-quiet:has(> .sem-btn) { display: grid; gap: 6px; justify-items: start; max-width: 300px; }
+
+.overview-card { padding: 14px 16px; border: 1px solid var(--sem-border); border-radius: 12px; background: var(--sem-surface); }
+.overview-card h2 { margin: 0; font-size: 13px; font-weight: 600; }
+/* The head's text may shrink; its action may not. Without this the long subtitle held its natural width and
+   pushed the card's own button onto a second line, which read as a stray control under the heading. */
+.overview-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.overview-card-head > div:first-child { flex: 1 1 0; min-width: 0; }
+.overview-card-head > .sem-btn { flex: none; }
+.overview-sub { margin-top: 2px; color: var(--sem-muted); font-size: 12px; }
+.overview-band .overview-card-head { align-items: baseline; }
+
+.overview-comp { display: flex; gap: 2px; height: 56px; margin-top: 12px; border-radius: 8px; overflow: hidden; }
+/* THE BLOCK ITSELF CARRIES NO PADDING. flex-basis: 0 zeroes the CONTENT box, not the padding around it, so
+   16px per block came off the band before any share was worked out: Sales printed 66% and drew 57% of the band
+   at 1440 and 54% at 1000, while each zero-byte table drew about 16.5px instead of the 2px sliver. (The comment
+   that used to sit here asserted the opposite; measured on the built bundle, 2026-09-14.) The label's padding
+   now lives INSIDE the block on .overview-comp-label, where it is clipped instead of stealing width. Change the
+   gap or the min-width here and BAND_GAP_PX / BAND_SLIVER_PX in overviewfacts.mjs must change with them; a test
+   compares the two. */
+.overview-comp-block { flex-basis: 0; flex-shrink: 1; display: flex; align-items: stretch; min-width: 2px; padding: 0; overflow: hidden; color: #06210f; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.overview-comp-label { display: flex; align-items: flex-end; gap: 6px; min-width: 0; padding: 6px 8px; overflow: hidden; }
+.overview-comp-block small { font-weight: 500; opacity: .82; }
+.overview-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; color: var(--sem-muted); font-size: 11.5px; }
+.overview-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; }
+.overview-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 9px; color: var(--sem-muted); font-size: 11.5px; }
+
+/* The two cards keep their own heights and align to the top of the grid. Stretching the shorter one to match
+   pinned its last line to the bottom and left about 170px of dead space above it, which read worse than a card
+   that simply ends. Nothing is padded to match: a card holding less is shorter. */
+.overview-cols { display: grid; grid-template-columns: 1fr 1.25fr; gap: 16px; margin-top: 16px; align-items: stretch; }
+/* Kane, 15 Sep: the AI Instructions card takes the Tables card's height and scrolls inside. The body's only child is
+   absolutely positioned, so the card adds no height of its own to the row and the Tables card sets it. */
+.overview-instructions { display: flex; flex-direction: column; }
+.overview-instructions-body { position: relative; flex: 1 1 0; min-height: 260px; margin-top: 12px; }
+.overview-instructions-scroll { position: absolute; inset: 0; overflow-y: auto; padding-right: 2px; }
+.overview-instructions-scroll .overview-instr { margin-top: 0; }
+.overview-instr { margin-top: 12px; padding: 12px 14px; border-left: 3px solid var(--sem-accent); border-radius: 0 8px 8px 0; background: var(--sem-surface-2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.overview-meter { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--sem-muted); font-size: 11.5px; }
+.overview-meter-bar { flex: 1; height: 5px; border: 1px solid var(--sem-border); border-radius: 3px; background: var(--sem-surface-2); overflow: hidden; }
+.overview-meter-bar i { display: block; height: 100%; background: var(--sem-accent); }
+/* Suggested Primer notes, waiting for a person. They sit under the instructions editor on the free
+   Overview card, because the decisions are free and the Model notes page that used to hold them is not. */
+.overview-suggestions { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--sem-border); }
+.overview-suggestion { display: flex; align-items: flex-start; gap: 12px; padding: 8px 10px; border: 1px solid var(--sem-border); border-radius: 8px; background: var(--sem-bg); }
+.overview-suggestion-text { display: grid; gap: 2px; min-width: 0; flex: 1; font-size: 11.5px; line-height: 1.45; }
+.overview-suggestion-text b { color: var(--sem-accent); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.overview-suggestion-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.overview-notes { margin-top: 12px; color: var(--sem-muted); font-size: 12px; }
+.overview-link { border: 0; background: none; padding: 0; color: var(--sem-accent); font: inherit; font-weight: 600; cursor: pointer; }
+/* Sized by its own content now that the card no longer stretches: a model with nothing written gets a short
+   card holding a short invitation, not a tall one holding a centred one. */
+.overview-empty { display: grid; justify-items: start; gap: 6px; margin-top: 12px; padding: 16px; border: 1px dashed var(--sem-border); border-radius: 8px; color: var(--sem-muted); }
+.overview-empty strong { color: var(--sem-fg); }
+.overview-editor { display: grid; gap: 8px; margin-top: 12px; }
+.overview-editor textarea { box-sizing: border-box; width: 100%; min-height: 220px; padding: 11px 12px; resize: vertical; border: 1px solid var(--sem-border); border-radius: 8px; outline: none; background: var(--sem-surface-2); color: var(--sem-fg); font: 13px/1.55 var(--vscode-font-family, "Segoe UI", system-ui, sans-serif); }
+.overview-editor textarea:focus-visible { outline: 2px solid var(--sem-accent); outline-offset: 1px; }
+.overview-editor-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--sem-muted); font-size: 11.5px; }
+.overview-editor-foot > span:first-child { margin-right: auto; }
+.overview-over { color: var(--sem-bad); }
+
+.overview-rows-head, .overview-row { display: grid; grid-template-columns: minmax(120px, 150px) 1fr 74px 92px 28px; align-items: center; gap: 10px; }
+.overview-rows-head { margin-top: 12px; padding: 0 8px; color: var(--sem-muted); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.overview-rows-head span:nth-child(n+3) { text-align: right; }
+.overview-rows { display: grid; gap: 4px; margin-top: 8px; }
+.overview-row { padding: 6px 8px; border-radius: 8px; }
+.overview-row:hover { background: var(--sem-surface-2); }
+.overview-row.is-selected { background: var(--sem-accent-soft); outline: 1px solid var(--sem-accent); }
+.overview-row-name { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: var(--sem-fg); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.overview-row-name i { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.overview-stack { display: flex; height: 14px; border-radius: 3px; background: var(--sem-surface-2); overflow: hidden; }
+.overview-stack i { display: block; height: 100%; }
+.overview-n { color: var(--sem-muted); font-size: 12px; text-align: right; }
+/* The row's open affordance takes its HEIGHT from the shared dense control, not a size of its own; only the
+   width is narrower, because it holds one glyph. The mockup drew it at 22px, which would have been a fourth
+   button height on the page. */
+.overview-go { width: 26px; height: var(--sem-control-h-sm); padding: 0; border: 1px solid var(--sem-border); border-radius: 5px; background: var(--sem-surface-2); color: var(--sem-muted); cursor: pointer; }
+.overview-hint { margin-top: 14px; color: var(--sem-muted); font-size: 11.5px; }
+.overview-tables .object-actions { margin: 14px 0 0; padding: 10px 12px; }
+
+.overview-health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.overview-health-card { padding: 12px 14px; }
+.overview-v { margin-top: 6px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.overview-v-ok { color: var(--sem-accent); }
+.overview-v-warn { color: var(--sem-warn); }
+.overview-d { margin-top: 2px; color: var(--sem-muted); font-size: 12px; }
+/* Which run the Checks card is showing. Quieter than the detail line and never optional: a result from this
+   minute and one recorded last week can disagree completely, so the card always says which one you have. */
+.overview-stamp { margin-top: 6px; color: var(--sem-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; }
+.overview-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.overview-quiet { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--sem-muted); font-size: 12px; }
+.overview-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; color: var(--sem-bad); font-size: 12px; }
+.overview .sem-spin { width: 12px; height: 12px; border: 2px solid var(--sem-border); border-top-color: var(--sem-accent); border-radius: 50%; }
+
+/* The columns stack before they squeeze, and the Measures count is the first thing to go: it is the
+   one number on the row that is also one click away on the table itself. */
+@media (max-width: 980px) {
+  .overview-hero, .overview-cols { grid-template-columns: 1fr; }
+  .overview-instructions-body { min-height: 360px; }
+  .overview-facts { justify-content: flex-start; }
+  .overview-health { grid-template-columns: 1fr; }
+  .overview-rows-head, .overview-row { grid-template-columns: minmax(110px, 1fr) 1.4fr 92px 28px; }
+  .overview-col-measures { display: none; }
+  .overview-hero h1 { font-size: 28px; }
+}
+@media (prefers-reduced-motion: reduce) { .overview .sem-spin { animation-duration: 2s; } }
+
+/* ---- The one tool row, and the chips that replaced the rows under it -----------------------------
+   Kane's rule, accepted 2026-09-14: every tool keeps ONE 40px row of controls. Hints leave the row for a
+   tooltip and the page notes; counts, legends and status lines become quiet chips inside the canvas.
+   Measured before this landed, at 1366x768: Diagram spent 121px on three rows, Lineage 284px (Tree) and
+   316px (Graph) on six and seven. A row of chrome costs the same on every screen; the canvas is what
+   shrinks, so the rows are what had to go.
+
+   The row does not wrap, and that is load-bearing: a control that does not fit cannot fall to a second
+   line, so the only way to fit is to fold into a menu (see toolrow.tsx). It clips on the X axis so a long
+   row can never push the page sideways, and stays visible on the Y axis so a slicer or menu opened from
+   it still hangs below the row instead of being cut off at its edge. */
+.sem-toolrow {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 0 16px;
+  flex-wrap: nowrap;
+  overflow-x: clip;
+  overflow-y: visible;
+  border-bottom: 1px solid var(--sem-border);
+  color: var(--sem-fg);
+  font-size: 11px;
+}
+.sem-toolrow > * { flex: 0 0 auto; }
+.sem-toolrow-sep { width: 1px; height: 18px; background: var(--sem-border); margin: 0 2px; }
+.sem-toolrow-label { color: var(--sem-muted); font-size: 11px; }
+.sem-toolrow-badge { padding: 0 4px; border-radius: 4px; background: var(--sem-accent-soft); color: var(--sem-fg); font-size: 10px; }
+.sem-toolrow-end { margin-left: auto; }
+/* A text input on the row takes the dense control's height, so a row of buttons and a search box line up. */
+.sem-toolrow-input {
+  box-sizing: border-box;
+  height: var(--sem-control-h-sm);
+  padding: 0 8px;
+  border: 1px solid var(--sem-border);
+  border-radius: var(--sem-control-radius);
+  background: var(--sem-bg);
+  color: var(--sem-fg);
+  font-size: var(--sem-control-font-sm);
+  outline: none;
+}
+.sem-toolrow-input:focus-visible { border-color: var(--sem-accent); }
+
+.sem-rowmenu-pop {
+  position: fixed; z-index: 60;
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 168px; max-width: 320px; max-height: 60vh; overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--sem-border); border-radius: 8px;
+  background: var(--sem-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+}
+.sem-rowmenu-pop .sem-btn { justify-content: flex-start; width: 100%; }
+
+/* A chip is a note ON the picture, not another bar: surface tokens, a 1px border, 11px text. It never sits
+   where the canvas keeps its own controls — React Flow pins zoom to the bottom-left with a 15px margin and
+   26px buttons, so the start chip begins at 52px. */
+.sem-canvas-chip {
+  position: absolute; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 76px);
+  padding: 4px 8px;
+  border: 1px solid var(--sem-border); border-radius: 6px;
+  background: var(--sem-surface);
+  color: var(--sem-muted);
+  font-size: 11px; line-height: 1.5; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sem-canvas-chip b, .sem-canvas-chip strong { color: var(--sem-fg); font-weight: 600; }
+.sem-canvas-chip-start { left: 52px; bottom: calc(12px + var(--sem-canvas-inset, 0px)); }
+.sem-canvas-chip-end { right: 12px; bottom: calc(12px + var(--sem-canvas-inset, 0px)); }
+.sem-canvas-chip-top { left: 12px; top: 12px; }
+/* The honesty caveat is the one chip allowed to run to several lines: truncating a warning into a tooltip
+   would hide the very thing it exists to say. */
+.sem-canvas-chip-note { max-width: min(620px, calc(100% - 24px)); white-space: normal; }
+.sem-canvas-chip-warn { border-color: var(--sem-warn); color: var(--sem-warn); }
+.sem-canvas-chips { position: absolute; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.sem-canvas-chips-start { left: 52px; bottom: calc(12px + var(--sem-canvas-inset, 0px)); }
+.sem-canvas-chips-end { right: 12px; bottom: calc(12px + var(--sem-canvas-inset, 0px)); align-items: flex-end; }
+.sem-canvas-chips .sem-canvas-chip { position: static; max-width: 100%; }
+.sem-canvas-chip-bad { border-color: var(--sem-bad); color: var(--sem-bad); }

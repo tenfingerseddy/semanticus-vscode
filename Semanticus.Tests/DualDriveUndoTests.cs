@@ -24,7 +24,7 @@ namespace Semanticus.Tests
         public async Task InitializeAsync()
         {
             _sessions = new SessionManager();
-            _engine = new LocalEngine(_sessions);
+            _engine = new LocalEngine(_sessions, TestEntitlements.Pro);
             await _engine.OpenAsync(FindTestBim());
             _table = (await _engine.ListMeasuresAsync()).First().Table;   // a real table to hang objects on
         }

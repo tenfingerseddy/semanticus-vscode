@@ -131,7 +131,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Under_the_client_preset_an_agent_push_to_prod_is_denied_outright()
         {
-            AgentPolicyStore.SetPreset("client", "human", isPro: true);
+            AgentPolicyStore.SetPreset("client", "human");
             var rec = ConnectionRegistry.Remember("xmla", Endpoint, "DS");
             ConnectionRegistry.SetLabel(rec.Id, "prod", "human");
 

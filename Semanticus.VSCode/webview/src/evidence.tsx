@@ -409,7 +409,7 @@ function WhatMovedEvidence({ record, digest, rich, sessionId, onJump }: {
     deploy_live: 'Deployed to the service', save_model: 'Saved the model',
   };
   const opPlain = (op?: string) => (op ? OP_PLAIN[op] ?? op.replace(/_/g, ' ') : 'edit');
-  const actor = (o?: string) => (o === 'agent' ? 'AI Assistant' : o === 'system' ? 'System' : 'You');
+  const actor = (o?: string) => (o === 'agent' ? 'Your assistant' : o === 'system' ? 'System' : 'You');
   // 'measure:Sales/Total Cost' → 'Total Cost' (the raw ref stays in the raw-JSON expander).
   const friendly = (ref?: string) => {
     if (!ref) return 'formula';

@@ -289,18 +289,24 @@ namespace Semanticus.Tests
             });
         }
 
+        /// <summary>Workflows became a whole Pro feature on 2026-09-15, so the refusal no longer has to walk the call
+        /// graph to find an enforced callee. WHERE it happens is still the subject: at the entry, before a run is
+        /// allocated, so a refused start can never leave a half-built run behind on either engine.</summary>
         [Fact]
-        public async Task Public_call_entitles_the_enforced_callee_before_allocating_a_run()
+        public async Task Public_call_refuses_free_before_allocating_a_run()
         {
-            var (owner, _) = Make(new Free());
+            var (owner, ws) = Make(new Pro());
             await owner.SaveWorkflowAsync("public-paid-callee", Md(
                 "---", "schemaVersion: 2", "name: public-paid-callee", "title: Paid", "strictness: hard", "---",
                 "## Step 1: Ask", "Body.", "```yaml gate", "inputs:",
                 "  - name: answer", "    question: Answer?", "    required: required", "```"), "human");
             await owner.SaveWorkflowAsync("public-free-root", CallOnlyMd("public-free-root", "public-paid-callee"), "human");
-            var refused = await Record.ExceptionAsync(() => owner.StartWorkflowAsync("public-free-root", "human"));
+
+            using var free = new LocalEngine(new SessionManager(), new Free(), ws);
+            var refused = await Record.ExceptionAsync(() => free.StartWorkflowAsync("public-free-root", "human"));
             Assert.NotNull(refused);
             Assert.Contains("Pro", refused.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, free.ActiveWorkflowRunsForTest);
             Assert.Equal(0, owner.ActiveWorkflowRunsForTest);
         }
 
@@ -671,7 +677,8 @@ namespace Semanticus.Tests
                 + "\"modelName\":\"Invented Sales Model\",\"modelFingerprint\":\"fixture-fingerprint\",\"steps\":["
                 + "{\"StepId\":\"step-1\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
                 + "{\"StepId\":\"step-2\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":null,\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
-                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
+                + "{\"StepId\":\"step-3\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null},"
+                + "{\"StepId\":\"step-4\",\"Status\":\"passed\",\"Note\":null,\"EffectiveStrictness\":\"hard\",\"answers\":[],\"verify\":[],\"verifyHistory\":null}],"
                 + "\"witnessLocks\":null,\"witnessRevisions\":null,\"partitionRevisions\":null,\"anchorLocks\":null,\"anchorRevisions\":null}", json);
         }
 

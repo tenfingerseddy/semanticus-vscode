@@ -40,8 +40,8 @@ namespace Semanticus.Tests
                 var admission = await engine.CheckWorkflowAsync("governed-rename");
                 Assert.True(admission.Ok, string.Join(" | ", admission.Findings.Select(x => x.Message)));
                 var def = await engine.GetWorkflowAsync("governed-rename");
-                Assert.Equal("Safe rename", def.Title);
-                Assert.Equal(6, def.Steps.Length);
+                Assert.Equal("Rename with impact review", def.Title);
+                Assert.Equal(5, def.Steps.Length);
                 Assert.Contains(def.Steps.SelectMany(x => x.Gate?.Verify ?? Array.Empty<VerifySpec>()), x => x.Kind == "impact_assessment" && x.Intent == "rename");
 
                 var measures = await engine.ListMeasuresAsync();
@@ -71,16 +71,15 @@ namespace Semanticus.Tests
 
                 run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-3",
                     "{\"baselineCapture\":{\"declined\":true,\"reason\":\"No live query model is connected\"}}", "human");
-                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-4",
-                    "{\"externalBindingsReviewed\":\"No M or external bindings in the declared model-only scope\",\"renameDecision\":\"Proceed\"}", "human");
-
+                // Step 4 now carries the decision AND the apply, so the plan item is approved and applied
+                // before the submission whose gate proves plan_item_applied and tests_replay.
                 await engine.SetPlanItemAsync(item.Id, null, approved: true, "human");
                 var applied = await engine.ApplyPlanAsync(new[] { item.Id }, "human");
                 Assert.Equal(1, applied.AppliedCount);
-                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-5",
-                    "{\"liveSyncConfirmed\":\"No baseline was captured\",\"replayInterview\":{\"declined\":true,\"reason\":\"No current-model pack was scheduled\"}}", "human");
-                Assert.Equal("passed", run.Steps[4].VerifyResults.Single(x => x.Kind == "plan_item_applied").Status);
-                Assert.Equal("passed", run.Steps[4].VerifyResults.Single(x => x.Kind == "tests_replay").Status);   // this model decides integrity checks offline (decided>0); the all-NotVerifiable false-safe is guarded separately
+                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-4",
+                    "{\"externalBindingsReviewed\":\"No M or external bindings in the declared model-only scope\",\"renameDecision\":\"Proceed\"}", "human");
+                Assert.Equal("passed", run.Steps[3].VerifyResults.Single(x => x.Kind == "plan_item_applied").Status);
+                Assert.Equal("passed", run.Steps[3].VerifyResults.Single(x => x.Kind == "tests_replay").Status);   // this model decides integrity checks offline (decided>0); the all-NotVerifiable false-safe is guarded separately
 
                 if (dependant != null)
                 {
@@ -89,14 +88,13 @@ namespace Semanticus.Tests
                     Assert.DoesNotContain("[" + target.Name + "]", expression);
                 }
 
-                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-6",
-                    "{\"certificateDelivery\":\"Save with model\"}", "human");
+                run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-5", "{}", "human");
                 Assert.Equal("completed", run.Status);
                 var artifact = await engine.ExportWorkflowEvidenceAsync(run.RunId);
                 Assert.Null(artifact.Error);
                 Assert.Contains("plan_item_applied", artifact.Json);
                 Assert.Contains("tests_replay", artifact.Json);
-                Assert.Contains("Safe rename", artifact.Html);
+                Assert.Contains("Rename with impact review", artifact.Html);
             }
             finally { Directory.Delete(Path.GetDirectoryName(bim), true); }
         }

@@ -77,7 +77,7 @@ namespace Semanticus.Tests
             var root = Scratch("d031-");
             var bim = Path.Combine(root, "model.bim");
             File.Copy(TestModels.FindBim(), bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             var rpc = new EngineRpcTarget(engine);
             try
             {
@@ -114,7 +114,7 @@ namespace Semanticus.Tests
         {
             var root = Scratch("d024-");
             var tmdl = Path.Combine(root, "model");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());
@@ -140,7 +140,7 @@ namespace Semanticus.Tests
             var bim = Path.Combine(root, "model.bim");
             File.Copy(TestModels.FindBim(), bim);
             var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -230,7 +230,7 @@ Finish up.
             Git(root, "add", "--", "model.bim");
             Git(root, "commit", "-q", "-m", "initial");
             Git(root, "branch", "other");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -296,7 +296,7 @@ Finish up.
             InitRepo(root);
             Git(root, "add", "--", "model.bim");
             Git(root, "commit", "-q", "-m", "initial");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -322,7 +322,7 @@ Finish up.
             Git(root, "add", "--", "model.bim");
             Git(root, "commit", "-q", "-m", "initial");
             var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -356,7 +356,7 @@ Finish up.
             InitRepo(root);
             Git(root, "add", "--", "model.bim");
             Git(root, "commit", "-q", "-m", "initial");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -391,7 +391,7 @@ Finish up.
             var sem = Path.Combine(proj, "Model.SemanticModel");
             var def = Path.Combine(sem, "definition");
             Directory.CreateDirectory(proj);
-            using (var seed = new LocalEngine(new SessionManager()))
+            using (var seed = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
             {
                 await seed.OpenAsync(bim);
                 await seed.SaveAsync(def, "TMDL");
@@ -411,7 +411,7 @@ Finish up.
             // layout, definition.pbism, a hand-kept note) was invisible. The model folder is the unit the save
             // replaces, so the whole tree is the unit the guard must watch.
             var root = Scratch("d031b-");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 var (pbip, def) = await MakePbipAsync(root);
@@ -441,7 +441,7 @@ Finish up.
             // mention. The save writes a fresh temp tree and swaps it over the target, so anything the serializer
             // did not write disappears with the old tree. Only the model definition is the engine's to rewrite.
             var root = Scratch("d228-");
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 var (pbip, def) = await MakePbipAsync(root);
@@ -478,7 +478,7 @@ Finish up.
             var folder = Path.Combine(root, "model");
             var bim = Path.Combine(root, "seed.bim");
             File.Copy(TestModels.FindBim(), bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -512,7 +512,7 @@ Finish up.
             var folder = Path.Combine(root, format == "TMDL" ? "tmdl-model" : "json-model");
             var bim = Path.Combine(root, "seed.bim");
             File.Copy(TestModels.FindBim(), bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -563,7 +563,7 @@ Finish up.
                 {
                     var skipBim = Path.Combine(skipRoot, "model.bim");
                     File.Copy(TestModels.FindBim(), skipBim);
-                    using var skipEngine = new LocalEngine(new SessionManager());
+                    using var skipEngine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
                     var before = File.ReadAllBytes(skipBim);
                     await skipEngine.OpenAsync(skipBim);
                     var m = (await skipEngine.ListMeasuresAsync()).First();
@@ -579,7 +579,7 @@ Finish up.
             var bim = Path.Combine(root, "model.bim");
             File.Copy(TestModels.FindBim(), bim);
             var original = File.ReadAllBytes(bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -610,7 +610,7 @@ Finish up.
             var root = Scratch("save01-");
             var bim = Path.Combine(root, "model.bim");
             File.Copy(TestModels.FindBim(), bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);
@@ -619,7 +619,7 @@ Finish up.
                 await engine.SaveAsync(null, "BIM");
                 Assert.False((await engine.SessionInfoAsync()).HasUnsavedChanges);
 
-                using var reopened = new LocalEngine(new SessionManager());
+                using var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
                 await reopened.OpenAsync(bim);
                 Assert.False((await reopened.SessionInfoAsync()).HasUnsavedChanges);
                 Assert.Equal("6 * 7", (await reopened.ListMeasuresAsync()).First(m => m.Ref == measure.Ref).Expression);
@@ -647,7 +647,7 @@ Finish up.
             {
                 foreach (var entry in new[] { pbip, sem, proj })
                 {
-                    using var engine = new LocalEngine(new SessionManager());
+                    using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
                     var opened = await engine.OpenAsync(entry);
                     Assert.False(string.IsNullOrEmpty(opened.SessionId), entry);
                     // Whichever door was used, the model that comes up is the project's own model.
@@ -669,7 +669,7 @@ Finish up.
             File.Copy(TestModels.FindBim(), bim);
             var folder = Path.Combine(root, "tmdl");
             var (pbip, def) = await MakePbipAsync(root);
-            using (var seed = new LocalEngine(new SessionManager()))
+            using (var seed = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
             {
                 await seed.OpenAsync(bim);
                 await seed.SaveAsync(folder, "TMDL");
@@ -678,7 +678,7 @@ Finish up.
             {
                 foreach (var path in new[] { bim, folder, pbip, def })
                 {
-                    using var engine = new LocalEngine(new SessionManager());
+                    using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
                     var rpc = new EngineRpcTarget(engine);
                     await engine.OpenAsync(path);
 
@@ -716,7 +716,7 @@ Finish up.
             var root = Scratch("d240b-");
             var bim = Path.Combine(root, "model.bim");
             File.Copy(TestModels.FindBim(), bim);
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(bim);

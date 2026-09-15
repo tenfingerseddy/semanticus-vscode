@@ -11,7 +11,7 @@ using Xunit;
 namespace Semanticus.Tests
 {
     /// <summary>
-    /// The Verified Edits AUDIT LAYER + ACCOUNTABLE CHECKPOINT — the Pro "referee memory". The contract these tests
+    /// The Verified Edits AUDIT LAYER + ACCOUNTABLE CHECKPOINT, the "referee memory", free for every tier. The contract these tests
     /// pin down: a verified op leaves an APPEND-ONLY, hash-chained record that survives undo (the audit write is NON-
     /// undoable, so unlike a waiver it can't be rolled back); the chain self-checks and fails LOUD on tampering / a
     /// corrupt blob; the trail records ONLY real evidence (mode-off / empty / unproven-offline record nothing); and the
@@ -429,16 +429,24 @@ namespace Semanticus.Tests
         }
 
         // ============================================================================================================
-        // F. Export — Pro-gated; renders both markdown (human) and json (CI, round-trippable).
+        // F. Export: free for every tier; renders both markdown (human) and json (CI, round-trippable).
         // ============================================================================================================
 
+        /// <summary>Export used to refuse on free. The free tier now gets the trail WITH its content, not an empty
+        /// shell: Verified Mode is free, so a free edit records, and the record renders.</summary>
         [Fact]
-        public async Task Export_is_pro_gated()
+        public async Task Export_is_free_and_renders_a_free_tier_edit()
         {
             var (engine, _) = await OpenAsync(pro: false);
             using (engine)
             {
-                await Assert.ThrowsAsync<EntitlementException>(() => engine.ExportVerifiedEditsAsync("md"));
+                var mref = await FirstMeasureRefAsync(engine);
+                await engine.SetVerifiedModeAsync(true, "human");
+                await engine.SetDaxAsync(mref, "1 + 1", "agent");   // >= 1 record to render
+
+                var md = await engine.ExportVerifiedEditsAsync("md");
+                Assert.Contains("Verified Edits", md);
+                Assert.Contains("set_dax", md);
             }
         }
 

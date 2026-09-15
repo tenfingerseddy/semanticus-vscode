@@ -170,7 +170,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
       <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap text-[12px]" style={{ borderColor: 'var(--sem-border)' }}>
         <div>
           <div className="font-semibold">Model Spec</div>
-          <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>One shared draft for you and AI Assistant. Review it here before anything is built.</div>
+          <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>One shared draft for you and your assistant. Review it here before anything is built.</div>
         </div>
         {snap?.spec && <Chip>{SOURCE_LABEL[snap.source] ?? snap.source} · v{snap.version}</Chip>}
         {dirty && <span className="text-[11px] font-medium" style={{ color: 'var(--sem-warn)' }} title="You have unsaved changes to the spec">● Unsaved changes</span>}
@@ -245,7 +245,7 @@ export function SpecView({ session }: { session?: { modelName?: string; tables?:
             <div className="flex items-center gap-2">
               <Btn primary onClick={applyJson} busy={busy === 'apply'}>Apply JSON</Btn>
               <Btn onClick={() => setEditingJson(false)}>Cancel</Btn>
-              <span style={{ color: 'var(--sem-muted)' }} className="text-[11px]">Edit the spec as JSON, or let your AI Assistant refine it through the shared connection. Changes appear here in the VS Code view, and the AI Assistant sees them on its next call.</span>
+              <span style={{ color: 'var(--sem-muted)' }} className="text-[11px]">Edit the spec as JSON, or let your assistant refine it through the shared connection. Changes appear here in the VS Code view, and your assistant sees them on its next call.</span>
             </div>
           </div>
         ) : !spec ? (
@@ -277,7 +277,7 @@ function SpecEditor({ spec, counts, edit }: { spec: ModelSpec; counts: ReturnTyp
     .filter((x) => !tableNames.includes(x.m.table)), [spec, tableNames]);
 
   return (
-    <div className="p-4 flex flex-col gap-4">
+    <div className="sem-tool-page flex flex-col gap-4">
       {/* shared native-autocomplete sources for the format + display-folder inputs */}
       <datalist id="spec-formats">{FORMAT_PRESETS.filter((p) => p.value).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</datalist>
       <datalist id="spec-folders">{folderSuggestions.map((f) => <option key={f} value={f} />)}</datalist>
@@ -794,15 +794,13 @@ function Toggle({ on, onToggle, title, children }: { on: boolean; onToggle: (v: 
 }
 function IconBtn({ onClick, title, children }: { onClick: () => void; title?: string; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={title} className="text-[12px] px-1.5 rounded leading-none"
-      style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>{children}</button>
+    <button onClick={onClick} title={title} className="sem-btn sem-btn-sm">{children}</button>
   );
 }
 function Btn({ children, onClick, primary, busy, disabled, title }: { children: React.ReactNode; onClick: () => void; primary?: boolean; busy?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={busy || disabled} title={title}
-      className="px-2.5 py-1 rounded text-[12px] font-medium disabled:opacity-50"
-      style={{ background: primary ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: primary ? '#000' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {busy ? '…' : children}
     </button>
   );

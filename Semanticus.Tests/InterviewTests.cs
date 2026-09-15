@@ -11,8 +11,8 @@ namespace Semanticus.Tests
     /// <summary>
     /// The Model Interview (docs/product-innovation-brainstorm.md §1), offline. Pins:
     /// (1) the STORE kernel — delta replay (add → record-run → delete ordering), corrupt-line skip-and-count,
-    ///     per-tier fail-loud add validation, and the free/Pro gate (add = Pro with the free alternative named;
-    ///     list/run/delete free);
+    ///     per-tier fail-loud add validation, and the tier line (Kane 2026-09-15: the whole interview is FREE,
+    ///     add included, so nothing here is gated);
     /// (2) the SCORING kernel — every tier's outcome mapping including the HONESTY DOWNGRADES (offline / erroring
     ///     query / truncated / zero rows / missing oracle are all Unverified — never a fabricated pass and never a
     ///     fabricated "confidently wrong");
@@ -199,27 +199,28 @@ namespace Semanticus.Tests
             finally { Cleanup(ws, home); }
         }
 
-        // ---- free/Pro gate (Kane locked 2026-07-07: persistence = Pro; one-off run + list + delete = free) ----
+        // ---- the tier line (Kane, 2026-09-15: the whole interview is free, persistence included) ----
 
+        // The add gate is gone. ProGateRemovalTests proves the add no longer throws; this proves the free tier
+        // gets the whole loop: the added question PERSISTS and lists, while an inline one-off still records
+        // nothing (that has always been about the call, not about the tier).
         [Fact]
-        public async Task Add_is_pro_gated_with_the_free_alternative_named_run_and_list_stay_free()
+        public async Task Free_tier_persists_an_added_question_and_an_inline_run_still_records_nothing()
         {
             var (e, ws, home) = await MakeWs(pro: false);
             try
             {
-                var ex = await Assert.ThrowsAsync<EntitlementException>(() => AddValue(e));
-                Assert.Contains("run_interview", ex.Message);   // the free alternative is named, not a dead end
+                var q = await AddValue(e);
+                Assert.StartsWith("iq-", q.Id);
 
-                // The free paths all work: list (empty + guidance), one-off inline run, and the run is NOT persisted.
                 var listed = await e.ListInterviewQuestionsAsync(null);
-                Assert.Empty(listed.Questions);
-                Assert.Contains("run_interview", listed.Note);
+                Assert.Single(listed.Questions, x => x.Id == q.Id);   // the free add really landed in the store
 
                 var r = await e.RunInterviewAsync(null,
                     "{\"question\":\"What was churn in 2024?\",\"tier\":\"refusal\"}", abstained: true, attemptDax: null, origin: "agent");
                 Assert.Equal("Refused", r.Outcome);
                 Assert.False(r.Recorded);                        // inline one-offs persist nothing
-                Assert.Empty((await e.ListInterviewQuestionsAsync(null)).Questions);
+                Assert.Single((await e.ListInterviewQuestionsAsync(null)).Questions);
             }
             finally { Cleanup(ws, home); }
         }
@@ -505,8 +506,11 @@ namespace Semanticus.Tests
             Assert.Null(InterviewFixMap.Resolve("value", "Unverified").RuleId);
         }
 
+        // The Model interview left Tests in 1.2.0 (Kane, 2026-09-15). A run used to replay every saved value
+        // question and write its outcome back here, so a Tests run quietly changed a second record. The saved
+        // pack and its own operations stay exactly where a person put them; a Tests run does not touch them.
         [Fact]
-        public async Task Tests_replay_saved_questions_as_current_evidence_without_changing_health_or_live_history()
+        public async Task Tests_do_not_replay_or_report_saved_questions()
         {
             var (e, ws, home) = await MakeWs();
             try
@@ -519,27 +523,14 @@ namespace Semanticus.Tests
 
                 Assert.Equal(baseline.Health.Grade, run.Health.Grade);
                 Assert.Equal(baseline.Health.CoveragePct, run.Health.CoveragePct);
-                Assert.Equal(baseline.Health.Passed, run.Health.Passed);
-                Assert.Equal(baseline.Health.Failed, run.Health.Failed);
-                Assert.Equal(baseline.Health.Suspect, run.Health.Suspect);
-                Assert.Equal(baseline.Health.NotVerifiable, run.Health.NotVerifiable);
+                Assert.Equal(baseline.Health.Checked, run.Health.Checked);
 
-                var replayed = Assert.Single(run.Interview, x => x.QuestionId == value.Id);
-                Assert.Equal("replayed", replayed.ReplayStatus);
-                Assert.Equal("Unverified", replayed.Outcome);
-                Assert.Null(replayed.PreviousOutcome);
-                Assert.False(replayed.Changed);
-                Assert.True(DateTime.TryParse(replayed.When, out _));
+                Assert.DoesNotContain("\"interview\"", TestSuiteStore.Serialize(run), StringComparison.OrdinalIgnoreCase);
 
-                var chatOnly = Assert.Single(run.Interview, x => x.QuestionId == refusal.Id);
-                Assert.Equal("chat-only", chatOnly.ReplayStatus);
-                Assert.Null(chatOnly.Outcome);
-                Assert.Null(chatOnly.When);
-                Assert.Contains("assistant response", chatOnly.Detail);
-                Assert.Contains("evidence only", run.InterviewNote);
-                Assert.Contains("prior live outcomes were not overwritten", run.InterviewNote);
-
+                // Both questions are still saved, and neither carries an outcome the Tests run invented.
                 var stored = await e.ListInterviewQuestionsAsync("project");
+                Assert.Contains(stored.Questions, q => q.Id == value.Id);
+                Assert.Contains(stored.Questions, q => q.Id == refusal.Id);
                 Assert.All(stored.Questions, q => Assert.Null(q.LastRun));
             }
             finally { Cleanup(ws, home); }

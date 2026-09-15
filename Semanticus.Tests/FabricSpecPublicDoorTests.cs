@@ -21,7 +21,7 @@ namespace Semanticus.Tests
         public async Task Autogenerate_spec_from_fabric_public_doors_fail_before_auth_and_preserve_the_spec()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new Free());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var rpc = new EngineRpcTarget(engine);
             var baseline = await engine.SetSpecAsync(
                 "{\"name\":\"Last good\",\"storageMode\":\"import\",\"tables\":[]}", "human");

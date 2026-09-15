@@ -80,6 +80,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowLayout> GetWorkflowLayoutAsync(string name)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var sidecar = SidecarDir();
             await context.WorkflowGate.WaitAsync();
@@ -94,6 +95,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowLayout> SaveWorkflowLayoutAsync(string name, Dictionary<string, WorkflowPosition> positions, string expectedRevision = null)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             // Save As can move SourcePath without replacing the context while this operation is queued.
             var sidecar = SidecarDir();

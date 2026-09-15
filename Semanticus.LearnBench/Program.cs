@@ -25,11 +25,11 @@ namespace Semanticus.LearnBench
     internal static class Program
     {
         private const int EvalModels = 6;
-        private const string Task = "optimize-dax";              // its step-1 gate REQUIRES target + originalDax
+        private const string Task = "optimize-dax";              // its step-1 gate REQUIRES target, goal, originalDax and equivalenceGrid; speedBaselineMs may be declined
         private const string HintKey = "optimize-dax";           // the post-mortem's match key the policy keys on
         private const string Query = "optimize a slow measure";
         // What a memory-guided agent supplies (non-empty required inputs) vs the naive empty submit.
-        private const string Correct = "{\"target\":\"measure:Sales/Sales Amount\",\"originalDax\":\"CALCULATE(SUM(Sales[SalesAmount]))\",\"equivalenceGrid\":\"Date[Year]\"}";
+        private const string Correct = "{\"target\":\"measure:Sales/Sales Amount\",\"goal\":\"READABILITY\",\"originalDax\":\"CALCULATE(SUM(Sales[SalesAmount]))\",\"equivalenceGrid\":\"'Date'[Year]\",\"speedBaselineMs\":{\"declined\":true,\"reason\":\"readability rewrite; no live timing\"}}";
         private const string Naive = "{}";
 
         private static async Task<int> Main()
@@ -107,7 +107,7 @@ namespace Semanticus.LearnBench
 
                 // Post-mortem → approved (autoApprove defaults true for single-user local), fingerprint-scoped.
                 var ins = await McpTools.AddInsight(e,
-                    "optimize-dax step-1 needs the pre-rewrite baseline BEFORE you submit: get_dax for originalDax and name the target measure. An empty submit fails the required-input gate.",
+                    "optimize-dax step-1 needs the pre-rewrite baseline BEFORE you submit: get_dax for originalDax, name the target measure, choose the goal (SPEED or READABILITY) and give the equivalence grid; decline speedBaselineMs for a readability rewrite. An empty submit fails the required-input gate.",
                     new[] { HintKey, "benchmark_delta", "missing-baseline" }, "post-mortem", "project", fingerprintScoped: true);
                 if (!string.Equals(ins.Status, "approved", StringComparison.Ordinal))
                     await McpTools.ApproveInsight(e, ins.Id);

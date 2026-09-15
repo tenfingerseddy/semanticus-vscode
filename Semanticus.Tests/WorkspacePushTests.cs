@@ -13,7 +13,7 @@ namespace Semanticus.Tests
     /// <summary>
     /// apply_diff to a WORKSPACE (published-model) target — the ALM-Toolkit-style selective push. The live XMLA
     /// legs (snapshot + SaveChanges) are behind test seams (WorkspaceSnapshotHook / WorkspacePushHook), so the
-    /// merge / validate / drift-guard / entitlement-gate / audit legs are all exercised OFFLINE — no real endpoint,
+    /// merge / validate / drift-guard / audit legs are all exercised OFFLINE, with no real endpoint,
     /// no live write. The actual live delete removal is pinned separately against LiveDeploy.RemoveExplicit (in-memory
     /// TOM), and the whole-model deploy_live "absence never deletes" guarantee is pinned against SyncModels.
     /// </summary>
@@ -102,37 +102,46 @@ namespace Semanticus.Tests
             finally { File.Delete(src); }
         }
 
-        // ---- (b) multi-object commit without Pro is refused by the entitlement gate (before any live write) ----
+        // ---- (b) a multi-object commit is free (Kane retired the >1 push gate on 2026-09-15) ----
+        // The selective push is free at every size now, so the whole point of this pair is that the size of the
+        // push changes nothing: two objects reach live exactly like one.
         [Fact]
-        public async Task Multi_object_commit_is_refused_on_free()
+        public async Task Multi_object_commit_is_free()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(Db(m => { Measure(m, "A", "2", "tag-a"); Measure(m, "B", "2", "tag-b"); }));
             try
             {
                 var pushed = false;
+                var refs = new[] { "measure:Sales/A", "measure:Sales/B" };
                 engine.WorkspaceSnapshotHook = () => Task.FromResult(Db(m => { Measure(m, "A", "1", "tag-a"); Measure(m, "B", "1", "tag-b"); }));
-                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(2); };
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(2, synced: refs); };
 
-                await Assert.ThrowsAsync<EntitlementException>(() =>
-                    engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: true, "human"));
-                Assert.False(pushed);   // the refusal happened before any live write
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: true, "human");
+                Assert.True(r.Applied, r.Error);
+                Assert.True(pushed);
+                Assert.Equal(2, r.Count);
             }
             finally { File.Delete(src); }
         }
 
-        // Deletes gate the SAME as any object: two Delete refs on free is refused too.
+        // Deletes go the SAME way as any object: two Delete refs commit on free too.
         [Fact]
-        public async Task Multi_delete_commit_is_refused_on_free()
+        public async Task Multi_delete_commit_is_free()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(Db());   // source has NO measures → A's two measures read as Delete
             try
             {
+                string[] pushedDeletes = null;
                 engine.WorkspaceSnapshotHook = () => Task.FromResult(Db(m => { Measure(m, "A", "1", "tag-a"); Measure(m, "B", "1", "tag-b"); }));
-                engine.WorkspacePushHook = (_, __) => OkReport(2);
-                await Assert.ThrowsAsync<EntitlementException>(() =>
-                    engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: true, "human"));
+                engine.WorkspacePushHook = (_, dels) => { pushedDeletes = dels?.Select(d => d.Ref).ToArray() ?? Array.Empty<string>(); return OkReport(2, pushedDeletes); };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(),
+                    new[] { "measure:Sales/A", "measure:Sales/B" }, commit: true, "human");
+                Assert.True(r.Applied, r.Error);
+                Assert.Contains("measure:Sales/A", pushedDeletes);
+                Assert.Contains("measure:Sales/B", pushedDeletes);
             }
             finally { File.Delete(src); }
         }
@@ -1130,7 +1139,7 @@ namespace Semanticus.Tests
             // snapshot B, where the old r still lives -> the merged Create collides on the DUPLICATE NAME and lands in
             // outcome.Failed. Without the name coupling the Delete would be unlinked and commit alone, leaving the live model
             // with NO relationship. With it, the staging guard refuses the Delete and aborts the whole push (nothing written).
-            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));   // Create + Delete = multi-object -> Pro
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));   // tier is irrelevant to this guard; Pro kept so a future tier change can't mask the staging refusal
             var src = WriteBim(RepointDb("CustomerKey", "CustomerV2", "r"));
             try
             {

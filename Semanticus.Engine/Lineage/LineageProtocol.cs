@@ -44,6 +44,11 @@ namespace Semanticus.Engine
         public string Kind { get; set; }
         public int Depth { get; set; }          // 1 = directly references the root; deeper = transitive
         public string Via { get; set; }         // dax | relationship | hierarchy | sortBy
+        /// <summary>At depth &gt; 1, the NAME of the object this one was reached through, so a surface can say
+        /// "via Margin" rather than "depth 2". Null at depth 1 (it uses the root directly).</summary>
+        public string ViaName { get; set; }
+        /// <summary>The table this object belongs to, when it has one.</summary>
+        public string Table { get; set; }
     }
 
     /// <summary>Forward impact — everything that breaks if the root object changes or is removed.</summary>

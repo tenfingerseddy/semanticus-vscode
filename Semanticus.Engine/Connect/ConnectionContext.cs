@@ -158,7 +158,7 @@ namespace Semanticus.Engine
             return FromRecord(record, new ConnectionContextModel
             {
                 Available = true,
-                ModelName = record?.ModelName ?? live.Database,
+                ModelName = NameOrWorkspace(record?.ModelName ?? live.Database, live.DataSource),
                 Source = live.DataSource,
                 Kind = record?.Kind ?? live.Kind,
                 Endpoint = live.DataSource,
@@ -186,7 +186,7 @@ namespace Semanticus.Engine
             return FromRecord(publish, new ConnectionContextModel
             {
                 Available = true,
-                ModelName = publish.ModelName ?? publish.Database,
+                ModelName = NameOrWorkspace(publish.ModelName ?? publish.Database, publish.Endpoint),
                 Source = publish.Endpoint,
                 Kind = publish.Kind,
                 Endpoint = publish.Endpoint,
@@ -194,6 +194,14 @@ namespace Semanticus.Engine
                 Live = true
             });
         }
+
+        // A WORKSPACE-level target has no dataset, so both sides above used to hand out an empty name and every surface
+        // then showed the endpoint's encoded last segment ("Contoso%20Fabric%20Monitoring", a placeholder for the real
+        // workspace name the public mirror refuses to carry). The decoded workspace is
+        // the one honest name such a target has. Null when even that is unknown — a caller must be able to tell "no
+        // name" from a name, and inventing one from a local data source would be worse than the defect.
+        private static string NameOrWorkspace(string name, string endpoint) =>
+            string.IsNullOrWhiteSpace(name) ? ConnectionRegistry.WorkspaceNameFromEndpoint(endpoint) : name;
 
         private static ConnectionContextModel FromRecord(ModelConnectionRecord record, ConnectionContextModel side)
         {

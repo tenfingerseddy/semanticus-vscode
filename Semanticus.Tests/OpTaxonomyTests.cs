@@ -29,14 +29,16 @@ namespace Semanticus.Tests
             "Set the rules of the work", "Look things up",
         };
 
-        // T215 placements plus T241/T242/T243 document, layout and upgrade operations on the workflow shelf.
-        // 20+38+93+15+24+14+36+32+35+6 = 313.
+        // T215 placements plus the workflow document, preview, layout and upgrade operations.
+        // 25+41+93+15+30+14+36+32+36+6 = 328 (the Tests shelf took get_test_run, record_test_run and get_unmatched_rows;
+        // the Reports shelf took list_report_scope, set_report_scope and check_reports with the one report scope;
+        // Connections took list_sql_source_usage, the shared free projection the Pro Tests feature made necessary).
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
         {
-            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 20 },
+            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 25 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 7, ["Reports and what uses this model"] = 7, ["Speed and size"] = 7,
+                ["Measures, DAX and queries"] = 7, ["Reports and what uses this model"] = 10, ["Speed and size"] = 7,
                 ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 5,
                 ["Relationships and the diagram"] = 4, ["Tests, numbers and evidence"] = 3,
             },
@@ -47,14 +49,14 @@ namespace Semanticus.Tests
                 ["The model spec"] = 8, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
             },
             ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 15 },
-            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 24 },
+            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 30 },
             ["Track versions and compare"] = new Dictionary<string, int> { ["Versions and history"] = 14 },
             ["Ship it out"] = new Dictionary<string, int>
             {
                 ["Publishing and deployment"] = 24, ["Who can see what"] = 8, ["The model write-up"] = 4,
             },
             ["Teach the AI about this model"] = new Dictionary<string, int> { ["Teach the AI"] = 32 },
-            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 35 },
+            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 36 },
             ["Look things up"] = new Dictionary<string, int> { ["Reference lists and instruction sheets"] = 6 },
         };
 
@@ -114,8 +116,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(313, catalog.Length);
-            Assert.Equal(313, OpTaxonomy.Count);
+            Assert.Equal(328, catalog.Length);
+            Assert.Equal(328, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -248,7 +250,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(313, cat.Length);
+                Assert.Equal(328, cat.Length);
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

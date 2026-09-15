@@ -209,7 +209,7 @@ export function CustomRulesPanel({ kind, onChanged }: { kind: Kind; onChanged?: 
 
       {open && !form && (
         rules.length === 0
-          ? <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>None yet. Start from a template with New rule, or ask the AI Assistant to author one for you.</div>
+          ? <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>None yet. Start from a template with New rule, or ask your assistant to author one for you.</div>
           : (
             <div className="mt-3 flex flex-col gap-1.5">
               {rules.map((r) => (
@@ -300,7 +300,7 @@ export function CustomRulesPanel({ kind, onChanged }: { kind: Kind; onChanged?: 
               <Field label="How it gets fixed" hint="Advisory: who acts on a finding">
                 <select className="ra-in" value={d.fixKind} onChange={(e) => setDraft({ fixKind: e.target.value })}>
                   <option value="None">Just report it</option>
-                  <option value="AiContent">The AI Assistant writes the fix</option>
+                  <option value="AiContent">Your assistant writes the fix</option>
                   <option value="Proposal">A person reviews it</option>
                 </select>
               </Field>
@@ -340,8 +340,8 @@ export function CustomRulesPanel({ kind, onChanged }: { kind: Kind; onChanged?: 
             </Btn>
             <Btn onClick={closeForm}>Cancel</Btn>
             <span className="ml-auto" />
-            <Btn onClick={() => void askAssistant()} title="Copies a ready-to-paste prompt. Paste it to the AI Assistant and it will draft, test and save the rule with you.">
-              {copied ? 'Copied ✓' : 'Ask the AI Assistant for help'}
+            <Btn onClick={() => void askAssistant()} title="Copies a ready-to-paste prompt. Paste it to your assistant and it will draft, test and save the rule with you.">
+              {copied ? 'Copied ✓' : 'Ask your assistant for help'}
             </Btn>
           </div>
         </div>
@@ -364,8 +364,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function Btn({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {children}
     </button>
   );
@@ -373,8 +372,7 @@ function Btn({ children, onClick, primary, disabled, title }: { children: React.
 function MiniBtn({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm">
       {children}
     </button>
   );

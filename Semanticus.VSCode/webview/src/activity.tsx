@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { onActivity, type ActivityEvent } from './bridge';
+import { onActivity, runHostCommand, type ActivityEvent } from './bridge';
 
 export type { ActivityEvent };
 
@@ -104,28 +104,100 @@ export function useClaudeReflection(kind: string, apply: (e: ActivityEvent) => v
   }, [kind, e?.seq, p?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-// Header indicator + deep-link feed: a pulsing AI Assistant chip showing the latest op; click to drop a feed of
-// recent runs, each of which opens its tab. A pending permission keeps the chip visible even before the first run.
+/** One row of the chip's menu. `note` is the right-hand text: a count, a state, nothing. */
+interface ChipItem { id: string; label: string; note?: string; title?: string; run: () => void; }
+
+// Header chip + its menu: the assistant's own corner of the header. Kane retired the gear that sat beside
+// Connections (2026-09-14) because it named nothing and doubled up with the tabs, so assistant permissions
+// live here now, beside the live feed and the one command that wires the assistant up in the first place.
+// The chip no longer hides itself before the first run: it owns Permissions and Connect Claude Code, and a
+// person who has not connected yet is exactly the person who needs both.
 export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApprovalId }: { onOpen: (tab: string, approvalId?: string) => void; pendingApprovalCount?: number; firstPendingApprovalId?: string }) {
   const { feed, pin } = useActivity();
   const [open, setOpen] = useState(false);
+  // The menu is the first thing the chip opens; the live feed is one pick in, where it used to be the whole popover.
+  const [view, setView] = useState<'menu' | 'feed'>('menu');
+  const [highlight, setHighlight] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
     window.addEventListener('mousedown', close);
     return () => window.removeEventListener('mousedown', close);
   }, [open]);
-  if (feed.length === 0 && pendingApprovalCount === 0) return null;
+  useEffect(() => { if (open) { setView('menu'); setHighlight(0); } }, [open]);
+  // Focus follows whichever surface is mounted. The feed REPLACES the menu, so the menu node is already gone by
+  // the time this runs after a pick: focusing it there put the ring on an unmounting node and it fell to the
+  // document, which left the feed open with no keyboard way out (Astra finding 4).
+  useEffect(() => {
+    if (!open) return;
+    if (view === 'feed') { feedRef.current?.focus(); return; }
+    if (highlight >= 0) itemRefs.current[highlight]?.focus(); else menuRef.current?.focus();
+  }, [open, view, highlight]);
+  const closeAndReturnFocus = () => { setOpen(false); chipRef.current?.focus(); };
+
   const latest = feed[0];
   const approvalLabel = `${pendingApprovalCount} permission${pendingApprovalCount === 1 ? '' : 's'} waiting for approval. Open Permissions.`;
+  // What the webview can actually PROVE about the assistant. Activity events and approval requests both arrive
+  // only through the MCP door, so either one is proof it is wired to this session. Nothing in the webview can see
+  // the folder's .mcp.json, so the un-proven side says so in the tooltip rather than claiming a checked negative.
+  const assistantSeen = feed.length > 0 || pendingApprovalCount > 0;
+  const assistantState = assistantSeen ? 'connected' : 'not connected';
+  const connectTitle = assistantSeen
+    ? 'Your assistant has used this session. Running this again rewrites the connection file in this folder.'
+    : 'Semanticus has not seen your assistant use this session. If you already wired it up, it may simply not have run anything yet.';
+
+  const items: ChipItem[] = [];
+  if (pendingApprovalCount > 0) items.push({
+    id: 'approvals', label: `${pendingApprovalCount} approval${pendingApprovalCount === 1 ? '' : 's'} waiting`,
+    title: approvalLabel, run: () => onOpen('permissions', firstPendingApprovalId),
+  });
+  items.push({ id: 'feed', label: 'Live activity', note: feed.length ? String(feed.length) : undefined,
+    title: 'What your assistant has run on this model', run: () => setView('feed') });
+  items.push({ id: 'permissions', label: 'Permissions', title: 'What your assistant is allowed to do, and what it must ask for first',
+    run: () => onOpen('permissions') });
+  // The palette command is called Connect AI Assistant and the id still says claudeCode, but product copy never
+  // names a vendor's model: it says "your assistant" (docs/product-copy-style.md, enforced by copy-rules).
+  items.push({ id: 'connect', label: 'Connect your assistant', note: assistantState, title: connectTitle,
+    run: () => runHostCommand('semanticus.connectClaudeCode') });
+
+  const pick = (item: ChipItem, fromKeyboard: boolean) => {
+    item.run();
+    if (item.id === 'feed') return;   // stays open one level in; the focus effect moves the ring into the feed
+    setOpen(false);
+    if (fromKeyboard) chipRef.current?.focus(); else chipRef.current?.blur();
+  };
+
+  // The feed is a LIST, so Tab keeps walking its entries (the header lane's decision, kept). What it may not do
+  // is outlive the keyboard: Astra, 2026-09-14, tabbed past the last entry and Escape then did nothing while the
+  // chip still read aria-expanded="true". Whichever surface is open closes the moment focus lands outside this
+  // chip and its popovers. Focus that went nowhere while the WINDOW lost focus is not a person leaving.
+  const closeOnFocusLeaving = (e: React.FocusEvent) => {
+    if (!open) return;
+    const next = e.relatedTarget as Node | null;
+    if (wrap.current?.contains(next)) return;
+    if (!next && !document.hasFocus()) return;
+    setOpen(false);
+  };
   return (
-    <div ref={wrap} className="relative shrink-0">
-      <button onClick={() => { if (feed.length) setOpen((o) => !o); else onOpen('permissions', firstPendingApprovalId); }} title={latest?.label ? `AI Assistant · ${latest.label}` : 'AI Assistant'}
+    <div ref={wrap} className="relative shrink-0" onBlur={closeOnFocusLeaving} style={{ marginRight: pendingApprovalCount > 0 ? 10 : undefined }}>
+      <button ref={chipRef} type="button" aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); }
+          else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+        }}
+        title={latest?.label ? `Your assistant · ${latest.label}` : 'Your assistant'}
         className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md"
         style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' }}>
-        <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} />
-        <span className="font-semibold">AI Assistant</span>
+        {/* The dot only pulses while there is something live to pulse about; idle it is a plain muted mark. */}
+        <span className={`w-1.5 h-1.5 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
+          style={{ background: feed.length > 0 ? 'var(--sem-accent)' : 'var(--sem-muted)' }} />
+        <span className="font-semibold">Your assistant</span>
         {feed.length > 0 && <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>{FEED_MARK}</span>}
       </button>
       {pendingApprovalCount > 0 && (
@@ -136,14 +208,44 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
           {pendingApprovalCount > 99 ? '99+' : pendingApprovalCount}
         </button>
       )}
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-96 rounded-lg shadow-xl overflow-hidden"
+      {open && view === 'menu' && (
+        <div ref={menuRef} tabIndex={-1} role="menu" aria-label="Your assistant" className="studio-chip-menu absolute right-0 top-full z-50 mt-1"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => (h + 1 + items.length) % items.length); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => (h <= 0 ? items.length : h) - 1); }
+            else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const it = items[highlight]; if (it) pick(it, true); }
+            else if (e.key === 'Tab') { e.preventDefault(); closeAndReturnFocus(); }
+          }}>
+          {items.map((item, i) => <button key={item.id} ref={(el) => { itemRefs.current[i] = el; }} role="menuitem" type="button"
+            title={item.title} className={i === highlight ? 'is-highlighted' : undefined}
+            onMouseEnter={() => setHighlight(i)} onClick={() => pick(item, false)}>
+            <span>{item.label}</span>
+            {item.note && <span className="studio-chip-menu-note">{item.note}</span>}
+          </button>)}
+        </div>
+      )}
+      {open && view === 'feed' && (
+        <div ref={feedRef} tabIndex={-1} className="absolute right-0 top-full mt-1 z-50 w-96 rounded-lg shadow-xl overflow-hidden outline-none"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
+            // Left/Backspace walk back to the menu the same way the Back button does, so the feed is not a one-way
+            // door for the keyboard. Tab stays native: the feed is a LIST, and trapping it would make sixty
+            // entries unreachable.
+            else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); setView('menu'); }
+          }}
           style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
           <div className="px-3 py-2 text-[11px] uppercase tracking-wide font-semibold flex items-center gap-2"
             style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} />
-            Live activity · AI Assistant
+            <span className={`w-1.5 h-1.5 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
+              style={{ background: feed.length > 0 ? 'var(--sem-accent)' : 'var(--sem-muted)' }} />
+            Live activity · your assistant
+            <button type="button" onClick={() => setView('menu')} className="ml-auto normal-case tracking-normal font-medium"
+              style={{ color: 'var(--sem-accent)' }} title="Back to the assistant menu">Back</button>
           </div>
+          {feed.length === 0 && <div className="px-3 py-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
+            Nothing yet. Anything your assistant runs on this model shows up here.
+          </div>}
           <div className="max-h-96 overflow-auto">
             {feed.map((e) => {
               // A policy refusal carries its exact ledger id straight to Permissions. An op whose result renders
@@ -196,7 +298,7 @@ export function ClaudeRanBanner({ event, onClear }: { event: ActivityEvent | nul
     <div className="flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md"
       style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' }}>
       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'var(--sem-accent)' }} />
-      <span className="font-semibold shrink-0">AI Assistant</span>
+      <span className="font-semibold shrink-0">Your assistant</span>
       <span className="shrink-0">{event.label}</span>
       {event.query && <span className="font-mono truncate" style={{ color: 'var(--sem-muted)' }}>{event.query}</span>}
       {event.elapsedMs != null && <span className="tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>· {event.elapsedMs}ms</span>}

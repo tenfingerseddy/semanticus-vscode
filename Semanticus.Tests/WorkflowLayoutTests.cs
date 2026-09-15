@@ -39,7 +39,7 @@ public sealed class WorkflowLayoutTests : IDisposable
     public WorkflowLayoutTests()
     {
         Directory.CreateDirectory(_workspace);
-        _engine = new LocalEngine(_sessions, new Free(), _workspace);
+        _engine = new LocalEngine(_sessions, TestEntitlements.Pro, _workspace);
     }
     private string FileFor(string name = "layout-test") => Path.Combine(_workspace, ".semanticus", "workflow-layouts", name + ".json");
     private static Dictionary<string, WorkflowPosition> Positions(string id = "first", double x = 123) =>

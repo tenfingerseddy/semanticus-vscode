@@ -3,6 +3,7 @@ import type * as echarts from 'echarts';
 import { EChart } from './echart';
 import { KIND_COLOR, KIND_GLYPH, KIND_LABEL, fieldFacetOptions, makeScope, rankNodeMatches, resolveColor, tableFacetOptions, useFillHeight, type LineageResult } from './lineagetypes';
 import { MultiSelect } from './lineageslicer';
+import { CANVAS_CHIP_MIN_H, CanvasChip, CanvasChipStack, RowMenu, RowSep, ToolRow, canvasInsetStyle, useToolRow, visibleBottomInset } from './toolrow';
 
 // ===================================================================================================
 // View A — the Obsidian-style force-directed lineage graph. Reuses the EChart wrapper (ECharts `graph`
@@ -51,7 +52,17 @@ function neighborhood(root: string, edges: { from: string; to: string }[], depth
   return seen;
 }
 
-export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult | null; onOpenImpact: (ref: string) => void }) {
+export interface GraphViewProps {
+  graph: LineageResult | null;
+  onOpenImpact: (ref: string) => void;
+  // The Lineage view switcher, owned by lineage.tsx. It leads this view's single tool row.
+  modeSwitch?: React.ReactNode;
+  counts?: string | null;
+  caveat?: string | null;
+  error?: string | null;
+}
+
+export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, caveat, error }: GraphViewProps) {
   const [layout, setLayout] = useState<Layout>(DEFAULT_LAYOUT);
   const [selected, setSelected] = useState<{ ref: string; name: string; kind: string; table?: string } | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);   // the node the local view centres on
@@ -68,6 +79,10 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
   const [resetNonce, setResetNonce] = useState(0);   // Reset bumps this to force a fresh layout even from default state
   const [sizeScale, setSizeScale] = useState(DEFAULT_SIZE);   // node-size slider (multiplies the degree-based bubble size)
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const containerElRef = useRef<HTMLDivElement | null>(null);
+  // True once the person has panned/zoomed (wheel or drag) since the LAST fit. A resize-triggered auto-fit checks this
+  // so it never fights a manual view the person set up on purpose — it only reframes when they haven't touched it since.
+  const interactedSinceFit = useRef(false);
   const autoFocused = useRef(false);   // one-shot: large models open in Focused so the first view isn't a hairball
   // Throttle the size slider to one update per animation frame: a raw drag fires dozens of events/sec, each triggering
   // an O(N) style-merge + canvas repaint. Coalescing to ~60fps keeps dragging smooth on a big graph.
@@ -95,6 +110,12 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
   // Fill the viewport height (remeasure when the control rows above can change height: scope toggles the depth slider,
   // the edge-key row appears once edges load).
   const [fillRef, chartH] = useFillHeight(440, [scope, edgeKindsPresent.length]);
+  // The row folds in priority order when it runs out of room: slicers first, then the layout and scope
+  // cluster, and only then the view switcher. Fit and Reset never fold.
+  const row = useToolRow(3);
+  // How far the chart runs behind the page's bottom bar, so the in-canvas chips sit clear of the strip nobody
+  // can see (see toolrow.tsx).
+  const [chartInset, setChartInset] = useState(0);
 
   // Topology signature so a non-structural live refresh reuses the same option (no re-layout / no focus wipe).
   const sig = useMemo(() => {
@@ -289,6 +310,7 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     c.dispatchAction({ type: 'graphRoam', zoom, originX: cx, originY: cy });   // zoom keeps (cx,cy) fixed on screen…
     c.dispatchAction({ type: 'graphRoam', dx: W / 2 - cx, dy: H / 2 - cy });   // …then recentre it
+    interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
   };
 
   // Auto-fit once per STRUCTURAL view (new topology / scope / focus / depth / filter / layout / reset) — NOT on a
@@ -303,6 +325,26 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
     return () => { c.off('finished', run); window.clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey]);
+
+  // Refit when the CONTAINER resizes (a narrow pane, or a VS Code panel resize) — otherwise the graph keeps whatever
+  // zoom/pan it had for the OLD size and nodes end up sitting partly outside the new viewport until Fit is pressed by
+  // hand. Debounced (150ms) so a continuous drag-resize doesn't refit every frame. Gated by interactedSinceFit: if the
+  // person has manually panned/zoomed since the previous fit, their view is left alone (a resize must not undo it).
+  useEffect(() => {
+    const el = containerElRef.current; if (!el) return;
+    let t: number | null = null;
+    const readInset = () => setChartInset((p) => { const n = visibleBottomInset(el); return p === n ? p : n; });
+    readInset();
+    const ro = new ResizeObserver(() => {
+      readInset();
+      if (t != null) window.clearTimeout(t);
+      t = window.setTimeout(() => { t = null; if (!interactedSinceFit.current) fitToView(); }, 150);
+    });
+    ro.observe(el);
+    window.addEventListener('scroll', readInset, true);
+    return () => { ro.disconnect(); window.removeEventListener('scroll', readInset, true); if (t != null) window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Node clicks are handled by a SINGLE forgiving snap-to-nearest handler bound on the ZRender canvas (see onChartReady),
   // not ECharts' exact-hit onEvents — so a click that grazes a tiny node still lands. A click only moves the SELECTION;
@@ -349,103 +391,105 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
   };
   const toggleKind = (k: string) => setDisabled((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  if (!graph) return <Panel><Empty>Loading the lineage graph…</Empty></Panel>;
-  if (total === 0) return <Panel><Empty>No objects to graph yet. Open a model.</Empty></Panel>;
+  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the lineage graph…</div>;
+  if (total === 0) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Nothing to draw yet. Open a model first.</div>;
 
-  return (
-    <Panel className="p-0 overflow-hidden">
-      {/* toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: 'var(--sem-border)' }}>
-        <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Dependency graph</span>
-        <span className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{shown < total ? `${shown} of ${total}` : `${total}`} nodes</span>
-        <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>· click a node to see what it connects to · click another to walk there · click empty space to clear · scroll/drag to navigate</span>
-        {selected && <span className="text-[10px] tnum px-1.5 py-0.5 rounded truncate" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', maxWidth: 180 }}>selected: {selected.name}</span>}
-        <div className="ml-auto flex items-center gap-1.5">
-          {selected && <ToolBtn onClick={clearSelection}>Clear selection</ToolBtn>}
-          <label className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--sem-muted)' }} title="Node size">
-            <span style={{ fontSize: 9 }}>size</span>
-            <input type="range" min={0.4} max={2} step={0.05} value={sizeScale} onChange={(e) => onSizeChange(Number(e.target.value))} style={{ width: 64, accentColor: 'var(--sem-accent)' }} />
-          </label>
-          <ToolBtn active={layout === 'force'} onClick={() => setLayout('force')}>Force</ToolBtn>
-          <ToolBtn active={layout === 'circular'} onClick={() => setLayout('circular')}>Circular</ToolBtn>
-          <ToolBtn onClick={fitToView}>Fit</ToolBtn>
-          <ToolBtn onClick={resetView}>Reset</ToolBtn>
-        </div>
-      </div>
-
-      {/* controls: search · scope/depth · kind filters */}
-      <div className="flex items-center gap-3 px-3 py-2 border-b flex-wrap" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
-        <div className="relative">
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search a node to focus…" spellCheck={false}
-            onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) focusOn(matches[0].ref, matches[0].name, matches[0].kind, matches[0].table); else if (e.key === 'Escape') setSearch(''); }}
-            className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ width: 220, background: 'var(--sem-bg)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-          {matches.length > 0 && (
-            <div className="absolute z-10 mt-1 rounded-md overflow-hidden" style={{ width: 260, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
-              {matches.map((m) => (
-                <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); focusOn(m.ref, m.name, m.kind, m.table); }}
-                  className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
-                  <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
-                  <span className="truncate flex-1">{m.name}</span>
-                  {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{m.table}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Slicers — scope the whole picture to a subset of tables / specific fields (multi-select; the search box only
-            picks one node). Union: pick tables AND/OR specific measures & columns. A count badge shows when active. */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>slice</span>
-          <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} />
-          <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} />
-          {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }}>Clear slice</ToolBtn>}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <ToolBtn active={scope === 'all'} onClick={() => setScope('all')}>Whole model</ToolBtn>
-          <ToolBtn active={scope === 'focus'} onClick={() => { if (selected && !focusRef) setFocusRef(selected.ref); setScope('focus'); }}>Focused</ToolBtn>
-          {scope === 'focus' && (
-            <label className="flex items-center gap-1.5 text-[11px] ml-1" style={{ color: 'var(--sem-muted)' }}>
-              depth
-              <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} style={{ width: 80, accentColor: 'var(--sem-accent)' }} />
-              <span className="tnum w-3">{depth}</span>
-            </label>
-          )}
-          {scope === 'focus' && !focusRef && <span className="text-[10px]" style={{ color: 'var(--sem-warn)' }}>click or search a node</span>}
-        </div>
-
-        <div className="flex items-center gap-1 flex-wrap ml-auto">
-          {kindsPresent.map((k) => {
-            const on = !disabled.has(k);
-            return (
-              <button key={k} onClick={() => toggleKind(k)} title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)}
-                className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md"
-                style={{ background: on ? 'var(--sem-bg)' : 'transparent', border: '1px solid var(--sem-border)', color: on ? 'var(--sem-fg)' : 'var(--sem-muted)', opacity: on ? 1 : 0.5 }}>
-                <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
-                {KIND_LABEL[k] ?? k}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* edge-kind colour key — explains the directed edge colours (node kinds are the chips above) */}
-      {edgeKindsPresent.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-1 border-b flex-wrap" style={{ borderColor: 'var(--sem-border)' }}>
-          <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>edges</span>
-          {edgeKindsPresent.map((k) => (
-            <span key={k} className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>
-              <span style={{ width: 14, height: 0, borderTop: '2px solid ' + (EDGE_COLOR[k] ?? muted), display: 'inline-block' }} />
-              {EDGE_LABEL[k] ?? k}
-            </span>
+  const nodeCount = shown < total ? `${shown} of ${total} things` : `${total} things`;
+  const walkHint = 'Click a thing to see what it connects to. Click another to walk there. Click empty space to clear. Scroll or drag to move around.';
+  const searchBox = (
+    <div className="relative">
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search for something to focus on" spellCheck={false}
+        aria-label="Search for something to focus on" title={walkHint}
+        onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) focusOn(matches[0].ref, matches[0].name, matches[0].kind, matches[0].table); else if (e.key === 'Escape') setSearch(''); }}
+        className="sem-toolrow-input" style={{ width: 196 }} />
+      {matches.length > 0 && (
+        <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width: 260, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
+          {matches.map((m) => (
+            <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); focusOn(m.ref, m.name, m.kind, m.table); }}
+              className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
+              <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
+              <span className="truncate flex-1">{m.name}</span>
+              {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{m.table}</span>}
+            </button>
           ))}
-          <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>· arrow points from a dependant to what it depends on</span>
         </div>
       )}
+    </div>
+  );
+  const sliceControls = (
+    <>
+      <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the picture down to some of the tables" />
+      <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the picture down to certain measures or columns" />
+      {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }}>Clear</ToolBtn>}
+    </>
+  );
+  const viewControls = (
+    <>
+      <ToolBtn active={scope === 'all'} onClick={() => setScope('all')}>Whole model</ToolBtn>
+      <ToolBtn active={scope === 'focus'} onClick={() => { if (selected && !focusRef) setFocusRef(selected.ref); setScope('focus'); }}>Focused</ToolBtn>
+      {scope === 'focus' && (
+        <label className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }} title="How many steps out from the chosen thing to show">
+          steps
+          <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} style={{ width: 72, accentColor: 'var(--sem-accent)' }} />
+          <span className="tnum w-3">{depth}</span>
+        </label>
+      )}
+      <ToolBtn active={layout === 'force'} onClick={() => setLayout('force')}>Force</ToolBtn>
+      <ToolBtn active={layout === 'circular'} onClick={() => setLayout('circular')}>Circular</ToolBtn>
+      <label className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--sem-muted)' }} title="How big the dots are">
+        size
+        <input type="range" min={0.4} max={2} step={0.05} value={sizeScale} onChange={(e) => onSizeChange(Number(e.target.value))} style={{ width: 56, accentColor: 'var(--sem-accent)' }} />
+      </label>
+    </>
+  );
+  // The kinds are a list a model decides the length of, so they are ALWAYS one menu. Spelling eight of them
+  // out is what used to push this tool's controls onto a third row.
+  const kindMenu = (
+    <RowMenu label="Show" align="end" badge={disabled.size || undefined} title="Choose which kinds of thing the picture shows">
+      {kindsPresent.map((k) => {
+        const on = !disabled.has(k);
+        return (
+          <button key={k} className="sem-btn sem-btn-sm" aria-pressed={on} onClick={() => toggleKind(k)}
+            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)} style={{ opacity: on ? 1 : 0.55 }}>
+            <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
+            {KIND_LABEL[k] ?? k}
+          </button>
+        );
+      })}
+    </RowMenu>
+  );
 
-      {/* chart */}
-      <div ref={fillRef} style={{ position: 'relative' }}>
+  return (
+    <div className="h-full flex flex-col">
+      {/* ONE tool row. It used to be three: a title strip carrying the node count and a long walk hint, a
+          controls strip, and an edge-colour key. The count, the key and the model-only caveat are chips inside
+          the picture now, and the hint is the search box's tooltip and a line in LINEAGE_NOTES. */}
+      <ToolRow rowRef={row.ref}>
+        {row.level >= 3
+          ? <RowMenu label="Graph" title="Switch to another view of lineage">{modeSwitch}</RowMenu>
+          : modeSwitch}
+        <RowSep />
+        {searchBox}
+        <RowSep />
+        {row.level >= 2
+          ? <RowMenu label="View" title="How much of the model to draw, and how">{viewControls}</RowMenu>
+          : viewControls}
+        <RowSep />
+        <ToolBtn onClick={fitToView}>Fit</ToolBtn>
+        <ToolBtn onClick={resetView}>Reset</ToolBtn>
+        <RowSep />
+        {row.level >= 1
+          ? <RowMenu label="Slice" align="end" badge={(selTables.size + selFields.size) || undefined} title="Cut the picture down to part of the model">{sliceControls}</RowMenu>
+          : sliceControls}
+        {kindMenu}
+      </ToolRow>
+
+      {/* data-own-zoom: this graph has roam:true, so Ctrl+wheel is ITS gesture, not Studio's. Saying so is the
+          contract; relying on which events ZRender happens to consume is not. Astra measured it, 2026-09-14, at
+          1000x768: a Ctrl+wheel at x=70,y=450 (canvas, no graph under the pointer) took Studio to 110% while the
+          same gesture at x=700,y=400 did nothing, so the behaviour depended on where the pointer was. */}
+      <div ref={(el) => { fillRef(el); containerElRef.current = el; }} className="lineage-graph-canvas" data-own-zoom
+        style={{ position: 'relative', ...canvasInsetStyle(chartInset) }}>
         <EChart option={option} height={chartH}
           onChartReady={(c) => {
             chartRef.current = c;
@@ -455,6 +499,8 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
             // Track the press point and only treat the release as a click if the pointer barely moved.
             let downPt: { x: number; y: number } | null = null;
             c.getZr().on('mousedown', (e: any) => { downPt = { x: e.offsetX, y: e.offsetY }; });
+            // A wheel zoom is always a manual interaction (roam:true maps it straight to graphRoam).
+            c.getZr().on('mousewheel', () => { interactedSinceFit.current = true; });
             // FORGIVING CLICK: snap the click to the NEAREST node within ~30px and select it. Clicking a tiny node
             // in a dense graph exactly is hard — a click that grazes an edge or the gap would otherwise register
             // nothing, which reads as "walk doesn't work". A genuine empty-space click DESELECTS (safe now that
@@ -462,7 +508,7 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
             c.getZr().on('click', (e: any) => {
               const moved = downPt ? Math.hypot(e.offsetX - downPt.x, e.offsetY - downPt.y) : 0;
               downPt = null;
-              if (moved > 4) return;   // it was a drag or a pan, not a click
+              if (moved > 4) { interactedSinceFit.current = true; return; }   // it was a drag or a pan, not a click
               const inst = chartRef.current; if (!inst || (inst as any).isDisposed?.()) return;
               let data: any; try { data = (inst as any).getModel().getSeriesByIndex(0)?.getData(); } catch { return; }
               if (!data || !data.count) return;
@@ -487,38 +533,50 @@ export function LineageGraphView({ graph, onOpenImpact }: { graph: LineageResult
           }} />
         {shown === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-            {scope === 'focus' && !focusRef ? 'Click or search a node to focus a local view.' : 'No nodes match the current filters.'}
+            {scope === 'focus' && !focusRef ? 'Click something, or search for it, to see just its corner of the model.' : 'Nothing matches the filters you have set.'}
           </div>
         )}
-        {selected && (
-          <div className="absolute left-3 bottom-3 flex items-center gap-2 px-3 py-2 rounded-lg text-[12px]"
-            style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', backdropFilter: 'blur(4px)' }}>
-            <span className="shrink-0" style={{ color: resolveColor(KIND_COLOR[selected.kind], '#9aa0aa') }}>{KIND_GLYPH[selected.kind] ?? '•'}</span>
-            <span className="font-medium truncate" style={{ maxWidth: 200 }}>{selected.name}</span>
-            {selected.table && <span style={{ color: 'var(--sem-muted)' }} className="truncate">· {selected.table}</span>}
-            {scope === 'all' && <button onClick={() => { setFocusRef(selected.ref); setScope('focus'); }} className="ml-1 text-[11px] px-2 py-0.5 rounded font-medium" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>Focus local</button>}
-            <button onClick={() => onOpenImpact(selected.ref)} className="text-[11px] px-2 py-0.5 rounded font-medium" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Assess change</button>
-          </div>
+        {/* The honesty caveat keeps its own words and its own room: truncating a warning into a tooltip would
+            hide the very thing it exists to say. */}
+        {error && <CanvasChip at="top" tone="bad" note>{error}</CanvasChip>}
+        {!error && caveat && <CanvasChip at="top" tone="warn" note>{caveat}</CanvasChip>}
+        {scope === 'focus' && !focusRef && <CanvasChip at="top" tone="warn">Click something, or search for it, to pick the centre</CanvasChip>}
+        {/* Bottom-left: the selection card, with the counts under it. Both used to be text on a row. */}
+        <CanvasChipStack at="start">
+          {selected && (
+            <CanvasChip data-sem-selected={selected.name}>
+              <span className="shrink-0" style={{ color: resolveColor(KIND_COLOR[selected.kind], '#9aa0aa') }}>{KIND_GLYPH[selected.kind] ?? '•'}</span>
+              <span className="font-medium truncate" style={{ maxWidth: 200, color: 'var(--sem-fg)' }}>{selected.name}</span>
+              {selected.table && <span className="truncate">· {selected.table}</span>}
+              {scope === 'all' && <button className="sem-btn sem-btn-sm" onClick={() => { setFocusRef(selected.ref); setScope('focus'); }}>Focus here</button>}
+              <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={() => onOpenImpact(selected.ref)}>Assess change</button>
+              <button className="sem-btn sem-btn-sm" onClick={clearSelection} title="Clear selection">Clear selection</button>
+            </CanvasChip>
+          )}
+          <CanvasChip title={counts ? `${counts}. ${walkHint}` : walkHint}>
+            <span><b>{nodeCount}</b></span>
+            <span>{graph.edges.length} links</span>
+          </CanvasChip>
+        </CanvasChipStack>
+        {/* Bottom-right: the edge-colour key, which used to be a 24px row of its own. On a short chart it folds
+            into the counts chip's tooltip rather than stacking a second chip over the picture. */}
+        {edgeKindsPresent.length > 0 && chartH >= CANVAS_CHIP_MIN_H && (
+          <CanvasChip at="end" title="An arrow points from a thing to what it depends on">
+            {edgeKindsPresent.map((k) => (
+              <span key={k} className="flex items-center gap-1">
+                <span style={{ width: 14, height: 0, borderTop: '2px solid ' + (EDGE_COLOR[k] ?? muted), display: 'inline-block' }} />
+                {EDGE_LABEL[k] ?? k}
+              </span>
+            ))}
+          </CanvasChip>
         )}
       </div>
-    </Panel>
+    </div>
   );
 }
 
 // ---- local primitives (kept consistent with lineage.tsx) -------------------------------------
-function Panel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border ${className.includes('p-0') ? '' : 'p-4'} ${className}`} style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
-}
-function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="text-[12px] py-10 text-center" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
-}
+// Every control on the row takes the shared dense scale, so the tool row holds one control height, not three.
 function ToolBtn({ active, onClick, children }: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
-  // active:scale + brightness gives INSTANT tactile feedback on press (no wait for the re-render), so a click never
-  // "feels like nothing happened" even when the result (relayout/refetch) takes a beat.
-  return (
-    <button onClick={onClick} className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-[transform,filter,background-color] duration-100 active:scale-90 active:brightness-125 hover:brightness-110"
-      style={active ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-      {children}
-    </button>
-  );
+  return <button className="sem-btn sem-btn-sm" onClick={onClick} aria-pressed={active}>{children}</button>;
 }

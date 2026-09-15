@@ -131,11 +131,20 @@ export function onReconnect(fn: () => void): () => void {
 // The host asks the webview to navigate to a tab (optionally selecting a target object) — e.g. a Model-tree
 // right-click "Preview data" jumps to the Data tab and previews that table. `addTables` carries the tables a
 // "Add to Studio Diagram" right-click should drop onto the Diagram canvas. Host→webview, not an engine RPC.
-export type NavigateMessage = { tab: string; target?: string; addTables?: string[] };
+export type NavigateMessage = { tab: string; target?: string; addTables?: string[]; sessionId?: string };
 const navigateListeners = new Set<(m: NavigateMessage) => void>();
 export function onNavigate(fn: (m: NavigateMessage) => void): () => void {
   navigateListeners.add(fn);
   return () => { navigateListeners.delete(fn); };
+}
+
+// Native tree selection is context, not a navigation command. Model home may show actions for it while every
+// mounted tool retains its draft and query state.
+export type TreeSelectionMessage = { ref?: string; sessionId?: string };
+const treeSelectionListeners = new Set<(selection: TreeSelectionMessage) => void>();
+export function onTreeSelection(fn: (selection: TreeSelectionMessage) => void): () => void {
+  treeSelectionListeners.add(fn);
+  return () => { treeSelectionListeners.delete(fn); };
 }
 
 // The host asks the webview to open the Connections hub — e.g. the tree "Open Model" / "Manage Connections", or the
@@ -157,6 +166,18 @@ export function onConnectionChange(fn: () => void): () => void {
   connectionChangeListeners.add(fn);
   return () => { connectionChangeListeners.delete(fn); };
 }
+
+// Whether the host has an ENGINE at all. A different question from "is a model open" and from "is a live query
+// connection attached", and Studio could not tell them apart: with no engine every request fails, sessionInfo comes
+// back empty, and the page fell through to the same "Open a model to begin" placeholder whose only button ALSO needs
+// the engine. The host announces both transitions and answers this on 'studioReady', so a panel that mounts while
+// the engine is down learns the truth instead of inferring it from a rejection.
+const engineStateListeners = new Set<(connected: boolean) => void>();
+export function onEngineState(fn: (connected: boolean) => void): () => void {
+  engineStateListeners.add(fn);
+  return () => { engineStateListeners.delete(fn); };
+}
+
 // Announce a registry change made through THIS webview's own door. The drawer's "Add a published model" runs
 // connect_xmla, which the engine remembers but does NOT surface as model/activity — so the host's 'connectionChanged'
 // relay never fires for it, and a mounted sibling (the Compare picker; the hub next) would go stale until a remount.
@@ -165,6 +186,19 @@ export function onConnectionChange(fn: () => void): () => void {
 // emit activity) still arrive via the 'connectionChanged' message handled below — the two paths never overlap.
 export function announceConnectionChange(): void {
   connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
+}
+
+// Studio text size. The level is a percentage the user sets with Ctrl+wheel, Ctrl+0 or Help > Text size, and the
+// host keeps it in workspaceState so the same project opens at the same size next time. The host answers
+// 'studioReady' with the stored level, which is why this is a subscription rather than an RPC: there is nothing to
+// wait for, and a webview that never hears back simply stays at 100%.
+const studioZoomListeners = new Set<(level: number) => void>();
+export function onStudioZoom(fn: (level: number) => void): () => void {
+  studioZoomListeners.add(fn);
+  return () => { studioZoomListeners.delete(fn); };
+}
+export function postStudioZoom(level: number): void {
+  vscode.postMessage({ type: 'setStudioZoom', level });
 }
 
 // Resolvers for in-flight requestDropTables() calls (host hands back the Model-tree drag stash on drop).
@@ -227,12 +261,21 @@ window.addEventListener('message', (e: MessageEvent) => {
     const e = msg.payload as ActivityEvent;
     activityListeners.forEach((l) => { try { l(e); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'navigate') {
-    const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables };
+    const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'treeSelection') {
+    const selection: TreeSelectionMessage = { ref: typeof msg.ref === 'string' ? msg.ref : undefined, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
+    treeSelectionListeners.forEach((l) => { try { l(selection); } catch { /* isolate a view */ } });
+  } else if (msg.type === 'studioZoom') {
+    const level = Number(msg.level);
+    if (Number.isFinite(level)) studioZoomListeners.forEach((l) => { try { l(level); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'openConnections') {
     openConnectionsListeners.forEach((l) => { try { l(msg.section); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'connectionChanged') {
     connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'engineState') {
+    const connected = !!msg.connected;
+    engineStateListeners.forEach((l) => { try { l(connected); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnected') {
     // The host swapped the engine connection (reconnect, or a new model opened). Requests in flight against the OLD
     // connection will never get an rpcResult, so abandon them, then let subscribers re-read. The rejection copy is
@@ -322,8 +365,8 @@ export function focusModelTree(): void {
 
 // Hand a workbench command to the host (D-149). Webview keydowns never reach VS Code's keybinding
 // service on their own; the host allow-lists the few chords we forward (save, undo, redo, palette).
-export function runHostCommand(command: string): void {
-  vscode.postMessage({ type: 'runCommand', command });
+export function runHostCommand(command: string, ref?: string, sessionId?: string): void {
+  vscode.postMessage({ type: 'runCommand', command, ref, sessionId });
 }
 
 // Tell the host the Studio webview has mounted and its message listeners are live, so the host can flush a

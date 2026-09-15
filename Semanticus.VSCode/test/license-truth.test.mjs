@@ -92,11 +92,14 @@ const readToken = functionBody(extensionCode, 'getLicenseToken');
 assert.match(readToken, /if \(!\(await canUseSecretStorage\(context\)\)\)[\s\S]{0,200}?get<string>\('licenseToken'\)/,
   'the plaintext fallback may only run once the store has proven it is unusable');
 
-// D-155: a free click on a Pro-gated merge must teach at the click, not only in a banner above the diff.
-assert.match(compare, /data-testid="compare-pro-gated-why"/,
-  'the merge confirm panel must name the click-site teaching notice so it can be found');
-assert.match(compare, /\{pending &&[\s\S]*compare-pro-gated-why/,
-  'the teaching notice must render inside the pending confirm, at the click');
+// D-155 is RETIRED, with the gate it guarded. Merging everything you selected in one step is FREE from
+// 2026-09-15 (Kane set the line by feature), so there is no plan-shaped refusal left on the merge path and
+// no click-site teaching notice to place. What replaces it is the opposite assertion: no refusal may be
+// faked on a path the engine no longer refuses.
+assert.doesNotMatch(compare, /data-testid="compare-pro-gated-why"/,
+  'a bulk merge is free now, so the click-site upsell must be gone, not merely unreachable');
+assert.doesNotMatch(compare, /isEntitlementError/,
+  'compare must not soften an entitlement refusal it can no longer receive');
 
 // D-168: Pro options shows the licence. It does not open the marketing page while Pro is active.
 assert.match(bridge, /export function showLicense\(\)/, 'Studio must be able to open the licence view without a browser');

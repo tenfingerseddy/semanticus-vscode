@@ -22,6 +22,7 @@ namespace Semanticus.Engine
             string template, string tableName, string dateColumn, int fiscalStartMonth,
             string startExpr, string endExpr, string calendarName, string origin)
         {
+            RequireProFeature();
             var kind = NormalizeTemplate(template);
             if (fiscalStartMonth < 1 || fiscalStartMonth > 12)
                 throw new ArgumentException($"Fiscal year start month must be 1 to 12 (got {fiscalStartMonth}).");

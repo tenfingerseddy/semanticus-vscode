@@ -44,6 +44,225 @@ namespace Semanticus.Engine
         public string LastAccount { get; set; }
     }
 
+    /// <summary>
+    /// One durable, NAMED SQL source the user saves once and then chooses by name from a check or a table mapping
+    /// (Kane's Tests redesign, 2026-09-15). It is a fourth ROLE in Connections beside Editing, Tests and Publish to,
+    /// and it is stored BESIDE the model records in its own file, never mixed into them: a model connection answers
+    /// DAX, a SQL source answers the independent ground-truth query, and one list holding both would let a surface
+    /// offer the wrong one.
+    ///
+    /// Holds NO secrets, exactly like <see cref="ModelConnectionRecord"/>: <see cref="AuthMode"/> is a mode NAME and
+    /// there is no password field to fill. The token is acquired at use time through the same Entra helper the XMLA
+    /// side uses, keyed by identity rather than stored here.
+    /// </summary>
+    public sealed class SqlSourceRecord
+    {
+        public string Id { get; set; }              // opaque and stable for life: a rename or a re-point keeps it, so references never break
+        public string Name { get; set; }            // what the user calls it, and what a check's picker shows
+        public string Server { get; set; }          // the SQL endpoint address only, never a connection string
+        public string Database { get; set; }
+        public string AuthMode { get; set; }        // interactive | devicecode | azcli | serviceprincipal — a mode NAME, never a secret
+        public string TenantId { get; set; }
+        public string CreatedUtc { get; set; }
+        public string LastTestedUtc { get; set; }   // null = never tested
+        public bool? LastTestOk { get; set; }       // null = never tested; false = the last test failed. Never rounded into "ok"
+    }
+
+    /// <summary>
+    /// The named SQL sources, stored beside <c>connections.json</c> in their own <c>sql-sources.json</c> under the
+    /// same <see cref="ConnectionRegistry.Root"/>, with the same cross-process discipline: one writer at a time, an
+    /// unreadable file moved aside rather than overwritten, and a scrub of every string field before the bytes land.
+    /// </summary>
+    public static class SqlSourceRegistry
+    {
+        public const int MaxRecords = 50;
+        private const string FileName = "sql-sources.json";
+
+        /// <summary>The auth modes a SQL source may declare. "token" is deliberately absent: a raw token is a
+        /// credential, and this record never holds one.</summary>
+        public static readonly string[] AuthModes = { "interactive", "devicecode", "azcli", "serviceprincipal" };
+
+        private static readonly object Gate = new object();
+        private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
+
+        private static string FilePath() => Path.Combine(ConnectionRegistry.Root(), FileName);
+
+        /// <summary>Newest first, so a picker reads sensibly. Read-only; a parse failure just yields an empty list.</summary>
+        public static IReadOnlyList<SqlSourceRecord> List()
+        {
+            lock (Gate) return ReadForDisplay();
+        }
+
+        public static SqlSourceRecord Find(string id) =>
+            string.IsNullOrWhiteSpace(id) ? null : List().FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// Create (no id) or update (an id that exists). The rules here are the reason this record can be handed to a
+        /// token helper without a second thought: the mode is one of four NAMES, and neither address field may carry a
+        /// connection string, which is the only shape a pasted password arrives in.
+        /// </summary>
+        public static SqlSourceRecord Save(string id, string name, string server, string database, string authMode, string tenantId)
+        {
+            name = (name ?? "").Trim();
+            server = (server ?? "").Trim();
+            database = (database ?? "").Trim();
+            tenantId = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim();
+            if (name.Length == 0) throw new ArgumentException("A SQL source needs a name, so a check can pick it by name later.", nameof(name));
+            if (server.Length == 0) throw new ArgumentException("A SQL source needs a server address.", nameof(server));
+            if (database.Length == 0) throw new ArgumentException("A SQL source needs a database name.", nameof(database));
+
+            // FAIL CLOSED on the only shape a secret arrives in. A bare address has no ';' and no '=': anything that
+            // does is a pasted connection string, and we refuse it rather than try to strip a credential out of it.
+            if (LooksLikeConnectionString(server) || XmlaAuthHint.ContainsSecret(server))
+                throw new ArgumentException("Enter just the server address, like contoso-sql.database.windows.net, not a connection string. Semanticus signs in for you and never stores a password.", nameof(server));
+            if (LooksLikeConnectionString(database) || XmlaAuthHint.ContainsSecret(database))
+                throw new ArgumentException("Enter just the database name, not a connection string. Semanticus signs in for you and never stores a password.", nameof(database));
+
+            var mode = (authMode ?? "").Trim().ToLowerInvariant();
+            if (mode == "token")
+                throw new ArgumentException("Semanticus never holds a password or a token for you. Pick how to sign in instead: sign in in a browser, sign in with a code, use the Azure CLI sign-in, or use an app registration.", nameof(authMode));
+            if (!AuthModes.Contains(mode))
+                throw new ArgumentException("Pick how to sign in to this source. Sign in with one of: interactive (a browser), devicecode (a code on another device), azcli (the Azure CLI sign-in on this machine), or serviceprincipal (an app registration).", nameof(authMode));
+
+            return Mutate(all =>
+            {
+                var existing = string.IsNullOrWhiteSpace(id) ? null
+                    : all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(id) && existing == null)
+                    throw new InvalidOperationException("No SQL source with that id. Open Connections to see the saved sources.");
+
+                // One name, one source: the picker shows names, so two rows called the same thing would make the
+                // person's choice a guess.
+                var clash = all.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)
+                    && (existing == null || !string.Equals(r.Id, existing.Id, StringComparison.OrdinalIgnoreCase)));
+                if (clash != null)
+                    throw new ArgumentException($"There is already a SQL source called '{clash.Name}'. Give this one a different name.", nameof(name));
+
+                if (existing == null && all.Count >= MaxRecords)
+                    throw new InvalidOperationException($"You already have {MaxRecords} saved SQL sources, which is the limit. Remove one you no longer use, then add this one.");
+
+                var rec = existing ?? new SqlSourceRecord { Id = NewId(), CreatedUtc = DateTimeOffset.UtcNow.ToString("O") };
+                if (existing != null) all.Remove(existing);
+                rec.Name = name;
+                rec.Server = server;
+                rec.Database = database;
+                rec.AuthMode = mode;
+                rec.TenantId = tenantId;
+                all.Insert(0, rec);
+                return rec;
+            });
+        }
+
+        /// <summary>Remove a source. Returns false when the id was not present. Whether anything still REFERENCES it
+        /// is the engine's question, not the file's: the engine refuses that delete before it reaches here.</summary>
+        public static bool Delete(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return false;
+            return Mutate(all =>
+            {
+                var rec = all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (rec == null) return false;
+                all.Remove(rec);
+                return true;
+            });
+        }
+
+        /// <summary>Stamp the outcome of a connection test. A failure is RECORDED as a failure; it is never rounded
+        /// up to "ok", and "never tested" (both fields null) stays its own third state. Null when the id is gone.</summary>
+        public static SqlSourceRecord RecordTest(string id, bool ok)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return null;
+            return Mutate(all =>
+            {
+                var rec = all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (rec == null) return null;
+                rec.LastTestedUtc = DateTimeOffset.UtcNow.ToString("O");
+                rec.LastTestOk = ok;
+                return rec;
+            });
+        }
+
+        private static string NewId() => "sql-" + Guid.NewGuid().ToString("N").Substring(0, 16);
+
+        // A bare address never contains these. A pasted "Server=...;Password=..." always does.
+        private static bool LooksLikeConnectionString(string value) =>
+            value.IndexOf(';') >= 0 || value.IndexOf('=') >= 0;
+
+        // ---- persistence (the ConnectionRegistry discipline, its own file) --------------------------------------
+
+        private static T Mutate<T>(Func<List<SqlSourceRecord>, T> mutator)
+        {
+            lock (Gate)
+            using (AcquireCrossProcessLock())
+            {
+                var all = ReadForWrite();
+                var result = mutator(all);
+                Save(all);
+                return result;
+            }
+        }
+
+        private static IDisposable AcquireCrossProcessLock()
+        {
+            Directory.CreateDirectory(ConnectionRegistry.Root());
+            var lockPath = FilePath() + ".lock";
+            for (var i = 0; i < 200; i++)
+            {
+                try { return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
+                catch (IOException) { System.Threading.Thread.Sleep(15); }
+            }
+            throw new IOException("Could not acquire the SQL-source lock within 3 seconds. Another Semanticus process is holding it. Try again.");
+        }
+
+        private static List<SqlSourceRecord> ReadForDisplay()
+        {
+            try
+            {
+                var p = FilePath();
+                if (!File.Exists(p)) return new List<SqlSourceRecord>();
+                return JsonSerializer.Deserialize<List<SqlSourceRecord>>(File.ReadAllText(p), JsonOpts) ?? new List<SqlSourceRecord>();
+            }
+            catch { return new List<SqlSourceRecord>(); }
+        }
+
+        // Same rule as the model registry: never Save over a file we could not read — move it aside first, so a
+        // transient read error cannot destroy every saved source.
+        private static List<SqlSourceRecord> ReadForWrite()
+        {
+            var p = FilePath();
+            if (!File.Exists(p)) return new List<SqlSourceRecord>();
+            try
+            {
+                return JsonSerializer.Deserialize<List<SqlSourceRecord>>(File.ReadAllText(p), JsonOpts) ?? new List<SqlSourceRecord>();
+            }
+            catch
+            {
+                var aside = p + ".corrupt-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                try { File.Move(p, aside); }
+                catch (Exception ex) { throw new IOException($"Refusing to overwrite an unreadable SQL-source file at {p} (could not preserve it: {ex.Message}).", ex); }
+                return new List<SqlSourceRecord>();
+            }
+        }
+
+        private static void Save(List<SqlSourceRecord> all)
+        {
+            // The same serialization-boundary scrub the model registry uses: whatever a future field holds, a secret
+            // never reaches the disk.
+            foreach (var r in all) XmlaAuthHint.ScrubStringProperties(r);
+
+            Directory.CreateDirectory(ConnectionRegistry.Root());
+            var tmp = FilePath() + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(all, JsonOpts));
+            File.Move(tmp, FilePath(), overwrite: true);
+        }
+    }
+
     public static class ConnectionRegistry
     {
         public const int MaxRecords = 40;
@@ -91,6 +310,34 @@ namespace Semanticus.Engine
 
         public static bool IsUnlabelled(ModelConnectionRecord r) =>
             !(Labels.Contains(r?.Label?.Trim().ToLowerInvariant() ?? ""));
+
+        /// <summary>
+        /// The workspace an XMLA endpoint points at, in WORDS — "Contoso Fabric Monitoring", never the stored
+        /// "Contoso%20Fabric%20Monitoring". A workspace-level target has no dataset to name it by, and the encoded last
+        /// path segment is what every surface used to fall back to (Kane, 2026-09-15). This is the one honest name such
+        /// a record has, so it is derived here, once, and read by both doors rather than re-invented per surface.
+        ///
+        /// Anchored to a TRAILING <c>/myorg/&lt;name&gt;</c> so a deeper path is never mistaken for the workspace, and
+        /// malformed percent-encoding returns null rather than the raw segment: showing "Bad%ZZ" as a name is the exact
+        /// defect being fixed, not a lesser version of it. Null for anything else (a local data source has no
+        /// workspace). The webview's helper of the same name mirrors these rules so one endpoint reads as one string.
+        /// </summary>
+        public static string WorkspaceNameFromEndpoint(string endpoint)
+        {
+            if (string.IsNullOrWhiteSpace(endpoint)) return null;
+            var trimmed = endpoint.Trim().TrimEnd('/');
+            const string marker = "/myorg/";
+            var at = trimmed.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (at < 0) return null;
+            var segment = trimmed.Substring(at + marker.Length);
+            if (segment.Length == 0 || segment.IndexOfAny(new[] { '/', '?', '#' }) >= 0) return null;
+            for (var i = 0; i < segment.Length; i++)
+            {
+                if (segment[i] != '%') continue;
+                if (i + 2 >= segment.Length || !Uri.IsHexDigit(segment[i + 1]) || !Uri.IsHexDigit(segment[i + 2])) return null;
+            }
+            return Uri.UnescapeDataString(segment);
+        }
 
         // Length-prefix each component before hashing, so no pair of (kind, endpoint, database) can collide by moving a
         // delimiter across the boundary — e.g. endpoint "a|b"+db "c" must not hash the same as endpoint "a"+db "b|c".
@@ -155,7 +402,13 @@ namespace Semanticus.Engine
                 if (rec == null) rec = new ModelConnectionRecord { Id = id, Kind = kind, Endpoint = endpoint, Database = database };
                 else all.Remove(rec);
 
-                rec.ModelName = modelName ?? rec.ModelName;
+                // A record that RESOLVED a dataset always carries a readable name, even when the caller passed none.
+                // The two live-open sites already pass the database as the name; doing it here instead makes it true of
+                // every caller, including remember_xmla_connection — the route Kane's encoded-name row came in by.
+                // (Every workspace name in this file is the Contoso placeholder: the public-mirror gate refuses the real
+                // tenant name, so the literal Kane saw is not written down here.) A caller-supplied name still wins, and a WORKSPACE-only record (no dataset) invents
+                // nothing: its readable name comes from WorkspaceNameFromEndpoint at display time, not from storage.
+                rec.ModelName = modelName ?? rec.ModelName ?? (string.IsNullOrWhiteSpace(database) ? null : database);
                 rec.TenantId = tenantId ?? rec.TenantId;
                 rec.AuthMode = authMode ?? rec.AuthMode;
                 // Preserve a known account when this connect can't name one (azcli/sp) — like the label, a display hint the

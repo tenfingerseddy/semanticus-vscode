@@ -253,7 +253,7 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
           <span className="text-[11px]" style={{ color: 'var(--sem-fg)' }}>{selectedNodes.length} selected</span>
           <button onClick={() => setSel(new Set())} className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>clear</button>
           <button onClick={() => { onPickMany?.(selectedNodes); setSel(new Set()); }}
-            className="text-[11px] px-2 py-0.5 rounded-md font-medium ml-auto" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>
+            className="sem-btn sem-btn-sm sem-btn-primary ml-auto">
             Add {selectedNodes.length} selected
           </button>
         </div>

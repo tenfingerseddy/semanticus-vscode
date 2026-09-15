@@ -27,8 +27,8 @@ assert.match(compare, /function WorkspacePicker/, 'the Published-model side must
 assert.match(compare, /records\.map\(/, 'the picker must render one selectable row per remembered record');
 
 // (3) Each record shows its environment chip, reusing the drawer wording (uat/prod/local, else "Production safeguards").
-assert.match(compare, /r\.label \|\| 'Production safeguards'/,
-  'the environment chip must reuse the manager pattern: declared label, else the fail-closed "Production safeguards"');
+assert.match(compare, /r\.label \? publishStageName\(r\.label\) : 'Production safeguards'/,
+  'the environment chip must reuse the manager pattern: declared label (shown as its stage name), else the fail-closed "Production safeguards"');
 assert.match(hub, /text: 'Production safeguards'/,
   'the Connections hub remains the source of the "Production safeguards" fail-closed wording the picker copies');
 

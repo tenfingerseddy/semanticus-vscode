@@ -12,7 +12,7 @@ const flags = window as unknown as { __semanticusInitialView?: string; __semanti
 const initialView = flags.__semanticusInitialView;
 // The section the standalone hub should land on (Manage Connections -> Current setup). Only the known hub views apply.
 const sectionFlag = flags.__semanticusInitialSection;
-const initialSection = (['open', 'setup', 'accounts', 'history', 'add'] as const).find((v) => v === sectionFlag);
+const initialSection = (['open', 'setup', 'accounts', 'history', 'add', 'sqlsources'] as const).find((v) => v === sectionFlag);
 
 class StudioErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -30,7 +30,7 @@ class StudioErrorBoundary extends Component<{ children: ReactNode }, { failed: b
         <div className="max-w-md rounded-xl border p-5" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
           <div className="text-[15px] font-semibold">Studio could not finish loading</div>
           <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>Reload Studio to restore the open model. Your model session is unchanged.</div>
-          <button className="text-[12px] font-semibold px-3 py-1.5 rounded-lg mt-4" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} onClick={() => location.reload()}>Reload Studio</button>
+          <button className="sem-btn sem-btn-primary mt-4" onClick={() => location.reload()}>Reload Studio</button>
         </div>
       </div>
     );

@@ -28,7 +28,7 @@ namespace Semanticus.Engine
 
         /// <summary>Set by the owning <see cref="LocalEngine"/>: builds the ambient commit observer registered on
         /// each NEW session — today the health-delta probe (feature #4), which is installed on EVERY session and
-        /// reads the entitlement LAZILY per commit (the SOFT Pro gate — free costs one bool check, never a
+        /// reports for every tier (the health delta became free on 2026-09-15) and never a
         /// throw), so a license activated mid-session starts reporting on the next edit without a reopen.
         /// Further ambient probes register straight on <see cref="Session.RegisterObserver"/>.</summary>
         public Func<Session, ISessionObserver> ObserverFactory { get; set; }

@@ -15,7 +15,8 @@ namespace Semanticus.Tests
     /// (per-workflow strictness survives); enabling REMOVES the key (absent = the safe default, keeps the file
     /// minimal); a malformed settings file never hides the library (fail-safe = AVAILABLE); the read is live off
     /// disk (hot-reload — a settings edit by the other door is seen without a restart); and whenToUse surfaces on
-    /// WorkflowInfo so a caller can pick among siblings. Availability is Free — curating a menu is content.
+    /// WorkflowInfo so a caller can pick among siblings. Availability rides inside Workflows, which is a whole Pro
+    /// feature since 2026-09-15, so every test here holds Pro and the axis under test is the toggle, not the tier.
     /// </summary>
     public sealed class WorkflowAvailabilityTests
     {
@@ -26,8 +27,8 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
-        // A minimal, un-gated workflow: no enforced gate → a FREE start completes, so the availability axis is
-        // tested in isolation from the entitlement/strictness axes. Carries a whenToUse hint for §9b.
+        // A minimal, un-gated workflow: no enforced gate, so a start completes in one step and the availability axis
+        // is tested in isolation from the strictness axis. Carries a whenToUse hint for §9b.
         private const string VehicleMd = @"---
 name: avail-vehicle
 title: Availability vehicle
@@ -54,7 +55,7 @@ Just do it. There is no gate here.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);   // FREE: availability is free
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);   // Pro: the whole workflow area is Pro now
             try
             {
                 using (engine)
@@ -94,7 +95,7 @@ Just do it. There is no gate here.
             var file = SettingsFile(ws);
             File.WriteAllText(file, "{ \"workflows\": { \"avail-vehicle\": { \"strictness\": \"warn\" } } }");
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -125,7 +126,7 @@ Just do it. There is no gate here.
             var ws = NewWorkspace();
             var file = SettingsFile(ws);
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -152,7 +153,7 @@ Just do it. There is no gate here.
             var ws = NewWorkspace();
             File.WriteAllText(SettingsFile(ws), "{ this is not valid json ]");
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -173,7 +174,7 @@ Just do it. There is no gate here.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)
@@ -199,7 +200,7 @@ Just do it. There is no gate here.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(false), ws);
+            var engine = new LocalEngine(sessions, new Fake(true), ws);
             try
             {
                 using (engine)

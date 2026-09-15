@@ -75,9 +75,49 @@ namespace Semanticus.Tests
             }
         }
 
+        /// <summary>The FROZEN pre-UX16 v7 definition, not the shipped seed.
+        ///
+        /// UX16 shortened the shipped verified-measure to four person-facing steps, which removed the
+        /// second hard equivalence gate, the later witness-purity revalidation and the rename-alias path
+        /// that three of the replays below are about. Repointing at a frozen copy keeps those six measured
+        /// v6 failures with a definition behind them instead of deleting the evidence along with the steps.
+        ///
+        /// BE CLEAR ABOUT WHAT THIS COSTS: from here this suite pins ENGINE mechanics against a fixture and
+        /// proves nothing about the file Semanticus ships. The shipped file's own shape, gates and purity
+        /// contract are asserted in HardMeasureWorkflowTests, which reads the real seed.</summary>
+        /// <summary>The frozen fixture's markdown under a name no stock seed uses, so a test that needs the
+        /// ENGINE path (saved runs, anchor revisions, live receipts) can install it and start it instead of
+        /// starting the shipped four-step seed, which no longer has the steps these replays submit.</summary>
+        private const string FrozenWorkflowName = "verified-measure-frozen-v7";
+
+        private static string FrozenV7Markdown()
+        {
+            var text = File.ReadAllText(V7FixturePath());
+            // Newline-agnostic: a Windows checkout may hand the fixture over with CRLF, and the rename must still land.
+            var renamed = System.Text.RegularExpressions.Regex.Replace(text, @"^name: verified-measure(\r?)$", "name: " + FrozenWorkflowName + "$1", System.Text.RegularExpressions.RegexOptions.Multiline);
+            Assert.NotEqual(text, renamed);
+            return renamed;
+        }
+
+        private static string V7FixturePath()
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Semanticus.sln"))) root = root.Parent;
+            Assert.True(root != null, "could not find Semanticus.sln above " + AppContext.BaseDirectory
+                + "; the frozen v7 fixture is read from the repo, not from the output directory");
+            var fixture = Path.Combine(root.FullName, "Semanticus.Tests", "fixtures", "verified-measure-frozen", "verified-measure-v7.md");
+            Assert.True(File.Exists(fixture), "frozen verified-measure v7 fixture is missing: " + fixture);
+            return fixture;
+        }
+
         private static WorkflowDef V7Definition()
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "verified-measure.md");
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Semanticus.sln"))) dir = dir.Parent;
+            Assert.True(dir != null, "could not find Semanticus.sln above " + AppContext.BaseDirectory
+                + "; the frozen v7 fixture is read from the repo, not from the output directory");
+            var path = Path.Combine(dir.FullName, "Semanticus.Tests", "fixtures", "verified-measure-frozen", "verified-measure-v7.md");
+            Assert.True(File.Exists(path), "frozen verified-measure v7 fixture is missing: " + path);
             var def = WorkflowParser.Parse(File.ReadAllText(path));
             Assert.Null(def.Error);
             Assert.Equal(7, def.Version);
@@ -113,9 +153,43 @@ namespace Semanticus.Tests
             RowCount = rows.Length,
         };
 
+        /// <summary>The SHIPPED four-step seed. Most replays below run against it, and those are the ones
+        /// worth having: a counterfactual that only runs against a fixture proves the engine still works,
+        /// not that the file Semanticus ships still catches the failure it was written for.</summary>
+        private static WorkflowDef ShippedDefinition()
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "verified-measure.md");
+            Assert.True(File.Exists(path), "stock verified-measure seed was not copied beside the test binary: " + path);
+            var def = WorkflowParser.Parse(File.ReadAllText(path));
+            Assert.Null(def.Error);
+            Assert.Equal(4, def.Steps.Length);
+            Assert.Equal("hard", def.Strictness);
+            return def;
+        }
+
+        /// <summary>Submit only the answers the run's own definition actually collects at that step.
+        ///
+        /// The shared helpers below carry the SUPERSET of both shapes: the frozen seven-step fixture asks
+        /// for modelFacts, contextLedger and externalAnchors, while the shipped four-step seed reads the
+        /// first two off the model and folds the third into expectedValues. This drops what a shape does
+        /// not ask for and passes everything it does, so one helper drives both.
+        ///
+        /// It cannot mask a missing REQUIRED answer. The runner still refuses such a submission, and
+        /// several tests below depend on exactly that refusal.</summary>
+        private static Task SubmitDeclared(WorkflowRunState run, string stepId,
+            Dictionary<string, AnswerValue> answers, WorkflowVerifyExecutor executor)
+        {
+            var step = run.Def.Steps.Single(s => s.Id == stepId);
+            var declared = new HashSet<string>(
+                (step.Gate?.Inputs ?? Array.Empty<GateInput>()).Select(i => i.Name), StringComparer.Ordinal);
+            var scoped = answers.Where(kv => declared.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            return WorkflowRunner.SubmitStepAsync(run, stepId, scoped, executor);
+        }
+
         private static async Task Step1(WorkflowRunState run)
         {
-            await WorkflowRunner.SubmitStepAsync(run, "step-1", new Dictionary<string, AnswerValue>
+            await SubmitDeclared(run, "step-1", new Dictionary<string, AnswerValue>
             {
                 ["requirement"] = Answer("The requirement pins every listed grain and names any silence."),
                 ["modelFacts"] = Answer("Fact and calendar extents are recorded separately."),
@@ -127,7 +201,7 @@ namespace Semanticus.Tests
         private static async Task Step2(WorkflowRunState run, string anchors, string grid, string openGrains,
             WorkflowVerifyExecutor executor)
         {
-            await WorkflowRunner.SubmitStepAsync(run, "step-2", new Dictionary<string, AnswerValue>
+            await SubmitDeclared(run, "step-2", new Dictionary<string, AnswerValue>
             {
                 ["expectedValues"] = Answer(anchors),
                 ["equivalenceGrid"] = Answer(grid),
@@ -139,27 +213,30 @@ namespace Semanticus.Tests
 
         private static async Task Step3(WorkflowRunState run, string candidate, WorkflowVerifyExecutor executor)
         {
-            await WorkflowRunner.SubmitStepAsync(run, "step-3", new Dictionary<string, AnswerValue>
+            await SubmitDeclared(run, "step-3", new Dictionary<string, AnswerValue>
             {
                 ["candidate"] = Answer(candidate),
                 ["target"] = Answer("measure:Fact/Candidate"),
             }, executor);
         }
 
-        private static async Task Steps4And5(WorkflowRunState run)
+        /// <summary>The shipped seed's single reconcile-and-finish gate: witness, battery, adjudication,
+        /// performance and finalize in one submission, proved by the hard dax_equivalence verify against
+        /// witnessDax and the expected_values re-check of the locked anchors. Extra or replaced answers
+        /// (a countersign, a revised witness) are merged over these defaults.</summary>
+        private static Dictionary<string, AnswerValue> ShippedStep4(params (string Name, AnswerValue Value)[] overrides)
         {
-            const string witness = "SUMX ( 'Fact', 'Fact'[Value] )";
-            await WorkflowRunner.SubmitStepAsync(run, "step-4", new Dictionary<string, AnswerValue>
+            var answers = new Dictionary<string, AnswerValue>(StringComparer.Ordinal)
             {
-                ["witnessDax"] = Answer(witness),
-                ["witnessTiming"] = Answer("Bare-axis witness query completed in 0.1 seconds."),
-            }, null);
-            await WorkflowRunner.SubmitStepAsync(run, "step-5", new Dictionary<string, AnswerValue>
-            {
+                ["witnessDax"] = Answer("SUMX ( 'Fact', 'Fact'[Value] )"),
                 ["battery"] = Answer("Candidate and witness were evaluated across the complete lattice."),
-                ["witnessDax"] = Answer(witness),
                 ["adjudications"] = Decline("No pinned disagreement required adjudication."),
-            }, null);
+                ["perfPass"] = Decline("The candidate matched the model floor."),
+                ["finalized"] = Answer("Production metadata applied."),
+                ["certificate"] = Answer("FULL"),
+            };
+            foreach (var (name, value) in overrides) answers[name] = value;
+            return answers;
         }
 
         private static WorkflowVerifyExecutor EquivalenceExecutor(Func<string, ResultSet> execute) => async (spec, step, run, all) =>
@@ -208,7 +285,7 @@ namespace Semanticus.Tests
                 return Scalar(1.0);
             }))
             {
-                var run = new WorkflowRunStore().Start(V7Definition(), null);
+                var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
                 await Step1(run);
                 await Step2(run, pinnedAnchors, grid, null, anchored.Executor());
                 var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -224,11 +301,10 @@ namespace Semanticus.Tests
                 + "{\"context\":{\"'Date'[Year]\":2025,\"'Product'[Subcategory]\":\"Laptops\"},\"expect\":1}]";
             using (var open = new ScriptedAnchorHarness(_ => Scalar(1.0)))
             {
-                var run = new WorkflowRunStore().Start(V7Definition(), null);
+                var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
                 await Step1(run);
                 await Step2(run, openAnchors, grid, "axis:'Product'[Subcategory]", open.Executor());
                 await Step3(run, "SUM ( 'Fact'[Value] )", open.Executor());
-                await Steps4And5(run);
 
                 ResultSet Equivalence(string query)
                 {
@@ -241,12 +317,11 @@ namespace Semanticus.Tests
                     return Comparison(Array.Empty<string>(), new object[] { 1.0, 1.0 });
                 }
 
+                // The shipped seed proves the grid on its single hard step-4 gate, so the open-shape block
+                // and the countersign exit both land there, and finalize rides the same submission.
                 var eqExecutor = open.Executor(EquivalenceExecutor(Equivalence));
                 var first = await Assert.ThrowsAsync<InvalidOperationException>(() => WorkflowRunner.SubmitStepAsync(
-                    run, "step-6", new Dictionary<string, AnswerValue>
-                    {
-                        ["certificate"] = Answer("FULL"),
-                    }, eqExecutor));
+                    run, "step-4", ShippedStep4(), eqExecutor));
                 Assert.Contains("OPEN-shape disagreement", first.Message);
                 Assert.Contains("candidate=0.25", first.Message);
                 Assert.Contains("witness=0.218", first.Message);
@@ -257,16 +332,8 @@ namespace Semanticus.Tests
                     cells = new[] { coordinate },
                     stated = "The requirement deliberately leaves the bare subcategory grain open.",
                 });
-                await WorkflowRunner.SubmitStepAsync(run, "step-6", new Dictionary<string, AnswerValue>
-                {
-                    ["certificate"] = Answer("FULL"),
-                    ["countersign"] = Answer(countersign),
-                }, eqExecutor);
-                await WorkflowRunner.SubmitStepAsync(run, "step-7", new Dictionary<string, AnswerValue>
-                {
-                    ["perfPass"] = Decline("The candidate matched the model floor."),
-                    ["finalized"] = Answer("Production metadata applied."),
-                }, open.Executor());
+                await WorkflowRunner.SubmitStepAsync(run, "step-4",
+                    ShippedStep4(("countersign", Answer(countersign))), eqExecutor);
 
                 Assert.Equal("completed", run.Status);
                 Assert.Equal("PARTIAL", run.Certificate.Level);
@@ -288,7 +355,7 @@ namespace Semanticus.Tests
                     ? Shaped("Product[Name]", "B", 2.0)
                     : Scalar(1.0)))
             {
-                var run = new WorkflowRunStore().Start(V7Definition(), null);
+                var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
                 await Step1(run);
                 await Step2(run, shaped, grid, null, visual.Executor());
                 await Step3(run, "RANKX ( ALLSELECTED ( 'Product'[Name] ), SUM ( 'Fact'[Value] ) )", visual.Executor());
@@ -306,7 +373,7 @@ namespace Semanticus.Tests
                     ? Shaped("Product[Name]", "B", 2.0)
                     : Scalar(1.0)))
             {
-                var run = new WorkflowRunStore().Start(V7Definition(), null);
+                var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
                 await Step1(run);
                 await Step2(run, flat, grid, null, collapsed.Executor());
                 var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -361,7 +428,8 @@ namespace Semanticus.Tests
                     return Scalar(1.0);
                 }));
 
-                var run = await engine.StartWorkflowAsync("verified-measure", "human");
+                await engine.SaveWorkflowAsync(FrozenWorkflowName, FrozenV7Markdown(), "human");
+                var run = await engine.StartWorkflowAsync(FrozenWorkflowName, "human");
                 await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", JsonSerializer.Serialize(new Dictionary<string, object>
                 {
                     ["requirement"] = "Pinned rank requirement",
@@ -443,7 +511,7 @@ namespace Semanticus.Tests
             const string anchors = "[{\"context\":{},\"expect\":1},"
                 + "{\"context\":{\"'Date'[Quarter]\":\"Q2\"},\"expect\":1},"
                 + "{\"context\":{\"'Date'[Year]\":2025,\"'Date'[Quarter]\":\"Q2\"},\"expect\":1}]";
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
 
             var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => Step2(run, anchors,
@@ -462,7 +530,7 @@ namespace Semanticus.Tests
         public async Task X07_date_axis_without_a_bare_period_anchor_or_open_declaration_is_refused_with_a_skeleton()
         {
             const string anchors = "[{\"context\":{},\"expect\":1}]";
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
 
             var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => Step2(run, anchors,
@@ -491,7 +559,7 @@ namespace Semanticus.Tests
                 }
                 return Scalar(1.0);
             });
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
             await Step2(run, anchors, "'Date'[Month]", null, harness.Executor());
 
@@ -519,7 +587,7 @@ namespace Semanticus.Tests
                     ? Shaped("Currency[Code]", "AUD", 100.0)
                     : Scalar(100.0);
             });
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
             await Step2(run, anchors, "'Currency'[Code]", null, harness.Executor());
 
@@ -548,7 +616,7 @@ namespace Semanticus.Tests
                     ? Shaped("Date[Month]", "2025-03", null)
                     : Scalar(null);
             });
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
             await Step2(run, anchors, "'Date'[Month]", null, harness.Executor());
 
@@ -1316,7 +1384,7 @@ inputs:
         {
             const string anchors = "[{\"context\":{},\"expect\":1},"
                 + "{\"context\":{\"'Product'[Name]\":\"A\"},\"expect\":1}]";
-            var run = new WorkflowRunStore().Start(V7Definition(), null);
+            var run = new WorkflowRunStore().Start(ShippedDefinition(), null);
             await Step1(run);
             await Step2(run, anchors, "'Product'[Name]", null,
                 (spec, step, state, all) => Task.FromResult(LocalEngine.WorkflowAnchorCoverage(spec, step, state, all)));
@@ -1324,11 +1392,9 @@ inputs:
                 (spec, step, state, all) => Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "passed", Detail = "scripted anchor match" }));
 
             var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => WorkflowRunner.SubmitStepAsync(
-                run, "step-4", new Dictionary<string, AnswerValue>
-                {
-                    ["witnessDax"] = Answer("SUM ( 'Fact'[Value] ) + [Sales PY] + 0 * LEN ( \"[Ignored]\" ) // [Comment]"),
-                    ["witnessTiming"] = Answer("0.1 seconds"),
-                }, null));
+                run, "step-4",
+                ShippedStep4(("witnessDax", Answer("SUM ( 'Fact'[Value] ) + [Sales PY] + 0 * LEN ( \"[Ignored]\" ) // [Comment]"))),
+                null));
             Assert.Contains("must contain zero measure references", refused.Message);
             Assert.Contains("[Sales PY]", refused.Message);
             Assert.DoesNotContain("[Ignored]", refused.Message);

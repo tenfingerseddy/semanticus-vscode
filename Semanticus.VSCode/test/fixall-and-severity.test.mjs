@@ -26,18 +26,23 @@ assert.match(bpa, /u\.reason/, 'each leftover finding must show the engine\'s re
 // Colour is never the only channel: the heading states the count in words too.
 assert.match(bpa, /could not be fixed/, 'the leftover heading must say what happened in words');
 
-// ---- 2. a refusal clears when its cause is fixed -------------------------------------------------------
-assert.match(bpa, /useEffect\(\(\) => \{ setUpsell\(null\); \}, \[tier\]\)/,
-  'the Pro refusal must clear when the tier changes, or it outlives the free plan that caused it');
-assert.match(bpa, /setUpsell\(null\); setErr\(null\); setLeftOver\(\[\]\);/,
-  'a press must clear the old refusal and the old error before it tries, so neither survives a press that works');
+// ---- 2. there is no refusal left to clear ---------------------------------------------------------------
+// Fixing every auto-fixable violation in one step is FREE from 2026-09-15 (Kane set Free and Pro by
+// feature; Model quality is not one of the four). The old guard here proved the plan-shaped refusal cleared
+// when the plan changed. What has to be proven now is the opposite: that no such refusal is faked on a path
+// the engine no longer refuses, while the state a press DOES leave behind is still cleared before it tries.
+assert.doesNotMatch(bpa, /isEntitlementError/,
+  'Fix all is free, so the page must not soften an entitlement refusal it can no longer receive');
+assert.doesNotMatch(bpa, /<ProBadge/, 'and the Fix all button must not wear a Pro pill');
+assert.match(bpa, /setBusy\(true\); setErr\(null\); setLeftOver\(\[\]\);/,
+  'a press must clear the old error and the old remainder before it tries, so neither survives a press that works');
 
 // ---- 3. a severity filter that is not carried by colour alone ------------------------------------------
 assert.match(findings, /export function GroupedFindings/, 'the shared findings list is where the filter belongs');
 assert.match(findings, /type SevFilter = 'all' \| 'error' \| 'warning' \| 'info'/,
   'the list needs a severity filter with an all option');
 assert.match(findings, /aria-pressed=\{on\}/, 'a filter chip must expose its pressed state to assistive tech');
-assert.match(findings, /role="group" aria-label="Filter findings by severity"/,
+assert.match(findings, /role="group" aria-label="Filter findings by level"/,
   'the chips must be one labelled group, not four loose buttons');
 assert.match(findings, /disabled=\{n === 0\}/, 'a bucket with nothing in it must not be offered');
 assert.match(findings, /showing \{shown\.length\} of \{rows\.length\}/,
@@ -57,5 +62,26 @@ assert.match(findings, /const sevLabel = \(s: number\) =>/, 'the badge needs the
 // A strict-equality "Errors" bucket would drop every Critical (readiness scores it 5, BPA scores it 3).
 assert.match(findings, /f === 'error' \? s >= 3 : f === 'warning' \? s === 2 : s <= 1/,
   'the buckets must be at-least for Errors, or Critical findings vanish from the Errors chip');
+
+// =====================================================================================================
+// B3 (walkthrough): the green primary on Model quality and AI understanding looked inert on the free tier.
+// The engine DOES gate both (LocalEngine.BpaFixAllAsync / ApplySafeFixesAsync call EntitlementGuard.RequirePro)
+// and the webview DOES turn that refusal into the upsell — the screenshot harness was the half that lied,
+// answering every unmocked method with {}. So the harness must now refuse on free and work on Pro, and the
+// review surface must exercise both tiers.
+// =====================================================================================================
+const harness = read('tools/uishot/harness.html');
+const PRO_PHRASE = /is a Semanticus Pro feature/;
+for (const method of ['bpaFixAll', 'applySafeFixes', 'applyPlan']) {
+  assert.match(harness, new RegExp(`RESPONSES\\.${method} = function`),
+    `${method} must be answered by the harness, or a free click looks like a dead button`);
+}
+assert.match(harness, /function proRefusal\(/, 'the harness needs the engine\'s refusal shape in one place');
+assert.match(harness, PRO_PHRASE, 'the refusal must carry the exact phrase isEntitlementError matches on');
+assert.match(harness, /proRefusal\([\s\S]{0,200}Fix violations one at a time/, 'BPA names its free alternative');
+assert.match(harness, /proRefusal\([\s\S]{0,400}Apply fixes one at a time/, 'readiness names its free alternative');
+// applyPlan must answer with a COMPLETE report on Pro: the missing score fields are what crashed Studio (B1).
+assert.match(harness, /overallBefore: \d/, 'the applied-plan report must carry the before score');
+assert.match(harness, /overallAfter: \d/, 'the applied-plan report must carry the after score');
 
 console.log('fix-all and severity UI contract tests passed');

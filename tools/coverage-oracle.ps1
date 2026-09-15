@@ -26,14 +26,14 @@ function Get-Family([string]$operation) {
         '^(create_role|delete_role|list_roles|set_role_|set_table_permission|set_table_ols|set_column_ols)' { return 'model-security' }
         '^(ai_readiness_|make_model_ai_ready|apply_safe_fixes|apply_fix|get_fix_prompt|get_grounding|load_readiness_rules|reset_readiness_rules|get_custom_rules|validate_rule|enable_qna|set_synonyms|set_ai_|get_ai_instructions)' { return 'ai-readiness' }
         '^(bpa_|load_bpa_rules|reset_bpa_rules|list_waivers|waive_finding|unwaive_finding)' { return 'bpa-and-waivers' }
-        '^(get_lineage|impact_of|impact_assessment|unused_objects|remove_safe_objects|analyze_reports|analyze_cloud_reports|list_reports)' { return 'lineage-and-impact' }
+        '^(get_lineage|impact_of|impact_assessment|unused_objects|remove_safe_objects|analyze_reports|analyze_cloud_reports|list_reports|list_report_scope|set_report_scope|check_reports)' { return 'lineage-and-impact' }
         '^(model_diff|apply_model_diff|cherry_pick|get_reference_tree|git_|create_history_checkpoint|list_history_checkpoints|restore_history_checkpoint)' { return 'compare-and-source-control' }
-        '^(list_connections|list_connection_history|probe_connection_accounts|probe_auth_prerequisites|list_account_profiles|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy)' { return 'connections' }
+        '^(list_connections|list_connection_history|probe_connection_accounts|probe_auth_prerequisites|list_account_profiles|connection_context|remember_xmla_connection|forget_connection|label_connection|set_connection_working_folder|set_publish_destination|prepare_working_copy|list_sql_sources|list_sql_source_usage|save_sql_source|delete_sql_source|test_sql_source)' { return 'connections' }
         '^(deploy_|preview_deploy|deployment_history|list_workspaces|list_deployment_pipelines|get_pipeline_stages|get_stage_items|fabric_git_|cicd_|rollback_push|list_restore_points|purge_restore_points|refresh_partition)' { return 'deployment-and-fabric' }
         '^(list_data_agents|get_data_agent|generate_data_agent_config|create_data_agent|update_data_agent|delete_data_agent|publish_data_agent)' { return 'data-agent' }
         '^(propose_plan|get_plan|set_plan_item|add_plan_item|apply_plan|clear_plan|capture_baseline|compare_baseline|get_verified_mode|set_verified_mode|list_verified_edits|export_verified_edits)' { return 'change-plan-and-verified-edits' }
-        '^(save_test|delete_test|list_tests|run_tests|try_test|list_test_runs|review_reconcile_mapping|add_interview_question|delete_interview_question|list_interview_questions|list_interview_seeds|run_interview|get_evidence|list_evidence|save_evidence|export_test_report)' { return 'tests-and-evidence' }
-        '^(list_workflows|get_workflow|save_workflow|edit_workflow_document|upgrade_workflow|delete_workflow|check_workflow|start_workflow|get_workflow_run|submit_workflow_step|skip_workflow_step|abort_workflow|get_op_catalog|set_workflow_|get_workflow_|export_workflow_evidence|replay_check_workflow|list_workflow_templates|get_workflow_template|save_workflow_template|delete_workflow_template|instantiate_workflow_template|list_workflow_profiles|activate_workflow_profile)' { return 'workflows' }
+        '^(save_test|delete_test|list_tests|run_tests|try_test|list_test_runs|get_test_run|record_test_run|get_unmatched_rows|review_reconcile_mapping|add_interview_question|delete_interview_question|list_interview_questions|list_interview_seeds|run_interview|get_evidence|list_evidence|save_evidence|export_test_report|set_table_source_mapping|clear_table_source_mapping|list_table_mappings)' { return 'tests-and-evidence' }
+        '^(list_workflows|get_workflow|save_workflow|edit_workflow_document|preview_workflow_edit|upgrade_workflow|delete_workflow|check_workflow|start_workflow|get_workflow_run|submit_workflow_step|skip_workflow_step|abort_workflow|get_op_catalog|set_workflow_|get_workflow_|export_workflow_evidence|replay_check_workflow|list_workflow_templates|get_workflow_template|save_workflow_template|delete_workflow_template|instantiate_workflow_template|list_workflow_profiles|activate_workflow_profile)' { return 'workflows' }
         '^(get_model_primer|set_model_primer|list_primer_suggestions|accept_primer_suggestion|reject_primer_suggestion|get_model_fingerprint|recall_experience|add_insight|edit_insight|delete_insight|approve_insight|upvote_insight|downvote_insight|list_insights|purge_knowledge)' { return 'primer-and-learning' }
         '^(get_agent_policy|set_agent_policy|list_pending_approvals|approve_agent_action|deny_agent_action)' { return 'agent-governance' }
         '^(get_doc_|set_doc_|get_spec|set_spec|clear_spec|save_spec|load_spec|build_model_from_spec|autogenerate_spec_)' { return 'documentation-and-spec' }
@@ -123,11 +123,16 @@ $groupEnd = $appSource.IndexOf('const TAB_TO_GROUP', [StringComparison]::Ordinal
 $groupText = $appSource.Substring($groupStart, $groupEnd - $groupStart)
 $studioTabs = @([regex]::Matches($groupText, "\{ id: '([^']+)', label: '[^']+' \}") |
     ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-$studioType = [regex]::Match($appSource, "type StudioTab = (?<types>[^;]+);").Groups['types'].Value
+$routePath = 'Semanticus.VSCode/webview/src/route.ts'
+$routeSource = Get-Content -LiteralPath $routePath -Raw
+$studioType = [regex]::Match($routeSource, "type ToolId\s*=\s*(?<types>[^;]+);").Groups['types'].Value
+$nonLiteralTypes = [regex]::Replace($studioType, "'[^']+'|\||\s", '')
+if ($nonLiteralTypes) { throw "Unsupported ToolId declaration in $routePath. Resolve composed types before recording the inventory." }
 $allStudioTabs = @([regex]::Matches($studioType, "'([^']+)'") |
     ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+if ($allStudioTabs.Count -eq 0) { throw "No Studio destinations found in $routePath. Check the ToolId declaration before recording the inventory." }
 
-$sourceHashInput = ($mcpSource + "`n" + $rpcSource + "`n" + $iEngineSource + "`n" + $groupText) -replace "`r`n?", "`n"
+$sourceHashInput = ($mcpSource + "`n" + $rpcSource + "`n" + $iEngineSource + "`n" + $groupText + "`n" + $studioType) -replace "`r`n?", "`n"
 $hashBytes = [Text.Encoding]::UTF8.GetBytes($sourceHashInput)
 $sourceHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($hashBytes)).ToLowerInvariant()
 # A count lets two branches that each add a different file agree with the recorded number while the
@@ -140,7 +145,7 @@ $withoutReference = @($operations | Where-Object { $_.referenceEvidence.Count -e
 $inventory = [ordered]@{
     schemaVersion = 1
     sourceHash = $sourceHash
-    sources = @($mcpPaths) + $rpcPaths + @('Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx')
+    sources = @($mcpPaths) + $rpcPaths + @('Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx', $routePath)
     summary = [ordered]@{
         mcpOperations = $operations.Count
         rpcActions = $rpcCount

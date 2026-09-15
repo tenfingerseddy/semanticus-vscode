@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rpc, onPlanChange, copyText } from './bridge';
-import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
 import { uiLabel } from './copy';
 
 // ---- wire types (camelCase, from Semanticus.Engine/Plan.cs) ----------------------------------
@@ -34,13 +33,20 @@ const STATUS: Record<string, { label: string; color: string }> = {
 
 type Filter = 'all' | 'deterministic' | 'ai' | 'rename' | 'needs_content';
 
+// The apply report's numbers are wire data, and wire data can arrive without a field — an older engine, a
+// partial failure, a host that answered the call with an empty object. Reading .toFixed off one of those threw
+// during render, and with no boundary around the tool views that replaced the WHOLE Studio with "Studio could
+// not finish loading", losing the person's place after a press that may well have changed their model (B1,
+// walkthrough 2026-09-14). One guard, used by every number in the report.
+function scoreText(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(0) : 'not reported';
+}
+
 export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
   const [plan, setPlan] = useState<ChangePlanView | null>(null);
   const [report, setReport] = useState<ApplyPlanReport | null>(null);
   const [busy, setBusy] = useState<'analyse' | 'apply' | 'safe' | false>(false);
   const [err, setErr] = useState<string | null>(null);
-  const [upsell, setUpsell] = useState<string | null>(null);   // a free click on a bulk apply teaches, never errors
-  const tier = useTier();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<Filter>('all');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());   // collapsed category sections (expanded by default)
@@ -80,13 +86,11 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
     catch (e) { setErr(String((e as Error).message ?? e)); }
   }
   async function apply(ids: string[] | null, which: 'apply' | 'safe') {
-    setBusy(which); setErr(null); setUpsell(null);
+    setBusy(which); setErr(null);
     try { const r = await rpc<ApplyPlanReport>('applyPlan', ids, 'human'); setReport(r); await load(); }
-    catch (e) {
-      // A free click on a bulk apply gets the plain invitation, not a raw exception in a red banner.
-      if (isEntitlementError(e)) setUpsell('Apply one change at a time with Apply on each row. Pro applies the whole approved set in one undoable step and re-checks your score.');
-      else setErr(String((e as Error).message ?? e));
-    } finally { setBusy(false); }
+    // Applying the whole approved set in one step is FREE from 2026-09-15 (Kane's feature line), so a
+    // failure here is a real failure and keeps its loud red treatment.
+    catch (e) { setErr(String((e as Error).message ?? e)); } finally { setBusy(false); }
   }
   async function clear() { try { await rpc('clearPlan', 'human'); setReport(null); await load(); } catch { /* ignore */ } }
 
@@ -135,31 +139,25 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
             <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>changes</div>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold">Change Plan</div>
+            <div className="text-[15px] font-semibold">Proposed changes</div>
             <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
               {hasPlan
                 ? (items.length === 0
                   ? (plan?.note ? 'No changes could be planned. The note below explains why.' : 'No applicable changes were found.')
                   : <>{s!.deterministic + s!.bpa} deterministic · {s!.ai} AI-authored · {s!.renames} rename{s!.renames === 1 ? '' : 's'} · {s!.approved} approved · {s!.needsContent} need content{s!.unverified ? ` · ${s!.unverified} unverified` : ''}</>)
-                : 'A reviewable “pull request for your model”: analyse, review every change as a diff, then apply the approved set in one undoable transaction.'}
+                : 'Proposals are local. Applied changes stay in your copy until you publish.'}
             </div>
             {hasPlan && plan?.scope && <div className="text-[11px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>scope: {plan.scope}</div>}
           </div>
           <div className="flex flex-col gap-2 shrink-0">
             <Button primary disabled={busy !== false} onClick={analyse}>{busy === 'analyse' ? 'Analysing…' : hasPlan ? 'Re-analyse' : 'Analyse model'}</Button>
             {hasPlan && <Button disabled={busy !== false || (s?.approved ?? 0) === 0} onClick={() => apply(null, 'apply')}
-              title={tier === 'free' && (s?.approved ?? 0) > 1
-                ? 'Pro applies the whole approved set in one undoable step. Apply one change at a time with Apply on each row.'
-                : 'Apply every approved change as one undoable step.'}>
+              title="Apply every approved change as one undoable step.">
               {busy === 'apply' ? 'Applying…' : `Apply approved (${s?.approved ?? 0})`}
-              <ProBadge show={tier === 'free' && (s?.approved ?? 0) > 1} />
             </Button>}
             {hasPlan && safeIds.length > 0 && <Button disabled={busy !== false} onClick={() => apply(safeIds, 'safe')}
-              title={tier === 'free' && safeIds.length > 1
-                ? 'Pro applies all the safe changes in one undoable transaction. Applying one at a time stays free.'
-                : 'Apply the deterministic safe changes as one undoable transaction.'}>
+              title="Apply these safe changes in one undoable step.">
               {busy === 'safe' ? 'Applying…' : `Apply safe only (${safeIds.length})`}
-              <ProBadge show={tier === 'free' && safeIds.length > 1} />
             </Button>}
             {hasPlan && <Button disabled={busy !== false} onClick={clear}>Clear</Button>}
           </div>
@@ -167,24 +165,23 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
       </Panel>
 
       {err && <Banner color="var(--sem-bad)">{err}</Banner>}
-      {upsell && <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>}
       {hasPlan && plan?.note && <Banner color="var(--sem-warn)">{plan.note}</Banner>}
 
       {report && (
         <Panel>
           <div className="flex items-center gap-4 flex-wrap">
-            <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-good)' }}>{report.appliedCount} applied</div>
-            {report.skippedCount > 0 && <div className="text-[12px]" style={{ color: 'var(--sem-warn)' }}>{report.skippedCount} skipped</div>}
-            {report.failedCount > 0 && <div className="text-[12px]" style={{ color: 'var(--sem-bad)' }}>{report.failedCount} failed</div>}
-            <Stat label="BPA" from={report.bpaViolationsBefore} to={report.bpaViolationsAfter} good="down" />
-            <Stat label="Grade" from={report.gradeBefore} to={report.gradeAfter} />
-            <Stat label="Score" from={report.overallBefore.toFixed(0)} to={report.overallAfter.toFixed(0)} good="up" />
+            <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-good)' }}>{report.appliedCount ?? 0} applied</div>
+            {(report.skippedCount ?? 0) > 0 && <div className="text-[12px]" style={{ color: 'var(--sem-warn)' }}>{report.skippedCount} skipped</div>}
+            {(report.failedCount ?? 0) > 0 && <div className="text-[12px]" style={{ color: 'var(--sem-bad)' }}>{report.failedCount} failed</div>}
+            <Stat label="BPA" from={report.bpaViolationsBefore ?? 'unknown'} to={report.bpaViolationsAfter ?? 'unknown'} good="down" />
+            <Stat label="Grade" from={report.gradeBefore ?? 'unknown'} to={report.gradeAfter ?? 'unknown'} />
+            <Stat label="Score" from={scoreText(report.overallBefore)} to={scoreText(report.overallAfter)} good="up" />
           </div>
         </Panel>
       )}
 
       {!hasPlan && !report && (
-        <Panel><div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No change plan yet. Click <b>Analyse model</b> (or ask your AI Assistant to “propose a change plan for the whole model”) to assemble one. Nothing is changed until you apply.</div></Panel>
+        <Panel><div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No proposals yet. Click <b>Analyse model</b> (or ask your assistant to “propose a change plan for the whole model”) to assemble one. Nothing is changed until you apply.</div></Panel>
       )}
 
       {hasPlan && (
@@ -323,8 +320,7 @@ function Panel({ children }: { children: React.ReactNode }) {
 function Button({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {children}
     </button>
   );
@@ -332,8 +328,7 @@ function Button({ children, onClick, primary, disabled, title }: { children: Rea
 function MiniButton({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm">
       {children}
     </button>
   );

@@ -25,7 +25,7 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-wftmpl-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            return (new LocalEngine(new SessionManager(), new Free(), ws), ws);
+            return (new LocalEngine(new SessionManager(), TestEntitlements.Pro, ws), ws);
         }
 
         private static readonly string[] StockTemplates = { "metric-certification", "month-end-close", "deploy-freeze-guard", "hard-measure" };

@@ -22,8 +22,10 @@ assert.match(optimize, /it\.source === 'ai' \? RISK\.ai/,
   'the AI badge follows whether the change was AI-authored, not the risk of the kind');
 assert.match(optimize, /onApply=\{\(\) => void apply\(\[it\.id\], 'apply'\)\}/,
   'each approved row has Apply, the free one-at-a-time path the Pro refusal names');
-assert.match(optimize, /Apply one change at a time with Apply on each row/,
-  'the Pro refusal must point at the per-row Apply control');
+// The per-row Apply stays, and is asserted above. The sentence that used to point at it was a Pro refusal,
+// and applying the whole approved set in one step is FREE from 2026-09-15, so there is nothing to point at.
+assert.doesNotMatch(optimize, /Apply one change at a time with Apply on each row/,
+  'the plan-shaped refusal is gone with the gate that caused it');
 assert.match(optimize, /if \(\(next\.summary\?\.applied \?\? 0\) === 0\) setReport\(null\)/,
   'undo that restores plan items must clear the leftover applied result bar');
 assert.match(ext, /semanticus\.selectTreeObject/,

@@ -132,6 +132,9 @@ namespace Semanticus.Engine
                     && !string.Equals(toolName, "update_measure", StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(toolName, "create_relationship", StringComparison.OrdinalIgnoreCase))
                     return null;
+                // Workflows is a Pro feature as a whole, reads included, so on the free tier this refuses and the
+                // catch below returns null: a free session simply gets no workflow advisory, which is correct.
+                // The refusal is thrown at operation entry, so it costs nothing beyond the call itself.
                 var policy = await engine.GetWorkflowPolicyAsync().ConfigureAwait(false);
                 var binding = policy?.Bindings?.FirstOrDefault(b => string.Equals(b.Op, toolName, StringComparison.OrdinalIgnoreCase));
                 if (binding == null || !string.Equals(binding.Mode, "warn", StringComparison.OrdinalIgnoreCase))

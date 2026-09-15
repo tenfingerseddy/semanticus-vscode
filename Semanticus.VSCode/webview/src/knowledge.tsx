@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { onActivity, rpc } from './bridge';
+import { PathDisclosure } from './ui';
 import { mdToHtml } from './docrender';
 import type { WorkflowDef, WorkflowInfo } from './workflows';
 
@@ -110,10 +111,7 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: 'var(--sem-accent)' }}>Model orientation</div>
-              <h1 className="m-0 mt-1 text-[22px] font-semibold">{doc?.modelName ? `${doc.modelName} Primer` : 'Model Primer'}</h1>
-              <p className="m-0 mt-1 max-w-[820px] text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-                Explain what this model covers, define business terms and record known issues. People and your AI Assistant use the same guide. Saved notes and their controls are below.
-              </p>
+              <h1 className="m-0 mt-1 text-[22px] font-semibold">{doc?.modelName ? `${doc.modelName} notes` : 'Model notes'}</h1>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {SECTIONS.map((section) => <span key={section} className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: pendingFor(section) ? 'var(--sem-warn)' : 'var(--sem-border)', color: pendingFor(section) ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>{section}{pendingFor(section) ? ` · ${pendingFor(section)} suggested` : ''}</span>)}
               </div>
@@ -121,20 +119,20 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
                 <Jump href="#knowledge-insights">Insights{approved.length || pending.length ? ` · ${approved.length}` : ''}</Jump>
                 <Jump href="#knowledge-learned">Learned workflows</Jump>
                 <Jump href="#knowledge-recall">Recall</Jump>
-                <Jump href="#knowledge-purge">Delete saved knowledge</Jump>
+                <Jump href="#knowledge-purge" destructive>Delete saved knowledge…</Jump>
               </nav>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {editing ? <>
                 <button onClick={() => { setDraft(doc?.markdown ?? ''); setEditing(false); setError(null); }} disabled={saving} className="rounded-md border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--sem-border)' }}>Cancel</button>
-                <button onClick={() => void save()} disabled={saving || !dirty} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saving ? 'Saving…' : 'Save Primer'}</button>
-              </> : <button onClick={() => setEditing(true)} disabled={!doc?.markdown} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Edit Primer</button>}
+                <button onClick={() => void save()} disabled={saving || !dirty} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saving ? 'Saving…' : 'Save notes'}</button>
+              </> : <button onClick={() => setEditing(true)} disabled={!doc?.markdown} className="rounded-md px-3 py-1.5 text-[11px] font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Edit notes</button>}
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-[10.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
             <span>{doc?.exists ? 'Saved beside this model' : 'Starter document, not saved yet'}</span>
             {updated && !isNaN(updated.getTime()) && <span>Updated {updated.toLocaleString()}</span>}
-            {doc?.filePath && <span className="min-w-0 truncate font-mono" title={doc.filePath}>{doc.filePath}</span>}
+            <PathDisclosure path={doc?.filePath} />
           </div>
         </header>
 
@@ -150,7 +148,7 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
         {!editing && !!suggestions?.suggestions?.length && <section className="rounded-xl border p-4" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
           <div className="mb-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--sem-warn)' }}>Suggested updates</div>
-            <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Review each suggested addition. It is added to the Primer only when you select Accept.</p>
+            <p className="m-0 mt-1 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Review each suggested addition. It is added to these notes only when you select Accept.</p>
           </div>
           <div className="grid gap-2">
             {suggestions.suggestions.map((suggestion) => <article key={suggestion.id} className="rounded-lg border p-3" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-bg)' }}>
@@ -168,9 +166,9 @@ export function KnowledgeView({ onOpenWorkflows }: { onOpenWorkflows?: () => voi
             </article>)}
           </div>
         </section>}
-        {!doc ? <div className="rounded-xl border p-8 text-[12px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>Loading the model Primer…</div>
+        {!doc ? <div className="rounded-xl border p-8 text-[12px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>Loading the model notes…</div>
           : editing ? <section className="grid min-h-[420px] gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
-              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} aria-label="Primer Markdown"
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} aria-label="Model notes, written in Markdown"
                 className="min-h-[420px] w-full resize-y rounded-xl border p-5 text-[12px] outline-none"
                 style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)', color: 'var(--sem-fg)', fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace' }} />
               <article className="sem-primer rounded-xl border p-6" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} dangerouslySetInnerHTML={{ __html: mdToHtml(draft) }} />
@@ -198,7 +196,7 @@ function InsightsSection({ approved, pending, loaded, onChanged }: {
       {!loaded ? (
         <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading insights…</div>
       ) : approved.length === 0 && pending.length === 0 ? (
-        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No lessons are saved yet. Ask your AI Assistant to save a useful business rule or lesson from your work.</div>
+        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No lessons are saved yet. Ask your assistant to save a useful business rule or lesson from your work.</div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">{approved.map((i) => <InsightCard key={i.id} rec={i} onChanged={onChanged} />)}</div>
       )}
@@ -278,7 +276,7 @@ function InsightCard({ rec, pending, onChanged }: { rec: InsightRecord; pending?
       </div>
       {showProv && prov && (
         <div className="mt-1.5 rounded-md px-2 py-1.5 text-[11px]" style={{ background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-          <span>by <b style={{ color: 'var(--sem-fg)' }}>{prov.origin === 'human' ? 'You' : 'AI Assistant'}</b></span>
+          <span>by <b style={{ color: 'var(--sem-fg)' }}>{prov.origin === 'human' ? 'You' : 'Your assistant'}</b></span>
           {prov.when && <span> · {fmtWhen(prov.when)}</span>}
           {prov.sourceRunIds && prov.sourceRunIds.length > 0 && <span> · from {prov.sourceRunIds.length} run{prov.sourceRunIds.length === 1 ? '' : 's'}</span>}
         </div>
@@ -337,7 +335,7 @@ function LearnedWorkflowsSection({ onOpenWorkflows }: { onOpenWorkflows?: () => 
       {!learned ? (
         <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading…</div>
       ) : learned.length === 0 ? (
-        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No learned workflows yet. Ask your AI Assistant to turn a successful process into a reusable workflow.</div>
+        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No learned workflows yet. Ask your assistant to turn a successful process into a reusable workflow.</div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">{learned.map((d) => <LearnedWorkflowCard key={d.name} def={d} onOpenWorkflows={onOpenWorkflows} />)}</div>
       )}
@@ -608,11 +606,15 @@ function PurgeSection({ onPurged }: { onPurged: () => void }) {
   );
 }
 
-function Jump({ href, children }: { href: string; children: ReactNode }) {
+function Jump({ href, children, destructive }: { href: string; children: ReactNode; destructive?: boolean }) {
   const id = href.startsWith('#') ? href.slice(1) : href;
   return (
     <a href={href} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-      className="rounded-full border px-2 py-0.5 no-underline" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-fg)' }}>
+      title={destructive ? 'Go to the section that removes saved lessons. Nothing is removed until you confirm there.' : undefined}
+      className={destructive ? 'rounded-md border px-2 py-0.5 no-underline font-medium' : 'rounded-full border px-2 py-0.5 no-underline'}
+      style={destructive
+        ? { borderColor: 'color-mix(in srgb, var(--sem-bad) 55%, transparent)', color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 10%, transparent)' }
+        : { borderColor: 'var(--sem-border)', color: 'var(--sem-fg)' }}>
       {children}
     </a>
   );
@@ -630,8 +632,7 @@ function Pill({ children, tint, title }: { children: ReactNode; tint?: string; t
 function MiniBtn({ children, onClick, disabled, primary, title }: { children: ReactNode; onClick?: () => void; disabled?: boolean; primary?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-medium transition-opacity disabled:opacity-40"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-sm sem-btn-primary' : 'sem-btn sem-btn-sm'}>
       {children}
     </button>
   );

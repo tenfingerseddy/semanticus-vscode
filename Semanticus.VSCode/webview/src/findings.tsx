@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { revealInTree, copyText } from './bridge';
+import { Caret } from './ui';
 
 // A normalized finding/violation row shared by the AI-Readiness and BPA views.
 export interface FindingRow {
   ruleId: string; ruleName: string; category: string; severity: number;   // severity 3=error 2=warning 1=info
   objectRef: string; objectName: string; message: string;
   tag?: { label: string; color: string };                                 // optional fix-type badge
-  waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean;       // an accepted finding (shown in the Waived section)
+  waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean;       // an accepted finding (shown in the Accepted findings section)
 }
 
 const sevColor = (s: number) => (s >= 3 ? 'var(--sem-bad)' : s === 2 ? 'var(--sem-warn)' : 'var(--sem-muted)');
@@ -59,7 +60,7 @@ type Menu = { x: number; y: number; row: FindingRow } | null;
 
 // Collapsible Category → Rule → Items tree. Categories expand by default; rules collapse by default (so you
 // scan the rule list, then expand a rule to see its items). Right-click an item → reveal it in the Model tree.
-export function GroupedFindings({ rows, renderActions, renderRuleActions, categoryOrder }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode; categoryOrder?: string[] }) {
+export function GroupedFindings({ rows, renderActions, renderRuleActions, categoryOrder, extraFilters }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode; categoryOrder?: string[]; extraFilters?: React.ReactNode }) {
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   // rules collapse by default; ?expand=all opens them (used by the screenshot harness + a future expand-all).
   const [openRules, setOpenRules] = useState<Set<string>>(() =>
@@ -89,8 +90,8 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
     const idx = (c: string) => { const i = categoryOrder.indexOf(c); return i < 0 ? categoryOrder.length : i; };
     groups = [...groups].sort((a, b) => idx(a.category) - idx(b.category));
   }
-  const bar = (
-    <div className="flex items-center gap-1 flex-wrap pb-0.5" role="group" aria-label="Filter findings by severity">
+  const severityBar = (
+    <div className="sem-seg flex-wrap" role="group" aria-label="Filter findings by level">
       {SEV_BUCKETS.map((b) => {
         const n = sevCounts[b.key];
         const on = sev === b.key;
@@ -98,16 +99,22 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
           <button key={b.key} type="button" aria-pressed={on} disabled={n === 0}
             title={b.key === 'all' ? 'Show every finding' : `Show only ${b.label.toLowerCase()} findings`}
             onClick={() => setSev(b.key)}
-            className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-colors disabled:opacity-40"
-            style={on
-              ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-              : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-            {b.label} <span className="opacity-70 tnum">{n}</span>
+            className="sem-seg-item disabled:opacity-40">
+            <span>{b.label}</span><span className="opacity-70 tnum ml-1">{n}</span>
           </button>
         );
       })}
+    </div>
+  );
+  // ONE filter row. The fix-type filter used to sit in its own row above this one, so the page showed two
+  // stacked rows that each began with "All" and read as the same control twice.
+  const bar = (
+    <div className="flex items-center gap-3 flex-wrap">
+      <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>By level</span>
+      {severityBar}
+      {extraFilters}
       {sev !== 'all' && (
-        <span className="text-[11px] ml-1" style={{ color: 'var(--sem-muted)' }}>
+        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>
           showing {shown.length} of {rows.length}
         </span>
       )}
@@ -139,7 +146,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
                     <SevBadge severity={g.severity} />
                     <span className="font-medium truncate">{g.ruleName}</span>
                     <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>({g.items.length})</span>
-                    {renderRuleActions && <span className="ml-auto shrink-0" onClick={(e) => e.stopPropagation()}>{renderRuleActions(g.ruleId, g.category)}</span>}
+                    {renderRuleActions && <span className="shrink-0 ml-1" onClick={(e) => e.stopPropagation()}>{renderRuleActions(g.ruleId, g.category)}</span>}
                   </Row>
                   {open && g.items.map((r, i) => (
                     <div key={r.objectRef + i}
@@ -189,40 +196,52 @@ function Row({ children, onClick, className, style }: { children: React.ReactNod
   );
 }
 function Twist({ open }: { open: boolean }) {
-  return <span className="inline-block w-3 shrink-0 text-[10px] transition-transform" style={{ transform: open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>;
+  return <span className="inline-flex w-3 shrink-0 justify-center"><Caret open={open} /></span>;
 }
 
-function FBtn({ children, onClick, disabled, title }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
+function QuietBtn({ children, onClick, disabled, title }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
   return (
-    <button title={title} onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+    <button type="button" title={title} onClick={onClick} disabled={disabled}
+      className="text-[11px] font-medium disabled:opacity-40"
+      style={{ color: 'var(--sem-muted)', background: 'none', border: 0, padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer' }}>
       {children}
     </button>
   );
 }
 
-/// Per-finding waive control. "Waive" reveals an inline REQUIRED reason input (Enter or ✓ to commit, Esc to cancel);
-/// a waived finding shows "Un-waive". Used in both the AI-Readiness and BPA findings lists.
-export function WaiveControl({ waived, reason, label = 'Waive', title, onWaive, onUnwaive }: { waived?: boolean; reason?: string; label?: string; title?: string; onWaive: (reason: string) => void; onUnwaive: () => void }) {
+function FBtn({ children, onClick, disabled, title }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
+  return (
+    <button title={title} onClick={onClick} disabled={disabled}
+      className="sem-btn sem-btn-sm">
+      {children}
+    </button>
+  );
+}
+
+/// Per-finding accept control. "Accept finding" reveals an inline REQUIRED reason input (Enter or ✓ to commit, Esc to cancel);
+/// an accepted finding shows "Reopen". Used in both the AI-Readiness and BPA findings lists.
+export function WaiveControl({ waived, reason, label = 'Accept finding', title, subtle, onWaive, onUnwaive }: { waived?: boolean; reason?: string; label?: string; title?: string; subtle?: boolean; onWaive: (reason: string) => void; onUnwaive: () => void }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
-  if (waived) return <FBtn title={reason} onClick={onUnwaive}>Un-waive</FBtn>;
-  if (!editing) return <FBtn title={title ?? "Accept this finding (won't count against the score)"} onClick={() => setEditing(true)}>{label}</FBtn>;
+  // `subtle` is the rule-header variant: the rule name is what you read, so its accept is a quiet text
+  // action beside it rather than a boxed button repeated down a far-right column.
+  const Btn = subtle ? QuietBtn : FBtn;
+  if (waived) return <Btn title={reason} onClick={onUnwaive}>Reopen</Btn>;
+  if (!editing) return <Btn title={title ?? "Accept this finding (won't count against the score)"} onClick={() => setEditing(true)}>{label}</Btn>;
   const commit = () => { const t = text.trim(); if (t) { onWaive(t); setEditing(false); setText(''); } };
   return (
     <span className="flex items-center gap-1">
-      <input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="reason (required)…" spellCheck={false}
+      <input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Why is this finding acceptable?" spellCheck={false}
         onKeyDown={(e) => { if (e.key === 'Enter') commit(); else if (e.key === 'Escape') { setEditing(false); setText(''); } }}
-        className="text-[11px] px-1.5 py-0.5 rounded outline-none" style={{ width: 150, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+        className="text-[11px] px-1.5 py-0.5 rounded outline-none" style={{ width: 220, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
       <FBtn disabled={!text.trim()} onClick={commit}>✓</FBtn>
     </span>
   );
 }
 
-/// The "Waived (accepted)" section — every finding consciously accepted, with its reason + an un-waive action. Always
+/// The "Accepted findings" section — every finding consciously accepted, with its reason + an un-waive action. Always
 /// shown (collapsed) so the score is never silently inflated: the accepted findings stay visible and auditable.
-/// The header "N waived" count is a real control that opens this list (D-079); pass open/onOpenChange to drive it.
+/// The header "N accepted" count is a real control that opens this list (D-079); pass open/onOpenChange to drive it.
 export function WaivedList({ rows, onUnwaive, open, onOpenChange }: { rows: FindingRow[]; onUnwaive: (r: FindingRow) => void; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const [internal, setInternal] = useState(false);
   const isOpen = open ?? internal;
@@ -231,7 +250,7 @@ export function WaivedList({ rows, onUnwaive, open, onOpenChange }: { rows: Find
   return (
     <div id="waived-findings" className="rounded-xl border p-3" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
       <Row onClick={() => setOpen(!isOpen)} className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>
-        <Twist open={isOpen} />⊘ Waived (accepted)<span className="ml-1 opacity-70">({rows.length})</span>
+        <Twist open={isOpen} />⊘ Accepted findings<span className="ml-1 opacity-70">({rows.length})</span>
       </Row>
       {isOpen && (
         <div className="mt-1 flex flex-col gap-1">
@@ -242,11 +261,11 @@ export function WaivedList({ rows, onUnwaive, open, onOpenChange }: { rows: Find
                 <div className="text-[12px] truncate">
                   <span className="font-medium" style={{ color: 'var(--sem-muted)' }}>{r.objectName}</span>
                   <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}> · {r.ruleName}</span>
-                  {r.waiverRuleLevel && <span className="text-[9px] uppercase px-1 py-0.5 rounded ml-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-warn)' }} title="Whole rule waived model-wide">rule</span>}
+                  {r.waiverRuleLevel && <span className="text-[9px] uppercase px-1 py-0.5 rounded ml-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-warn)' }} title="Whole rule accepted across the model">rule</span>}
                 </div>
                 {r.waiverReason && <div className="text-[11px]" style={{ color: 'var(--sem-warn)' }}>“{r.waiverReason}”</div>}
               </div>
-              <div className="shrink-0 mt-0.5"><FBtn title={r.waiverRuleLevel ? 'Removes the model-wide waiver for this rule (all instances)' : undefined} onClick={() => onUnwaive(r)}>{r.waiverRuleLevel ? 'Un-waive rule' : 'Un-waive'}</FBtn></div>
+              <div className="shrink-0 mt-0.5"><FBtn title={r.waiverRuleLevel ? 'Reopens every instance of this rule across the model' : undefined} onClick={() => onUnwaive(r)}>{r.waiverRuleLevel ? 'Reopen rule' : 'Reopen'}</FBtn></div>
             </div>
           ))}
         </div>

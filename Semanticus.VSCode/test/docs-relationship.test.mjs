@@ -40,7 +40,10 @@ const dto = {
 };
 const rendered = renderDoc(dto, DEFAULT_DOC_CONFIG, DEFAULT_DOC_BRANDING);
 assert.match(rendered.html, /data-components="14" data-isolated="13"/, 'preview and exported HTML must use the fixed shared relationship renderer');
-assert.match(viewSource, /srcDoc=\{rendered\?\.html \?\? ''\}/, 'the live preview must render the shared HTML result');
+assert.match(viewSource, /srcDoc=\{rendered\?\.previewHtml \?\? ''\}/,
+  'the live preview must render the shared HTML result (script-free: its iframe has no allow-scripts)');
+assert.match(source, /const previewHtml = html\.split\(searchScript\(\)\)/,
+  'the preview must be that SAME rendered document with the script removed, never a second render');
 assert.match(viewSource, /exportDoc\('html', rendered\.html, docName\)/, 'HTML export must write that same shared HTML result');
 
 console.log('Docs relationship diagram tests passed');

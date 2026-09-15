@@ -1,98 +1,75 @@
 ---
 name: incremental-refresh-setup
-title: Set up incremental refresh and prove the window loads
-description: Add the RangeStart/RangeEnd plumbing that MUST fold, apply a rolling-window policy on a large fact table, verify the partitions it produced, then PROVE the loaded window against a source control total before you trust it.
+title: Set up rolling refresh
+description: Check folding prerequisites, configure a rolling window, inspect partitions and record an optional control check.
+whenToUse: "Use for a large fact table that needs only recent data refreshed. For a normal small-table import, use Import a table; for a date calendar, use Set up a calendar."
 version: 1
 strictness: hard
 triggers: [set_incremental_refresh_policy]
 ---
 
-## Step 1: Define the rolling window and check the fold
+## Step 1: Choose the fact and rolling window
 
-Incremental refresh partitions a large fact table so only recent data reloads. Decide the
-window first: how many years to STORE and how many trailing days to REFRESH on each run. The plumbing is
-two datetime parameters, `RangeStart` and `RangeEnd`, and a filter step on the fact's date column bounded
-by them. THE folding caveat is decisive: that filter step MUST fold to the source, or
-the refresh silently degrades to the mashup engine and incremental refresh breaks outright.
-Be honest about the limit: folding introspection is NOT available offline; you cannot confirm the fold
-from here. Instruct the user to verify "View Native Query" resolves on the filter step in Power BI Desktop
-before relying on the policy.
+Name the fact table, archive years and trailing refresh days. The RangeStart and RangeEnd filter must fold
+to the source. The engine can create the parameters and policy but cannot prove folding offline; use Power BI
+Desktop View Native Query or an equivalent source check and record that external result honestly.
 
 ```yaml gate
 inputs:
   - name: factTable
-    question: "Which fact table gets incremental refresh (e.g. Sales)?"
+    question: "Which large fact table gets incremental refresh?"
     type: text
     required: required
   - name: storeYears
-    question: "How many years of history to STORE in the model (the archive window, e.g. 5)?"
+    question: "How many years of history should remain stored?"
     type: number
     required: required
   - name: refreshDays
-    question: "How many trailing days to REFRESH on each run (the hot window, e.g. 10)?"
+    question: "How many trailing days should refresh on each run?"
     type: number
     required: required
 ```
 
-## Step 2: Plumb the parameters and apply the policy
+## Step 2: Add the parameters and policy
 
-Create the `RangeStart` and `RangeEnd` datetime parameters with `create_named_expression`, then bind the
-fact's partition M to filter its date column between them with `set_partition_m`; filters early so the
-step folds. Apply the rolling-window policy with `set_incremental_refresh_policy` using the
-store/refresh answers from Step 1, then read it back with `get_incremental_refresh_policy` to confirm the
-window landed as intended. Optionally enable detect-data-changes so only changed partitions reload.
+Create or repair RangeStart and RangeEnd, bind the half-open date filter in the partition M, then call
+`set_incremental_refresh_policy` and read it back with `get_incremental_refresh_policy`. Show the returned
+window and any prerequisites. Do not claim that metadata setup refreshed data.
 
 ```yaml gate
 ops: [create_named_expression, set_partition_m, set_incremental_refresh_policy, get_incremental_refresh_policy]
 ```
 
-## Step 3: Verify the partitions it produced
+## Step 3: Inspect partitions and optionally check one window
 
-A policy is not proof: inspect what it generated. Run `list_partitions` AFTER applying the
-policy: you should see the archive partitions plus the incremental buckets matching the window you set. If
-the shape is wrong, the policy or the fold is off; fix it before any refresh. Refresh with
-`refresh_partition` ONLY on a live model and ONLY with the user's explicit go-ahead; on a large fact table
-a full refresh is expensive, so refresh a single recent partition first to confirm the mechanics.
-
-```yaml gate
-ops: [list_partitions, refresh_partition]
-```
-
-## Step 4: Prove the loaded window with a control total
-
-A loaded window is unproven until a number confirms it. Author a control measure (a
-`COUNTROWS` or `SUM` over the fact within the window) with `create_measure`, and give `target` its ref.
-Ask the business for the matching figure from the SOURCE system over the same window (a row count or a
-control total they computed independently, not a number derived by this model). The hard gate probes the
-measure against that value; a mismatch means the filter dropped rows, the fold broke, or the window is
-misaligned: fix and re-probe. The gate holds on this step until the number matches or you decline.
+Call `list_partitions` and compare the archive and incremental buckets with the chosen window. A single
+recent `refresh_partition` is an optional live operation and requires the user's explicit go-ahead. When an
+independent source count or additive total is available, create a control measure and probe it with `target`;
+otherwise decline `verificationValue`. Folding, a live refresh and the scalar proof are separate evidence
+items, so one cannot stand in for another.
 
 ```yaml gate
 strictness: hard
-ops: [create_measure]
+ops: [list_partitions, refresh_partition, create_measure, probe_measure]
 inputs:
+  - name: target
+    question: "Optional control measure ref for the selected window; leave blank when no control measure is being checked."
+    type: objectRef
+    required: optional
   - name: verificationValue
-    question: "A row count or control total from the SOURCE system over the refresh window, supplied by the user, not derived by the model (e.g. 'the OLTP reports 842,110 rows in the last 10 days')."
+    question: "An independent source count or total for the same window; decline when unavailable."
     type: verification
     required: answer-or-decline
-  - name: target
-    question: "The ref of the control measure you created to check the window (e.g. measure:Sales/Windowed Row Count)."
-    type: objectRef
-    required: required
 verify:
   - kind: dax_probe
     when: inputs.verificationValue.answered
     probe: verificationValue
 ```
 
-## Step 5: Save and note the hybrid option
+## Step 4: Save the policy
 
-Persist with `save_model` so the parameters, partition M, and policy land in the TMDL beside the model.
-Record the store/refresh window and what the control measure verifies against, so the load can be
-re-checked after any refresh. If near-real-time freshness matters, note the option of a HYBRID table:
-import partitions plus exactly one DirectQuery partition for the latest data. Hybrid
-is Premium-family only (incl. PPU / Embedded / F SKUs) and pairs best with Dual dimensions; flag it as a
-follow-up, not part of this policy.
+Call `save_model`. Record the window, folding evidence, partition shape and any refresh or control result.
+If the model needs a hybrid table, list it as a separate follow-up; it is not silently created here.
 
 ```yaml gate
 ops: [save_model]

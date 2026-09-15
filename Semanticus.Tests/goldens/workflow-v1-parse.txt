@@ -2,533 +2,476 @@ FILE Semanticus.Engine/workflows/add-relationship.md
   error=<null>
   source=stock file=add-relationship.md
   name=add-relationship kind=<null> version=1 strictness=hard
-  title=Relate two tables and prove the join did not fan out
-  description=Relate two tables on their keys at the right cardinality and direction, review the graph for ambiguity or an unintended inactive path, then PROVE a known measure still equals its control total after relating. The relationship equivalent of import-table's control-total proof.
-  whenToUse=Connect two tables so a measure can filter across them (a fact to a dimension, or two dimensions through a bridge). Use it whenever a wrong cardinality or filter direction could silently fan out rows and inflate a total. To bring a single table in and prove its own load, use import-table.
+  title=Connect tables
+  description=Inspect two endpoints, create the relationship with a deliberate shape, and check one meaningful result.
+  whenToUse=Use when loaded tables need a relationship, such as a fact and dimension. For a new source table, use Import a table; for broad cleanup, use Tidy a model.
   triggers=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter]
   tags=[]
-  step id=step-1 number=1 title=State the join and its cardinality
-    ops=[]
-    instructions.len=536 instructions.hash=70151990AAE1484D
+  step id=step-1 number=1 title=Choose the endpoints
+    ops=[get_model_graph]
+    instructions.len=434 instructions.hash=596AACC2DEAABAE3
     gate strictness=<null>
-    input name=joinSpec type=text required=required daxPurity=<null> question=Which two tables and key columns, and which side is the ONE (unique key) vs the MANY (repeating FK)?
-    input name=filterDirection type=text required=answer-or-decline daxPurity=<null> question=Single-direction (the default, where the dimension filters the fact) or bidirectional, and if bidirectional, the reason it is needed?
+    input name=joinSpec type=text required=required daxPurity=<null> question=Which two key columns are joined, which side is ONE versus MANY, and why is the chosen filter direction safe?
   step id=step-2 number=2 title=Create the relationship
-    ops=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter]
-    instructions.len=558 instructions.hash=18C8168702422886
+    ops=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter|set_relationship_active|get_model_graph]
+    instructions.len=332 instructions.hash=D5806521C122CCE1
     gate=<null>
-  step id=step-3 number=3 title=Review the graph for ambiguity and stray inactive paths
-    ops=[get_model_graph|set_relationship_active|set_relationship_crossfilter]
-    instructions.len=491 instructions.hash=EDC234BFB7A91952
-    gate strictness=<null>
-    input name=graphReviewed type=text required=answer-or-decline daxPurity=<null> question=Have you confirmed no ambiguous filter path and no unintended inactive/duplicate relationship between these tables?
-  step id=step-4 number=4 title=Prove the join did not fan out (HARD GATE)
-    ops=[create_measure|probe_measure]
-    instructions.len=746 instructions.hash=703B9A87AC6EFC8B
+  step id=step-3 number=3 title=Check a representative aggregate
+    ops=[probe_measure]
+    instructions.len=418 instructions.hash=B9ADCBE269579733
     gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of a known measure to prove the join did not fan out (e.g. measure:Sales/Order Line Count).
-    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=That measure's correct total, confirmed independently by the user, not derived by this model (e.g. 'Order Line Count should be 1,204,882 for 2024').
+    input name=target type=objectRef required=required daxPurity=<null> question=The existing measure to check through this relationship, for example measure:Sales/Net Sales.
+    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=An independently known result in a relationship-using context; decline when none is available.
     verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Save the relationship
+  step id=step-4 number=4 title=Save the relationship
     ops=[save_model]
-    instructions.len=251 instructions.hash=64E97BCB3448CD85
+    instructions.len=216 instructions.hash=81429755BDB45752
     gate=<null>
 FILE Semanticus.Engine/workflows/calendar-setup.md
   error=<null>
   source=stock file=calendar-setup.md
   name=calendar-setup kind=<null> version=1 strictness=hard
-  title=Set up a calendar and prove its time intelligence
-  description=Stand up calendar-based time intelligence (CL 1701+) from a template, then PROVE a calendar-aware YTD against a known-good figure before you trust it: modern time intelligence, verified, not eyeballed.
-  whenToUse=<null>
+  title=Set up a calendar
+  description=Choose a calendar convention, create its mappings, and optionally check one time calculation before saving.
+  whenToUse=Use when the model needs a new or updated date calendar. For comparisons on an existing calendar, use Add time comparisons; for importing a date table, use Import a table.
   triggers=[define_calendar_from_template|define_calendar|list_calendars]
   tags=[]
   step id=step-1 number=1 title=Choose the calendar shape
     ops=[]
-    instructions.len=924 instructions.hash=AB3A6F848B481736
+    instructions.len=300 instructions.hash=8E314C6CA0C0EEC1
     gate strictness=<null>
     input name=template type=text required=required daxPurity=<null> question=Which calendar shape: gregorian, fiscal, iso, 445, or 13period?
-    input name=targetTable type=text required=optional daxPurity=<null> question=Which table holds the calendar: an existing date table, or a NEW name to spin up a fresh CALENDAR() table? (default 'Date')
-    input name=dateColumn type=text required=optional daxPurity=<null> question=The date column on that table (leave blank to auto-detect when the table has a single DateTime column).
-    input name=fiscalStart type=number required=optional daxPurity=<null> question=Fiscal template only: the first month of the fiscal year, 1-12 (default 7 = July). Ignore for the other templates.
-  step id=step-2 number=2 title=Confirm support, then generate the calendar
-    ops=[list_calendars|set_compatibility_level|define_calendar_from_template]
-    instructions.len=653 instructions.hash=A82493E2F4D6B294
+    input name=targetTable type=text required=optional daxPurity=<null> question=Which existing date table or new table name should receive the calendar? Leave blank only when Date is unambiguous.
+    input name=dateColumn type=text required=optional daxPurity=<null> question=Which date column should be mapped? Leave blank only when one DateTime column is unambiguous.
+    input name=fiscalStart type=number required=optional daxPurity=<null> question=For a fiscal calendar, the first month numbered 1-12; decline or leave blank for other shapes.
+  step id=step-2 number=2 title=Check compatibility and create the mapping
+    ops=[list_calendars|set_compatibility_level|define_calendar_from_template|define_calendar]
+    instructions.len=371 instructions.hash=0B78BC8961A1132A
     gate=<null>
-  step id=step-3 number=3 title=Prove the calendar-aware time intelligence
-    ops=[create_measure]
-    instructions.len=598 instructions.hash=C33259473151B6A5
+  step id=step-3 number=3 title=Review the mapping and optionally check time logic
+    ops=[list_calendars|create_measure|probe_measure]
+    instructions.len=458 instructions.hash=E5529B3C998FC729
     gate strictness=hard
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=A known-good YTD figure at a context you can check independently (the classic date-column YTD, or a source-of-truth total), from the user, not derived by the model.
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the calendar-aware YTD measure you just created (e.g. measure:Sales/Sales YTD (Fiscal)).
+    input name=target type=objectRef required=optional daxPurity=<null> question=Optional ref of a calendar-aware time measure to check, for example measure:Sales/Sales YTD. Leave unanswered for metadata-only setup.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for that time measure and context; decline when no calculation was created or no trusted value exists.
     verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save and hand the calendar to the model
+  step id=step-4 number=4 title=Save the calendar
     ops=[save_model]
-    instructions.len=522 instructions.hash=AA879940B0AEF2C1
+    instructions.len=177 instructions.hash=37AABDDA67AAE99C
     gate=<null>
 FILE Semanticus.Engine/workflows/check-blast-radius.md
   error=<null>
   source=stock file=check-blast-radius.md
   name=check-blast-radius kind=<null> version=1 strictness=hard
-  title=Check blast radius
-  description=Assess a risky model change, preserve representative values when live evidence is available, replay the affected safety checks, record the decision, and produce one sealed evidence certificate.
-  whenToUse=Before changing, renaming, removing or restructuring an existing model object when downstream measures, reports or saved checks may depend on it. Use Safe rename for the guided apply path when the intended change is specifically a rename.
+  title=Review a risky change
+  description=Assess a risky model change, capture relevant evidence, replay saved checks, and record the remaining risk without applying the change.
+  whenToUse=Use before removing, restructuring or otherwise changing an object with downstream use. For a rename that should be applied with a plan, use Rename with impact review; for a quick dependency lookup, use Lineage.
   triggers=[impact_assessment|capture_baseline|delete_object|rename_object]
   tags=[]
-  step id=step-1 number=1 title=Assess the declared change
+  step id=step-1 number=1 title=Assess the proposed change
     ops=[impact_assessment]
-    instructions.len=550 instructions.hash=7B9231447CEDF2A0
+    instructions.len=360 instructions.hash=DD62DD2647814812
     gate strictness=<null>
-    input name=target type=objectRef required=required daxPurity=<null> question=The exact object ref being changed, for example measure:Sales/Total Sales or column:Sales/Amount.
-    input name=changeIntent type=text required=required daxPurity=<null> question=Describe the intended change and why it is needed.
-    input name=reportPaths type=text required=answer-or-decline daxPurity=<null> question=Local PBIR report folder paths in this review scope, separated by semicolons; or decline with why this certificate must be model-only.
+    input name=target type=objectRef required=required daxPurity=<null> question=The exact object ref being changed, for example measure:Sales/Net Sales or column:Sales/Amount.
+    input name=changeIntent type=text required=required daxPurity=<null> question=What change is being considered and why?
+    input name=reportPaths type=text required=answer-or-decline daxPurity=<null> question=Local PBIR report folders in scope, separated by semicolons; decline with why the review is model-only when unavailable.
     verify kind=impact_assessment when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-2 number=2 title=Preserve representative values where they can be measured
+  step id=step-2 number=2 title=Capture values when the change can be measured
     ops=[capture_baseline]
-    instructions.len=600 instructions.hash=C63CE3928061EFC2
+    instructions.len=316 instructions.hash=2D81159FE95854CE
     gate strictness=<null>
-    input name=baselineCapture type=text required=answer-or-decline daxPurity=<null> question=The captureId returned by a representative capture_baseline run; or decline with why measured value evidence is unavailable.
+    input name=baselineCapture type=text required=answer-or-decline daxPurity=<null> question=The captureId from a representative baseline, or a reason measured evidence is unavailable.
     verify kind=baseline_exists when=inputs.baselineCapture.answered probe=baselineCapture scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-3 number=3 title=Replay the safety net
-    ops=[run_tests|run_interview]
-    instructions.len=563 instructions.hash=5BFE59F9007A04E7
+  step id=step-3 number=3 title=Replay the saved checks
+    ops=[run_tests|export_test_report]
+    instructions.len=377 instructions.hash=015D1FB3770645E1
     gate strictness=<null>
-    input name=replayInterview type=text required=answer-or-decline daxPurity=<null> question=Answer yes when the assessment scheduled Model Interview questions for replay; otherwise decline and record that no current-model pack was scheduled.
     verify kind=tests_replay when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-    verify kind=interview_replay when=inputs.replayInterview.answered probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Record the decision and residual risk
-    ops=[]
-    instructions.len=261 instructions.hash=1C82881B9E11EB95
-    gate strictness=<null>
-    input name=decision type=text required=required daxPurity=<null> question=Proceed, revise or reject - and the evidence-based reason for that decision.
-    input name=residualRisk type=text required=required daxPurity=<null> question=List every remaining coverage gap or external binding an owner must review; write none only when the recorded evidence supports it.
-  step id=step-5 number=5 title=Produce the certificate
+  step id=step-4 number=4 title=Decide and preserve the review record
     ops=[export_workflow_evidence|save_evidence]
-    instructions.len=342 instructions.hash=4EB631F6655719EE
+    instructions.len=349 instructions.hash=01CB6A1287734241
     gate strictness=<null>
-    input name=certificateDelivery type=text required=required daxPurity=<null> question=Where should the completed certificate go: Save with model, local export, or both?
+    input name=decision type=text required=required daxPurity=<null> question=Proceed, revise or reject, with the evidence-based reason.
+    input name=residualRisk type=text required=required daxPurity=<null> question=What coverage gaps or external bindings remain for an owner to review?
 FILE Semanticus.Engine/workflows/deploy-to-production.md
   error=<null>
   source=stock file=deploy-to-production.md
   name=deploy-to-production kind=<null> version=1 strictness=hard
-  title=Promote a model to production safely
-  description=Review the change like a pull request, gate on a clean BPA and a non-regressed readiness grade, dry-run against the target ALWAYS, then promote through separate stages; the live ops stay consent-gated and the run never bypasses them.
-  whenToUse=<null>
+  title=Publish changes
+  description=Choose the configured destination, preview the actual change, publish under its current permission gate, and record what happened.
+  whenToUse=Use when reviewed model changes are ready for a configured test or production destination. For a risky edit that still needs impact review, use Review a risky change; for a report-dependent rename, use Rename with impact review.
   triggers=[deploy_stage|deploy_live|preview_deploy]
   tags=[]
-  step id=step-1 number=1 title=Review the change as a diff
-    ops=[model_diff|list_verified_edits|export_verified_edits]
-    instructions.len=358 instructions.hash=2D928EF3F6AB9E45
+  step id=step-1 number=1 title=Choose the destination and change set
+    ops=[model_diff|list_verified_edits]
+    instructions.len=307 instructions.hash=6BA4EB897F277F6E
     gate strictness=<null>
-    input name=diffReviewed type=text required=answer-or-decline daxPurity=<null> question=Have you reviewed the full before/after diff (model_diff + verified edits) and confirmed every change is intended?
-  step id=step-2 number=2 title=Validate: BPA clean, readiness holds, RLS roles tested
-    ops=[list_roles|run_dax]
-    instructions.len=1095 instructions.hash=1F091370CFD7DF9F
-    gate strictness=hard
-    input name=rlsTested type=text required=answer-or-decline daxPurity=<null> question=Have you tested every RLS role (and any OLS-secured measures) for correct row/column visibility, so each role sees the rows it should and no more?
-    verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-3 number=3 title=Preview against the target: dry-run ALWAYS
-    ops=[preview_deploy|deploy_gate|connection_status]
-    instructions.len=425 instructions.hash=4A1388E92A57FE41
+    input name=targetStage type=text required=required daxPurity=<null> question=Which configured workspace, pipeline stage or live model is the intended destination?
+  step id=step-2 number=2 title=Preview the relevant checks
+    ops=[connection_status|preview_deploy|deploy_gate|list_roles|run_dax]
+    instructions.len=487 instructions.hash=5AB6CA596F1980ED
     gate strictness=<null>
-    input name=previewReviewed type=text required=answer-or-decline daxPurity=<null> question=Have you dry-run the deploy (preview_deploy / deploy_gate) against the target and confirmed the previewed changes and parameter rebinds are correct?
-  step id=step-4 number=4 title=Promote through the right stage
-    ops=[deploy_stage|deploy_live|cicd_publish|deployment_history]
-    instructions.len=578 instructions.hash=667C9640AC8CAA7F
-    gate strictness=<null>
-    input name=targetStage type=text required=answer-or-decline daxPurity=<null> question=Which stage is this promoting to, and is it the correct NEXT stage (dev→test→prod, not straight to prod)?
-  step id=step-5 number=5 title=Record and monitor
+    input name=previewReviewed type=text required=required daxPurity=<null> question=What did the target preview and deploy gate show, and which RLS path applies: published role test, offline simulation, or no roles?
+  step id=step-3 number=3 title=Publish with the configured permission
+    ops=[deploy_stage|deploy_live|cicd_publish]
+    instructions.len=460 instructions.hash=F485CAEC6F5A0FE4
+    gate=<null>
+  step id=step-4 number=4 title=Record the actual result
     ops=[deployment_history|save_model]
-    instructions.len=562 instructions.hash=E46D37C4AA25D6A8
+    instructions.len=366 instructions.hash=6B989FA155597769
     gate=<null>
 FILE Semanticus.Engine/workflows/governed-rename.md
   error=input type 'planItem' is not one of: verification | text | enum | number | objectRef.
   source=stock file=governed-rename.md
   name=governed-rename kind=<null> version=2 strictness=hard
-  title=Safe rename
-  description=Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.
-  whenToUse=When renaming an existing measure, column or table that may be referenced by formulas, reports, M text or external consumers. Use Check blast radius when you need the evidence and decision without an apply path.
+  title=Rename with impact review
+  description=Review model and report uses, preview one reference-aware rename, apply it once, and record remaining external work.
+  whenToUse=Use when renaming a published measure, column or table may affect reports or external text. For a quick model-only rename, use the direct rename action; for review without applying, use Review a risky change.
   triggers=[rename_object|add_plan_item]
   tags=[]
 FILE Semanticus.Engine/workflows/import-table.md
   error=<null>
   source=stock file=import-table.md
   name=import-table kind=<null> version=1 strictness=hard
-  title=Import a table and prove it loaded correctly
-  description=Bring in an import table, type every column, tame datetime cardinality, hide the plumbing, lay the incremental-refresh groundwork, then PROVE the load against a control total from the source before you trust a single number.
-  whenToUse=Bring a table into the model (fact or dimension) and prove it loaded correctly against a known source figure. Use it whenever a broken fold, a dropped filter, or a coerced type could silently lose or duplicate rows. To connect two tables you have already loaded, use add-relationship.
+  title=Import a table
+  description=Bring in one table, make its fields deliberate, and record an independent load check when available.
+  whenToUse=Use when adding a fact or dimension table from a source. For a loaded table that needs a relationship, use Connect tables; for a large table needing a rolling window, use Set up rolling refresh.
   triggers=[create_import_table|set_column_data_type|set_incremental_refresh_policy]
   tags=[]
-  step id=step-1 number=1 title=Import the table
-    ops=[]
-    instructions.len=291 instructions.hash=0628BD6D51BBC748
+  step id=step-1 number=1 title=Choose the source and load the table
+    ops=[create_import_table]
+    instructions.len=363 instructions.hash=8D62DAA907D2AFD0
+    gate strictness=<null>
+    input name=sourceTable type=text required=required daxPurity=<null> question=Which source entity should be imported, and what final table name should it have?
+  step id=step-2 number=2 title=Review types and exposed fields
+    ops=[list_columns|set_column_data_type|set_column_hidden|set_summarize_by]
+    instructions.len=420 instructions.hash=A022DFECA50D7D84
     gate=<null>
-  step id=step-2 number=2 title=Type every column deliberately
-    ops=[]
-    instructions.len=344 instructions.hash=6F2E312817C44CB3
-    gate strictness=<null>
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the table you are hardening (e.g. table:Sales).
-    input name=typesConfirmed type=text required=answer-or-decline daxPurity=<null> question=Have you set a deliberate data type on every column (money = Fixed Decimal, keys = integer)?
-    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-3 number=3 title=Split datetime columns
-    ops=[]
-    instructions.len=350 instructions.hash=F41597F1560359D8
-    gate=<null>
-  step id=step-4 number=4 title=Hide the plumbing and set summarization
-    ops=[]
-    instructions.len=340 instructions.hash=0EBF0F265B955309
-    gate strictness=<null>
-    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Prepare incremental-refresh plumbing
-    ops=[]
-    instructions.len=381 instructions.hash=BF62C01F0776C575
-    gate strictness=<null>
-    input name=irDecision type=text required=answer-or-decline daxPurity=<null> question=Will this table use incremental refresh? If yes, is the RangeStart/RangeEnd filter confirmed foldable?
-  step id=step-6 number=6 title=Prove the load (HARD GATE)
+  step id=step-3 number=3 title=Check a source control total
     ops=[create_measure|probe_measure]
-    instructions.len=661 instructions.hash=07B3658086A7F8F1
+    instructions.len=473 instructions.hash=C31343438F377F1F
     gate strictness=hard
-    input name=controlMeasure type=objectRef required=required daxPurity=<null> question=The ref of the control measure you created to check the load (e.g. measure:Sales/Order Line Count).
-    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=A control total or row count from the SOURCE system, supplied by the user, not derived by the model (e.g. 'the OLTP system reports 1,204,882 order lines for 2024').
+    input name=target type=objectRef required=required daxPurity=<null> question=The control measure ref, for example measure:Product/Product Row Count.
+    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=A row count or additive total from the source system for the same scope; decline when no independent value or source access is available.
     verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the imported table
+    ops=[save_model]
+    instructions.len=245 instructions.hash=FEA626FC82F7C9B6
+    gate=<null>
 FILE Semanticus.Engine/workflows/incremental-refresh-setup.md
   error=<null>
   source=stock file=incremental-refresh-setup.md
   name=incremental-refresh-setup kind=<null> version=1 strictness=hard
-  title=Set up incremental refresh and prove the window loads
-  description=Add the RangeStart/RangeEnd plumbing that MUST fold, apply a rolling-window policy on a large fact table, verify the partitions it produced, then PROVE the loaded window against a source control total before you trust it.
-  whenToUse=<null>
+  title=Set up rolling refresh
+  description=Check folding prerequisites, configure a rolling window, inspect partitions and record an optional control check.
+  whenToUse=Use for a large fact table that needs only recent data refreshed. For a normal small-table import, use Import a table; for a date calendar, use Set up a calendar.
   triggers=[set_incremental_refresh_policy]
   tags=[]
-  step id=step-1 number=1 title=Define the rolling window and check the fold
+  step id=step-1 number=1 title=Choose the fact and rolling window
     ops=[]
-    instructions.len=718 instructions.hash=A11BB6FC2FF02ECD
+    instructions.len=314 instructions.hash=9B9E21AA5126BF58
     gate strictness=<null>
-    input name=factTable type=text required=required daxPurity=<null> question=Which fact table gets incremental refresh (e.g. Sales)?
-    input name=storeYears type=number required=required daxPurity=<null> question=How many years of history to STORE in the model (the archive window, e.g. 5)?
-    input name=refreshDays type=number required=required daxPurity=<null> question=How many trailing days to REFRESH on each run (the hot window, e.g. 10)?
-  step id=step-2 number=2 title=Plumb the parameters and apply the policy
+    input name=factTable type=text required=required daxPurity=<null> question=Which large fact table gets incremental refresh?
+    input name=storeYears type=number required=required daxPurity=<null> question=How many years of history should remain stored?
+    input name=refreshDays type=number required=required daxPurity=<null> question=How many trailing days should refresh on each run?
+  step id=step-2 number=2 title=Add the parameters and policy
     ops=[create_named_expression|set_partition_m|set_incremental_refresh_policy|get_incremental_refresh_policy]
-    instructions.len=505 instructions.hash=D88CC62F0C2034FA
+    instructions.len=288 instructions.hash=067189B790029DA1
     gate=<null>
-  step id=step-3 number=3 title=Verify the partitions it produced
-    ops=[list_partitions|refresh_partition]
-    instructions.len=493 instructions.hash=B6C33D5C5FF6DCF4
-    gate=<null>
-  step id=step-4 number=4 title=Prove the loaded window with a control total
-    ops=[create_measure]
-    instructions.len=597 instructions.hash=5DEC586E80122723
+  step id=step-3 number=3 title=Inspect partitions and optionally check one window
+    ops=[list_partitions|refresh_partition|create_measure|probe_measure]
+    instructions.len=470 instructions.hash=8561AC7216767BAB
     gate strictness=hard
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=A row count or control total from the SOURCE system over the refresh window, supplied by the user, not derived by the model (e.g. 'the OLTP reports 842,110 rows in the last 10 days').
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the control measure you created to check the window (e.g. measure:Sales/Windowed Row Count).
+    input name=target type=objectRef required=optional daxPurity=<null> question=Optional control measure ref for the selected window; leave blank when no control measure is being checked.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independent source count or total for the same window; decline when unavailable.
     verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Save and note the hybrid option
+  step id=step-4 number=4 title=Save the policy
     ops=[save_model]
-    instructions.len=529 instructions.hash=28A7ED7467A7A1D7
+    instructions.len=207 instructions.hash=D3B71E7FAEEC036F
     gate=<null>
 FILE Semanticus.Engine/workflows/make-ai-ready.md
   error=<null>
   source=stock file=make-ai-ready.md
   name=make-ai-ready kind=<null> version=1 strictness=hard
-  title=Make the model AI-ready
-  description=Descriptions, synonyms, Q&A, and Prep-for-AI config in the order Microsoft's AI-readiness workflow prescribes, gated on a readiness rescan.
-  whenToUse=<null>
+  title=Explain the model to assistants
+  description=Improve assistant-facing meaning for selected objects, review preparation settings, and show what remains unresolved.
+  whenToUse=Use when assistants need clearer definitions, vocabulary or instructions for selected model objects. For types, visibility or unused-object cleanup, use Tidy a model; for one description, use the direct description action.
   triggers=[make_model_ai_ready|ai_readiness_scan|set_description]
   tags=[]
-  step id=step-1 number=1 title=Optimize and describe first
-    ops=[]
-    instructions.len=392 instructions.hash=FC39EEEA428C8206
-    gate=<null>
-  step id=step-2 number=2 title=Synonyms and perspectives
-    ops=[]
-    instructions.len=323 instructions.hash=C29FC53D81BD7782
-    gate=<null>
-  step id=step-3 number=3 title=Enable Q&A
-    ops=[]
-    instructions.len=245 instructions.hash=E250E9401A7BEC51
+  step id=step-1 number=1 title=Scan and choose the content scope
+    ops=[ai_readiness_scan|list_objects]
+    instructions.len=294 instructions.hash=D9348FC9D701F511
     gate strictness=<null>
-    input name=qnaConfirmed type=text required=answer-or-decline daxPurity=<null> question=Is Q&A enablement confirmed for this model (or explicitly not applicable)?
-  step id=step-4 number=4 title=Prep for AI, schema and instructions
-    ops=[]
-    instructions.len=364 instructions.hash=E02EB40062CF6952
+    input name=contentScope type=text required=required daxPurity=<null> question=Which selected tables, columns or measures need business descriptions, synonyms or assistant instructions in this pass?
+  step id=step-2 number=2 title=Add selected explanations and settings
+    ops=[get_ai_instructions|set_description|set_synonyms|set_ai_instructions|set_ai_data_schema|create_perspective|set_perspective_member|enable_qna]
+    instructions.len=536 instructions.hash=10B49467DCB51924
     gate strictness=<null>
-    input name=schemaCurated type=text required=answer-or-decline daxPurity=<null> question=Have you excluded plumbing/ambiguous fields from the AI data schema and written AI instructions?
-  step id=step-5 number=5 title=Score and gate
-    ops=[]
-    instructions.len=255 instructions.hash=E56258652C60AE7A
+    input name=qnaPath type=text required=answer-or-decline daxPurity=<null> question=Is Q&A or the linguistic schema relevant and supported for this model, or should this pass leave it unchanged?
+  step id=step-3 number=3 title=Rescan and report the remaining work
+    ops=[ai_readiness_scan|save_model]
+    instructions.len=436 instructions.hash=3AA8E9F7B7C052DB
     gate strictness=hard
     verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
 FILE Semanticus.Engine/workflows/model-hygiene-pass.md
   error=<null>
   source=stock file=model-hygiene-pass.md
   name=model-hygiene-pass kind=<null> version=1 strictness=hard
-  title=Sweep the model for hygiene and AI-readiness
-  description=A single enforced pass over the whole model: scan for gaps, fix types/hiding/summarization/formatting/descriptions, remove genuinely unused objects only after checking report usage and dependents, then prove the pass regressed nothing.
-  whenToUse=A periodic hygiene sweep over the whole model, or the tidy-up before a review or deploy: types, hiding, summarization, formatting, descriptions, AI-readiness, and the careful removal of genuinely unused objects (proven no report usage and no dependents first). For securing the model use secure-with-rls; for a single measure use new-measure.
+  title=Tidy a model
+  description=Scan the model, apply only selected low-risk fixes, rescan the changed area and save with remaining findings visible.
+  whenToUse=Use for a bounded cleanup of model properties before review or publish. For authored descriptions and assistant preparation, use Explain the model to assistants; for deletion or a risky change, use Review a risky change.
   triggers=[apply_safe_fixes|make_model_ai_ready]
   tags=[]
-  step id=step-1 number=1 title=Scan, the scan output is the work queue
+  step id=step-1 number=1 title=Scan and choose the work queue
     ops=[ai_readiness_scan|bpa_scan|list_columns|unused_objects]
-    instructions.len=293 instructions.hash=90C49AD79C222F86
-    gate=<null>
-  step id=step-2 number=2 title=The sweep
-    ops=[set_column_data_type|set_column_hidden|set_summarize_by|set_sort_by_column|set_measure_format|set_data_category|set_description|rename_object|set_property|apply_safe_fixes|make_model_ai_ready]
-    instructions.len=808 instructions.hash=B7E4C389F7718376
-    gate=<null>
-  step id=step-3 number=3 title=Remove genuinely unused objects, carefully
-    ops=[unused_objects|analyze_reports|impact_of|delete_object]
-    instructions.len=492 instructions.hash=2728F6D9309C5065
+    instructions.len=416 instructions.hash=AA9BD7D4FCCE8570
     gate strictness=<null>
-    input name=deletionsReviewed type=text required=answer-or-decline daxPurity=<null> question=For every object you deleted, did you confirm (via analyze_reports AND impact_of) that it has no report usage and no model dependents?
-  step id=step-4 number=4 title=Prove the pass regressed nothing
-    ops=[]
-    instructions.len=405 instructions.hash=E873EE75FFE05BB7
+    input name=selectedScope type=text required=required daxPurity=<null> question=Which selected objects or finding categories are in scope for this cleanup? Leave unrelated findings for a later pass.
+  step id=step-2 number=2 title=Review and apply selected fixes
+    ops=[apply_safe_fixes|set_column_hidden|set_summarize_by|set_measure_format|set_data_category|set_sort_by_column|set_property]
+    instructions.len=308 instructions.hash=9FDB72172FA08C60
+    gate=<null>
+  step id=step-3 number=3 title=Rescan the changed area
+    ops=[ai_readiness_scan|bpa_scan]
+    instructions.len=314 instructions.hash=E0D1108F4BBDE53F
     gate strictness=hard
     verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
     verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Save the model
+  step id=step-4 number=4 title=Save the selected cleanup
     ops=[save_model]
-    instructions.len=245 instructions.hash=7D664EFA1F5C6087
+    instructions.len=248 instructions.hash=082D0BCBDA860323
     gate=<null>
 FILE Semanticus.Engine/workflows/new-measure.md
   error=<null>
   source=stock file=new-measure.md
   name=new-measure kind=<null> version=1 strictness=hard
-  title=Author a verified measure
-  description=Create a measure with declared intent, verified against a known-good number.
-  whenToUse=A single straightforward measure verified against one known-good number: the everyday default. For an edge-heavy or hard measure that must be correct across every filter context, use verified-measure; to rewrite an existing measure for speed or clarity, use optimize-dax.
+  title=Add a measure
+  description=Define a measure, check the cases that matter, and save the result with its meaning.
+  whenToUse=Use for a straightforward measure with a clear business meaning. For ratios, time logic or other context-sensitive measures, use Test a complex measure; to improve an existing measure, use Fix a slow measure.
   triggers=[create_measure|update_measure]
   tags=[]
-  step id=step-1 number=1 title=Capture intent
+  step id=step-1 number=1 title=Define the question
     ops=[]
-    instructions.len=349 instructions.hash=C61CA9660BDD071A
+    instructions.len=368 instructions.hash=D05D73FC079AEFBE
     gate strictness=<null>
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=A known-good number (or per-group matrix) to verify against, from the user, not derived.
-    input name=intendedFilterContext type=text required=answer-or-decline daxPurity=<null> question=Which dimensions/slicers must this measure respect?
-    input name=expectedGrain type=text required=answer-or-decline daxPurity=<null> question=At what grain is this measure meaningful?
-  step id=step-2 number=2 title=Author the DAX
-    ops=[]
-    instructions.len=341 instructions.hash=CE5B34AD5DCFC276
+    input name=meaning type=text required=required daxPurity=<null> question=What business question does this measure answer, and which context or grain must it respect?
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for a useful context, including its context if it is not the grand total; decline with why none is available.
+  step id=step-2 number=2 title=Author and create the measure
+    ops=[get_grounding|validate_dax|lint_dax|create_measure|set_measure_format|set_description]
+    instructions.len=288 instructions.hash=B0186E0666835EEC
     gate=<null>
-  step id=step-3 number=3 title=Create and verify
-    ops=[]
-    instructions.len=300 instructions.hash=AE4EB707CE3A885A
+  step id=step-3 number=3 title=Check the selected case
+    ops=[probe_measure]
+    instructions.len=393 instructions.hash=4FEB0E3566E23D72
     gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the measure you just created (e.g. measure:Sales/Total Sales).
+    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the measure just created, for example measure:Sales/Net Sales.
     verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
     verify kind=bpa_clean when=<null> probe=<null> scope=object intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the result
+    ops=[save_model]
+    instructions.len=224 instructions.hash=463EC97EBF37659B
+    gate=<null>
 FILE Semanticus.Engine/workflows/optimize-dax.md
   error=<null>
   source=stock file=optimize-dax.md
   name=optimize-dax kind=<null> version=1 strictness=hard
-  title=Rewrite a measure and prove it unchanged, for speed or clarity
-  description=Rewrite an existing measure (to make it faster, or just cleaner and more readable), then prove the rewrite returns the IDENTICAL result before you keep it. A hard equivalence gate stands between a rewrite and a silent behaviour change; the benchmark steps apply when the goal is speed and are skipped for a clarity-only cleanup.
-  whenToUse=Rewrite an existing measure while proving every number stays identical, whether the goal is SPEED (benchmark, profile, faster form) or CLARITY (VARs, house conventions, de-duplication, readability). To author a new measure from scratch use new-measure or verified-measure; to change what a measure computes use verified-measure.
+  title=Fix a slow measure
+  description=Freeze a measure, compare a rewrite across useful contexts, and keep it only when the evidence supports it.
+  whenToUse=Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose SPEED for measured timing work or READABILITY when the goal is a clearer equivalent expression. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure.
   triggers=[benchmark_dax|profile_dax|update_measure]
   tags=[]
-  step id=step-1 number=1 title=State the goal and freeze the original
+  step id=step-1 number=1 title=Freeze the original and choose the goal
     ops=[]
-    instructions.len=620 instructions.hash=451711C99089BB66
+    instructions.len=417 instructions.hash=D88BD4E4821968E4
     gate strictness=<null>
-    input name=target type=objectRef required=required daxPurity=<null> question=The measure being rewritten (e.g. measure:Sales/Total Sales).
-    input name=originalDax type=text required=required daxPurity=<null> question=The CURRENT expression, copied verbatim BEFORE any rewrite (get_dax gives it).
-    input name=equivalenceGrid type=text required=answer-or-decline daxPurity=<null> question=Comma-separated group-by columns for the per-context equivalence proof (e.g. Date[Year], Product[Category]).
-  step id=step-2 number=2 title=Profile the bottleneck (speed goal only)
-    ops=[]
-    instructions.len=464 instructions.hash=24CD19B773876438
+    input name=target type=objectRef required=required daxPurity=<null> question=The measure being rewritten, for example measure:Sales/Net Sales.
+    input name=goal type=text required=required daxPurity=<null> question=Choose SPEED when a comparable timing matters, or READABILITY when the goal is a clearer equivalent expression.
+    input name=originalDax type=text required=required daxPurity=<null> question=The exact expression returned by get_dax before the rewrite.
+    input name=equivalenceGrid type=text required=required daxPurity=<null> question=Qualified group-by columns for the equivalence check, such as 'Date'[Year], 'Product'[Category].
+    input name=speedBaselineMs type=number required=answer-or-decline daxPurity=<null> question=For SPEED, the pre-rewrite warm median in milliseconds from benchmark_dax; decline for READABILITY or when no live timing is available.
+  step id=step-2 number=2 title=Inspect the measured bottleneck when SPEED is selected
+    ops=[profile_dax|capture_query_plan|clear_cache|benchmark_dax]
+    instructions.len=358 instructions.hash=B4495CD1F184EF00
     gate=<null>
-  step id=step-3 number=3 title=Rewrite the measure
-    ops=[]
-    instructions.len=485 instructions.hash=237BCAF4C73D352D
-    gate=<null>
-  step id=step-4 number=4 title=Prove equivalence before you trust it
-    ops=[]
-    instructions.len=344 instructions.hash=0FE766292601FD7B
+  step id=step-3 number=3 title=Rewrite and prove the meaning stayed the same
+    ops=[validate_dax|lint_dax|update_measure]
+    instructions.len=346 instructions.hash=64D79732585040FD
     gate strictness=hard
-    verify kind=dax_equivalence when=inputs.originalDax.answered probe=originalDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Confirm the win and keep it
-    ops=[]
-    instructions.len=570 instructions.hash=8FA205089D657E27
+    verify kind=dax_equivalence when=<null> probe=originalDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Keep the supported result
+    ops=[benchmark_dax|save_model]
+    instructions.len=380 instructions.hash=09B75A5FC553EF0D
+    gate strictness=hard
+    verify kind=benchmark_delta when=inputs.speedBaselineMs.answered probe=speedBaselineMs scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+FILE Semanticus.Engine/workflows/reconcile-saved-tests-sql.md
+  error=<null>
+  source=stock file=reconcile-saved-tests-sql.md
+  name=reconcile-saved-tests-sql kind=<null> version=1 strictness=hard
+  title=Reconcile saved tests with SQL
+  description=Run saved SQL comparisons, inspect mismatches or missing access, and export the checked contexts and unresolved cases.
+  whenToUse=Use for a repeatable month-end or handoff check when the model already has saved SQL reconciliation tests. Do not use it to author or retype a new SQL test.
+  triggers=[run_tests|export_test_report]
+  tags=[]
+  step id=step-1 number=1 title=Choose the saved test pack and endpoints
+    ops=[list_tests|review_reconcile_mapping]
+    instructions.len=418 instructions.hash=239483D14D6E781A
+    gate strictness=<null>
+    input name=testPack type=text required=required daxPurity=<null> question=Which saved reconciliation test ids are in scope, and which endpoint/mapping result was reviewed for each?
+  step id=step-2 number=2 title=Run the comparisons
+    ops=[run_tests]
+    instructions.len=400 instructions.hash=370A0896006B8B5E
+    gate=<null>
+  step id=step-3 number=3 title=Export the result
+    ops=[export_test_report|list_test_runs]
+    instructions.len=387 instructions.hash=35F9D6D5956277BF
     gate=<null>
 FILE Semanticus.Engine/workflows/refactor-to-calculation-group.md
   error=<null>
   source=stock file=refactor-to-calculation-group.md
   name=refactor-to-calculation-group kind=<null> version=1 strictness=hard
-  title=Refactor repeated time-intelligence measures into one calculation group
-  description=Collapse a family of copy-pasted time-intel measures (PY, YTD, MAT, %growth…) into a single calculation group, and prove, item by item, that not one number changed. A structural refactor most people are scared to do by hand.
-  whenToUse=When several base measures each repeat the SAME time-intelligence variants (Sales PY, Sales YTD, Sales MAT; Margin PY, Margin YTD…), dozens of near-identical measures. Use this to collapse them into one reusable calculation group without changing a single reported value; it is also the home for building a fresh calculation group of time-intelligence items. To expand ONE base measure into its variants, use time-intelligence-variants; not for a one-off single measure.
+  title=Replace repeated measures with a calculation group
+  description=Replace a selected repeated variant family with calculation items, compare representative outputs, and retire only chosen measures.
+  whenToUse=Use when many base measures repeat the same time variants. For variants on one base measure, use Add time comparisons; for general cleanup, use Tidy a model.
   triggers=[create_calculation_group|create_calculation_item]
   tags=[]
-  step id=step-1 number=1 title=Inventory the repeated pattern
+  step id=step-1 number=1 title=Choose the repeated family
     ops=[]
-    instructions.len=421 instructions.hash=C8A7F5F97E673F95
+    instructions.len=268 instructions.hash=909452AD0DA3E64E
     gate strictness=<null>
-    input name=baseMeasures type=text required=required daxPurity=<null> question=The base measures the variants apply to (e.g. Sales Amount, Total Cost, Margin).
-    input name=variantMeasures type=text required=required daxPurity=<null> question=Every existing variant measure this will replace (e.g. Sales PY, Sales YTD, Margin YTD…): the full retirement list.
-  step id=step-2 number=2 title=Freeze the ground truth
-    ops=[]
-    instructions.len=313 instructions.hash=037A5D4858ECCBC5
+    input name=baseMeasures type=text required=required daxPurity=<null> question=Which base measures should receive the calculation items?
+    input name=variantMeasures type=text required=required daxPurity=<null> question=Which existing variant measures are candidates for replacement?
+  step id=step-2 number=2 title=Capture a representative before matrix
+    ops=[run_dax]
+    instructions.len=301 instructions.hash=E614580B94E62C3E
     gate strictness=<null>
-    input name=baselineMatrix type=text required=required daxPurity=<null> question=The frozen before-values: each variant measure × the representative Year×Month matrix, from run_dax.
-  step id=step-3 number=3 title=Build the calculation group and its items
-    ops=[]
-    instructions.len=417 instructions.hash=3DF14E16368A27C3
+    input name=baselineMatrix type=text required=required daxPurity=<null> question=The representative before-values and contexts captured with run_dax for each selected base and variant.
+  step id=step-3 number=3 title=Build the calculation group
+    ops=[create_calculation_group|create_calculation_item|set_calc_group_precedence|set_calc_item_format_string]
+    instructions.len=306 instructions.hash=013E7FFE09697E94
     gate=<null>
-  step id=step-4 number=4 title=Prove every item reproduces the frozen numbers (the gate)
-    ops=[]
-    instructions.len=371 instructions.hash=F3AA2B03FB88D1AE
+  step id=step-4 number=4 title=Compare outputs and review dependants
+    ops=[run_dax|impact_of|analyze_reports]
+    instructions.len=401 instructions.hash=7B7AE076430BBB4E
     gate strictness=hard
-    input name=allItemsReproduceBaseline type=text required=required daxPurity=<null> question=Confirm EVERY (base × item) pair matched its Step-2 frozen value (paste the comparison). If any differed, you have not finished; fix and re-check.
-  step id=step-5 number=5 title=Retire the redundant measures and re-verify the model
-    ops=[]
-    instructions.len=312 instructions.hash=30651C81973083A7
-    gate strictness=hard
+    input name=comparisonResult type=text required=required daxPurity=<null> question=The after matrix against the same contexts, every mismatch, and each remaining model/report dependant.
     verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-5 number=5 title=Retire only selected replacements and save
+    ops=[delete_object|save_model]
+    instructions.len=341 instructions.hash=2B319B324269BB53
+    gate strictness=<null>
+    input name=retireDecision type=text required=required daxPurity=<null> question=Which selected variants were retired or kept, and why does each remaining dependant make a keep necessary?
 FILE Semanticus.Engine/workflows/secure-with-rls.md
   error=<null>
   source=stock file=secure-with-rls.md
   name=secure-with-rls kind=<null> version=1 strictness=hard
-  title=Secure the model with row-level security and attack-test it
-  description=Design least-privilege RLS by filtering dimensions and letting propagation reach facts, review the propagation limits that silently break security, PROVE the filter bites against a figure the role should see, then ADVERSARIALLY attack-test it (prove out-of-scope rows do not leak) before the role is allowed to stand. With an honest note on offline impersonation.
-  whenToUse=Add or change row-level security (a role plus a table filter). Use it whenever a mistake would leak data across a security boundary such as regions, departments, or customers. It makes the adversarial 'prove it blocks' step mandatory, which manual authoring almost always skips.
+  title=Set up data access rules
+  description=Define row access, inspect propagation, test allowed and denied cases, and record the remaining published-model check.
+  whenToUse=Use when people must see different rows by region, department or customer. For a publish review of existing roles, use Publish changes; for general cleanup, use Tidy a model.
   triggers=[create_role|set_table_permission|set_role_permission]
   tags=[]
-  step id=step-1 number=1 title=State the security requirement
+  step id=step-1 number=1 title=State who may see what
     ops=[]
-    instructions.len=367 instructions.hash=B2AA3C4024B58713
+    instructions.len=212 instructions.hash=FD58A1626A62AB8C
     gate strictness=<null>
-    input name=securityRequirement type=text required=required daxPurity=<null> question=Who may see what, stated as a business rule (e.g. 'sales reps see only their own region's rows')?
-    input name=testIdentity type=text required=answer-or-decline daxPurity=<null> question=A UPN/email to reason with concretely (e.g. rep@contoso.com): the identity you'll simulate the filter for.
-  step id=step-2 number=2 title=Design and create the roles
-    ops=[create_role|set_table_permission|set_role_member|set_column_hidden]
-    instructions.len=596 instructions.hash=30301B974D84DCB5
-    gate=<null>
-  step id=step-3 number=3 title=Review the propagation limits
-    ops=[get_model_graph|set_relationship_crossfilter]
-    instructions.len=668 instructions.hash=6C9012CC7F269F1A
+    input name=securityRequirement type=text required=required daxPurity=<null> question=Who may see which rows, stated as a business rule?
+    input name=testIdentity type=text required=answer-or-decline daxPurity=<null> question=The UPN or other test identity to simulate, or decline when a static role has no identity-specific case.
+  step id=step-2 number=2 title=Create the role and inspect propagation
+    ops=[create_role|set_table_permission|set_role_member|get_model_graph|set_relationship_crossfilter]
+    instructions.len=369 instructions.hash=59B0375F9D1D6536
     gate strictness=<null>
-    input name=propagationReviewed type=text required=answer-or-decline daxPurity=<null> question=Have you confirmed no secured filter depends on an inactive relationship, and reviewed every bidirectional relationship touching a secured table?
-  step id=step-4 number=4 title=Prove the filter bites
-    ops=[create_measure]
-    instructions.len=737 instructions.hash=38327BDF7D2AE1FB
+    input name=propagationReviewed type=text required=answer-or-decline daxPurity=<null> question=What graph paths were reviewed, including inactive or bidirectional relationships touching the secured tables?
+  step id=step-3 number=3 title=Check an allowed case
+    ops=[create_measure|probe_measure]
+    instructions.len=331 instructions.hash=613010E99D480448
     gate strictness=hard
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=A figure the role SHOULD see, computed independently by the business (e.g. the filtered row count or a filtered total for the test identity).
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the control measure that simulates the role's filter via CALCULATE (e.g. measure:Sales/Region-Filtered Row Count).
+    input name=target type=objectRef required=required daxPurity=<null> question=The control measure ref that applies the role's filter in CALCULATE.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known allowed result for the selected identity and context; decline when unavailable.
     verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Attack-test the role, prove out-of-scope rows do not leak (HARD GATE)
+  step id=step-4 number=4 title=Check a denied case
     ops=[run_dax]
-    instructions.len=836 instructions.hash=56E57DA6364D8986
+    instructions.len=294 instructions.hash=9E84D9F85B28E40F
     gate strictness=hard
-    input name=attackResult type=text required=required daxPurity=<null> question=As the role, attempting to reach OUT-of-scope data (other regions, cross-segment totals): confirm ZERO rows leak, and paste the evidence. Anything non-empty means the filter is broken, so fix it and re-attack.
+    input name=deniedResult type=text required=required daxPurity=<null> question=What did the denied or out-of-scope query return? Record zero rows or the service refusal; any leaked rows require a fix.
     verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-6 number=6 title=Object-level security and save
+  step id=step-5 number=5 title=Apply conditional OLS and save
     ops=[set_table_ols|set_column_ols|save_model]
-    instructions.len=537 instructions.hash=89C604B8C1A5A9D4
+    instructions.len=299 instructions.hash=1E6E1DA48F47F7A8
     gate=<null>
 FILE Semanticus.Engine/workflows/time-intelligence-variants.md
   error=<null>
   source=stock file=time-intelligence-variants.md
   name=time-intelligence-variants kind=<null> version=1 strictness=hard
-  title=Expand one base measure into verified time-intelligence variants
-  description=Take ONE base measure and author its period-over-period variants (PY, YoY %, YTD, QTD, MAT) as a consistent, well-named set (calendar-aware where calendars exist), then verify a representative PY and a representative YTD against known-good numbers before you trust the set. The single-measure counterpart to refactor-to-calculation-group, which collapses the SAME variants across MANY base measures into one calculation group.
-  whenToUse=You have ONE base measure and want its standard period-over-period variants (PY, YoY %, YTD, QTD, MAT) authored consistently and verified. To collapse the same variants across MANY base measures into one reusable calculation group, use refactor-to-calculation-group; for a single non-time measure use new-measure.
+  title=Add time comparisons
+  description=Select the needed variants for one trusted measure, generate them, check a representative context and save.
+  whenToUse=Use when one base measure needs selected prior-period or to-date measures. Set up a calendar first when date support is missing; for the same variants across many measures, use Replace repeated measures with a calculation group.
   triggers=[generate_time_intelligence|create_measure]
   tags=[]
-  step id=step-1 number=1 title=Name the base measure and pick the variants
+  step id=step-1 number=1 title=Choose the base and variants
     ops=[]
-    instructions.len=675 instructions.hash=581F6D2AE773F07E
+    instructions.len=292 instructions.hash=149FF820D1287D02
     gate strictness=<null>
-    input name=baseMeasure type=objectRef required=required daxPurity=<null> question=The single base measure to expand (e.g. measure:Sales/Total Sales), and confirmation it is already correct.
-    input name=variants type=text required=required daxPurity=<null> question=Which variants to author (e.g. PY, YoY %, YTD, MAT), the naming convention for the set, and whether calendars exist to author against (list_calendars).
-  step id=step-2 number=2 title=Author the variants consistently
-    ops=[create_measure|generate_time_intelligence|set_measure_format|set_description|list_calendars]
-    instructions.len=642 instructions.hash=35BC52462024A810
+    input name=baseMeasure type=objectRef required=required daxPurity=<null> question=The single trusted base measure to expand.
+    input name=variants type=text required=required daxPurity=<null> question=Which variants and naming convention should be created, and which calendar/date support does the model have?
+  step id=step-2 number=2 title=Generate only the selected variants
+    ops=[list_calendars|generate_time_intelligence|create_measure|set_measure_format|set_description]
+    instructions.len=239 instructions.hash=2E73F0E31A5C3EF2
     gate=<null>
-  step id=step-3 number=3 title=Verify a representative PY (HARD GATE)
+  step id=step-3 number=3 title=Check one representative boundary
     ops=[probe_measure|pivot_measure]
-    instructions.len=625 instructions.hash=3809DB85426A7041
+    instructions.len=415 instructions.hash=2FCC55E38D3FCFE2
     gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The PY variant to verify (e.g. measure:Sales/Sales PY).
-    input name=pyVerification type=verification required=answer-or-decline daxPurity=<null> question=A known-good PY figure at a context you can check independently (e.g. 'FY2023 full-year revenue = 3.8M').
-    verify kind=dax_probe when=inputs.pyVerification.answered probe=pyVerification scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Verify a representative YTD (HARD GATE)
-    ops=[probe_measure|pivot_measure]
-    instructions.len=533 instructions.hash=70EE5BC4047F2686
-    gate strictness=hard
-    input name=ytdTarget type=objectRef required=required daxPurity=<null> question=The YTD (or QTD/MAT) variant to verify (e.g. measure:Sales/Sales YTD): the second, distinct check, on a different measure than the PY.
-    input name=ytdVerification type=verification required=answer-or-decline daxPurity=<null> question=A known-good YTD figure at a context you can check independently (e.g. 'FY2024 YTD to March = 1.1M').
-    verify kind=dax_probe when=inputs.ytdVerification.answered probe=ytdVerification scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-5 number=5 title=Save the family
+    input name=target type=objectRef required=required daxPurity=<null> question=The generated variant selected for the representative check.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for the selected variant and boundary context; decline when unavailable.
+    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the family
     ops=[save_model]
-    instructions.len=299 instructions.hash=A347FFE2F5C74C06
+    instructions.len=196 instructions.hash=BE15B1AD7177B763
     gate=<null>
 FILE Semanticus.Engine/workflows/verified-measure.md
   error=<null>
   source=stock file=verified-measure.md
   name=verified-measure kind=<null> version=7 strictness=hard
-  title=Author a hard DAX measure, reconciled against the requirement at every grain
-  description=Requirement-anchored verified authoring: pin conventions only from the requirement's own words, lock expected values from raw rows before authoring, reconcile one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicate disagreements cell-by-cell, and never let a speed pick or an invented convention overwrite a correct answer.
-  whenToUse=A measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves.
+  title=Test a complex measure
+  description=Define the hard cases for a measure, compare a candidate with independent expected values, and report checked and unresolved cases.
+  whenToUse=Use for ratios, shares, time logic, distinct counts or other measures that can look right in a simple total. For a straightforward new measure, use Add a measure; for a speed or readability rewrite, use Fix a slow measure.
   triggers=[create_measure|update_measure]
   tags=[]
   step id=step-1 number=1 title=Fix the specification. The requirement text is the only source
-    ops=[]
-    instructions.len=2350 instructions.hash=140826F8063E5D80
+    ops=[get_grounding|get_model_graph]
+    instructions.len=2359 instructions.hash=E3BF9E54473239DA
     gate strictness=<null>
-    input name=requirement type=text required=required daxPurity=<null> question=The metric and grain, restated; additivity PER DIMENSION.
-    input name=modelFacts type=text required=required daxPurity=<null> question=Fact date span vs calendar span; fact grain; relationships traversed (direction, active); date table marked and contiguous (if time-intel).
-    input name=contextLedger type=text required=required daxPurity=<null> question=EVERY degenerate context, exactly once, as PINNED (verbatim requirement quote or quoted clarify answer, plus the pinned value) or OPEN (requirement silent: recorded, never acted on).
-    input name=clarification type=text required=answer-or-decline daxPurity=<null> question=clarify questions asked and answers recorded, if a user was present (decline if none).
+    input name=requirement type=text required=required daxPurity=<null> question=The metric and grain, restated, with additivity PER DIMENSION, and the model facts you read confirmed by the user.
+    input name=clarification type=text required=answer-or-decline daxPurity=<null> question=The ambiguous business meaning you had to settle and the user's quoted answer; decline when nothing was ambiguous.
   step id=step-2 number=2 title=Lock the expected values before any candidate exists
     ops=[]
-    instructions.len=5511 instructions.hash=EDDD5DEF2DFD83F1
+    instructions.len=4307 instructions.hash=B706CFC008D166C7
     gate strictness=<null>
-    input name=expectedValues type=text required=required daxPurity=<null> question=The locked anchors as one fenced JSON array of {context, optional axis, expect} objects. Cover each non-open grain type of equivalenceGrid: grand total, every bare axis, and cross. Include the diverging grain and one ordinary leaf. Outside the JSON fence, include each small GROUPED raw-row extract and the OUTSIDE-DAX arithmetic that produced its expected value, with no CALCULATE or measure refs.
+    input name=expectedValues type=text required=required daxPurity=<null> question=The locked anchors as one fenced JSON array of {context, optional axis, expect} objects. Cover each non-open grain type of equivalenceGrid: grand total, every bare axis, and cross. Include the diverging grain and one ordinary leaf. Outside the JSON fence, include each small GROUPED raw-row extract, the OUTSIDE-DAX arithmetic that produced its expected value, and which tier backed it: model raw rows, source SQL, or a user-stated reference.
     input name=equivalenceGrid type=text required=required daxPurity=<null> question=Machine field: the comma-separated qualified display columns that define the proof lattice, for example 'Product'[Category],'Product'[Subcategory]. The grid must list every display column the anchors exercise.
     input name=openGrains type=text required=answer-or-decline daxPurity=<null> question=Machine field: the requirement-silent grains, as a comma-separated list of canonical shape ids (grand_total | cross | axis:<column>) and nothing else. Decline only when every grain is anchored. This partition is declared before authoring and cannot later shrink.
-    input name=externalAnchors type=text required=answer-or-decline daxPurity=<null> question=OPTIONAL stronger anchors: source-SQL recomputation of a locked value (query + result; a mismatch indicts the model, halt and surface it) and/or a user-stated reference number with its source. Decline when neither is available; absence never blocks.
     input name=naiveForm type=text required=required daxPurity=<null> question=The tempting naive wrong form; the diverging grain; and whether that grain is anchored from a PINNED ledger entry or declared requirement-silent in openGrains.
     verify kind=anchor_coverage when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=expectedValues
   step id=step-3 number=3 title=Author ONE canonical candidate
     ops=[create_measure|update_measure]
-    instructions.len=1333 instructions.hash=C6D94BAA40D52209
+    instructions.len=1116 instructions.hash=03F82530C3D4A8B6
     gate strictness=<null>
     input name=candidate type=text required=required daxPurity=<null> question=The single candidate expression, verbatim, and its value at each locked Step-2 context (must match, or carry an Expectation Revision).
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the created or updated measure (e.g. measure:Sales/Revenue Share).
+    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the created or updated measure, for example measure:Sales/Revenue Share.
     input name=expectedValues type=text required=optional daxPurity=<null> question=OPTIONAL EXPECTATION REVISION WITH REQUIRED RECEIPT: leave unanswered to inherit the Step-2 anchor set. Answer only when grouped raw-row arithmetic proves an anchor wrong. Submit the full corrected fenced JSON array without changing its contexts. Every changed anchor object must contain originalExpect equal to the locked value, correctedExpect equal to its new expect, and a row-returning extractQuery that produces the grouped or raw rows used by the outside-DAX arithmetic. Failed, empty, missing, or scalar-constant extracts are refused. Never re-pin an anchor merely to match the candidate.
     verify kind=expected_values when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=expectedValues
-  step id=step-4 number=4 title=Lock the witness. Independent AND efficient
-    ops=[]
-    instructions.len=2047 instructions.hash=4EA8A0ABF6855994
-    gate strictness=<null>
-    input name=witnessDax type=text required=required daxPurity=no-bare-measures question=The raw-row witness, verbatim: ZERO bare measure references; rebuild every dependency from qualified base columns; SARGable plain column filters, date ranges as predicates, grouped extracts; no bare FILTER over ALL of the fact table; no candidate idioms; implement only the ledger. The engine refuses bare refs.
-    input name=witnessTiming type=text required=required daxPurity=<null> question=The one witness query you timed (context + elapsed). It must be under roughly 2 seconds; if it was slower, rebuild the witness SARGable and re-time before submitting.
-  step id=step-5 number=5 title=The battery. Adjudicate, don't auto-fix
-    ops=[update_measure]
-    instructions.len=1797 instructions.hash=2687187745DF0475
-    gate strictness=<null>
-    input name=battery type=text required=required daxPurity=<null> question=Candidate AND witness value/blank/error at every ledger context and both named layouts; each PINNED context's match against its pin; the OPEN contexts' returned values (recorded, not acted on).
-    input name=witnessDax type=text required=required daxPurity=no-bare-measures question=The CURRENT witness expression, verbatim: restate the Step-4 witness when unchanged, or the revised SARGable raw-column expression when an adjudication convicted it. It must still contain zero bare measure references; the engine records a revision receipt on any change.
-    input name=adjudications type=text required=answer-or-decline daxPurity=<null> question=For each disagreement: the raw-row extract, the arithmetic verdict (which side convicted, or INCONCLUSIVE: changed neither, certificate capped at PARTIAL), any witness revision with before/after expressions, and confirmation the FULL battery was re-run after every change (decline if no disagreements).
-  step id=step-6 number=6 title=HARD gate. Prove every grain not declared requirement-silent
-    ops=[update_measure]
-    instructions.len=2378 instructions.hash=2039BEC5154CFE04
+  step id=step-4 number=4 title=Reconcile against an independent witness, then finalize honestly
+    ops=[probe_measure|run_dax|benchmark_dax|update_measure|rename_object|set_measure_format|set_description|set_display_folder|save_model]
+    instructions.len=5116 instructions.hash=E268BE6DB0956F11
     gate strictness=hard
-    input name=witnessDax type=text required=required daxPurity=no-bare-measures question=The CURRENT witness expression. Restate the Step-5 witness verbatim when unchanged. Revise it only to fix a witness this gate proved broken or too slow, never to move a correct candidate. It must remain SARGable, rebuild from qualified base columns, and contain zero bare measure references. The engine records a revision receipt. This input may not be declined.
+    input name=witnessDax type=text required=required daxPurity=no-bare-measures question=The raw-row witness, verbatim: ZERO bare measure references; every dependency rebuilt from qualified base columns; SARGable plain column filters, date ranges as predicates, grouped extracts; no bare FILTER over ALL of the fact table; no candidate idioms; it implements only the ledger. The engine refuses bare refs and this input may not be declined.
+    input name=battery type=text required=required daxPurity=<null> question=Candidate AND witness value, blank or error at every ledger context and both named layouts; each PINNED context's match against its pin; and the OPEN contexts' returned values, recorded and not acted on.
+    input name=adjudications type=text required=answer-or-decline daxPurity=<null> question=For each disagreement: the GROUPED row extract, the arithmetic verdict naming which side was convicted or INCONCLUSIVE, any witness revision with before and after expressions, and confirmation the FULL battery was re-run after every change. Decline when nothing disagreed.
+    input name=perfPass type=text required=answer-or-decline daxPurity=<null> question=The candidate against the MODEL FLOOR at its natural grid, with measure-faithful cold and warm timings and any zero-storage-engine reading discarded, plus the winning rewrite and its match against the locked anchors when one was applied. Decline when no comparable live environment was available; unmeasured is unverified.
+    input name=finalized type=text required=required daxPurity=<null> question=The production name, format string, description including the PINNED conventions, and display folder applied to the measure, with the checked grains and every unresolved OPEN observation.
     input name=countersign type=text required=optional daxPurity=<null> question=Machine exit: only after an open-mismatch block, copy the exact disputed cells array and provide one verbatim stated interpretation sentence. Leave unanswered when there is no current dispute. A decline is not a countersign.
     input name=certificate type=text required=required daxPurity=<null> question=Your certificate CLAIM: FULL, PARTIAL, or OVERRIDDEN, with any honest downgrade named. The engine computes the evidence-backed ceiling and the weaker level wins.
     verify kind=dax_equivalence when=<null> probe=witnessDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=openGrains openMismatch=countersign anchors=<null>
-  step id=step-7 number=7 title=Performance against the model floor, then finalize for production
-    ops=[update_measure|rename_object|set_measure_format|set_description|set_display_folder]
-    instructions.len=3496 instructions.hash=6B1A1801E2CB5476
-    gate strictness=hard
-    input name=expectedValues type=text required=optional daxPurity=<null> question=OPTIONAL EXPECTATION REVISION WITH REQUIRED RECEIPT: leave unanswered to inherit the latest anchor set (the Step-3 revision when present, otherwise Step 2). Answer only when grouped raw-row arithmetic proves an anchor wrong. Submit the full corrected fenced JSON array without changing its contexts. Every changed anchor object must contain originalExpect equal to the locked value, correctedExpect equal to its new expect, and a row-returning extractQuery that produces the grouped or raw rows used by the outside-DAX arithmetic. Failed, empty, missing, or scalar-constant extracts are refused. Never re-pin an anchor merely to match a candidate or performance result.
-    input name=perfPass type=text required=answer-or-decline daxPurity=<null> question=Either: the candidate-vs-model-floor benchmark at the natural grid (measure-faithful cold/warm timings, noting any 0-SE readings discarded as cache artifacts), the grade (FINE / SLOW / FAST-BUT-FRAGILE), and for a SLOW grade the winning rewrite, its match against the locked expected values, and the re-run pinned battery. Or DECLINE quoting the floor comparison that graded it FINE.
-    input name=finalized type=text required=required daxPurity=<null> question=The production name, format string, description (including PINNED conventions), and display folder applied to the measure.
-    input name=countersign type=text required=optional daxPurity=<null> question=Machine exit: only after this step reports new open-grain disputes, copy the exact disputed cells array and provide one verbatim stated interpretation sentence. Leave unanswered otherwise. A decline is not a countersign.
     verify kind=expected_values when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=expectedValues
-    verify kind=dax_equivalence when=inputs.perfPass.answered probe=witnessDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=openGrains openMismatch=countersign anchors=<null>
 FILE Semanticus.Engine/workflow-templates/deploy-freeze-guard.md
   error=<null>
   source=stock file=deploy-freeze-guard.md

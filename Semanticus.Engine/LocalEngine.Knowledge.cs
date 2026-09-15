@@ -126,6 +126,7 @@ namespace Semanticus.Engine
 
         public async Task<InsightRecord> AddInsightAsync(string text, string[] keys, string kind, string scope, bool fingerprintScoped, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(text))
                 throw new InvalidOperationException("An insight needs text: one actionable sentence-to-paragraph.");
             kind = string.Equals(kind, "post-mortem", StringComparison.OrdinalIgnoreCase) ? "post-mortem" : "insight";
@@ -164,6 +165,7 @@ namespace Semanticus.Engine
 
         public async Task<InsightRecord> ApproveInsightAsync(string id, string origin)
         {
+            RequireProFeature();
             await _knowledgeGate.WaitAsync();
             try
             {
@@ -178,6 +180,7 @@ namespace Semanticus.Engine
 
         public async Task<InsightRecord> EditInsightAsync(string id, string text, string[] keys, string origin)
         {
+            RequireProFeature();
             if (text == null && keys == null)
                 throw new InvalidOperationException("Nothing to edit: provide new text and/or keys.");
             await _knowledgeGate.WaitAsync();
@@ -192,8 +195,17 @@ namespace Semanticus.Engine
             finally { _knowledgeGate.Release(); }
         }
 
-        public Task<InsightRecord> UpvoteInsightAsync(string id, string origin) => VoteAsync(id, +1, origin);
-        public Task<InsightRecord> DownvoteInsightAsync(string id, string origin) => VoteAsync(id, -1, origin);
+        public Task<InsightRecord> UpvoteInsightAsync(string id, string origin)
+        {
+            RequireProFeature();
+            return VoteAsync(id, +1, origin);
+        }
+
+        public Task<InsightRecord> DownvoteInsightAsync(string id, string origin)
+        {
+            RequireProFeature();
+            return VoteAsync(id, -1, origin);
+        }
 
         // ExpeL importance counter (agent judgment, engine arithmetic): a downvote to <= 0 materializes the insight
         // OUT on the next read — the delta trail is kept, the live set drops it.
@@ -224,6 +236,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> DeleteInsightAsync(string id, string origin)
         {
+            RequireProFeature();
             await _knowledgeGate.WaitAsync();
             try
             {
@@ -240,6 +253,7 @@ namespace Semanticus.Engine
         /// it in that scope become invisible on replay — the file is not rewritten).</summary>
         public async Task<PurgeResult> PurgeKnowledgeAsync(string scope, bool confirm, string origin)
         {
+            RequireProFeature();
             scope = NormalizeScope(scope);
             var file = ScopeFile(scope);
             await _knowledgeGate.WaitAsync();
@@ -259,6 +273,7 @@ namespace Semanticus.Engine
 
         public Task<InsightListResult> ListInsightsAsync(string scope, string status)
         {
+            RequireProFeature();
             var scopes = string.IsNullOrEmpty(scope) ? new[] { "project", "global" } : new[] { NormalizeScope(scope) };
             var all = new List<InsightRecord>();
             int skipped = 0;
@@ -292,6 +307,7 @@ namespace Semanticus.Engine
         /// read-filtering) discounts stale insights. Each RETURNED insight gets a `retrieve` delta (counter bump).</summary>
         public async Task<RecallResult> RecallExperienceAsync(string query, int maxResults)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var fp = await s.ReadAsync(m => KnowledgeStore.ComputeFingerprint(m));
             var cap = maxResults <= 0 ? 12 : maxResults;

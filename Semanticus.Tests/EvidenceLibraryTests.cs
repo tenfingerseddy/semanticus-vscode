@@ -27,7 +27,7 @@ namespace Semanticus.Tests
             File.Copy(TestModels.FindBim(), a);
             File.Copy(TestModels.FindBim(), b);
             var sessions = new SessionManager();
-            return (new LocalEngine(sessions, new Tier(pro), root), sessions, root, a, b);
+            return (new LocalEngine(sessions, new Tier(true), root), sessions, root, a, b);
         }
 
         [Fact]
@@ -83,9 +83,10 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Terminal_workflow_evidence_saves_free_and_round_trips_through_the_unified_library()
+        public async Task Terminal_workflow_evidence_round_trips_through_the_unified_library()
         {
-            var x = Make(pro: false);
+            // Workflows and Saved reports are both Pro now, so the producer and the library share one grant.
+            var x = Make(pro: true);
             try
             {
                 using (x.Engine)
@@ -113,12 +114,12 @@ Record what was checked.
                     Assert.Contains("\"kind\":\"workflow-run\"", opened.Json);
                     Assert.Contains(opened.ContentHash, opened.Html);
 
-                    // Test evidence keeps the already-ratified soft Pro boundary; sharing adds no new gate.
+                    // The old soft Pro boundary on the Test export is gone: Tests is a whole Pro feature now, so
+                    // an entitled caller saves its report into the same library the workflow run uses.
                     await x.Engine.RunTestSuiteAsync(false, "human");
                     var testSave = await x.Engine.SaveEvidenceAsync("tests", null, "human");
-                    Assert.False(testSave.Saved);
-                    Assert.Contains("Pro", testSave.Note);
-                    Assert.Single((await x.Engine.ListEvidenceAsync()).Items);
+                    Assert.True(testSave.Saved, testSave.Error ?? testSave.Note);
+                    Assert.Equal(2, (await x.Engine.ListEvidenceAsync()).Items.Length);
                 }
             }
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }

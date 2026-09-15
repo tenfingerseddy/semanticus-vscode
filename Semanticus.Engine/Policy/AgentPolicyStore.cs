@@ -39,14 +39,11 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException("Only a human can change the agent policy: an agent cannot rewrite the matrix that gates it. This must come from the UI.");
         }
 
-        private static void RequirePro(bool isPro)
-            => Entitlement.EntitlementGuard.RequirePro(isPro, "Customising the agent policy",
-                "The default guardrail (and the global Off switch) are free; upgrade to choose a preset or edit the matrix.");
-
-        /// <summary>Switch to a named preset. Human + Pro.</summary>
-        public static AgentPolicy SetPreset(string preset, string origin, bool isPro)
+        /// <summary>Switch to a named preset. Human only, free on any tier: the matrix that gates the agent is
+        /// the human's, and an agent may never rewrite it.</summary>
+        public static AgentPolicy SetPreset(string preset, string origin)
         {
-            RequireHuman(origin); RequirePro(isPro);
+            RequireHuman(origin);
             var built = AgentPolicyPresets.Build(preset);
             return HomeFile.Mutate<AgentPolicy, AgentPolicy>(Path_(), Get, cur =>
             {
@@ -57,11 +54,11 @@ namespace Semanticus.Engine
             });
         }
 
-        /// <summary>Override a single cell. Human + Pro. A cell change makes the preset "custom" so the UI stops
-        /// claiming a named preset that no longer describes the matrix.</summary>
-        public static AgentPolicy SetCell(string capability, string label, string action, string origin, bool isPro)
+        /// <summary>Override a single cell. Human only, free on any tier. A cell change makes the preset "custom"
+        /// so the UI stops claiming a named preset that no longer describes the matrix.</summary>
+        public static AgentPolicy SetCell(string capability, string label, string action, string origin)
         {
-            RequireHuman(origin); RequirePro(isPro);
+            RequireHuman(origin);
             if (!Enum.TryParse<AgentCapability>(capability, ignoreCase: true, out var cap))
                 throw new ArgumentException($"Unknown capability '{capability}'.");
             if (!AgentPolicy.TryParseAction(action, out _))   // explicit allow|ask|deny — never numeric "0"

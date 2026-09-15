@@ -10,11 +10,9 @@ using TabularEditor.TOMWrapper;
 namespace Semanticus.Engine
 {
     /// <summary>
-    /// Fabric Data Agent ops (docs/data-agent-tab-plan.md §3) — dual-drive like every other capability. Reads
-    /// (list/get) are free; EVERY write on this surface is Pro (Kane 2026-07-07: create/update/publish/delete +
-    /// generate — one legible line, "configure and publish data agents with Pro", instead of gating only the
-    /// generate verb). Writes stay DRY-RUN by default for Pro (commit=false returns the exact request and changes
-    /// NOTHING). The engine holds no inference and never queries the agent (golden rule #1) — a published agent's
+    /// Fabric Data Agent ops (docs/data-agent-tab-plan.md §3), dual-drive like every other capability. The WHOLE
+    /// view is Pro, reads included, because it is one of the four Advanced publishing tabs (Kane 2026-09-15).
+    /// Writes stay DRY-RUN by default (commit=false returns the exact request and changes NOTHING). The engine holds no inference and never queries the agent (golden rule #1) — a published agent's
     /// MCP endpoint is the query surface, out of scope here. Every EXECUTED write rides an ActivityEvent onto the
     /// bus so the deploy trail + experience log capture it.
     /// </summary>
@@ -38,6 +36,7 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId)) return new DataAgentList { Error = "A workspaceId is required: list_workspaces shows your workspaces and their ids." };
             try
             {
@@ -58,6 +57,7 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId))
                 return new DataAgentDetail { Error = "A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it." };
             try
@@ -83,9 +83,7 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable = 200)
         {
-            // Part of the one-line rule above: configuring data agents (this one-click scope included) is Pro.
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Building a data-agent source from this model",
-                "Browsing data agents stays free (list_data_agents / get_data_agent); configuring and publishing them is Pro.");
+            RequireProFeature();
             var s = _sessions.Require();   // an instructive throw when no model is open
             var cap = maxColumnsPerTable <= 0 ? 200 : maxColumnsPerTable;
             var connectionContext = await ConnectionContextAsync();
@@ -178,13 +176,9 @@ namespace Semanticus.Engine
         // One gate helper for every data-agent write so the line stays legible ("writes are Pro, reads are
         // free") and the message identical on all four ops. Thrown at the very top — before validation and
         // before the dry-run branch — so a free call never gets halfway into a write flow it can't finish.
-        private void RequireProDataAgentWrite(string verb)
-            => Entitlement.EntitlementGuard.RequirePro(_entitlement, $"{verb} (data-agent writes)",
-                "Browsing data agents stays free (list_data_agents / get_data_agent); configuring and publishing them from here is Pro.");
-
         public async Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProDataAgentWrite("create_data_agent");
+            RequireProFeature();
             aiInstructions ??= string.Empty;
             if (string.IsNullOrWhiteSpace(workspaceId)) return Err("A workspaceId is required: list_workspaces shows your workspaces and their ids.");
             if (string.IsNullOrWhiteSpace(name)) return Err("A name is required.");
@@ -214,7 +208,7 @@ namespace Semanticus.Engine
         // existing parts + the changed ones — never drop an unknown part.
         public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProDataAgentWrite("update_data_agent");
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             if (aiInstructions != null && aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars: over the {AiInstructionsCap} cap. Nothing was sent.");
             if ((datasourceJson != null || fewshotsJson != null) && string.IsNullOrWhiteSpace(datasourceFolder))
@@ -260,7 +254,7 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProDataAgentWrite("publish_data_agent");
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"publish_data_agent {agentId} → copy {DataAgentRest.DraftPrefix}* to {DataAgentRest.PublishedPrefix}* + write {DataAgentRest.PublishInfoPath}; description {(description ?? string.Empty).Length} chars";
             if (!commit) return DryRun(summary);
@@ -279,7 +273,7 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProDataAgentWrite("delete_data_agent");
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"delete_data_agent {agentId} → DELETE item in {workspaceId}";
             if (!commit) return DryRun(summary);

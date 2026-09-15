@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Semanticus.Engine;
 using Semanticus.Engine.Evidence;
@@ -26,26 +27,27 @@ namespace Semanticus.Tests
             Assert.Null(result.Markdown);
         }
 
+        // Tests and Saved reports became a WHOLE Pro feature on 2026-09-15, so there is no degraded free export to
+        // pin any more: free is refused at the entry, and the only soft refusal left is "no run belongs to this
+        // model yet". Both halves are asserted here so the entitled path and the refused one stay one story.
         [Fact]
-        public async Task No_run_and_free_tier_are_soft_refusals_with_next_actions()
+        public async Task No_run_is_a_soft_refusal_and_free_is_refused_at_the_entry()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new Fake(false));
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.OpenAsync(TestModels.FindBim());
 
             var before = await engine.ExportTestReportAsync();
             Assert.Contains("run the suite again", before.Note);
             Assert.Null(before.Error);
+            Assert.Null(before.Markdown);
 
-            var run = await engine.RunTestSuiteAsync(false, "human");
-            Assert.Null(run.Error);
-            var after = await engine.ExportTestReportAsync();
-            Assert.Contains("signable test report is Pro", after.Note);
-            Assert.Null(after.Error);
-            Assert.False(string.IsNullOrWhiteSpace(after.Markdown));
-            Assert.False(string.IsNullOrWhiteSpace(after.Html));
-            Assert.True(string.IsNullOrWhiteSpace(after.Json));
-            Assert.True(string.IsNullOrWhiteSpace(after.ContentHash));
+            using var freeSessions = new SessionManager();
+            using var free = new LocalEngine(freeSessions, new Fake(false));
+            await free.OpenAsync(TestModels.FindBim());
+            var refusal = await Assert.ThrowsAsync<EntitlementException>(() => free.ExportTestReportAsync());
+            Assert.Contains("is a Semanticus Pro feature.", refusal.Message);
+            Assert.Contains("Tests", refusal.Message);
         }
 
         [Fact]
@@ -60,8 +62,10 @@ namespace Semanticus.Tests
             Assert.Null(report.Error);
             Assert.Contains("# Semanticus test report", report.Markdown);
             Assert.Contains("- Model: " + opened.ModelName, report.Markdown);
-            Assert.Contains("## Behavioral contracts (Model Interview)", report.Markdown);
-            Assert.Contains("behavioral evidence only; they do not change the test grade or coverage", report.Markdown);
+            // Security and the Model interview left Tests in 1.2.0 (Kane, 2026-09-15): an exported report may
+            // not carry a section for checks this run never made.
+            Assert.DoesNotContain("Model Interview", report.Markdown, StringComparison.Ordinal);
+            Assert.DoesNotContain("## Security", report.Markdown, StringComparison.Ordinal);
             Assert.Contains("<!doctype html>", report.Html);
             Assert.Contains(opened.ModelName, report.Html);
             Assert.Contains("\"kind\":\"test-suite\"", report.Json);

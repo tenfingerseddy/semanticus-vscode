@@ -15,7 +15,7 @@ namespace Semanticus.Tests
         private static async Task<(LocalEngine Engine, SessionManager Sessions)> NewModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions);
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("C52", 1604);
             return (engine, sessions);
         }
@@ -27,7 +27,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "semanticus-c52-" + Guid.NewGuid().ToString("N"));
             try
             {
-                using (var created = new LocalEngine(new SessionManager()))
+                using (var created = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
                 {
                     await created.CreateModelAsync("B Edit", 1604);
                     await created.CreateCalculatedTableAsync("Existing Calc", "{1}", "human");
@@ -35,7 +35,7 @@ namespace Semanticus.Tests
                 }
 
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
                 await engine.OpenAsync(dir);
 
                 var tableRef = await McpTools.CreateTable(engine, "B Table");

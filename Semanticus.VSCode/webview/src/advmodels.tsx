@@ -4,6 +4,7 @@ import { rpc, onDidChange } from './bridge';
 import { DaxField } from './daxeditor';
 import { inferFormatMode } from './formatMode';
 import { ObjectBrowser, useBrowserData, type BrowserNode } from './objectbrowser';
+import { Caret } from './ui';
 
 // ===================================================================================================
 // Advanced Modelling tab (Studio v2). A killer-UX authoring surface for constructs reachable today
@@ -33,12 +34,14 @@ interface CalendarResult { revision: number; table: string; calendar: string; cr
 type Area = 'perspectives' | 'fieldparams' | 'calcgroups' | 'calendars' | 'rlsols' | 'daxlib';
 const AREAS: Area[] = ['perspectives', 'fieldparams', 'calcgroups', 'calendars', 'rlsols', 'daxlib'];
 
-export function AdvancedModelsView({ navArea }: { navArea?: { area: string; nonce: number } | null } = {}) {
+export function AdvancedModelsView({ navArea, onNavConsumed }: { navArea?: { area: string; nonce: number } | null; onNavConsumed?: (nonce: number) => void } = {}) {
   const [area, setArea] = useState<Area>('perspectives');
   // A Model-tree "Advanced Modelling ▸ New …" jump lands here on the right builder. Guard the string against the
   // Area union (defensive — the nav payload is external); nonce makes a repeat jump to the same area re-fire.
   useEffect(() => {
-    if (navArea && (AREAS as string[]).includes(navArea.area)) setArea(navArea.area as Area);
+    if (!navArea) return;
+    if ((AREAS as string[]).includes(navArea.area)) setArea(navArea.area as Area);
+    onNavConsumed?.(navArea.nonce);
   }, [navArea?.nonce]);  // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="sem-evidence-page flex flex-col gap-4">
@@ -46,11 +49,8 @@ export function AdvancedModelsView({ navArea }: { navArea?: { area: string; nonc
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold">Advanced Modelling</div>
-            <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-              Build report choices, reusable calculations, calendars and access rules. Choose a feature below to get started.
-            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="sem-seg flex-wrap">
             <Seg active={area === 'perspectives'} onClick={() => setArea('perspectives')}>Perspectives</Seg>
             <Seg active={area === 'fieldparams'} onClick={() => setArea('fieldparams')}>Field parameters</Seg>
             <Seg active={area === 'calcgroups'} onClick={() => setArea('calcgroups')}>Calc groups</Seg>
@@ -263,7 +263,7 @@ function PerspectivesPanel() {
                   return (
                     <div key={vr.key} className="flex items-center" style={{ ...common, borderTop: '1px solid var(--sem-border)' }}>
                       <button onClick={() => toggleExpand(row.name)} className="flex items-center gap-1.5 text-left px-2" style={{ width: P_LABEL_W }}>
-                        <span className="inline-block w-3 text-[10px]" style={{ transform: row.open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
+                        <span className="inline-flex w-3 justify-center"><Caret open={row.open} /></span>
                         <span className="text-[12px] font-medium truncate">{row.name}</span>
                         <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>({row.count})</span>
                       </button>
@@ -796,11 +796,10 @@ function TemplateQuickStart({ tables, setMsg, onDone }: { tables: TableModel[]; 
         <SectionTitle>New calendar from a template</SectionTitle>
         <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>generates missing columns and their calendar-category mappings in one undoable step. The modern replacement for a date table</span>
       </div>
-      <div className="flex items-center gap-1.5 flex-wrap mt-2">
+      <div className="sem-seg flex-wrap mt-2">
         {TEMPLATES.map((t) => (
-          <button key={t.id} onClick={() => setTemplate(t.id)} title={t.hint}
-            className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-colors"
-            style={template === t.id ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+          <button key={t.id} type="button" onClick={() => setTemplate(t.id)} title={t.hint}
+            aria-pressed={template === t.id} className="sem-seg-item">
             {t.label}
           </button>
         ))}
@@ -944,7 +943,7 @@ function ShiftExplainer() {
   return (
     <Panel>
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-left w-full">
-        <span className="inline-block w-3 text-[10px]" style={{ transform: open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
+        <span className="inline-flex w-3 justify-center"><Caret open={open} /></span>
         <SectionTitle>Fixed vs Flexible shifts: help</SectionTitle>
       </button>
       {open && (
@@ -992,7 +991,7 @@ function ClassicDateTable({ tables, setMsg }: { tables: TableModel[]; setMsg: Ms
   return (
     <Panel>
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-left w-full">
-        <span className="inline-block w-3 text-[10px]" style={{ transform: open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
+        <span className="inline-flex w-3 justify-center"><Caret open={open} /></span>
         <SectionTitle>Classic date table</SectionTitle>
         <span className="text-[11px] ml-1" style={{ color: 'var(--sem-muted)' }}>the older Gregorian approach; prefer a calendar above for new models</span>
       </button>
@@ -1245,7 +1244,7 @@ function TableSecurityRow({ role, table, reload, onError }: { role: RoleInfo; ta
     <div className="rounded p-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
       <div className="flex items-center gap-2">
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 shrink-0" title="Column-level security (OLS)">
-          <span className="inline-block w-3 text-[10px]" style={{ transform: open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
+          <span className="inline-flex w-3 justify-center"><Caret open={open} /></span>
           <span className="text-[12px] font-medium">{table.name}</span>
           {hasFilter && <span className="w-1.5 h-1.5 rounded-full" title="Has a row filter" style={{ background: 'var(--sem-accent)' }} />}
         </button>
@@ -1485,8 +1484,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function Button({ children, onClick, primary, disabled }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {children}
     </button>
   );
@@ -1494,16 +1492,14 @@ function Button({ children, onClick, primary, disabled }: { children: React.Reac
 function MiniButton({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm">
       {children}
     </button>
   );
 }
 function Seg({ children, active, onClick }: { children: React.ReactNode; active?: boolean; onClick?: () => void }) {
   return (
-    <button onClick={onClick} className="text-[12px] px-3 py-1 rounded-lg font-medium transition-colors"
-      style={active ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
+    <button type="button" onClick={onClick} aria-pressed={!!active} className="sem-seg-item">
       {children}
     </button>
   );

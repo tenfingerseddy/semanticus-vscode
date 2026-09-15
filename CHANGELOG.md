@@ -9,6 +9,191 @@ All notable changes to Semanticus are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-15
+
+The usability redesign that followed 1.1.3. Installers for every supported platform are attached to the GitHub
+release.
+
+### Tests, rebuilt
+
+- Every saved check is in one list you can search and filter: All, Differs, Pass, Could not check, Off and Not run.
+  One line above it gives the grade, how many passed, differ and could not be checked, and the date.
+- **New check** asks what kind first. **Trusted answer** compares a calculation against a number you already trust.
+  **Compare with source** compares a number in the model against a number from a database. **Table row count**
+  compares the rows in a model table against the rows in the source table.
+- A database is saved once in Connections as a SQL source and then picked by name, so you never type the same server
+  and database twice. "Add a SQL source" opens Connections over the drawer and your half-finished check is still there
+  afterwards. A check pointing at a source that is no longer saved is refused and asks you to pick a new one.
+- Run all enabled checks has a menu: everything, only your saved checks, only relationships, only table row counts, or
+  **Only what I ticked**. Run part of them and you get a real grade for that part, with a line saying what it covers;
+  the last full run's grade still stands, and the parts that did not run keep their result.
+- Relationship checks read in plain columns: rows that match, lookup values unique, column types compatible, with a
+  summary like "2 relationships need attention; 3 fine". Show details names the lookup values that are missing and how
+  much data hangs off each. Table row counts have their own card. Each table says where it is counted from, or why it
+  cannot be counted. Counts that differ are not called a failure on their own: matching snapshots were not confirmed,
+  so this alone does not prove missing rows.
+- History is a dated list of recorded runs. **Record it** saves the run you are looking at rather than running it
+  again, and opening a row shows what each check found, with the query, the filter, the allowed difference and the
+  source it used at the time. The allowed difference reads in plain decimals and nothing is rounded away. A check that
+  fails shows what was expected, what came back and the difference. When failed data checks hold the grade down the
+  page says so: "2 data checks failed. The grade cannot rise above D until they are fixed."
+- Role security checks and the model interview no longer run inside a test run, so neither can move your grade. The
+  interview moved to AI understanding, where it keeps everything it had.
+
+### Lineage is one page: Graph, Tree and Impact
+
+- Lineage & Impact is now Lineage, with three views: Graph, Tree and Impact. Old links still land in the right place.
+  Pick anything and one card answers first: "Deleting this column would break 1 measure." A long list of dependants
+  opens with **Show all**, never a cut-off count. Cleanup candidates are grouped three ways, so "nothing uses this" is
+  never mixed up with "this was not checked". One **Choose reports** drawer holds the reports Semanticus may read,
+  folders on your computer and published reports together, and reading a published report asks your permission first.
+- Choosing a report is not the same as checking it. A report you picked but never checked is always reported as still
+  needing a check, and a cleanup sweep refuses to run until it is. Editing the model marks an earlier reading as
+  needing another check, and reopening a model keeps your choices but drops the old readings.
+- A removal you propose remembers the reports it was reviewed against, so changing the selection means checking again
+  rather than applying an old review.
+  If the selection changes at the very moment a removal is applied, the removal is refused with "The report selection
+  changed. Check it again and review this removal." Accepting or rejecting a suggested note on the free plan no longer
+  returns the Model notes text; the notes themselves stay part of Pro.
+
+### Free and Pro are now set by feature, not by button
+
+Pro used to be a list of big buttons. It is now four whole features, and everything else is free.
+
+- **Pro:** Create in Model (Model Spec, Advanced Modelling, Power Query, Docs and Model notes), Tests and Saved
+  reports, the Advanced view under Changes and Published (source control, Fabric Git, automated delivery and the Data
+  Agent), and Workflows. If a feature is Pro, everything behind it is Pro, including what it reads, for you and for
+  your assistant.
+- **Now free:** every one-click bulk fix and bulk apply, Model quality, AI understanding, Lineage with its published
+  report checks, Verified Mode, the assistant permission matrix, blame and value history, Promote, Publish, compare
+  and restore points. Twenty seven restrictions were removed.
+- A Pro page on the free plan shows a preview of the real page, filled with example data under the line "Example. This
+  is not your model." While your plan is being checked the page says so and does nothing, and a plan that lapses locks
+  the page straight away. Two free things that lived inside a now Pro page moved to Overview: suggested notes for your
+  assistant, with their Accept and Reject buttons, and raising the model's compatibility level, shown only when a
+  level is holding a feature back.
+- Connections shows the names and counts of checks and table mappings using each SQL source, through a small free
+  reading that carries nothing else. When something was not counted it says so, instead of printing a zero you might
+  delete a source on.
+
+### Model
+
+Studio is grouped into five areas: **Model**, **Calculations**, **Checks**, **Changes** and **Workflows**. Every page
+still exists and old links still open the right page.
+
+- Overview, Diagram, Lineage, Find and replace, Data, Size by table, Model Spec, Advanced Modelling, Power Query, Docs
+  and Model notes all live under Model. Search is now Find and replace, Storage is now Size by table, M Code is now
+  Power Query, and Model Primer is now Model notes. Model also has a **Create** menu, so making a table, measure,
+  column or relationship starts in one place.
+- Overview is now one glance page: the model name and a plain sentence about it, the Ready for AI grade with rows
+  loaded and memory used, one coloured bar showing every table by size with the date it was measured, a card showing
+  what your assistant is told that you can edit there, and small cards for checks passing, edits waiting and where the
+  model publishes to. Before a size scan the bar sizes by column count and offers **Scan sizes**.
+
+### Calculations, Checks and Changes
+
+- DAX Lab has its own area, so trying a formula and comparing answers is one place. A saved check opens straight from
+  a comparison and the two stay linked, and a result that arrives late no longer clears a check you changed while it
+  was running. In the performance results the formula part and the storage part are two colours.
+- Tests, Model quality, AI understanding and Saved reports live under Checks. Best practices is now Model quality, AI
+  Readiness is now AI understanding, and Evidence is now Saved reports. A check that could not run is never counted as
+  a pass, and the cell says why. Every saved check has a menu: Run this one, Edit, Turn off or on, and Delete.
+- Proposed, History and Published live under Changes. Change Plan is now Proposed, Edit History is now History, and
+  Deploy is now Published. Publish is a button in the header naming its destination, and afterwards the result says
+  what reached it and what stayed local. A rollback that changed nothing says so.
+
+### Workflows
+
+- Workflows is a top-level area: a library grouped by the everyday job, a Runs view, and Steps, Canvas and Source as
+  three views of one draft. You can create and edit a workflow in place, preview the change and apply it, and a run
+  your assistant starts is picked up even while you are reading another page. The Author canvas is the page now: the
+  rows of text above it are one thin bar, the tools sit on the canvas itself (Add step, Arrange, Reset, Fit all, Full
+  screen), and a picked step opens a side panel you can move, pin and close. On a normal laptop screen the canvas is
+  about twice as wide as it was. Shift and F turn Full screen on, Escape turns it off.
+
+### Connections
+
+- The current setup names four roles: Editing, Tests and queries, Publish to and SQL sources. SQL sources are saved
+  here once and reused by every check: name, server, database and how to sign in, with Test connection, Edit and
+  Remove. Removing one that is still in use is refused, and the refusal names the checks and tables that point at it.
+  There is no password box anywhere, because Semanticus never holds a password or a token for you.
+- A saved workspace reads as its name instead of a web address full of percent signs. A failed sign-in shows one
+  notice: a plain cause line, what to do, and the original message behind Show details. Promote, Fabric Git and the
+  publish half of CI and CD each have their own **Sign in as** picker, instead of always trying the Azure command
+  line. Pressing Sign in only checks who you are; it never publishes for you.
+- The Reference Model panel is gone. One command, **Copy from another model...**, replaces it: pick a file, a saved
+  version or a workspace model, tick several things at once, and the copy lands as one step you can undo.
+
+### A smaller top, and more room for the work
+
+- The top of every page is three short rows of the same height. The trail row and the tall page guide block are gone,
+  and page help is behind a small button that opens a pop up, keeping every word. The strip at the bottom is one line
+  at every window width and it follows the area you are in. The area buttons stay on screen when you open a table
+  preview, and clicking the area you are already in takes you to that area's home page.
+- Diagram went from three rows of buttons to one, and Lineage from six or seven to one, which nearly doubles the
+  drawing space. Counts and the colour key are quiet labels in the corners of the picture.
+- Hold Ctrl and scroll to make everything bigger or smaller, from 80% to 130%, with Ctrl and 0 to put it back. Menus
+  now open just under the button you clicked at any zoom.
+- The gear icon is gone. Assistant permissions, Live activity and Connect your assistant are under the **Your
+  assistant** chip, which is always there now. Help is a menu with page help, keyboard shortcuts and Restart engine.
+
+### Restarting the engine cannot lock you out
+
+- The engine always starts. A model that could not be reopened is reported as exactly that, in plain words, with
+  **Open a model** and **Show details**, and the engine keeps running behind it. If the engine is genuinely down,
+  Studio shows a recovery panel with Restart engine, Open a model and Show details, instead of a dead page.
+- What Semanticus remembers is the model, not a file path, so the model you opened from Studio or from Connections is
+  the one that comes back. Starting the editor never opens a sign-in window by itself: if reopening needs a sign-in it
+  says so and offers **Sign in**, and answering that asks about unsaved work first.
+
+### The same words everywhere
+
+- The assistant is called **your assistant** everywhere a person reads. The two VS Code command titles "Semanticus:
+  Connect AI Assistant" and "Install or Update Assistant Skills" keep their names until the commands themselves are
+  renamed, so anything telling you what to run still quotes them exactly. Apply, Save, Publish and Restore now mean
+  one thing each on every page and in every guide, and Restore is shown as Roll back.
+
+### Fixed
+
+- The Back button is gone. It could appear and then take you nowhere, so Settings has a **Done** button instead,
+  Escape does the same, and opening straight onto Settings always has a way out.
+- A card at the bottom of the Connections list no longer looks cut off, the last row of a long Checks page is no
+  longer flush against the bottom of the window, and the remove button on a workflow step chip sits beside the chip.
+  Holding Ctrl and scrolling over the Lineage picture zooms the picture, not the whole app. Workflow definition files
+  now have the same line endings on every platform, so their saved fingerprints match on Windows.
+
+### Known issues
+
+- On the free plan your assistant can still read a workflow run in full, including its instructions, when it asks for a run by name; the page shows only the run's status.
+- A removal remembers the reports it was reviewed against by their ids; if a report is re-pointed at different coordinates under the same id and checked again, the review is not told to look again.
+- Pro licences that have expired keep working for fourteen days; that grace period was proven with a test key, not with a key issued by the store.
+- No real database sign-in was ever made, so the first real Test connection and the first real comparison against a
+  warehouse are untested.
+- No live model connection was used, so running checks, recording a run and listing unmatched rows against a live
+  model are untested.
+- Power BI Desktop was never used, so reopening a running Desktop model after a restart is untested.
+- Reading a published report from the cloud was proven against a stand-in; report folders on your own computer were
+  read for real.
+- A removal reviewed against a report uses that report as it was last read, so a report someone edits in the cloud
+  afterwards is not noticed.
+- Pro was proven with a test licence, not with one issued by the store.
+- Publishing more than one selected object at a time, and two of the DAX Lab optimize steps, could not be tested
+  without a live destination.
+- After installing a new version an older engine can still be running. If a page reports a missing method, use Help,
+  then Restart engine, once.
+- On a narrow window with the app zoomed in the area buttons move into the More menu, the workflow step panel can
+  cover the step you picked, and between about 740 and 800 pixels wide the top bar controls still paint over the area
+  names.
+- Data, Find and replace, DAX Lab, Tests, Model quality, Published and Workflows still carry their older tall rows of
+  buttons, and a reference model set earlier has no button left that clears it.
+
+### Compatibility
+
+Nothing you saved has to be redone. A workflow that a project requires keeps the exact definition it was bound
+against. Saved checks, saved connections and assistant permissions are unchanged, and so are the model file formats
+Semanticus opens and writes. Runs recorded before this release keep their grade and totals, are labelled as scored
+under the old rules, and are never rescored.
+
 ## [1.1.3] - 2026-09-13
 
 ### Easier to learn

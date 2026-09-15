@@ -35,18 +35,21 @@ namespace Semanticus.Engine
         private static readonly Dictionary<string, (string Question, string Shelf)> Map =
             new Dictionary<string, (string, string)>(System.StringComparer.Ordinal)
         {
-            // Open a model and connect > Connections and targets (20)
+            // Open a model and connect > Connections and targets (25)
             { "connect_local", ("Open a model and connect", "Connections and targets") },
             { "connect_xmla", ("Open a model and connect", "Connections and targets") },
             { "connection_context", ("Open a model and connect", "Connections and targets") },
             { "connection_status", ("Open a model and connect", "Connections and targets") },
             { "create_model", ("Open a model and connect", "Connections and targets") },
+            { "delete_sql_source", ("Open a model and connect", "Connections and targets") },
             { "disconnect", ("Open a model and connect", "Connections and targets") },
             { "forget_connection", ("Open a model and connect", "Connections and targets") },
             { "label_connection", ("Open a model and connect", "Connections and targets") },
             { "list_account_profiles", ("Open a model and connect", "Connections and targets") },
             { "list_connection_history", ("Open a model and connect", "Connections and targets") },
             { "list_connections", ("Open a model and connect", "Connections and targets") },
+            { "list_sql_source_usage", ("Open a model and connect", "Connections and targets") },
+            { "list_sql_sources", ("Open a model and connect", "Connections and targets") },
             { "list_local_instances", ("Open a model and connect", "Connections and targets") },
             { "open_live", ("Open a model and connect", "Connections and targets") },
             { "open_local", ("Open a model and connect", "Connections and targets") },
@@ -55,7 +58,9 @@ namespace Semanticus.Engine
             { "probe_auth_prerequisites", ("Open a model and connect", "Connections and targets") },
             { "probe_connection_accounts", ("Open a model and connect", "Connections and targets") },
             { "remember_xmla_connection", ("Open a model and connect", "Connections and targets") },
+            { "save_sql_source", ("Open a model and connect", "Connections and targets") },
             { "set_publish_destination", ("Open a model and connect", "Connections and targets") },
+            { "test_sql_source", ("Open a model and connect", "Connections and targets") },
             // See what is in the model > Measures, DAX and queries (7)
             { "evaluate_and_log", ("See what is in the model", "Measures, DAX and queries") },
             { "get_dependencies", ("See what is in the model", "Measures, DAX and queries") },
@@ -64,13 +69,16 @@ namespace Semanticus.Engine
             { "pivot_measure", ("See what is in the model", "Measures, DAX and queries") },
             { "run_dax", ("See what is in the model", "Measures, DAX and queries") },
             { "run_dmv", ("See what is in the model", "Measures, DAX and queries") },
-            // See what is in the model > Reports and what uses this model (7)
+            // See what is in the model > Reports and what uses this model (10)
             { "analyze_cloud_reports", ("See what is in the model", "Reports and what uses this model") },
             { "analyze_reports", ("See what is in the model", "Reports and what uses this model") },
+            { "check_reports", ("See what is in the model", "Reports and what uses this model") },
             { "get_lineage", ("See what is in the model", "Reports and what uses this model") },
             { "impact_assessment", ("See what is in the model", "Reports and what uses this model") },
             { "impact_of", ("See what is in the model", "Reports and what uses this model") },
+            { "list_report_scope", ("See what is in the model", "Reports and what uses this model") },
             { "list_reports", ("See what is in the model", "Reports and what uses this model") },
+            { "set_report_scope", ("See what is in the model", "Reports and what uses this model") },
             { "unused_objects", ("See what is in the model", "Reports and what uses this model") },
             // See what is in the model > Speed and size (7)
             { "benchmark_dax", ("See what is in the model", "Speed and size") },
@@ -231,6 +239,10 @@ namespace Semanticus.Engine
             { "list_evidence", ("Prove it is right", "Tests, numbers and evidence") },
             { "list_interview_questions", ("Prove it is right", "Tests, numbers and evidence") },
             { "list_test_runs", ("Prove it is right", "Tests, numbers and evidence") },
+            { "list_table_mappings", ("Prove it is right", "Tests, numbers and evidence") },
+            { "get_test_run", ("Prove it is right", "Tests, numbers and evidence") },
+            { "record_test_run", ("Prove it is right", "Tests, numbers and evidence") },
+            { "get_unmatched_rows", ("Prove it is right", "Tests, numbers and evidence") },
             { "list_tests", ("Prove it is right", "Tests, numbers and evidence") },
             { "list_verified_edits", ("Prove it is right", "Tests, numbers and evidence") },
             { "probe_measure", ("Prove it is right", "Tests, numbers and evidence") },
@@ -240,6 +252,8 @@ namespace Semanticus.Engine
             { "run_tests", ("Prove it is right", "Tests, numbers and evidence") },
             { "save_evidence", ("Prove it is right", "Tests, numbers and evidence") },
             { "save_test", ("Prove it is right", "Tests, numbers and evidence") },
+            { "set_table_source_mapping", ("Prove it is right", "Tests, numbers and evidence") },
+            { "clear_table_source_mapping", ("Prove it is right", "Tests, numbers and evidence") },
             { "try_test", ("Prove it is right", "Tests, numbers and evidence") },
             { "set_verified_mode", ("Prove it is right", "Tests, numbers and evidence") },
             { "verify_dax_equivalence", ("Prove it is right", "Tests, numbers and evidence") },
@@ -330,7 +344,7 @@ namespace Semanticus.Engine
             { "set_synonyms", ("Teach the AI about this model", "Teach the AI") },
             { "update_data_agent", ("Teach the AI about this model", "Teach the AI") },
             { "upvote_insight", ("Teach the AI about this model", "Teach the AI") },
-            // Set the rules of the work > Workflows and rules (35)
+            // Set the rules of the work > Workflows and rules (36)
             { "abort_workflow", ("Set the rules of the work", "Workflows and rules") },
             { "activate_workflow_profile", ("Set the rules of the work", "Workflows and rules") },
             { "check_workflow", ("Set the rules of the work", "Workflows and rules") },
@@ -343,6 +357,7 @@ namespace Semanticus.Engine
             { "get_workflow", ("Set the rules of the work", "Workflows and rules") },
             { "get_workflow_document", ("Set the rules of the work", "Workflows and rules") },
             { "edit_workflow_document", ("Set the rules of the work", "Workflows and rules") },
+            { "preview_workflow_edit", ("Set the rules of the work", "Workflows and rules") },
             { "upgrade_workflow", ("Set the rules of the work", "Workflows and rules") },
             { "get_workflow_layout", ("Set the rules of the work", "Workflows and rules") },
             { "save_workflow_layout", ("Set the rules of the work", "Workflows and rules") },

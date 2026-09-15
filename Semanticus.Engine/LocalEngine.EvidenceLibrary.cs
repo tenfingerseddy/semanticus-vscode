@@ -75,6 +75,7 @@ namespace Semanticus.Engine
 
         public async Task<EvidenceLibrary> ListEvidenceAsync()
         {
+            RequireProFeature();
             var session = _sessions.Current;
             if (session == null) return new EvidenceLibrary { Note = "Open a model to browse its evidence." };
             var modelName = await session.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
@@ -117,6 +118,7 @@ namespace Semanticus.Engine
 
         public async Task<EvidenceArtifact> GetEvidenceAsync(string id)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) return new EvidenceArtifact { Error = "Choose an evidence record from list_evidence." };
             var library = await ListEvidenceAsync();
             var item = library.Items.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.Ordinal));
@@ -151,6 +153,7 @@ namespace Semanticus.Engine
         /// terminal Workflow evidence stays free. Re-saving the same source id is an idempotent atomic overwrite.</summary>
         public async Task<EvidenceSaveResult> SaveEvidenceAsync(string source, string sourceId, string origin)
         {
+            RequireProFeature();
             source = (source ?? "").Trim().ToLowerInvariant();
             EvidenceArtifact artifact;
             if (source == "tests" || source == "test" || source == "test-suite")

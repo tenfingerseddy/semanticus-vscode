@@ -10,6 +10,20 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
+    /// <summary>
+    /// The shipped verified-measure seed and the separately versioned hard-measure authoring template.
+    ///
+    /// UX16 shortened the STOCK file's person-facing form to four steps (requirement, expected values,
+    /// candidate, reconcile) while keeping its id, version, triggers and the whole of its assistant
+    /// instructions. The witness, battery, hard equivalence gate and finalize work that used to occupy
+    /// Steps 4 to 7 now all land on Step 4, so the run collects the witness ONCE.
+    ///
+    /// WHAT THAT COST, named here rather than left for the next reader to discover: the stock file no
+    /// longer re-collects `witnessDax` at a later step, so the engine's witness-revision receipt between
+    /// two collection points is not exercised by the stock corpus any more, and there is no second hard
+    /// equivalence gate after a performance rewrite. The FEATURED TEMPLATE still has the seven-step shape
+    /// and is asserted below unchanged, so those engine mechanics keep a live definition behind them.
+    /// </summary>
     public sealed class HardMeasureWorkflowTests
     {
         private sealed class Free : IEntitlement
@@ -35,17 +49,14 @@ namespace Semanticus.Tests
             var run = new WorkflowRunStore().Start(def, null);
             await WorkflowRunner.SubmitStepAsync(run, "step-1", new Dictionary<string, AnswerValue>
             {
-                ["requirement"] = Answer("Pinned requirement"),
-                ["modelFacts"] = Answer("Recorded model facts"),
-                ["contextLedger"] = Answer("All contexts pinned"),
-                ["clarification"] = Decline("none needed"),
+                ["requirement"] = Answer("Pinned requirement, additivity per dimension, model facts confirmed"),
+                ["clarification"] = Decline("nothing was ambiguous"),
             }, null);
             await WorkflowRunner.SubmitStepAsync(run, "step-2", new Dictionary<string, AnswerValue>
             {
                 ["expectedValues"] = Answer(anchors),
                 ["equivalenceGrid"] = Answer("'Product'[Category]"),
                 ["openGrains"] = Decline("every grain is anchored"),
-                ["externalAnchors"] = Decline("none available"),
                 ["naiveForm"] = Answer("Naive form diverges at the pinned grand total"),
             }, null);
             return run;
@@ -69,11 +80,11 @@ namespace Semanticus.Tests
         };
 
         [Fact]
-        public async Task Stock_v7_and_featured_v5_template_expose_their_verified_witness_contracts()
+        public async Task Stock_four_step_form_and_featured_v5_template_expose_their_verified_witness_contracts()
         {
             var workspace = Path.Combine(Path.GetTempPath(), "smx-hard-v6-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(workspace);
-            using var engine = new LocalEngine(new SessionManager(), new Free(), workspace);
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro, workspace);
             try
             {
                 var canonical = await engine.GetWorkflowAsync("verified-measure");
@@ -82,7 +93,7 @@ namespace Semanticus.Tests
                 Assert.Null(template.Error);
                 Assert.Equal(7, canonical.Version);
                 Assert.Equal(5, template.Version);
-                Assert.Equal("Author a hard DAX measure, reconciled against the requirement at every grain", canonical.Title);
+                Assert.Equal("Test a complex measure", canonical.Title);
                 Assert.Equal(new[] { "measure_goal", "measure_pattern" }, template.Slots.Select(x => x.Name));
                 Assert.DoesNotContain(template.Slots, x => x.Name.Contains("control", StringComparison.OrdinalIgnoreCase));
 
@@ -96,7 +107,8 @@ namespace Semanticus.Tests
 
                 Assert.Null(featured.Error);
                 Assert.Equal(5, featured.Version);
-                Assert.Equal(7, canonical.Steps.Length);
+                // The stock file is the SHORT form now; the template keeps the long one.
+                Assert.Equal(4, canonical.Steps.Length);
                 Assert.Equal(7, featured.Steps.Length);
 
                 foreach (var workflow in new[] { canonical, featured })
@@ -108,18 +120,6 @@ namespace Semanticus.Tests
                     // the retired v4 framing must be fully gone from both surfaces
                     Assert.DoesNotContain("independent raw-row oracle", instructions, StringComparison.OrdinalIgnoreCase);
                     Assert.DoesNotContain("control total", instructions, StringComparison.OrdinalIgnoreCase);
-
-                    // Step 4 runs no verify and precedes the battery, so the witness is on the record before any
-                    // comparison result exists.
-                    var witnessStep = workflow.Steps[3];
-                    Assert.Empty(witnessStep.Gate.Verify);
-                    Assert.Empty(witnessStep.Ops);
-                    Assert.Contains(workflow.Steps[4].Gate.Inputs, i => i.Name == "battery");
-                    // Step 5 re-collects the CURRENT witness under the same name (run-wide answers are
-                    // last-answered-wins) as a required input, so a decline can never clobber the locked value.
-                    var recollected = workflow.Steps[4].Gate.Inputs.Single(i => i.Name == "witnessDax");
-                    Assert.Equal("required", recollected.Required);
-
                 }
 
                 var canonicalInstructions = string.Join("\n", canonical.Steps.Select(x => x.Instructions));
@@ -128,6 +128,14 @@ namespace Semanticus.Tests
                 Assert.Contains("GROUPED row extract", canonicalInstructions, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("OUTSIDE DAX", canonicalInstructions, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("MODEL FLOOR", canonicalInstructions, StringComparison.OrdinalIgnoreCase);
+                // The context ledger moved OUT of a gate question and into the assistant instructions; if it
+                // is in neither place the workflow has quietly dropped the discipline it exists to enforce.
+                Assert.Contains("CONTEXT LEDGER", canonicalInstructions, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(canonical.Steps[0].Gate.Inputs, i => i.Name == "contextLedger" || i.Name == "modelFacts");
+
+                // Step 1 asks two things and reads the model facts itself.
+                Assert.Equal(new[] { "requirement", "clarification" }, canonical.Steps[0].Gate.Inputs.Select(i => i.Name).ToArray());
+                Assert.Contains("get_grounding", canonical.Steps[0].Ops);
 
                 var anchorInput = canonical.Steps[1].Gate.Inputs.Single(i => i.Name == "expectedValues");
                 Assert.Contains("fenced JSON array", anchorInput.Question, StringComparison.OrdinalIgnoreCase);
@@ -136,6 +144,7 @@ namespace Semanticus.Tests
                 var coverage = Assert.Single(canonical.Steps[1].Gate.Verify);
                 Assert.Equal("anchor_coverage", coverage.Kind);
                 Assert.Equal("expectedValues", coverage.Anchors);
+
                 var candidateRevision = canonical.Steps[2].Gate.Inputs.Single(i => i.Name == "expectedValues");
                 Assert.Equal("optional", candidateRevision.Required);
                 Assert.Contains("REQUIRED RECEIPT", candidateRevision.Question, StringComparison.OrdinalIgnoreCase);
@@ -149,45 +158,28 @@ namespace Semanticus.Tests
                 Assert.Equal("expected_values", candidateAnchors.Kind);
                 Assert.Equal("expectedValues", candidateAnchors.Anchors);
 
-                Assert.Equal(new[] { "witnessDax", "witnessTiming" }, canonical.Steps[3].Gate.Inputs.Select(i => i.Name).ToArray());
-                Assert.Equal("no-bare-measures", canonical.Steps[3].Gate.Inputs.Single(i => i.Name == "witnessDax").DaxPurity);
-                Assert.Equal("no-bare-measures", canonical.Steps[4].Gate.Inputs.Single(i => i.Name == "witnessDax").DaxPurity);
-                var gateWitness = canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "witnessDax");
+                // Step 4 is the single reconcile-and-finish gate: the witness is collected once, purity
+                // scanned, and may not be declined, and the same gate re-proves the locked anchors.
+                var gateWitness = canonical.Steps[3].Gate.Inputs.Single(i => i.Name == "witnessDax");
                 Assert.Equal("required", gateWitness.Required);
                 Assert.Equal("no-bare-measures", gateWitness.DaxPurity);
-                Assert.Contains("Restate the Step-5 witness verbatim", gateWitness.Question, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("may not be declined", gateWitness.Question, StringComparison.OrdinalIgnoreCase);
-                var equality = Assert.Single(canonical.Steps[5].Gate.Verify);
-                Assert.Equal("dax_equivalence", equality.Kind);
+                Assert.Equal("hard", canonical.Steps[3].Gate.Strictness);
+                Assert.DoesNotContain(canonical.Steps[3].Gate.Inputs, i => i.Name == "openShapes" || i.Name == "equivalenceGrid");
+                Assert.Equal("optional", canonical.Steps[3].Gate.Inputs.Single(i => i.Name == "countersign").Required);
+                Assert.Equal("required", canonical.Steps[3].Gate.Inputs.Single(i => i.Name == "certificate").Required);
+                Assert.Equal(2, canonical.Steps[3].Gate.Verify.Length);
+                var equality = canonical.Steps[3].Gate.Verify.Single(v => v.Kind == "dax_equivalence");
                 Assert.Null(equality.When);
                 Assert.Equal("witnessDax", equality.Probe);
                 Assert.Equal("openGrains", equality.OpenShapesFrom);
                 Assert.Equal("countersign", equality.OpenMismatch);
-                Assert.DoesNotContain(canonical.Steps[5].Gate.Inputs, i => i.Name == "openShapes" || i.Name == "equivalenceGrid");
-                Assert.Equal("optional", canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "countersign").Required);
-                Assert.Equal("required", canonical.Steps[5].Gate.Inputs.Single(i => i.Name == "certificate").Required);
+                var finalAnchors = canonical.Steps[3].Gate.Verify.Single(v => v.Kind == "expected_values");
+                Assert.Null(finalAnchors.When);
+                Assert.Equal("expectedValues", finalAnchors.Anchors);
 
-                // Step 7 re-proves the latest receipted anchors and witness equality. The equality check inherits
-                // the Step 6 partition, so a performance rewrite cannot quietly re-open a shape it broke.
-                var finalRevision = canonical.Steps[6].Gate.Inputs.Single(i => i.Name == "expectedValues");
-                Assert.Equal("optional", finalRevision.Required);
-                Assert.Contains("REQUIRED RECEIPT", finalRevision.Question, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("leave unanswered", finalRevision.Question, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("originalExpect", finalRevision.Question, StringComparison.Ordinal);
-                Assert.Contains("correctedExpect", finalRevision.Question, StringComparison.Ordinal);
-                Assert.Contains("extractQuery", finalRevision.Question, StringComparison.Ordinal);
-                Assert.Equal(2, canonical.Steps[6].Gate.Verify.Length);
-                var perfAnchors = canonical.Steps[6].Gate.Verify.Single(v => v.Kind == "expected_values");
-                Assert.Null(perfAnchors.When);
-                Assert.Equal("expectedValues", perfAnchors.Anchors);
-                var perfEquality = canonical.Steps[6].Gate.Verify.Single(v => v.Kind == "dax_equivalence");
-                Assert.Equal("inputs.perfPass.answered", perfEquality.When);
-                Assert.Equal("witnessDax", perfEquality.Probe);
-                Assert.Equal("openGrains", perfEquality.OpenShapesFrom);
-                Assert.Equal("countersign", perfEquality.OpenMismatch);
-                Assert.Equal("optional", canonical.Steps[6].Gate.Inputs.Single(i => i.Name == "countersign").Required);
-
-                // The featured template remains the separately versioned v5 authoring template.
+                // The featured template remains the separately versioned v5 authoring template, and is the
+                // only definition still exercising the two-collection-point witness lock.
                 Assert.Empty(featured.Steps[2].Gate.Verify);
                 Assert.Equal(new[] { "witnessDax" }, featured.Steps[3].Gate.Inputs.Select(i => i.Name).ToArray());
                 Assert.DoesNotContain(featured.Steps[5].Gate.Inputs, i => i.Name == "witnessDax");
@@ -243,11 +235,18 @@ namespace Semanticus.Tests
             Assert.Equal(initial, WorkflowRunner.AllAnswers(run)["expectedValues"].Value);
         }
 
+        /// <summary>Step 4 refuses a DECLINED witness and proves the one actually submitted.
+        ///
+        /// This replaces the old step-6 test, and the difference is worth stating: that test proved a
+        /// decline could not clobber a witness LOCKED AT AN EARLIER STEP, because the seven-step form
+        /// collected `witnessDax` three times. The four-step form collects it once, so the clobber
+        /// scenario no longer exists in the stock corpus and only the decline refusal is left to prove
+        /// here. The multi-collection lock is still exercised by the hard-measure template.</summary>
         [Fact]
-        public async Task Stock_step6_rejects_decline_then_omission_evaluates_the_step5_witness()
+        public async Task Stock_step4_refuses_a_declined_witness_and_proves_the_submitted_one()
         {
             var def = StockDefinition();
-            Assert.Equal("required", def.Steps[5].Gate.Inputs.Single(i => i.Name == "witnessDax").Required);
+            Assert.Equal("required", def.Steps[3].Gate.Inputs.Single(i => i.Name == "witnessDax").Required);
             var run = await RunThroughLockedAnchors(def, "[{\"context\":{},\"expect\":100}]");
             WorkflowVerifyExecutor pass = (spec, step, state, all) =>
                 Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "passed", Detail = "passed for setup" });
@@ -257,32 +256,26 @@ namespace Semanticus.Tests
                 ["candidate"] = Answer("100"),
                 ["target"] = Answer("measure:Sales/Candidate"),
             }, pass);
-            await WorkflowRunner.SubmitStepAsync(run, "step-4", new Dictionary<string, AnswerValue>
-            {
-                ["witnessDax"] = Answer("EVALUATE ROW(\"v\", 42)"),
-                ["witnessTiming"] = Answer("representative query: 0.2 seconds"),
-            }, null);
-            await WorkflowRunner.SubmitStepAsync(run, "step-5", new Dictionary<string, AnswerValue>
-            {
-                ["battery"] = Answer("candidate and witness agree across the full battery"),
-                ["witnessDax"] = Answer("EVALUATE ROW(\"v\", 42)"),
-                ["adjudications"] = Decline("no disagreements"),
-            }, null);
 
             var calls = 0;
             string resolvedWitness = null;
             WorkflowVerifyExecutor capture = (spec, step, state, all) =>
             {
+                if (spec.Kind != "dax_equivalence")
+                    return Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "passed", Detail = "not the probe under test" });
                 if (!all.TryGetValue(spec.Probe, out var probe) || !probe.Answered)
                     return Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "unavailable", Missing = "an answered witness", Detail = "probe unanswered" });
                 calls++;
                 resolvedWitness = probe.Value;
                 return Task.FromResult(new VerifyResult { Kind = spec.Kind, Status = "passed", Detail = "witness evaluated" });
             };
+
             var common = new Dictionary<string, AnswerValue>
             {
-                ["equivalenceGrid"] = Answer("'Product'[Category]"),
-                ["openShapes"] = Decline("all evaluated shapes are pinned"),
+                ["battery"] = Answer("candidate and witness agree across the full battery"),
+                ["adjudications"] = Decline("no disagreements"),
+                ["perfPass"] = Decline("no comparable live environment"),
+                ["finalized"] = Answer("Net Sales, #,0, description carries the pinned conventions"),
                 ["certificate"] = Answer("FULL"),
             };
             var withDecline = new Dictionary<string, AnswerValue>(common)
@@ -291,15 +284,18 @@ namespace Semanticus.Tests
             };
 
             var declined = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => WorkflowRunner.SubmitStepAsync(run, "step-6", withDecline, capture));
+                () => WorkflowRunner.SubmitStepAsync(run, "step-4", withDecline, capture));
             Assert.Contains("may not be declined", declined.Message);
             Assert.Equal(0, calls);
 
-            await WorkflowRunner.SubmitStepAsync(run, "step-6", common, capture);
-            Assert.Equal("passed", run.Results[5].Status);
+            var submitted = new Dictionary<string, AnswerValue>(common)
+            {
+                ["witnessDax"] = Answer("EVALUATE ROW(\"v\", 42)"),
+            };
+            await WorkflowRunner.SubmitStepAsync(run, "step-4", submitted, capture);
+            Assert.Equal("passed", run.Results[3].Status);
             Assert.Equal(1, calls);
             Assert.Equal("EVALUATE ROW(\"v\", 42)", resolvedWitness);
-            Assert.False(run.Results[5].Answers.ContainsKey("witnessDax"));
             Assert.Equal("EVALUATE ROW(\"v\", 42)", WorkflowRunner.AllAnswers(run)["witnessDax"].Value);
         }
     }

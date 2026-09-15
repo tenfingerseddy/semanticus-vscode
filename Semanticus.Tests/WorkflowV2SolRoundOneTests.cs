@@ -19,14 +19,15 @@ namespace Semanticus.Tests
     /// </summary>
     public sealed class WorkflowV2SolRoundOneTests
     {
-        private sealed class Free : IEntitlement { public bool IsPro => false; public EntitlementInfo Info => new EntitlementInfo { Tier = "free" }; }
         private sealed class Pro : IEntitlement { public bool IsPro => true; public EntitlementInfo Info => new EntitlementInfo { Tier = "pro" }; }
 
+        // Pro by default since 2026-09-15: save_workflow and check_workflow are inside the Workflows feature, and
+        // the tier is never what these parser and lint findings are about.
         private static (LocalEngine e, string ws) Make(IEntitlement ent = null)
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-sol1-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            return (new LocalEngine(new SessionManager(), ent ?? new Free(), ws), ws);
+            return (new LocalEngine(new SessionManager(), ent ?? new Pro(), ws), ws);
         }
 
         private static string Md(params string[] lines) => string.Join("\n", lines);

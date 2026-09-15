@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import { rpc, onDidChange, onActivity, copyText } from './bridge';
 import { KIND_GLYPH, KIND_COLOR, resolveColor } from './lineagetypes';
 import { Evidence, useRichEvidence, matchRich } from './evidence';
-import { opLabel } from './copy';
-import { useTier, isEntitlementError, ProBadge } from './pro';
+import { opLabel, readSafetyCheckOverride, SAFETY_CHECK_COPY } from './copy';
 
 // ===================================================================================================
-// Edit History — the co-authoring timeline. Every model change this session, by YOU (the VS Code UI) or the
-// AI ASSISTANT (over MCP), on one shared, undoable timeline. This is the premium home for the dual-drive story:
+// History — the co-authoring timeline. Every model change this session, by YOU (the VS Code UI) or the
+// USER'S ASSISTANT (over MCP), on one shared, undoable timeline. This is the premium home for the dual-drive story:
 // who changed what, when, and a one-click step back. Data is the model/didChange edit stream (collected at the
 // App root so the full session is captured); undo/redo drive the engine's single shared undo timeline.
 //
@@ -80,7 +79,7 @@ const VERDICT_PRIORITY: Record<string, number> = {
 const verdictPriority = (v: string) => VERDICT_PRIORITY[v] ?? 0.5;
 
 const isAi = (origin: string) => origin === 'agent';
-const actorLabel = (origin: string) => (origin === 'agent' ? 'AI Assistant' : origin === 'system' ? 'System' : 'You');
+const actorLabel = (origin: string) => (origin === 'agent' ? 'Your assistant' : origin === 'system' ? 'System' : 'You');
 
 function ago(ts: number, now: number): string {
   const s = Math.max(0, Math.floor((now - ts) / 1000));
@@ -112,8 +111,8 @@ function refLabel(ref: string): { kind: string; name: string } {
   return { kind, name: slash > 0 ? rest.slice(slash + 1) : rest };
 }
 
-export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
-  items: EditEntry[]; undoneCount: number; sessionId?: string;
+export function HistoryView({ items, undoneCount, sessionId, objectFilter, onOpenRollback }: {
+  items: EditEntry[]; undoneCount: number; sessionId?: string; objectFilter?: string;
   onOpenRollback?: (point: RestorePointRecord) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -194,23 +193,33 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
     window.setTimeout(() => setFlashRev((f) => (f === rev ? null : f)), 1800);
   };
 
-  const liveItems = items.slice(undoneCount);
+  const timeline = items.map((item, index) => ({ item, index }))
+    .filter(({ item }) => !objectFilter || item.refs.includes(objectFilter));
+  const liveItems = timeline.filter(({ index }) => index >= undoneCount).map(({ item }) => item);
   const aiCount = liveItems.filter((i) => isAi(i.origin)).length;
   const youCount = liveItems.length - aiCount;
-  const overrides = [...(chain?.records ?? [])].filter((r) => r.overrideReason).sort((a, b) => b.seq - a.seq);
+  const displayedLive = objectFilter ? liveItems.length : live;
+  // The publishes that went ahead on a red safety check, newest first. A PUBLISH is the only thing that check
+  // gates, so an override recorded against anything else (a plan item accepted against its recommendation) is
+  // deliberately not folded in: it would sit under a heading that does not describe it, which is how the old
+  // block came to say nothing at all. Those records keep their reason on the audit trail below, which is open
+  // by default, so this filter hides nothing from anyone.
+  const redPublishes = [...(chain?.records ?? [])]
+    .filter((r) => r.overrideReason && (r.op === 'deploy_live' || r.op === 'deploy_stage'))
+    .sort((a, b) => b.seq - a.seq);
 
   return (
     <div className="sem-evidence-page sem-centered-page flex flex-col gap-4 min-w-0">
       <Panel>
         <div className="flex items-center gap-4">
           <div className="flex flex-col items-center justify-center w-16 h-16 rounded-2xl shrink-0" style={{ background: 'var(--sem-surface-2)', boxShadow: 'inset 0 0 0 2px var(--sem-accent)' }}>
-            <div className="text-2xl font-bold tnum" style={{ color: 'var(--sem-fg)' }}>{live}</div>
+            <div className="text-2xl font-bold tnum" style={{ color: 'var(--sem-fg)' }}>{displayedLive}</div>
             <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>edits</div>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold">Edit History</div>
+            <div className="text-[15px] font-semibold">History{objectFilter ? ' for ' + refLabel(objectFilter).name : ''}</div>
             <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-              Every change this session, yours and the AI Assistant’s, on one shared, undoable timeline.
+              Undo changes your copy only. Nothing published changes until you publish.
             </div>
             <div className="flex items-center gap-3 mt-2">
               <Legend kind="you" n={youCount} />
@@ -224,16 +233,7 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
           </div>
         </div>
         {msg && <div className="text-[11px] mt-2" style={{ color: 'var(--sem-muted)' }}>{msg}</div>}
-        {overrides.length > 0 && (
-          <div className="mt-3 flex flex-col gap-1.5" data-testid="published-with-reason">
-            <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Published with a reason</div>
-            {overrides.map((r) => (
-              <div key={r.seq} className="text-[12px] px-2 py-1.5 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 12%, transparent)' }}>
-                <span className="font-semibold">Reason:</span> {r.overrideReason}
-              </div>
-            ))}
-          </div>
-        )}
+        {redPublishes.length > 0 && <RedCheckPublishes records={redPublishes} now={now} />}
         <div className="text-[10.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
           Tip: hover any edit and choose <span style={{ color: 'var(--sem-fg)' }}>Undo to here</span> to roll back that edit and everything after it.
         </div>
@@ -241,13 +241,13 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
 
       <RecoveryPanel sessionId={sessionId} onOpenRollback={onOpenRollback} />
 
-      {items.length === 0 ? (
+      {timeline.length === 0 ? (
         <Panel>
-          <div className="text-[13px]" style={{ color: 'var(--sem-fg)' }}>No edits yet this session.</div>
+          <div className="text-[13px]" style={{ color: 'var(--sem-fg)' }}>{objectFilter ? 'No edits for this object yet.' : 'No edits yet this session.'}</div>
           <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            Changes made in Studio and by the AI Assistant appear here in the VS Code view, with who made each change
-            shown. The AI Assistant sees model changes on its next call, and you can undo them from one place. Try
-            “Apply safe fixes”, or ask the AI Assistant to improve the model.
+            Changes made in Studio and by your assistant appear here in the VS Code view, with who made each change
+            shown. Your assistant sees model changes on its next call, and you can undo them from one place. Try
+            “Apply safe fixes”, or ask your assistant to improve the model.
           </div>
         </Panel>
       ) : (
@@ -256,7 +256,7 @@ export function HistoryView({ items, undoneCount, sessionId, onOpenRollback }: {
             {/* vertical timeline rail */}
             <div className="absolute top-1 bottom-1 w-px" style={{ left: 15, background: 'var(--sem-border)' }} />
             <div className="flex flex-col">
-              {items.map((it, i) => (
+              {timeline.map(({ item: it, index: i }) => (
                 <Entry key={it.revision + ':' + i} it={it} now={now} latest={i === undoneCount}
                   undone={i < undoneCount} busy={busy} flash={flashRev === it.revision}
                   record={it.sessionId === sessionId ? recordByRevision.get(it.revision) : undefined}
@@ -343,8 +343,8 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
       {result && <div className="mt-2 rounded-md px-3 py-2 text-[11px]" style={{ color: 'var(--sem-good)', border: '1px solid var(--sem-good)' }}>{result}</div>}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
         <section className="rounded-lg border p-3 min-w-0" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-bg)' }}>
-          <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-accent)' }}>Local file · source control</div>
-          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>A checkpoint commits only this model and its tracked Semanticus evidence. It never pushes.</div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-accent)' }}>Saved on this computer</div>
+          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>A save point keeps this model and its saved reports as they are right now. Nothing leaves this computer.</div>
           {local?.supported ? (
             <>
               <div className="flex gap-2 mt-2">
@@ -362,8 +362,7 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
               <div className="mt-3 flex flex-col gap-1.5">
                 {local.checkpoints.slice(0, 6).map((c) => (
                   <div key={c.hash} className="flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'var(--sem-surface-2)' }}>
-                    <span className="text-[10px] tnum font-semibold" style={{ color: 'var(--sem-accent)' }}>{c.shortHash}</span>
-                    <span className="text-[11px] truncate">{c.label}</span>
+                    <span className="text-[11px] truncate" title={`Save point ${c.shortHash}`}>{c.label}</span>
                     <span className="ml-auto text-[9.5px] shrink-0" style={{ color: 'var(--sem-muted)' }}>{shortWhen(c.when, Date.now())}</span>
                     <MiniButton onClick={() => previewRestore(c.hash)} disabled={busy != null}>Restore</MiniButton>
                   </div>
@@ -383,18 +382,18 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
           )}
         </section>
         <section className="rounded-lg border p-3 min-w-0" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-bg)' }}>
-          <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-warn)' }}>Published model · pre-write restore points</div>
-          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>These snapshots protect an XMLA write. Rollback happens against the named published target, never the local file.</div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-warn)' }}>Published model · restore points</div>
+          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>One of these is kept each time changes are published, so a publish can be put back. Rolling back changes the published model, not the copy on this computer.</div>
           <div className="mt-2 flex flex-col gap-1.5">
             {published.slice(0, 6).map((p) => (
               <div key={p.id} className="rounded-md px-2 py-1.5" style={{ background: 'var(--sem-surface-2)' }}>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-medium truncate">{p.database || 'Published model'}</span>
                   <span className="ml-auto text-[9.5px] shrink-0" style={{ color: 'var(--sem-muted)' }}>{shortWhen(p.capturedUtc, Date.now())}</span>
-                  {onOpenRollback && <MiniButton onClick={() => onOpenRollback(p)}>Open Roll back</MiniButton>}
+                  {onOpenRollback && <MiniButton onClick={() => onOpenRollback(p)}>Roll back published model</MiniButton>}
                 </div>
-                <div className="text-[9.5px] tnum truncate mt-0.5" title={p.endpoint} style={{ color: 'var(--sem-muted)' }}>{p.id} · {p.endpoint}</div>
-                {p.reason && <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--sem-muted)' }}>{p.reason}</div>}
+                {p.reason && <div className="text-[10px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>{p.reason}</div>}
+                <RestorePointDetail id={p.id} endpoint={p.endpoint} />
               </div>
             ))}
             {published.length === 0 && <div className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>No published restore points on this machine. One is created before a guarded published write.</div>}
@@ -402,6 +401,26 @@ function RecoveryPanel({ sessionId, onOpenRollback }: { sessionId?: string; onOp
         </section>
       </div>
     </Panel>
+  );
+}
+
+// The restore point's id and its server address are how support finds it, not how a person recognises it.
+// The row says the model and when; this opens the rest.
+function RestorePointDetail({ id, endpoint }: { id: string; endpoint?: string | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-0.5">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[9.5px]"
+        style={{ color: 'var(--sem-muted)', background: 'none', border: 0, padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer' }}>
+        {open ? 'Hide details' : 'Details'}
+      </button>
+      {open && (
+        <div className="text-[9.5px] tnum mt-0.5 break-all" style={{ color: 'var(--sem-muted)' }}>
+          <div>Restore point {id}</div>
+          {endpoint && <div>Server {endpoint}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -424,11 +443,11 @@ function Entry({ it, now, latest, undone, busy, record, revertCount, onAction, f
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[12px] font-medium" style={{ color: ai ? accent : 'var(--sem-fg)' }}>{ai ? 'AI Assistant' : 'You'}</span>
+          <span className="text-[12px] font-medium" style={{ color: ai ? accent : 'var(--sem-fg)' }}>{ai ? 'Your assistant' : 'You'}</span>
           <span className="text-[12px]" style={{ color: 'var(--sem-fg)', textDecoration: undone ? 'line-through' : 'none' }}>{it.label ? opLabel(it.label) : 'edited the model'}</span>
           {/* verdict badge — ONLY when a persistent Verified Edits record welds to this row. No record = no badge:
               silence is honest here (an un-verified edit isn't "unproven"; it simply wasn't checked). */}
-          {record && <VerdictBadge verdict={record.verdict} title={record.overrideReason ? `Override: ${record.overrideReason}` : record.summary} />}
+          {record && <VerdictBadge verdict={record.verdict} title={record.overrideReason ? `Reason given: ${record.overrideReason}` : record.summary} />}
           {latest && !undone && <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>latest</span>}
           {undone && <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>undone</span>}
           {/* per-edit action — appears on row hover (always visible for the boundary entries) */}
@@ -461,6 +480,58 @@ function Entry({ it, now, latest, undone, busy, record, revertCount, onAction, f
   );
 }
 
+// How many red-check publishes show before the rest go behind one control. Two, because this block is a
+// footnote on a tab about editing: a model that was published seven times on a red check turned the old block
+// into seven full-width red slabs, which is louder than anything else on the page and says less.
+const RED_CHECK_PREVIEW = 2;
+
+// The red-check block. It used to be a small grey "PUBLISHED WITH A REASON" over a stack of red slabs, each one
+// nothing but "Reason: <a sentence someone typed months ago>" — no date, no name, and nowhere on the tab any
+// word about what the check was or what red meant. Kane read it and asked what all the gate stuff meant, which
+// is the defect. It now says what the check is once, in the shared words Help uses, then gives each publish one
+// quiet row. THE REASON IS PRINTED VERBATIM: it is a person's own sentence and is never tidied or shortened.
+function RedCheckPublishes({ records, now }: { records: VerifiedEditRecord[]; now: number }) {
+  const [showAll, setShowAll] = useState(false);
+  const older = records.length - RED_CHECK_PREVIEW;
+  const shown = showAll ? records : records.slice(0, RED_CHECK_PREVIEW);
+  return (
+    <div className="mt-3 flex flex-col gap-1" data-testid="published-with-reason">
+      <div className="text-[12px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{SAFETY_CHECK_COPY.heading}</div>
+      <div className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>
+        {SAFETY_CHECK_COPY.explainer} {SAFETY_CHECK_COPY.keptHere}
+      </div>
+      <div className="flex flex-col mt-1">
+        {shown.map((r) => <RedCheckRow key={r.seq} r={r} now={now} />)}
+      </div>
+      {older > 0 && (
+        <button onClick={() => setShowAll((v) => !v)} className="self-start text-[11px] px-1.5 py-0.5 rounded"
+          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+          {showAll ? 'Show fewer' : `Show ${older} older`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// One red-check publish: the marker, then when and who, then the reason in that person's own words. Both the
+// date and the name come off the record itself (`when` is ISO-UTC, `origin` is the door that published), so
+// neither is ever guessed; a record with no readable `when` simply shows who, and says nothing about when.
+function RedCheckRow({ r, now }: { r: VerifiedEditRecord; now: number }) {
+  const when = r.when ? shortWhen(r.when, now) : null;
+  return (
+    <div className="flex items-baseline gap-2 py-1 text-[11.5px]" style={{ borderTop: '1px solid var(--sem-border)' }}>
+      <span className="flex items-center gap-1 shrink-0 font-medium" style={{ color: 'var(--sem-bad)' }}>
+        <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sem-bad)' }} />
+        {SAFETY_CHECK_COPY.pill}
+      </span>
+      <span className="shrink-0" style={{ color: 'var(--sem-muted)' }} title={r.when}>
+        {when ? when + ' · ' : ''}{actorLabel(r.origin)}
+      </span>
+      <span className="min-w-0" style={{ color: 'var(--sem-fg)' }}>“{r.overrideReason}”</span>
+    </div>
+  );
+}
+
 // A tinted verdict chip. `color-mix` gives a quiet fill + border on the tab's palette (no new colours) so a wall of
 // badges never shouts — the verdict word carries the meaning, the tint just nudges the eye (good/warn/bad).
 function VerdictBadge({ verdict, title }: { verdict: string; title?: string }) {
@@ -476,7 +547,7 @@ function VerdictBadge({ verdict, title }: { verdict: string; title?: string }) {
 // The persistent audit trail — collapsible, below the live timeline. The header carries the chain-integrity indicator:
 // a quiet "chain intact · N records" when the hash chain verifies end-to-end, a LOUD warning when it doesn't (a
 // record was edited or removed after the fact — the whole point of the chain is to make that undeniable). Export buttons
-// (MD / JSON) hand the trail to whoever needs it; the engine Pro-gates the export and its upsell surfaces inline.
+// (MD / JSON) hand the trail to whoever needs it. Exporting the trail is FREE from 2026-09-15 (Kane's feature line).
 function AuditTrail({ chain, now, richHits, sessionId, onJump }: {
   chain: VerifiedEditsChain; now: number; richHits: ReturnType<typeof useRichEvidence>; sessionId?: string; onJump?: (revision: number) => void;
 }) {
@@ -484,7 +555,6 @@ function AuditTrail({ chain, now, richHits, sessionId, onJump }: {
   const [exporting, setExporting] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [exportErr, setExportErr] = useState<string | null>(null);
-  const tier = useTier();
   const intact = chain.chainIntact;
   // Newest first (mirrors the live timeline above), but keep the seq so the chain order is still readable.
   const records = [...chain.records].sort((a, b) => b.seq - a.seq);
@@ -496,13 +566,7 @@ function AuditTrail({ chain, now, richHits, sessionId, onJump }: {
       const ok = await copyText(text);
       if (ok) { setCopied(format); window.setTimeout(() => setCopied((c) => (c === format ? null : c)), 2000); }
       else setExportErr('Could not copy to the clipboard.');
-    } catch (e) {
-      // The buttons stay visible and clickable on the free tier (honest: the capability exists, it's Pro) —
-      // a free click gets the plain invitation, not the raw engine exception.
-      setExportErr(isEntitlementError(e)
-        ? 'Reading the full trail here is always free. Pro packages it as a shareable Markdown or JSON report.'
-        : String((e as Error).message ?? e));
-    } finally { setExporting(null); }
+    } catch (e) { setExportErr(String((e as Error).message ?? e)); } finally { setExporting(null); }
   };
 
   return (
@@ -527,13 +591,11 @@ function AuditTrail({ chain, now, richHits, sessionId, onJump }: {
             </span>
           )}
           <span className="w-px h-4" style={{ background: 'var(--sem-border)' }} />
-          <MiniButton onClick={() => doExport('md')} disabled={!!exporting}
-            title={tier === 'free' ? 'Pro packages the trail as a shareable report. Reading it here stays free.' : 'Copy the audit trail as Markdown.'}>
-            {copied === 'md' ? 'Copied ✓' : exporting === 'md' ? '…' : 'Export MD'}<ProBadge show={tier === 'free'} />
+          <MiniButton onClick={() => doExport('md')} disabled={!!exporting} title="Copy the audit trail as Markdown.">
+            {copied === 'md' ? 'Copied ✓' : exporting === 'md' ? '…' : 'Export MD'}
           </MiniButton>
-          <MiniButton onClick={() => doExport('json')} disabled={!!exporting}
-            title={tier === 'free' ? 'Pro packages the trail as a shareable report. Reading it here stays free.' : 'Copy the audit trail as JSON.'}>
-            {copied === 'json' ? 'Copied ✓' : exporting === 'json' ? '…' : 'Export JSON'}<ProBadge show={tier === 'free'} />
+          <MiniButton onClick={() => doExport('json')} disabled={!!exporting} title="Copy the audit trail as JSON.">
+            {copied === 'json' ? 'Copied ✓' : exporting === 'json' ? '…' : 'Export JSON'}
           </MiniButton>
         </div>
       </div>
@@ -574,6 +636,11 @@ function AuditRow({ r, now, broken, rich, sessionId, onJump }: {
   const [open, setOpen] = useState(false);
   const l = r.objectRef ? refLabel(r.objectRef) : null;
   const s = verdictStyle(r.verdict);
+  // A publish that went ahead on a red check gets the whole row said in plain words. The recorded sentence is
+  // the only place that publish kept its destination, so it is read apart rather than reprinted: the row used
+  // to open "Live deploy OVERRIDDEN gate RED (19 blocking BPA error(s)) …", three engine words in a line Kane
+  // has to understand. Any other record keeps its own summary, printed exactly as the engine wrote it.
+  const red = r.overrideReason ? readSafetyCheckOverride(r.summary) : null;
   return (
     <div className="group relative flex items-start gap-3 py-2.5" style={{ opacity: broken ? 0.55 : 1 }}>
       {/* verdict node on the rail */}
@@ -584,7 +651,9 @@ function AuditRow({ r, now, broken, rich, sessionId, onJump }: {
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[12px] font-medium" style={{ color: 'var(--sem-fg)' }}>{opLabel(r.op)}</span>
+          <span className="text-[12px] font-medium" style={{ color: 'var(--sem-fg)' }}>
+            {red ? (red.kind === 'promote' ? SAFETY_CHECK_COPY.promoteTitle : SAFETY_CHECK_COPY.publishTitle) : opLabel(r.op)}
+          </span>
           {l && (
             <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)' }}>
               <span style={{ color: resolveColor(KIND_COLOR[l.kind], '#9aa0aa') }}>{KIND_GLYPH[l.kind] ?? '•'}</span>
@@ -601,10 +670,22 @@ function AuditRow({ r, now, broken, rich, sessionId, onJump }: {
             {actorLabel(r.origin)} · {shortWhen(r.when, now)} · #{r.seq}
           </span>
         </div>
-        {r.summary && <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>{r.summary}</div>}
+        {red ? (
+          <>
+            <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+              {SAFETY_CHECK_COPY.found} {red.problems}{' '}
+              {red.kind === 'promote' ? SAFETY_CHECK_COPY.promoteWentAhead : SAFETY_CHECK_COPY.publishWentAhead}
+            </div>
+            <div className="text-[11px] mt-0.5 break-all" style={{ color: 'var(--sem-muted)' }}>
+              {SAFETY_CHECK_COPY.destinationLabel} {red.destination}
+            </div>
+          </>
+        ) : r.summary ? (
+          <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>{r.summary}</div>
+        ) : null}
         {r.overrideReason && (
           <div className="text-[11px] mt-1 px-2 py-1 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 12%, transparent)' }}>
-            <span className="font-semibold">Override:</span> {r.overrideReason}
+            <span className="font-semibold">Reason given:</span> {r.overrideReason}
           </div>
         )}
         {open && (
@@ -634,7 +715,7 @@ function Legend({ kind, n }: { kind: 'you' | 'ai'; n: number }) {
         style={ai ? { background: accent, color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
         {ai ? 'AI' : 'Y'}
       </span>
-      {n} by {ai ? 'AI Assistant' : 'you'}
+      {n} by {ai ? 'your assistant' : 'you'}
     </span>
   );
 }
@@ -646,8 +727,7 @@ function Panel({ children }: { children: React.ReactNode }) {
 function Button({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn">
       {children}
     </button>
   );
@@ -655,8 +735,7 @@ function Button({ children, onClick, disabled }: { children: React.ReactNode; on
 function MiniButton({ children, onClick, disabled, title }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm">
       {children}
     </button>
   );

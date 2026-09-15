@@ -31,7 +31,8 @@ namespace Semanticus.Tests
             });
 
             Assert.Equal(Verdict.NotVerifiable, result.Check.Verdict);
-            Assert.Contains("independent connections", result.Check.Message);
+            Assert.Contains("Matching snapshots were not confirmed, so this alone does not prove missing rows.",
+                result.Check.Message, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -49,7 +50,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Ambient_suite_discovers_sql_physical_tables_offline_without_calling_them_passed()
         {
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             await engine.CreateModelAsync("Rows", 1604);
             await engine.CreateImportTableAsync("Sales",
                 "let Source = Sql.Database(\"fabric.example.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t", "human");

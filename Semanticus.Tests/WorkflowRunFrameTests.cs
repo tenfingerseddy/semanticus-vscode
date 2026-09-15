@@ -388,7 +388,7 @@ namespace Semanticus.Tests
                 },
             };
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(def, null);
             var top = run.Frames[0];
             var captured = RunFrame.CreateIteration(
@@ -436,7 +436,7 @@ namespace Semanticus.Tests
                 },
             };
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(def, null);
             var top = run.Frames[0];
             var captured = RunFrame.CreateIteration(
@@ -479,7 +479,7 @@ namespace Semanticus.Tests
                 },
             };
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(def, null);
             var captured = RunFrame.CreateIteration(
                 "iteration-frame", "step-1", 0, "measure", "invented", "in_progress",
@@ -521,7 +521,7 @@ namespace Semanticus.Tests
                 Name = "invented-frozen-source-fixture", Strictness = "hard", Steps = new[] { step },
             };
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(def, null);
             run.Results[0].Answers[source] = new AnswerValue { Value = "SUM ( Invented[Before] )" };
             WorkflowRunner.ExpandCurrentForEach(run, new[] { "one" });
@@ -1243,7 +1243,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_preparation_runs_outside_the_submission_frame_and_witness_receipt_scope()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(PreparationDef("invented-preparation-boundary"), null);
             var top = run.Frames[0];
 
@@ -1285,7 +1285,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_preparation_refuses_malformed_and_extra_field_payloads_before_any_run_change()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(PreparationDef("invented-preparation-refusal"), null);
             var plan = run.Plan.ToArray();
             var results = run.Results.ToArray();
@@ -1369,7 +1369,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_preparation_refuses_a_blank_non_optional_source_before_any_run_change()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var def = PreparationDef("invented-preparation-blank-source");
             // The list source is non-optional here, so a blank answer is the same gap EnforceInputs refuses on an
             // ordinary step. The preparation runs no input gate, so this rule binds inside the transition or nowhere.
@@ -1413,7 +1413,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_inline_expansion_runs_outside_the_submission_frame_and_witness_receipt_scope()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 InlineExpansionDef("invented-inline-boundary", new[] { "one", "two" }), null);
             var top = run.Frames[0];
@@ -1452,7 +1452,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_inline_expansion_refuses_malformed_extra_and_named_payloads_before_any_run_change()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 InlineExpansionDef("invented-inline-refusal", new[] { "one", "two" }), null);
             var plan = run.Plan.ToArray();
@@ -1488,7 +1488,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_inline_null_and_empty_object_payloads_both_expand()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             foreach (var payload in new[] { null, "", "{}" })
             {
                 var run = sessions.CurrentContext.WorkflowRuns.Start(
@@ -1505,7 +1505,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_empty_inline_expansion_creates_no_receipt_and_cannot_execute_hash_zero()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(new WorkflowDef
             {
                 SchemaVersion = 2,
@@ -1545,7 +1545,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_inline_over_bound_stale_and_duplicate_frame_refusals_leave_receipt_stores_unchanged()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
 
             var over = sessions.CurrentContext.WorkflowRuns.Start(
                 InlineExpansionDef("invented-inline-over", new[] { "one", "two", "three" }, 2), null);
@@ -1581,7 +1581,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_expansion_only_rows_project_setup_then_restore_authored_metadata_on_hash_zero()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
 
             var inline = sessions.CurrentContext.WorkflowRuns.Start(
                 InlineExpansionDef("invented-inline-project-local", new[] { "  North  ", "East, West" }), null);
@@ -1736,7 +1736,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_deferred_source_submit_expands_the_following_loop_inside_its_own_receipt_scope()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(DeferredLocalDef("invented-deferred-receipt"), null);
             var top = run.Frames[0];
 
@@ -1755,7 +1755,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_deferred_hard_failure_leaves_the_pair_visible_on_get_workflow_run()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var def = DeferredLocalDef("invented-deferred-hard", hard: true);
             def.Steps[0].Gate.Verify = new[] { new VerifySpec { Kind = "invented_check" } };
             var run = sessions.CurrentContext.WorkflowRuns.Start(def, null);
@@ -1781,7 +1781,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_over_bound_deferred_loop_refuses_before_the_submission_scope()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(DeferredLocalDef("invented-deferred-over", maxIterations: 2), null);
             var plan = run.Plan.ToArray();
             var results = run.Results.ToArray();
@@ -1808,7 +1808,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_current_unexpanded_deferred_loop_expands_on_a_no_answer_engine_setup()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 EarlierSourceLocalDef("invented-deferred-setup"), null);
             var top = run.Frames[0];
@@ -1837,7 +1837,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_step_that_does_not_own_the_next_row_submits_ordinarily_through_the_engine_door()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(new WorkflowDef
             {
                 SchemaVersion = 2,
@@ -1879,7 +1879,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_blank_optional_deferred_source_marks_the_loop_not_applicable_and_creates_no_iteration_receipt()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 DeferredLocalDef("invented-deferred-blank", following: new[] { new WorkflowStep { Id = "after", Number = 3, Title = "After" } }),
                 null);
@@ -2081,7 +2081,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_adjacent_deferred_source_submit_expands_the_following_loop()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(new WorkflowDef
             {
                 SchemaVersion = 2,
@@ -2141,7 +2141,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_ordinary_step_keeps_its_authored_projection()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(new WorkflowDef
             {
                 Name = "invented-ordinary-local",
@@ -2344,7 +2344,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Mcp_submit_accepts_a_self_source_preparation_without_claiming_the_step_passed()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(PreparationDef("invented-mcp-preparation-label"), null);
             var top = run.Frames[0];
             var activities = new List<ActivityEvent>();
@@ -2376,7 +2376,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Mcp_ordinary_submit_uses_the_same_accepted_label_and_still_returns_the_next_current_or_terminal_view()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(new WorkflowDef
             {
                 Name = "invented-mcp-ordinary-label",
@@ -2419,7 +2419,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_loop_entry_expansion_splices_without_receipt_and_keeps_intervening_seeds()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 EarlierSourceLocalDef("invented-loop-entry-local"), null);
             var top = run.Frames[0];
@@ -2541,7 +2541,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_loop_entry_projects_full_setup_view_then_restores_authored_metadata()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             var run = sessions.CurrentContext.WorkflowRuns.Start(
                 EarlierSourceLocalDef("invented-loop-entry-setup"), null);
             await engine.SubmitWorkflowStepAsync(run.RunId, "choose", "{\"regions\":\"North, South\"}", "human");
@@ -2576,7 +2576,7 @@ namespace Semanticus.Tests
         public async System.Threading.Tasks.Task Local_loop_entry_refusals_leave_receipt_and_all_proof_stores_unchanged()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions, new FreeEntitlement());
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
 
             var extra = sessions.CurrentContext.WorkflowRuns.Start(
                 EarlierSourceLocalDef("invented-loop-entry-extra"), null);

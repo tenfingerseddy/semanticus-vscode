@@ -39,14 +39,13 @@ export function MultiSelect({ label, options, selected, onChange, width = 240, t
   const btnActive = count > 0;
   return (
     <div ref={wrap} className="relative">
-      <button onClick={() => setOpen((o) => !o)} title={title ?? `Filter by ${label.toLowerCase()}`}
-        className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-medium transition-[transform,filter] duration-100 active:scale-95 hover:brightness-110"
-        style={btnActive
-          ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-          : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
+      {/* On the shared dense control scale: this button sits on a tool row beside plain buttons and segments,
+          so it takes its height and padding from the scale rather than picking its own. */}
+      <button className="sem-btn sem-btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
+        aria-pressed={btnActive} title={title ?? `Filter by ${label.toLowerCase()}`}>
         {label}
-        {count > 0 && <span className="tnum px-1 rounded" style={{ background: 'rgba(255,255,255,0.25)', fontSize: 9 }}>{count}</span>}
-        <span style={{ fontSize: 8, opacity: 0.8 }}>▾</span>
+        {count > 0 && <span className="tnum sem-toolrow-badge">{count}</span>}
+        <span aria-hidden style={{ opacity: 0.7 }}>▾</span>
       </button>
       {open && (
         <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>

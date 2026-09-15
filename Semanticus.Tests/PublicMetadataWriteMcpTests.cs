@@ -20,7 +20,7 @@ namespace Semanticus.Tests
         public void Workflow_tools_can_build_their_wire_schema(string methodName)
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             using var services = new ServiceCollection().AddSingleton<IEngine>(engine).BuildServiceProvider();
             var tool = McpServerTool.Create(typeof(McpTools).GetMethod(methodName), target: null,
                 options: new McpServerToolCreateOptions { Services = services });
@@ -31,7 +31,7 @@ namespace Semanticus.Tests
         public async Task Set_data_category_is_public_broadcast_undoable_and_failure_atomic()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpDataCategory", 1604);
             var table = await McpTools.CreateTable(engine, "Geo");
             var city = await McpTools.CreateColumn(engine, table, "City", "String");
@@ -66,7 +66,7 @@ namespace Semanticus.Tests
         public async Task Set_sort_by_column_is_public_broadcast_undoable_and_rejects_unknown_or_self_columns()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpSortBy", 1604);
             var table = await McpTools.CreateTable(engine, "Date");
             var month = await McpTools.CreateColumn(engine, table, "Month Name", "String");
@@ -115,7 +115,7 @@ namespace Semanticus.Tests
         public async Task Set_relationship_crossfilter_is_public_broadcast_undoable_and_rejects_invalid_directions()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpCrossfilter", 1604);
             var fact = await McpTools.CreateTable(engine, "Sales");
             var lookup = await McpTools.CreateTable(engine, "Customer");
@@ -151,7 +151,7 @@ namespace Semanticus.Tests
         public async Task Set_partition_m_is_public_broadcast_undoable_and_rejects_empty_M_without_mutation()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpPartitionM", 1604);
             const string before = "let Source = 1 in Source";
             const string after = "let Source = 2 in Source";
@@ -190,7 +190,7 @@ namespace Semanticus.Tests
         public async Task Set_partition_m_rejects_balanced_but_incomplete_M_without_mutation()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpIncompleteM", 1604);
             const string before = "let Source = 1 in Source";
             var table = await McpTools.CreateImportTable(engine, "Sales", before);
@@ -212,7 +212,7 @@ namespace Semanticus.Tests
         public async Task Set_partition_m_rejects_a_missing_let_step_separator_without_mutation()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("McpMalformedM", 1604);
             const string before = "let Source = 1 in Source";
             var table = await McpTools.CreateImportTable(engine, "Sales", before);

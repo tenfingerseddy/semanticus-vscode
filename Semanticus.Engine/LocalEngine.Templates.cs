@@ -16,7 +16,7 @@ namespace Semanticus.Engine
     /// user under .semanticus/workflow-templates) so the workflow loader, seed counts, and list_workflows are
     /// untouched — a shelf is not the board. They are never runnable: instantiate_workflow_template renders one
     /// into a concrete workflow through a DETERMINISTIC, STRUCTURE-PRESERVING, admission-gated pipeline (§10.4).
-    /// All five ops are FREE — §10.7: authoring is content; enforcement (running the instance) is the paid line.
+    /// All five belong to Workflows, which is a Pro feature as a whole, template reads included (Kane 2026-09-15).
     /// </summary>
     public sealed partial class LocalEngine
     {
@@ -50,6 +50,14 @@ namespace Semanticus.Engine
         /// <summary>§10.5: the shelf — one summary row per template (name/title/whenToUse/version/source + a slot
         /// summary: count + names). Free, read-only.</summary>
         public Task<WorkflowTemplateInfo[]> ListWorkflowTemplatesAsync()
+        {
+            RequireProFeature();
+            return ListWorkflowTemplatesCoreAsync();
+        }
+
+        // The ungated core: a Pro workflow-template write re-reads the shelf to return the new library, and must
+        // not re-run the gate it already passed.
+        private Task<WorkflowTemplateInfo[]> ListWorkflowTemplatesCoreAsync()
             => Task.FromResult(LoadTemplateDefs()
                 .Select(d => new WorkflowTemplateInfo
                 {
@@ -62,6 +70,7 @@ namespace Semanticus.Engine
         /// body (with {{slot}} references intact). Free, read-only.</summary>
         public Task<WorkflowTemplate> GetWorkflowTemplateAsync(string name)
         {
+            RequireProFeature();
             var def = LoadTemplateDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"Template '{name}' not found (list_workflow_templates shows the shelf).");
             return Task.FromResult(new WorkflowTemplate
@@ -78,6 +87,7 @@ namespace Semanticus.Engine
         /// NOT a save-blocker — check_workflow warns on it (an author may add a slot before wiring its {{ref}}).</summary>
         public async Task<WorkflowTemplateInfo[]> SaveWorkflowTemplateAsync(string name, string markdown, string origin)
         {
+            RequireProFeature();
             name = (name ?? "").Trim();
             if (!KebabName.IsMatch(name))
                 throw new InvalidOperationException($"'{name}' is not a valid template name: kebab-case (e.g. 'metric-certification'); it becomes the filename.");
@@ -103,13 +113,14 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException("No place to store user templates. Run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
             Directory.CreateDirectory(userDir);
             await Task.Run(() => File.WriteAllText(Path.Combine(userDir, name + ".md"), markdown));
-            return await ListWorkflowTemplatesAsync();
+            return await ListWorkflowTemplatesCoreAsync();
         }
 
         /// <summary>§10.5: delete a USER template. Stock templates are read-only by construction (a customised
         /// shadow reverts to stock) — deleting a stock name without a user copy is refused instructively.</summary>
         public async Task<WorkflowTemplateInfo[]> DeleteWorkflowTemplateAsync(string name, string origin)
         {
+            RequireProFeature();
             var (userDir, stockDir) = TemplateDirs();
             var trimmed = (name ?? "").Trim();
             var file = userDir == null ? null : Path.Combine(userDir, trimmed + ".md");
@@ -119,7 +130,7 @@ namespace Semanticus.Engine
                         ? $"'{name}' is a stock template (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflow-templates."
                         : $"User template '{name}' not found: list_workflow_templates shows the shelf, and only your own copies (under .semanticus/workflow-templates) are deletable.");
             await Task.Run(() => File.Delete(file));
-            return await ListWorkflowTemplatesAsync();
+            return await ListWorkflowTemplatesCoreAsync();
         }
 
         /// <summary>§10.4: render a template into a concrete workflow — the load-bearing algorithm.
@@ -129,6 +140,7 @@ namespace Semanticus.Engine
         /// admission; (e) save through the workflow write path (library broadcast included). FREE.</summary>
         public async Task<WorkflowInfo[]> InstantiateWorkflowTemplateAsync(string templateName, string newName, string valuesJson, string origin)
         {
+            RequireProFeature();
             var tmpl = LoadTemplateDefs().FirstOrDefault(d => string.Equals(d.Name, templateName, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"Template '{templateName}' not found (list_workflow_templates shows the shelf).");
             if (tmpl.Error != null)

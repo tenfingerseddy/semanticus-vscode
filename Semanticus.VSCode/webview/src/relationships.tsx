@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { rpc, onDidChange } from './bridge';
+import { RowSep, ToolRow } from './toolrow';
 import type { ModelGraph, GraphRelationship } from './diagram';
 
 // An audit grid over every relationship: endpoints, cardinality, cross-filter direction, active flag — with
@@ -7,7 +8,10 @@ import type { ModelGraph, GraphRelationship } from './diagram';
 type SortKey = 'fromTable' | 'toTable';
 const card = (c: string) => (c === 'Many' ? '*' : c === 'One' ? '1' : '?');
 
-export function RelationshipsView() {
+// `modeSwitch` is the Canvas / Relationships pair, owned by DiagramView. It leads this view's ONE tool row, so
+// the two views of the Diagram tab share a single 40px strip rather than stacking a switcher row above a
+// controls row (Kane's compact-top rule, 2026-09-14).
+export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode } = {}) {
   const [graph, setGraph] = useState<ModelGraph | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
@@ -60,22 +64,24 @@ export function RelationshipsView() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center gap-3 px-4 py-2 text-[11px] border-b flex-wrap" style={{ borderColor: 'var(--sem-border)' }}>
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter relationships…"
-          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 12, padding: '3px 8px', minWidth: 200 }} />
+      <ToolRow>
+        {modeSwitch}
+        {modeSwitch ? <RowSep /> : null}
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter the list…" aria-label="Filter the list"
+          className="sem-toolrow-input" style={{ minWidth: 180 }} />
         <label className="flex items-center gap-1.5 cursor-pointer select-none" style={{ color: 'var(--sem-fg)' }}>
           <input type="checkbox" checked={onlyIssues} onChange={(e) => setOnlyIssues(e.target.checked)} />
-          smells only
+          Problems only
         </label>
         {stats && (
-          <div className="ml-auto flex items-center gap-4" style={{ color: 'var(--sem-muted)' }}>
-            <Stat label="relationships" value={stats.total} />
-            <Stat label="bidirectional" value={stats.bidi} warn={stats.bidi > 0} />
-            <Stat label="inactive" value={stats.inactive} />
-            <Stat label="many-to-many" value={stats.manyMany} warn={stats.manyMany > 0} />
+          <div className="sem-toolrow-end flex items-center gap-4" style={{ color: 'var(--sem-muted)' }}>
+            <Stat label="links" value={stats.total} />
+            <Stat label="filter both ways" value={stats.bidi} warn={stats.bidi > 0} />
+            <Stat label="switched off" value={stats.inactive} />
+            <Stat label="many to many" value={stats.manyMany} warn={stats.manyMany > 0} />
           </div>
         )}
-      </div>
+      </ToolRow>
       <div className="flex-1 min-h-0 overflow-auto">
         <table className="w-full text-[12px]" style={{ borderCollapse: 'collapse', color: 'var(--sem-fg)' }}>
           <thead>

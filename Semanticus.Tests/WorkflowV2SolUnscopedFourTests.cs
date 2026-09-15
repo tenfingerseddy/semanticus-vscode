@@ -178,7 +178,7 @@ namespace Semanticus.Tests
             File.WriteAllText(Path.Combine(ws, ".semanticus", "workflow-settings.json"),
                 "{\"activation\":[{\"workflow\":\"verified-measure\",\"when\":\"inputs.approval.answered\",\"set\":\"off\"}]}");
 
-            var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
+            var e = new LocalEngine(new SessionManager(), TestEntitlements.Pro, ws);
             var policy = await e.GetWorkflowPolicyAsync();
             Assert.Contains(policy.Lints, l => l.Message.Contains("while a workflow is running"));
         }
@@ -191,7 +191,7 @@ namespace Semanticus.Tests
             File.WriteAllText(Path.Combine(ws, ".semanticus", "workflow-settings.json"),
                 "{\"activation\":[{\"workflow\":\"verified-measure\",\"when\":\"connection.isLive\",\"set\":\"off\"}]}");
 
-            var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
+            var e = new LocalEngine(new SessionManager(), TestEntitlements.Pro, ws);
             var policy = await e.GetWorkflowPolicyAsync();
             Assert.DoesNotContain(policy.Lints, l => l.Message.Contains("while a workflow is running"));
         }

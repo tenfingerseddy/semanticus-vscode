@@ -3,7 +3,7 @@
 // deterministic dossier: the value re-derived in the cell's exact filter context, the why-is-this-blank
 // checklist, the top contributors (which the ENGINE refuses to show when the parts don't sum), what feeds
 // the number, where the data comes from, and a row-security heads-up. The panel never narrates beyond the
-// engine's deterministic sentences; the "Ask the AI Assistant" button copies a ready-to-paste prompt so the
+// engine's deterministic sentences; the "Ask your assistant" button copies a ready-to-paste prompt so the
 // user's own assistant does the interpreting (golden rule: the engine runs no inference).
 // Copy rules (Kane's UX bar): plain language, jargon always glossed, no em-dashes, never "Claude".
 
@@ -213,9 +213,8 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
       {/* footer: hand the dossier to the user's assistant — the UI never narrates */}
       <div className="px-3 py-2 shrink-0 flex items-center gap-2" style={{ borderTop: '1px solid var(--sem-border)' }}>
         <button onClick={async () => { if (await copyText(prompt)) { setCopied(true); setTimeout(() => setCopied(false), 1600); } }}
-          className="text-[12px] px-3 py-1.5 rounded-lg font-medium"
-          style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: 'pointer' }}>
-          {copied ? 'Copied' : 'Ask the AI Assistant to explain'}
+          className="sem-btn sem-btn-primary">
+          {copied ? 'Copied' : 'Ask your assistant to explain'}
         </button>
         <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Copies a ready-to-paste prompt.</span>
       </div>

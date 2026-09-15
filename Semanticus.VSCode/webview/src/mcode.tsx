@@ -922,11 +922,13 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
           {msg && <span role={msg.startsWith('✓') ? 'status' : 'alert'} style={{ fontSize: 10.5, color: msg.startsWith('✓') ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{msg}</span>}
       </div>
 
-      <div className="p-4">
+      <div className="p-4 pb-10">
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_240px] items-start">
           <section className="min-w-0" aria-labelledby="m-editor-heading">
             <div id="m-editor-heading" className="mb-1.5 text-[11.5px] font-semibold">M editor</div>
-            <MEditor value={text} onChange={setEditorText} minHeight={420} selection={selection ?? undefined} resizable />
+            {/* 420 put the preview panel's own hint row exactly on the fold at 1440x900, so it rendered as a
+                sliced half-line above the context bar. The editor is still resizable by hand. */}
+            <MEditor value={text} onChange={setEditorText} minHeight={370} selection={selection ?? undefined} resizable />
             <div className="pt-1.5" style={{ ...hint, fontSize: 10 }}>Editing M changes the query definition. It does not run a refresh. Type to autocomplete M (Ctrl+Space), or hover a name for its inferred type.</div>
           </section>
           <aside className="min-w-0" aria-label="Applied steps">

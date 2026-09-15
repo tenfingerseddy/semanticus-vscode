@@ -37,7 +37,7 @@ namespace Semanticus.Tests
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
                 File.WriteAllBytes(FilePath, Utf8.GetBytes(text));
-                Engine = new LocalEngine(Sessions, new Free(), Workspace);
+                Engine = new LocalEngine(Sessions, TestEntitlements.Pro, Workspace);
             }
             public void Dispose() { Sessions.Dispose(); Directory.Delete(Workspace, true); }
         }
@@ -382,14 +382,16 @@ namespace Semanticus.Tests
         }
 
         [Theory]
-        [InlineData("calendar-setup")]
-        [InlineData("model-hygiene-pass")]
-        public async Task Stock_colon_prose_is_refused_without_requoting_its_description(string name)
+        [InlineData("Check the calendar: compare its answer with a trusted number.")]
+        [InlineData("Review the model: fix selected findings and scan again.")]
+        public async Task Legacy_colon_prose_is_refused_without_requoting_its_description(string prose)
         {
-            using var f = new Fixture(Simple);
-            var document = await f.Engine.GetWorkflowDocumentAsync(name);
+            // User files retain legacy spelling even when the stock library's wording changes.
+            var source = Simple.Replace("title: Upgrade test", "title: Upgrade test" + Lf + "description: " + prose);
+            using var f = new Fixture(source);
+            var document = await f.Engine.GetWorkflowDocumentAsync("upgrade-test");
             var description = document.ExactText.Split((char)10).Single(line => line.StartsWith("description:", StringComparison.Ordinal));
-            var preview = await f.Engine.UpgradeWorkflowAsync(name);
+            var preview = await f.Engine.UpgradeWorkflowAsync("upgrade-test");
             Assert.False(preview.CanApply);
             Assert.False(preview.Changed);
             Assert.NotNull(preview.ParseError);

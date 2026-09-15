@@ -26,7 +26,7 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-replay-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            var e = new LocalEngine(new SessionManager(), new Free(), ws);
+            var e = new LocalEngine(new SessionManager(), TestEntitlements.Pro, ws);
             if (withModel)
             {
                 await e.CreateModelAsync("ReplayTest", 1701);

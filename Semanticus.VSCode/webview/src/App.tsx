@@ -1,19 +1,24 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
-import { rpc, onDidChange, onReconnect, onActivity, onNavigate, onOpenConnections, onWorkflowChange, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, runHostCommand, copyText, loadState, saveState, type ChangeNotification } from './bridge';
+import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type ErrorInfo } from 'react';
+import { createPortal } from 'react-dom';
+import { anchorUnder } from './toolrow';
+import { publishStageName } from './publishcopy';
+import { rpc, onDidChange, onReconnect, onActivity, onNavigate, onPlanChange, onTreeSelection, onOpenConnections, onWorkflowChange, onStudioZoom, onEngineState, postStudioZoom, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, runHostCommand, copyText, loadState, saveState, type ChangeNotification } from './bridge';
 import { RevealBtn, rowKeyProps } from './objectactions';
 import { ShortcutsOverlay, tabForKey, isTypingTarget, hostCommandForKey } from './shortcuts';
 import { ActivityProvider, LiveActivity, ClaudeRanBanner, useClaudeReflection, KIND_TAB, type ActivityEvent } from './activity';
 import { useFixState } from './hooks';
 import { useConnection, ConnectBar, type SessionInfo } from './connection';
 import { ContextBar, compareSeedFromSession, QueryStalenessChip } from './contextbar';
-import { ConnectionsHub } from './connectionshub';
+import { ConnectionsHub, openConnectionsOnView, type HubView } from './connectionshub';
 import type { ModelRef } from './compare';
 import { VpaqComponentBars, VPAQ_COMPONENT_COLORS, VPAQ_UNATTRIBUTED_COLOR, Sparkline, type VpaqColumn, type VpaqTable, type VpaqBarItem } from './echart';
 import { DiagramView } from './diagram';
 import type { ModelGraph } from './diagram';
 import { AdvancedModelsView } from './advmodels';
 import { GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
-import { useTier, isEntitlementError, LicenseButton, ProBadge, UpsellNotice } from './pro';
+import { useFeature, useLockedTools, ProBadge, PENDING_ACCESS } from './pro';
+import { featureOfTool } from './features';
+import { ProPreview } from './propreview';
 import { DaxModelProvider } from './daxeditor';
 import { DaxLabTabStateProvider, DaxLabView, useDaxLabBusy } from './daxlab';
 import { LineageTabStateProvider, LineageView, useLineageReportsBusy } from './lineage';
@@ -23,19 +28,21 @@ import { BpaView } from './bpa';
 import { OptimizeView } from './optimize';
 import { SpecView } from './spec';
 import { DocumentationView } from './documentation';
-import { DeployView } from './deploy';
+import { DeployView, usePublishReach } from './deploy';
 import { EvidenceView, TestsView } from './tests';
 import { DataAgentView } from './dataagent';
-import { HelpButton, PageGuide } from './help';
+import { HelpButton, PageNotesButton } from './help';
 import { HistoryView, type EditEntry } from './history';
 import { WorkflowsView, type WorkflowRunView } from './workflows';
-import { emptyRuns, reduceRuns, liveRuns, runById, isRunNotFound, type RunMapState, type FoldOpts } from './workflowruns.mjs';
+import { emptyRuns, reduceRuns, liveRuns, mostRecentLive, runById, isRunNotFound, type RunMapState, type FoldOpts } from './workflowruns.mjs';
 import { anchorOf, normalizeStorageMode, snapKey, scanMatchesAnchor, scanUsableDuringTransition, storageEvidenceLevel, relationshipAllowsStorageEdits, relationshipAllowsReverifiedDeletePlan, compareDecision, shouldStoreAsLast, resolvedClaimAllowed, introducedClaimAllowed, refIsAmbiguous, identifierLike, type StorageMode, type StorageEvidenceLevel } from './storagecalc.mjs';
 import { busyAffordance } from './tabbusy.mjs';
 import { KnowledgeView } from './knowledge';
-import { PermissionsView } from './permissions';
-import { InterviewSummaryChip } from './interview';
+import { PermissionsView, permissionPresetDescription, publishPermissionDescription, type AgentPolicy } from './permissions';
+import { InterviewCard, InterviewSummaryChip } from './interview';
 import { CustomRulesPanel } from './rulesauthor';
+import { ModelHome } from './modelhome';
+import { DESTINATION_OF_TOOL, areaHomeTool, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
 
 // M Code is the heaviest tab (the @microsoft/powerquery-* parser/formatter/language-services + the 866-symbol
 // M standard-library dataset — ~1.7 MB). Lazy-load it so that whole cluster lands in its own chunk and only
@@ -62,59 +69,48 @@ const FIX_STYLE: Record<string, { label: string; color: string }> = {
   None: { label: 'Info', color: 'var(--sem-muted)' },
 };
 
-type StudioTab = 'readiness' | 'optimize' | 'bpa' | 'diagram' | 'advmodels' | 'mcode' | 'stats' | 'data' | 'daxlab' | 'lineage' | 'compare' | 'docs' | 'spec' | 'deploy' | 'tests' | 'evidence' | 'dataagent' | 'permissions' | 'history' | 'workflows' | 'knowledge' | 'search';
+type StudioTab = ToolId;
 
-// The primary row names the five analyst intents; the secondary row keeps direct tools reachable without exposing
-// product-internal machinery as navigation. IDs remain stable for host commands and persisted state. Compare and Data
-// Agent stay valid compatibility routes, but are no longer primary destinations: Compare opens as Deploy's review and
-// Data Agent lives under Deploy's Advanced tools. Model Spec remains primary because it uniquely owns model creation.
-const TAB_GROUPS: { id: string; label: string; tabs: { id: StudioTab; label: string }[] }[] = [
-  { id: 'understand', label: 'Understand', tabs: [
-    { id: 'diagram', label: 'Diagram' }, { id: 'search', label: 'Search' }, { id: 'lineage', label: 'Lineage' },
-    // DAX Lab is filed by the QUESTION THAT STARTS THE JOURNEY — "what does this query return?" — not by the
-    // fact a Lab query can also change the model. That start-of-journey intent is Understand (like Search and
-    // Lineage), even though each can lead to a change.
-    { id: 'daxlab', label: 'DAX Lab' },
-    { id: 'data', label: 'Data' }, { id: 'stats', label: 'Storage' },
+// Stable tool ids remain the compatibility API. The five buttons describe where people start, not every
+// capability reachable from there. A utility destination hosts Settings without becoming a sixth area.
+const TAB_GROUPS: { id: Area; label: string; tabs: { id: StudioTab; label: string }[] }[] = [
+  { id: 'model', label: 'Model', tabs: [
+    { id: 'modelhome', label: 'Overview' }, { id: 'diagram', label: 'Diagram' }, { id: 'lineage', label: 'Lineage' },
+    { id: 'search', label: 'Find and replace' }, { id: 'data', label: 'Data' }, { id: 'stats', label: 'Size by table' },
+    { id: 'spec', label: 'Model Spec' }, { id: 'advmodels', label: 'Advanced Modelling' }, { id: 'mcode', label: 'Power Query' },
+    { id: 'docs', label: 'Docs' }, { id: 'knowledge', label: 'Model notes' },
   ] },
-  { id: 'change', label: 'Change', tabs: [
-    { id: 'spec', label: 'Model Spec' }, { id: 'advmodels', label: 'Advanced Modelling' }, { id: 'mcode', label: 'M Code' },
-    { id: 'optimize', label: 'Change Plan' },
-  ] },
-  { id: 'improve', label: 'Improve', tabs: [
-    { id: 'readiness', label: 'AI Readiness' }, { id: 'bpa', label: 'Best practices' },
-  ] },
-  { id: 'prove', label: 'Prove', tabs: [
-    { id: 'tests', label: 'Tests' }, { id: 'evidence', label: 'Evidence' },
-  ] },
-  { id: 'ship', label: 'Ship', tabs: [
-    // Docs sits in Ship by Kane's ruling (2026-07-12): generated documentation is a deliverable
-    // you ship, not reference reading.
-    { id: 'deploy', label: 'Deploy' }, { id: 'permissions', label: 'Permissions' }, { id: 'docs', label: 'Docs' },
-  ] },
+  { id: 'calc', label: 'Calculations', tabs: [{ id: 'daxlab', label: 'DAX Lab' }] },
+  { id: 'checks', label: 'Checks', tabs: [{ id: 'tests', label: 'Tests' }, { id: 'bpa', label: 'Model quality' }, { id: 'readiness', label: 'AI understanding' }, { id: 'evidence', label: 'Saved reports' }] },
+  { id: 'changes', label: 'Changes', tabs: [{ id: 'optimize', label: 'Proposed' }, { id: 'history', label: 'History' }, { id: 'deploy', label: 'Published' }] },
+  { id: 'workflows', label: 'Workflows', tabs: [{ id: 'workflows', label: 'Workflows' }] },
 ];
-const TAB_TO_GROUP: Record<string, string> = Object.fromEntries(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => [t.id, g.id])));
-TAB_TO_GROUP.compare = 'ship';
-TAB_TO_GROUP.dataagent = 'ship';
-// The single source of truth for valid tab ids: every grouped tab + the standalone far-right surfaces. Used to
-// VALIDATE ids arriving from the host's navigateStudio — a stale bundle receiving an id it renamed (e.g. PR #29's
-// 'powerquery'→'mcode') must IGNORE the switch, not fall through the render ternary into an arbitrary tab. Derived
-// from TAB_GROUPS so it can never drift from the render switch.
-const STANDALONE_TABS: StudioTab[] = ['history', 'workflows', 'knowledge'];
+// The Model area's segmented row shows only these six as their own segment, and folds the five authoring tools
+// into one "Create" dropdown segment, so eleven equal buttons don't crowd the header. TAB_GROUPS itself stays the
+// full eleven-tool list: Find a tool, keyboard cycling and the tab→area map all still need every id. Size by table
+// joined the primary six because it was in no segment and no menu: a table row or Find a tool were the only ways
+// in, and it then appeared as a segment that had not existed a moment earlier. A Model tool in neither list still
+// gets a segment of its own while it is the open tool, so the row is never left with nothing marked.
+const MODEL_PRIMARY_TAB_IDS: StudioTab[] = ['modelhome', 'diagram', 'lineage', 'search', 'data', 'stats'];
+const MODEL_CREATE_TAB_IDS: StudioTab[] = ['spec', 'advmodels', 'mcode', 'docs', 'knowledge'];
+const TAB_TO_GROUP: Record<string, Area> = Object.fromEntries(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => [t.id, g.id])));
+TAB_TO_GROUP.compare = 'changes'; TAB_TO_GROUP.dataagent = 'changes';
 const LEGACY_TABS: StudioTab[] = ['compare', 'dataagent'];
-const VALID_TABS = new Set<string>([...TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.id)), ...STANDALONE_TABS, ...LEGACY_TABS]);
-// Keyboard next/prev cycles every tab in reading order: the grouped lifecycle tabs, then the standalone
-// far-right surfaces in their on-screen order (Primer · Workflows · Edit History). Wraps at both ends.
-const CYCLE_TABS: StudioTab[] = [...TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.id)), 'knowledge', 'workflows', 'history'];
-const FALLBACK_TAB: StudioTab = 'diagram';   // must be a real, first-of-lifecycle tab — never a mid-list default
-// A pending Data-tab target (from a Model-tree "Preview data" right-click). The nonce makes a repeat navigation to
-// the SAME table re-fire the preview.
-type DataTarget = { table: string; nonce: number };
-
+const VALID_TABS = new Set<string>([...TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.id)), ...LEGACY_TABS, 'permissions']);
+const CYCLE_TABS: StudioTab[] = TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.id));
+const FALLBACK_TAB: StudioTab = 'modelhome';
+const AREA_ALIASES: Record<string, Area> = { understand: 'model', change: 'changes', improve: 'checks', prove: 'checks', ship: 'changes', model: 'model', calc: 'calc', checks: 'checks', changes: 'changes', workflows: 'workflows' };
+// The exact sentence the host relay answers with when it holds no engine connection (extension.ts, the Studio and
+// Connections message handlers). Matched, not guessed: it is the only evidence a panel that mounted while the engine
+// was already down ever receives. engine-restart-recovery.test.mjs keeps the two literals identical.
+const ENGINE_NOT_CONNECTED = 'Engine not connected.';
 export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const sessionRef = useRef<SessionInfo | null>(null);
   sessionRef.current = session;
+  // No engine at all. Distinct from "no model open": with no engine the Open a model placeholder is a dead end,
+  // because its button needs the engine too. That is what Kane hit on 2026-09-15 after a restart failed.
+  const [engineDown, setEngineDown] = useState(false);
   // The live connection context is the single source of truth for the attached query engine (its session copy is
   // refreshed on attach/disconnect, which App's own `session` above is not) — the Compare seed reads BOTH from here.
   const { session: liveSession, conn, context: connectionContext, connectionsOpen, openConnections, closeConnections } = useConnection();
@@ -128,20 +124,29 @@ export function App() {
   const activityLenRef = useRef(0); activityLenRef.current = activity.length;
   const [trend, setTrend] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [upsell, setUpsell] = useState<string | null>(null);   // a free click on the bulk button teaches, never errors
-  const tier = useTier();
-  const [tab, setTab] = useState<StudioTab>('diagram');   // open on Understand → Diagram
-  const [dataTarget, setDataTarget] = useState<DataTarget | null>(null);          // table to preview (tree → Data)
-  const [diagramAdd, setDiagramAdd] = useState<{ tables: string[]; nonce: number } | null>(null);  // tables to drop on the Diagram (tree → "Add to Studio Diagram")
-  // Tree → Studio "jump to tab" targets: a right-click in the Model tree opens the owning tab AND focuses the object
-  // (lineage → impact of a ref · M Code → that table's M · Advanced Modelling → the right builder). Nonce so a repeat
-  // jump to the same target re-fires.
-  const [lineageTarget, setLineageTarget] = useState<{ ref: string; nonce: number } | null>(null);
-  const [workflowTarget, setWorkflowTarget] = useState<{ name: string; nonce: number } | null>(null);
+  const [route, setRoute] = useState<Route>({ sessionId: '', destination: 'model', tool: 'modelhome', nonce: 0 });
+  const routeRef = useRef(route); routeRef.current = route;
+  // THERE IS NO BACK STACK. Kane retired the Back button on 2026-09-14 after hitting it himself: "The back button
+  // doesnt do anything." A stack of places you have been is a browser idea, and Studio is not a browser — the areas
+  // and their segment strips are always on screen, so every page is one click away without it. What the stack did
+  // buy was a way out of Settings, which is the one page with no segment of its own. That is all this ref is: ONE
+  // page to come back to, recorded on the way into Settings.
+  const returnTo = useRef<Route | undefined>(undefined);
+  const lastInArea = useRef<Partial<Record<Area, Route>>>({});
+  // Whether a change plan is open. It is the only thing that decides where the Changes area button lands, so the
+  // shell has to know it even while the Proposed tab is unmounted.
+  const [hasPlan, setHasPlan] = useState(false);
+  const hasPlanRef = useRef(false); hasPlanRef.current = hasPlan;
+  const tab = route.tool;
+  const [selectedObject, setSelectedObject] = useState<Route['object']>();
+  const selectedObjectRef = useRef(selectedObject); selectedObjectRef.current = selectedObject;
+  const pendingTreeSelection = useRef<{ sessionId: string; object: Route['object'] } | undefined>(undefined);
+  const [agentPolicy, setAgentPolicy] = useState<AgentPolicy | null | undefined>(undefined);
+  const [modelChangeNonce, setModelChangeNonce] = useState(0);
   // Workflow RUNS live at the SHELL, above the conditionally-mounted Workflows tab (BLOCKER: a run started by the
-  // AI Assistant while the human is on another tab must not be missed — an unmounted tab has no listener). One
+  // your assistant while the human is on another tab must not be missed — an unmounted tab has no listener). One
   // always-alive subscription folds every workflow/didChange broadcast into a run-map keyed by runId, and a
-  // getWorkflowRun seed catches a run that started before we subscribed. Ownership (you vs the AI Assistant) is
+  // getWorkflowRun seed catches a run that started before we subscribed. Ownership (you vs your assistant) is
   // tracked by the ids we start ourselves.
   const [runs, setRuns] = useState<RunMapState>(emptyRuns());
   const ownRunIds = useRef<Set<string>>(new Set());
@@ -176,10 +181,6 @@ export function App() {
     }).catch(() => undefined);
   }, [foldRun]);
   const [deployRestoreTarget, setDeployRestoreTarget] = useState<{ id: string; endpoint: string; database: string; nonce: number } | null>(null);
-  const [publishNonce, setPublishNonce] = useState(0);
-  const [pqTarget, setPqTarget] = useState<{ table: string; partitionId?: string; nonce: number } | null>(null);
-  const [advArea, setAdvArea] = useState<{ area: string; nonce: number } | null>(null);
-  const [searchTarget, setSearchTarget] = useState<{ query: string; nonce: number } | null>(null);   // findInModel → "Open in Search & Replace"
   // Context-bar → Compare: seed the differ with what you're EDITING vs what you're QUERYING so a click lands on the
   // exact diff. Nonce so a repeat click re-fires; Compare only adopts a seed it hasn't consumed and never clobbers a
   // comparison the user set up by hand.
@@ -220,7 +221,6 @@ export function App() {
   const [unseen, setUnseen] = useState<Set<string>>(new Set());   // tabs with new Claude activity (badge)
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalNotice[]>([]);
   const pendingApprovalCount = pendingApprovals.length;
-  const [permissionTarget, setPermissionTarget] = useState<{ id: string; nonce: number } | null>(null);
   const tabRef = useRef(tab); tabRef.current = tab;
   const rescanTimer = useRef<number | undefined>(undefined);
 
@@ -280,24 +280,111 @@ export function App() {
     const visibleTab = ALIAS[tabRef.current] ?? tabRef.current;
     if (t && t !== visibleTab) setUnseen((s) => { const n = new Set(s); n.add(t); return n; });
   }), []);
-  const goTab = (t: string, approvalId?: string) => {
-    // Validate against the known tab set (single source of truth). An unknown id — e.g. a host on a newer/older
-    // protocol sending a renamed tab a stale bundle doesn't have — is IGNORED (never a mystery landing on some
-    // arbitrary tab), and logged so version skew is visible in devtools instead of silent.
-    if (!VALID_TABS.has(t)) { console.warn(`[Studio] ignoring navigation to unknown tab id '${t}' (host/webview version skew?)`); return; }
-    if (t === 'compare') t = 'deploy';   // compatibility alias: comparison is Deploy's Choose what to publish review
-    if (t === 'permissions' && approvalId) setPermissionTarget({ id: approvalId, nonce: ++navNonce.current });
-    setUnseen((s) => { if (!s.has(t)) return s; const n = new Set(s); n.delete(t); return n; });
-    setTab(t as StudioTab);
+  const goRoute = (next: Route) => {
+    const sid = sessionRef.current?.sessionId ?? '';
+    // A cold host hand-off may arrive just before sessionInfo. Accept its stamped route, but once a current session is
+    // known reject every delayed route from another model.
+    if (sid && next.sessionId !== sid) return;
+    const current = routeRef.current;
+    // Settings is a detour, not a place in the app, so record the page that sent you there — and only on the way IN.
+    // A second Settings route must not overwrite it, or Done would return you to Settings. The ambient tree selection
+    // is folded in here because Overview with a row selected is a different page from bare Overview, and coming back
+    // to the wrong one of those is the kind of near-miss that made the old Back feel broken.
+    if (next.destination === 'utility' && current.destination !== 'utility') {
+      returnTo.current = current.tool === 'modelhome' && !current.object && selectedObjectRef.current
+        ? { ...current, object: selectedObjectRef.current }
+        : current;
+    }
+    routeRef.current = next;
+    setRoute(next);
   };
-  // Group memory lives HERE (not in Shell) so the keyboard group jumps (Ctrl+Shift+1–5) and the group
-  // buttons share it: entering a group returns you to the tab you last used in it, not always its first.
-  const lastInGroup = useRef<Record<string, StudioTab>>({});
+  const consumeRouteSeed = useCallback((nonce: number) => {
+    setRoute((current) => {
+      if (current.nonce !== nonce || !current.seed) return current;
+      const next = { ...current, seed: undefined };
+      routeRef.current = next;
+      return next;
+    });
+  }, []);
+  // Done, the one way out of Settings. It must ALWAYS land somewhere, which is the whole lesson of the button it
+  // replaces: the old goBack popped its entry before goRoute could reject it, so a rejected route was consumed and
+  // the click did nothing. Two things stop that here. The remembered page is RESTAMPED with the session that is live
+  // now, so goRoute's session guard can never drop it — a page recorded before sessionInfo answered carries an empty
+  // stamp, and that alone would have been enough to make Done inert. And there is a real fallback when nothing is
+  // remembered, rather than silently doing nothing.
+  const goDone = () => {
+    const remembered = returnTo.current;
+    returnTo.current = undefined;
+    if (!remembered) { goTab('modelhome'); return; }
+    const sid = sessionRef.current?.sessionId ?? '';
+    // The seed is dropped: it was an explicit one-use hand-off and has already been acknowledged, so replaying it
+    // would re-run a request over work the person has since changed.
+    goRoute({ ...remembered, sessionId: sid || remembered.sessionId, seed: undefined, nonce: ++navNonce.current });
+  };
+  const seedForTarget = (tool: StudioTab, target: string | undefined, object: Route['object'], approvalId?: string): Seed | undefined => {
+    if (tool === 'daxlab' && object?.kind === 'measure') return { kind: 'query', value: objectToRef(object) };
+    if (tool === 'tests' && object?.kind === 'measure') return { kind: 'test', value: objectToRef(object) };
+    if (tool === 'search' && target != null) return { kind: 'search', value: object?.kind === 'table' ? '' : (objectLabel(object) ?? target) };
+    if (tool === 'deploy' && target === 'publish') return { kind: 'publish', value: 'publish' };
+    if (tool === 'permissions' && approvalId) return { kind: 'approval', value: approvalId };
+    if (tool === 'advmodels' && target) return { kind: 'advanced', value: target.startsWith('area:') ? target.slice(5) : target };
+    return undefined;
+  };
+  const goTab = (raw: string, approvalId?: string, target?: string, sessionId?: string, explicitSeed?: Seed) => {
+    if (!VALID_TABS.has(raw)) { console.warn(`[Studio] ignoring navigation to unknown tab id '${raw}' (host/webview version skew?)`); return; }
+    // Compare is a compatibility alias for Deploy. Data Agent remains a distinct route because its Advanced subview
+    // is part of the destination, not a disposable alias detail.
+    const t = raw === 'compare' ? 'deploy' : raw as StudioTab;
+    setUnseen((s) => { if (!s.has(t)) return s; const n = new Set(s); n.delete(t); return n; });
+    const object = refToObject(target);
+    const seed = explicitSeed ?? seedForTarget(t, target, object, approvalId);
+    goRoute({ sessionId: sessionId ?? sessionRef.current?.sessionId ?? routeRef.current.sessionId, destination: DESTINATION_OF_TOOL[t], tool: t, object, seed, nonce: ++navNonce.current });
+  };
+  useEffect(() => { if (route.destination !== 'utility' && !route.seed) lastInArea.current[route.destination] = route; }, [route]);
+  // A plan can be created or cleared from either door, so read it once per session and then follow the broadcast.
   useEffect(() => {
-    const visibleTab = tab === 'dataagent' ? 'deploy' : tab;
-    const g = TAB_TO_GROUP[visibleTab]; if (g) lastInGroup.current[g] = visibleTab;
-  }, [tab]);
-  const goGroup = (gid: string) => { const g = TAB_GROUPS.find((x) => x.id === gid); if (g) goTab(lastInGroup.current[g.id] ?? g.tabs[0].id); };
+    const sid = session?.sessionId;
+    if (!sid) { setHasPlan(false); return; }
+    let live = true;
+    rpc<{ planId?: string }>('getPlan').then((p) => { if (live) setHasPlan(!!p?.planId); }).catch(() => { /* no plan is a valid answer */ });
+    const off = onPlanChange((v) => setHasPlan(!!(v as { planId?: string } | null)?.planId));
+    return () => { live = false; off(); };
+  }, [session?.sessionId]);
+  const goGroup = (group: string) => {
+    const area = AREA_ALIASES[group];
+    if (!area) return;
+    // The button for the area you are ALREADY in is an exit, so it goes to that area's home page. Area memory is
+    // for coming BACK to an area, and using it here handed you the page you were already looking at: with Back
+    // retired, that is how Kane had nothing at all to press on Data with a table in hand (2026-09-15).
+    const remembered = routeRef.current.destination === area ? undefined : lastInArea.current[area];
+    if (remembered) goRoute({ ...remembered, sessionId: sessionRef.current?.sessionId ?? remembered.sessionId, seed: undefined, nonce: ++navNonce.current });
+    else goTab(areaHomeTool(area, hasPlanRef.current));
+  };
+  // A route and every object hand-off belong to one model session. Reset them together on open, close and swap.
+  const previousShellSession = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const sid = session?.sessionId ?? '';
+    if (previousShellSession.current === sid) return;
+    const previousSid = previousShellSession.current;
+    previousShellSession.current = sid;
+    const coldStampedRoute = !!sid && routeRef.current.sessionId === sid;
+    // A REAL session change is a different model, and the page you were on belongs to the model you left, so forget
+    // it. The session merely BECOMING KNOWN is not that: on a cold open the page that sent you to Settings is
+    // recorded before sessionInfo answers, and throwing it away there would make Done land on Overview instead of
+    // where you actually were. previousSid is undefined on mount and '' until a model arrives, so both are falsy.
+    if (previousSid) returnTo.current = undefined;
+    lastInArea.current = {};
+    const initialSelection = pendingTreeSelection.current?.sessionId === sid ? pendingTreeSelection.current.object : undefined;
+    pendingTreeSelection.current = undefined;
+    setSelectedObject(initialSelection); setCompareSeed(null); setDeployRestoreTarget(null); setSeedPending(false);
+    setAgentPolicy(undefined); setModelChangeNonce(0);
+    if (!coldStampedRoute) {
+      const next: Route = { sessionId: sid, destination: 'model', tool: 'modelhome', object: initialSelection, nonce: ++navNonce.current };
+      routeRef.current = next; setRoute(next);
+    }
+    if (sid) rpc<AgentPolicy>('getAgentPolicy').then((p) => { if (sessionRef.current?.sessionId === sid) setAgentPolicy(p); })
+      .catch(() => { if (sessionRef.current?.sessionId === sid) setAgentPolicy(null); });
+  }, [session?.sessionId]);
   // Next/prev Studio tab (Ctrl+Alt+←/→ via the host keybinding, so it works with focus inside OR outside the webview).
   const cycleTab = (dir: 1 | -1) => {
     const i = CYCLE_TABS.indexOf(tabRef.current);
@@ -309,7 +396,9 @@ export function App() {
   // plan is empty, so an in-progress plan is never clobbered). Turns Change Plan into the apply-mode of the findings.
   const [planSeed, setPlanSeed] = useState(0);
   const reviewAsPlan = () => { setPlanSeed((n) => n + 1); goTab('optimize'); };
-  const openWorkflow = (name: string) => { setWorkflowTarget({ name, nonce: ++navNonce.current }); goTab('workflows'); };
+  const openWorkflow = (name: string) => goTab('workflows', undefined, undefined, undefined, { kind: 'workflow', value: name });
+  const openWorkflowRuns = () => goTab('workflows', undefined, undefined, undefined, { kind: 'workflowRuns', value: 'runs' });
+  const openPublish = () => goTab('deploy', undefined, 'publish');
 
   // The host navigates us here (e.g. a Model-tree "Preview data" right-click): switch tabs and, for Data, hand the
   // target table to the Data view (nonce so re-selecting the same table re-previews). signalReady lets the host
@@ -317,41 +406,49 @@ export function App() {
   useEffect(() => {
     signalReady();
     return onNavigate((m) => {
-      // Keyboard/command pseudo-targets first — these aren't tabs, so they must never reach goTab.
+      const currentSid = sessionRef.current?.sessionId;
+      const messageSid = m.sessionId ?? currentSid ?? routeRef.current.sessionId;
+      if (currentSid && messageSid !== currentSid) return;
+      // Keyboard/command pseudo-targets are session-stamped too. A delayed old-session shortcut must not move the
+      // newly opened model any more than an old object target may.
       if (m.tab === 'shortcuts') { setShortcutsOpen(true); return; }
       if (m.tab === 'cycle:next') { cycleTab(1); return; }
       if (m.tab === 'cycle:prev') { cycleTab(-1); return; }
       if (m.tab?.startsWith('group:')) { goGroup(m.tab.slice('group:'.length)); return; }
-      if (m.tab === 'readiness' && m.target === 'rescan') { void scan(); }   // the palette/keyboard "run a scan" — then land on the tab
-      if (m.tab === 'data' && m.target) {
-        const table = m.target.startsWith('table:') ? m.target.slice('table:'.length) : m.target;
-        setDataTarget({ table, nonce: ++navNonce.current });
-      }
-      if (m.tab === 'diagram' && m.addTables?.length) setDiagramAdd({ tables: m.addTables, nonce: ++navNonce.current });
-      if (m.tab === 'lineage' && m.target) setLineageTarget({ ref: m.target, nonce: ++navNonce.current });
-      if (m.tab === 'mcode' && m.target) {
-        // 'partition:<Table>/<Name>' pinpoints WHICH partition was clicked; derive the table for the picker and
-        // keep the full ref so the M lane can land on that exact partition. 'table:<T>' selects the table only.
-        const rest = m.target.startsWith('partition:') ? m.target.slice('partition:'.length) : null;
-        const slash = rest ? rest.indexOf('/') : -1;
-        if (rest && slash > 0) setPqTarget({ table: rest.slice(0, slash), partitionId: m.target, nonce: ++navNonce.current });
-        else setPqTarget({ table: m.target.startsWith('table:') ? m.target.slice('table:'.length) : m.target, nonce: ++navNonce.current });
-      }
-      if (m.tab === 'advmodels' && m.target) setAdvArea({ area: m.target.startsWith('area:') ? m.target.slice('area:'.length) : m.target, nonce: ++navNonce.current });
-      // The native sync status-bar item → a seeded Compare (same as the footer click): compute the seed from
-      // live connection state and land on Review. jumpToCompare already seeds + goTab('compare'), so return early.
+      if (m.tab === 'readiness' && m.target === 'rescan') { void scan(); }
+      // The native sync status-bar item opens the existing seeded Compare path. All other host messages become one
+      // session-stamped route, including Add tables, which is no longer held in a second replayable state slot.
       if (m.tab === 'compare' && m.target === 'seed') { jumpToCompare(); return; }
-      if (m.tab === 'deploy' && m.target === 'publish') setPublishNonce((n) => n + 1);
-      // '' is a real target here: "just focus the find box" (Ctrl+F) — only undefined means no hand-off.
-      if (m.tab === 'search' && m.target != null) setSearchTarget({ query: m.target, nonce: ++navNonce.current });
-      if (m.tab) goTab(m.tab);
+      const explicitSeed = m.tab === 'diagram' && m.addTables?.length
+        ? { kind: 'addTables' as const, value: m.addTables }
+        : undefined;
+      if (m.tab) goTab(m.tab, undefined, m.target, messageSid, explicitSeed);
+
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The native tree picker's "Manage connections" opens the shared Connections drawer here, so both doors host the
-  // same component.
-  useEffect(() => onOpenConnections(() => openConnections()), [openConnections]);
+  // Native selection is context only. It may update Model home's route object, but never a DAX, Search or Tests seed.
+  // Session identity makes a queued event from model A harmless after model B has opened, even when names match.
+  useEffect(() => onTreeSelection((selection) => {
+    const sid = sessionRef.current?.sessionId;
+    if (sid && selection.sessionId && selection.sessionId !== sid) return;
+    const object = refToObject(selection.ref);
+    // The host can send its initial selection before sessionInfo returns. Keep its session stamp until the model
+    // arrives, so opening Studio does not discard the row the person already selected in the native tree.
+    if (!sid && selection.sessionId) { pendingTreeSelection.current = { sessionId: selection.sessionId, object }; return; }
+    setSelectedObject(object);
+    const current = routeRef.current;
+    if (current.tool === 'modelhome' && (!selection.sessionId || current.sessionId === selection.sessionId)) {
+      const next = { ...current, object };
+      routeRef.current = next; setRoute(next);
+    }
+  }), []);
+  // The native tree picker can name the hub section; use the same shared drawer as the footer and header.
+  useEffect(() => onOpenConnections((section) => {
+    if (section === 'open' || section === 'setup' || section === 'accounts' || section === 'history' || section === 'add' || section === 'work' || section === 'sqlsources') openConnectionsOnView(section);
+    openConnections();
+  }), [openConnections]);
 
   // The in-Studio half of the keyboard suite: gestures VS Code keybindings must NOT own (see shortcuts.tsx —
   // unmodified '?' would fire while typing, and Ctrl+Alt+letter package bindings collide with AltGr typing on
@@ -385,7 +482,17 @@ export function App() {
     } catch (e) { setError(String((e as Error).message ?? e)); }
   }
   async function refreshSession() {
-    try { const s = await rpc<SessionInfo>('sessionInfo'); setSession(s); return s; } catch { return null; }
+    try {
+      const s = await rpc<SessionInfo>('sessionInfo');
+      setSession(s);
+      setEngineDown(false);
+      return s;
+    } catch (e) {
+      // The host's own answer when it holds no engine connection. A panel that mounted while the engine was
+      // already down never saw an engineState transition, so this is the second way it can find out.
+      if (String((e as Error)?.message ?? e) === ENGINE_NOT_CONNECTED) setEngineDown(true);
+      return null;
+    }
   }
 
   useEffect(() => {
@@ -401,7 +508,7 @@ export function App() {
         // A failed refresh is not evidence of a model swap. Preserve the current shell until the host
         // confirms a replacement session, otherwise a transient RPC failure would erase local history.
         if (s?.sessionId && s.sessionId !== previousSessionId) {
-          setCard(null); setError(null); setUpsell(null);
+          setCard(null); setError(null);
           setActivity([]); setUndoneCount(0); setPendingApprovals([]);
         }
         // Same-session reconnect: the run-tracking effect (keyed on sessionId) will NOT re-run, so reconcile the
@@ -412,6 +519,8 @@ export function App() {
       })();
     });
     const off = onDidChange((n: ChangeNotification) => {
+      if (sessionRef.current?.sessionId && n.sessionId !== sessionRef.current.sessionId) return;
+      setModelChangeNonce((value) => value + 1);
       // Undo/redo broadcast as their own didChange (label 'undo'/'redo'). Interpret them as moving the rollback
       // boundary rather than appending a node — so the timeline reads like a stack-state view (undone entries dim,
       // redo restores them). A fresh edit clears the redo branch (TE2's UndoManager drops the RedoStack), so the
@@ -428,19 +537,68 @@ export function App() {
       window.clearTimeout(rescanTimer.current);
       rescanTimer.current = window.setTimeout(() => { void scan(); void refreshSession(); }, 350);
     });
-    return () => { off(); offReconnect(); window.clearTimeout(rescanTimer.current); };
+    // The host announces the engine going away and coming back, and answers this on studioReady. Studio must not
+    // have to guess it from a failed request: a rejected request could be one wedged call, while this is the host
+    // saying it has no engine at all.
+    const offEngine = onEngineState((connected) => {
+      setEngineDown(!connected);
+      if (connected) void refreshSession();
+    });
+    return () => { off(); offReconnect(); offEngine(); window.clearTimeout(rescanTimer.current); };
   }, []);
 
   async function applySafeFixes() {
-    setBusy(true); setUpsell(null);
+    setBusy(true); setError(null);
     try { const r = await rpc<{ scorecard: Scorecard }>('applySafeFixes'); if (r?.scorecard) setCard(r.scorecard); await refreshSession(); }
-    catch (e) {
-      // A free click on the bulk button gets the plain invitation, not a raw exception in a red banner.
-      if (isEntitlementError(e)) setUpsell(`Each fix below is free. Apply them one at a time, as many as you like. Pro applies all ${card?.safeFixCount ?? 0} in one undoable step and re-checks your score for you.`);
-      else setError(String((e as Error).message ?? e));
-    }
+    // Applying every safe fix in one step is FREE from 2026-09-15 (Kane's feature line). There is no
+    // entitlement refusal left to soften here, so a failure is a real failure and reads as one.
+    catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusy(false); }
   }
+
+  // ---- the one feature-aware render boundary --------------------------------------------------------
+  // Every way into a tool ends here, because every one of them sets route.tool and nothing else decides
+  // what renders: the tab row, a restored route, the legacy `dataagent` id, Find a tool, keyboard cycling
+  // (cycleTab), host navigation (onNavigate -> goTab) and a deep link all move the same value. So the gate
+  // is on the OPEN TOOL, once, above the tab switch. A pill on a navigation button is not a gate.
+  const gatedFeature = featureOfTool(tab);
+  const featureGrant = useFeature(gatedFeature);
+  // Tests is the trap. TestsView mounts for EVERY open model and is merely hidden with a CSS class, so a
+  // gate on the visible branch alone would leave its listTests / listTableMappings / listTestRuns calls
+  // running in the background on the free plan. It needs its own grant because it is not the open tool,
+  // and not rendering it at all is also what clears its paid state: an entitlement change unmounts the
+  // component, and its run evidence goes with it.
+  const testsGrant = useFeature('tests');
+  const routeIsCurrent = !!session?.sessionId && route.sessionId === session.sessionId;
+  const routeObjectRef = routeIsCurrent && route.object ? objectToRef(route.object) : undefined;
+  const routeTable = routeIsCurrent ? tableOfObject(route.object) : undefined;
+  const seed = routeIsCurrent ? route.seed : undefined;
+  const dataTarget = tab === 'data' && routeTable ? { table: routeTable, nonce: route.nonce } : null;
+  const diagramAdd = tab === 'diagram' && seed?.kind === 'addTables' && Array.isArray(seed.value) ? { tables: seed.value, nonce: route.nonce } : null;
+  const diagramRelationship = tab === 'diagram' && route.object?.kind === 'relationship' ? { id: route.object.id, nonce: route.nonce } : null;
+  const lineageTarget = tab === 'lineage' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce } : null;
+  const testTarget = tab === 'tests' && seed?.kind === 'test' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce } : null;
+  const daxTarget = tab === 'daxlab' && seed?.kind === 'query' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce } : null;
+  const workflowTarget = tab === 'workflows' && (seed?.kind === 'workflow' || seed?.kind === 'workflowRuns')
+    ? { kind: seed.kind === 'workflow' ? 'workflow' as const : 'section' as const, value: String(seed.value), nonce: route.nonce }
+    : null;
+  const pqTarget = tab === 'mcode' && routeTable ? { table: routeTable, partitionId: route.object?.kind === 'partition' ? routeObjectRef : undefined, nonce: route.nonce } : null;
+  const advArea = tab === 'advmodels' && seed?.kind === 'advanced' ? { area: String(seed.value), nonce: route.nonce } : null;
+  const searchTarget = tab === 'search' && seed?.kind === 'search'
+    ? { query: String(seed.value), scope: route.object?.kind === 'table' ? routeObjectRef : undefined, nonce: route.nonce }
+    : null;
+  const permissionTarget = tab === 'permissions' && seed?.kind === 'approval' ? { id: String(seed.value), nonce: route.nonce } : null;
+  const publishNonce = tab === 'deploy' && seed?.kind === 'publish' ? route.nonce : 0;
+  const statsTarget = tab === 'stats' && routeTable ? { table: routeTable, nonce: route.nonce } : null;
+  const historyTarget = tab === 'history' ? routeObjectRef : undefined;
+  const showConnections = (section: HubView = 'open') => { openConnectionsOnView(section); openConnections(); };
+  const selectOnModelHome = (object: Route['object']) => {
+    setSelectedObject(object);
+    const current = routeRef.current;
+    if (current.tool !== 'modelhome') return;
+    const next = { ...current, object };
+    routeRef.current = next; setRoute(next);
+  };
 
   return (
     <DaxModelProvider key={session?.sessionId ?? 'no-model'}>
@@ -452,34 +610,64 @@ export function App() {
     <StorageTabStateProvider active={tab === 'stats'}>
     <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     <ConnectionsHub open={connectionsOpen} onClose={closeConnections} />
-    <Shell tab={tab === 'dataagent' ? 'deploy' : tab} onTab={goTab} onGroup={goGroup} onShortcuts={() => setShortcutsOpen(true)} unseen={unseen} historyCount={activity.length - undoneCount} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={pendingApprovals[0]?.id} onConnections={openConnections} onJumpToCompare={jumpToCompare}>
+    <Shell route={route} onTab={goTab} onGroup={goGroup} onDone={goDone} onShortcuts={() => setShortcutsOpen(true)} unseen={unseen}
+      historyCount={activity.length - undoneCount} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={pendingApprovals[0]?.id}
+      onConnections={showConnections} onJumpToCompare={jumpToCompare} activeRun={mostRecentLive(runs)} liveRunCount={liveRuns(runs).length}
+      onWorkflowRuns={openWorkflowRuns} onPublish={openPublish} agentPolicy={agentPolicy} hasPlan={hasPlan}>
+      <ToolErrorBoundary resetKey={tab}>
       <>
       {/* A test run can carry substantial cell evidence, so keep the view alive across Studio navigation instead
           of copying it into persisted webview state. The session key still discards it when a different model opens. */}
-      {session?.sessionId && <div className={tab === 'tests' ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} /></div>}
-      {!session?.sessionId ? (
-        <Empty />
+      {session?.sessionId && testsGrant === 'granted' && <div className={tab === 'tests' ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
+        onOpenDaxLab={(ref) => goTab('daxlab', undefined, ref)} onOpenSavedReports={() => goTab('evidence')} /></div>}
+      {engineDown ? (
+        <EngineDown />
+      ) : !session?.sessionId ? (
+        <Empty onOpen={() => showConnections('open')} />
+      ) : featureGrant === 'denied' ? (
+        <ProPreview tool={tab} />
+      ) : featureGrant === 'unknown' ? (
+        <FeatureChecking />
+      ) : tab === 'modelhome' ? (
+        // Overview shows the Size by table scan the storage holder already owns, so landing on a model shows the
+        // last real measurement without starting a DMV sweep of its own. The holder sits ABOVE this switch, so
+        // App's own body cannot read it; the consumer keeps that read here at the mount instead.
+        // The session id is re-tested inside the render prop because a property narrowing does not survive into a
+        // closure; the outer branch has already proved it, so the null arm is unreachable.
+        // sessionEdits is the changes THIS WEBVIEW has been notified of since the model opened, capped at 200 by
+        // the activity list itself. It is not a destination comparison, so it travels under a name that says so.
+        <StorageTabStateContext.Consumer>{(storage) => !session?.sessionId ? null :
+          <ModelHome sessionId={session.sessionId} revision={session.revision} changeNonce={modelChangeNonce} modelName={session.modelName}
+            compatibilityLevel={session.compatibilityLevel}
+            selected={routeIsCurrent ? (route.object ?? selectedObject) : undefined} onSelect={selectOnModelHome} onConnections={() => showConnections('setup')}
+            sessionEdits={activity.length - undoneCount} agentPolicy={agentPolicy} storage={storage}
+            onGo={(tool, target, addTables) => goTab(tool, undefined, target, undefined,
+              addTables?.length ? { kind: 'addTables', value: addTables } : undefined)} />}
+        </StorageTabStateContext.Consumer>
       ) : tab === 'evidence' ? (
         <EvidenceView key={session.sessionId} />
       ) : tab === 'readiness' ? (
         <div className="sem-evidence-page sem-centered-page flex flex-col gap-4">
           {error && <Banner color="var(--sem-bad)">{error}</Banner>}
-          {upsell && <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>}
           {card?.gatedBy?.length ? <Banner color="var(--sem-bad)">{card.gatedBy.join(' · ')}</Banner> : null}
           {card?.caveat ? <Banner color="var(--sem-warn)">{card.caveat}</Banner> : null}
           {card?.ruleErrors?.length ? <Banner color="var(--sem-warn)">{card.ruleErrors.join(' · ')}</Banner> : null}
-          {card ? <Hero card={card} trend={trend} busy={busy} tier={tier} onSafe={applySafeFixes} onRescan={scan} onReviewAsPlan={reviewAsPlan} /> : <Loading />}
+          {card ? <Hero card={card} trend={trend} busy={busy} onSafe={applySafeFixes} onRescan={scan} onReviewAsPlan={reviewAsPlan} /> : <Loading />}
           {card && <Categories card={card} />}
-          {/* Improve keeps the latest behavioral signal; Prove owns the complete interview evidence and actions. */}
-          {card && <InterviewSummaryChip onOpen={() => goTab('tests')} />}
+          {/* The latest behavioral signal, as a summary. Interview evidence left the Tests page in 1.2.0. */}
+          {card && <InterviewSummaryChip />}
+          {/* And the saved questions themselves, which the summary chip cannot manage. Taking the interview
+              out of Tests was the decision; taking it out of the APP was not, and for a while the only way
+              to see a saved question was MCP (Astra, question 4). This is a temporary home, unchanged. */}
+          {card && <InterviewCard />}
           {card && <Findings card={card} onRescan={scan} />}
           {card && <CustomRulesPanel kind="readiness" onChanged={() => void scan()} />}
         </div>
       ) : tab === 'history' ? (
-        <HistoryView items={activity} undoneCount={undoneCount} sessionId={session?.sessionId}
+        <HistoryView items={activity} undoneCount={undoneCount} sessionId={session?.sessionId} objectFilter={historyTarget}
           onOpenRollback={(point) => { setDeployRestoreTarget({ id: point.id, endpoint: point.endpoint, database: point.database, nonce: ++navNonce.current }); goTab('deploy'); }} />
       ) : tab === 'workflows' ? (
-        <WorkflowsView navTarget={workflowTarget} runs={runs} onRunUpdate={foldRun}
+        <WorkflowsView navTarget={workflowTarget} onNavConsumed={consumeRouteSeed} runs={runs} onRunUpdate={foldRun}
           markOwnRun={(id) => ownRunIds.current.add(id)} isOwnRun={(id) => ownRunIds.current.has(id)} />
       ) : tab === 'knowledge' ? (
         <KnowledgeView onOpenWorkflows={() => goTab('workflows')} />
@@ -490,42 +678,52 @@ export function App() {
       ) : tab === 'bpa' ? (
         <BpaView onReviewAsPlan={reviewAsPlan} />
       ) : tab === 'diagram' ? (
-        <DiagramView addTables={diagramAdd} />
+        <DiagramView addTables={diagramAdd} focusRelationship={diagramRelationship} onNavConsumed={consumeRouteSeed} />
       ) : tab === 'advmodels' ? (
-        <AdvancedModelsView navArea={advArea} />
+        <AdvancedModelsView navArea={advArea} onNavConsumed={consumeRouteSeed} />
       ) : tab === 'mcode' ? (
         <Suspense fallback={<Loading />}>
           <MCodeView navTarget={pqTarget} />
         </Suspense>
       ) : tab === 'stats' ? (
-        <StatsView onReviewAsPlan={reviewAsPlan} />
+        <StatsView onReviewAsPlan={reviewAsPlan} navTarget={statsTarget} />
       ) : tab === 'data' ? (
         <DataPreviewView target={dataTarget} />
       ) : tab === 'lineage' ? (
-        <LineageView navTarget={lineageTarget} onOpenPlan={() => goTab('optimize')} onOpenTests={() => goTab('tests')} onOpenWorkflow={openWorkflow} />
+        // Add a check is a REAL hand-off, not a link to a page: a measure goes straight into the New check
+        // drawer on the Tests page with its measure already filled in, through the same test seed the model
+        // tree uses. Anything that is not a measure lands on Tests with its context intact, because a check
+        // runs one measure and a column has to be asked about rather than guessed at.
+        <LineageView navTarget={lineageTarget} onOpenPlan={() => goTab('optimize')} onOpenTests={() => goTab('tests')}
+          // The seed is explicit because a TABLE ref (a column with no measure to pick, offering its table's row
+          // count instead) is not one seedForTarget mints on its own, and without it the hand-off reached the
+          // Tests page with the context dropped. One line, on the line this hand-off already owned.
+          onAddCheck={(ref) => goTab('tests', undefined, ref, undefined, { kind: 'test', value: ref })}
+          onRename={(ref) => goTab('modelhome', undefined, ref)} onOpenWorkflow={openWorkflow} />
       ) : tab === 'search' ? (
-        <SearchView navQuery={searchTarget} onOpenPlan={() => goTab('optimize')} />
+        <SearchView sessionId={session.sessionId} navQuery={searchTarget} onNavConsumed={consumeRouteSeed} onOpenPlan={() => goTab('optimize')} />
       ) : tab === 'docs' ? (
         <DocumentationView />
       ) : tab === 'deploy' ? (
-        <DeployView key="deploy" seed={compareSeed} dataAgent={<DataAgentView />} restoreTarget={deployRestoreTarget} onRestoreConsumed={() => setDeployRestoreTarget(null)} publishNonce={publishNonce} />
+        <DeployView key="deploy" seed={compareSeed} dataAgent={<DataAgentView />} restoreTarget={deployRestoreTarget} onRestoreConsumed={() => setDeployRestoreTarget(null)} publishNonce={publishNonce} onPublishConsumed={consumeRouteSeed} />
       ) : tab === 'tests' ? (
         null
       ) : tab === 'permissions' ? (
-        <PermissionsView focusApproval={permissionTarget} onApprovalChanged={() => { void refreshPendingApprovals(); }} />
+        <PermissionsView focusApproval={permissionTarget} onFocusConsumed={consumeRouteSeed} onPolicyChanged={setAgentPolicy} onApprovalChanged={() => { void refreshPendingApprovals(); }} />
       ) : tab === 'dataagent' ? (
         // Distinct key + no seed: the legacy route must land ON the Data Agent. A shared fiber would
         // ignore initialMode on re-render, and a lingering compare seed would flip the mode to push.
         <DeployView key="dataagent" dataAgent={<DataAgentView />} initialMode="advanced" initialAdvanced="dataagent" />
       ) : tab === 'daxlab' ? (
-        <DaxLabView />
+        <DaxLabView navTarget={daxTarget} onNavConsumed={consumeRouteSeed} onOpenTests={() => goTab('tests')} />
       ) : (
         // Explicit, safe fallback: every valid tab is enumerated above and goTab rejects unknown ids, so this is
         // unreachable in practice — but if it ever fires it lands on the first-of-lifecycle tab, never a random
         // mid-list one (the old `: <DaxLabView/>` catch-all was itself the "lands on DAX Lab" skew bug).
-        FALLBACK_TAB === 'diagram' ? <DiagramView addTables={diagramAdd} /> : null
+        FALLBACK_TAB === 'diagram' ? <DiagramView addTables={diagramAdd} focusRelationship={diagramRelationship} onNavConsumed={consumeRouteSeed} /> : null
       )}
       </>
+      </ToolErrorBoundary>
     </Shell>
     </StorageTabStateProvider>
     </DaxLabTabStateProvider>
@@ -557,66 +755,173 @@ function BrandMark() {
   );
 }
 
-function MoreStudioMenu({ tab, onTab, onGroup }: { tab: StudioTab; onTab: (t: string) => void; onGroup: (gid: string) => void }) {
+// The header's gear is gone (Kane, 2026-09-14). It sat beside Connections, named nothing in words, and was the
+// only header way into assistant permissions. Permissions has a named row in the Your assistant menu now, beside
+// the rest of the assistant's controls, so the glyph and its button went with it.
+
+function ToolChooser({ tab, locked, onTab }: { tab: StudioTab; locked: Set<string>; onTab: (t: string) => void }) {
   const [open, setOpen] = useState(false);
-  const activeGroup = TAB_TO_GROUP[tab];
-  const standaloneActive = tab === 'knowledge' || tab === 'workflows' || tab === 'history';
+  const wrap = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (!el?.closest?.('.studio-more')) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    const closeOutside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    const closeEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', closeOutside); document.addEventListener('keydown', closeEscape);
+    return () => { document.removeEventListener('mousedown', closeOutside); document.removeEventListener('keydown', closeEscape); };
   }, [open]);
-  return (
-    <div className="studio-more relative">
-      <button type="button" aria-label="More Studio pages" aria-expanded={open} aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
-        className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold"
-        style={standaloneActive || open
-          ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-          : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>More</button>
-      {open && (
-        <div role="menu" className="absolute right-0 top-full mt-1 z-50 min-w-40 rounded-md py-1"
-          style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
-          {TAB_GROUPS.map((g) => (
-            <button key={g.id} role="menuitem" type="button"
-              onClick={() => { onGroup(g.id); setOpen(false); }}
-              className="block w-full text-left text-[12.5px] px-3 py-1.5"
-              style={g.id === activeGroup ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-fg)' }}>
-              {g.label}
-            </button>
-          ))}
-          <div className="my-1" style={{ borderTop: '1px solid var(--sem-border)' }} />
-          {([['knowledge', 'Primer'], ['workflows', 'Workflows'], ['history', 'Edits']] as const).map(([id, label]) => (
-            <button key={id} role="menuitem" type="button"
-              onClick={() => { onTab(id); setOpen(false); }}
-              className="block w-full text-left text-[12.5px] px-3 py-1.5"
-              style={tab === id ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-fg)' }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <div ref={wrap} className="tool-chooser relative">
+    <button type="button" className="studio-header-action" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}>Find a tool</button>
+    {open && <div role="menu" aria-label="Find a tool" className="tool-chooser-menu absolute right-0 top-full z-50 mt-1">
+      {TAB_GROUPS.map((group) => <section key={group.id} aria-label={group.label}>
+        <div className="tool-chooser-heading">{group.label}</div>
+        {/* The row carries a STABLE TOOL ID. It always did, and it now matters twice over: a Pro pill changes
+            the row's text, so anything selecting these by their words breaks the moment a tool is locked. */}
+        {group.tabs.map((tool) => <button key={tool.id} role="menuitem" type="button" data-tool={tool.id}
+          aria-current={tool.id === tab || ((tab === 'compare' || tab === 'dataagent') && tool.id === 'deploy') ? 'page' : undefined}
+          onClick={() => { onTab(tool.id); setOpen(false); }}>{tool.label}<ProBadge show={locked.has(tool.id)} /></button>)}
+      </section>)}
+    </div>}
+  </div>;
 }
 
-function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pendingApprovalCount, firstPendingApprovalId, onConnections, onJumpToCompare, children }: { tab: StudioTab; onTab: (t: string, approvalId?: string) => void; onGroup: (gid: string) => void; onShortcuts: () => void; unseen: Set<string>; historyCount: number; pendingApprovalCount: number; firstPendingApprovalId?: string; onConnections: () => void; onJumpToCompare: () => void; children: React.ReactNode }) {
-  // Edit History and Workflows are standalone (no intent group) — a different axis from the five task intents
-  // (a session-wide record / a cross-cutting playbook library). When either is active NO group is highlighted and the
-  // secondary tab-row is hidden — they're full-bleed surfaces, not sub-tabs of anything.
-  // Group memory (return to the tab you last used in a group) lives in App, shared with the keyboard jumps.
-  const isHistory = tab === 'history';
-  const isStandalone = isHistory || tab === 'workflows' || tab === 'knowledge';
-  const activeGroup = isStandalone ? null : (TAB_TO_GROUP[tab] ?? TAB_GROUPS[0].id);
-  const group = TAB_GROUPS.find((g) => g.id === activeGroup) ?? TAB_GROUPS[0];
+function MoreStudioMenu({ activeArea, onGroup, tab, onTab, onConnections }: {
+  activeArea: Area | null; onGroup: (gid: string) => void; tab: StudioTab;
+  onTab: (tab: string) => void; onConnections: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); wrap.current?.querySelector('button')?.focus(); } };
+    window.addEventListener('mousedown', outside); window.addEventListener('keydown', escape);
+    return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', escape); };
+  }, [open]);
+  const go = (next: string) => { onTab(next); setOpen(false); };
+  // The overflow menu holds its own copy of Find a tool, so it marks the locked tools the same way.
+  const lockedTools = useLockedTools();
+  return <div ref={wrap} className="studio-more relative">
+    <button type="button" aria-label="More Studio tools" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}
+      className="studio-header-action">More</button>
+    {open && <div role="menu" className="compact-menu absolute right-0 top-full z-50 mt-1">
+      <div className="compact-areas">{TAB_GROUPS.map((group) => <button key={group.id} role="menuitem" type="button" aria-current={activeArea === group.id ? 'page' : undefined}
+        onClick={() => { onGroup(group.id); setOpen(false); }}>{group.label}</button>)}</div>
+      <ToolChooser tab={tab} locked={lockedTools} onTab={go} />
+      {/* No Settings row: this menu is where the header utilities fold, and the gear is not one of them any more.
+          Assistant permissions live in the Your assistant menu, which is on the header at every width. */}
+      <button role="menuitem" type="button" onClick={() => { onConnections(); setOpen(false); }}>Connections</button>
+    </div>}
+  </div>;
+}
 
-  // Cross-tab busy: the converted surfaces (stages 1-2) keep their ops running while hidden. Surface that on the tab
-  // bar so the originating tab (or its group, when that group is closed) shows a subtle spinner. Hooks are called
-  // unconditionally — Shell always renders inside all three holders. The mapping mirrors the `unseen` bubbling.
+// Header folding is MEASURED, not guessed. The old rule folded the utilities at a fixed 1500px container width,
+// so on a 1440 window Find a tool and Connections were hidden behind More while the header still had
+// room to spare. A ResizeObserver works out what actually fails to fit and writes data-fold on the header;
+// styles.css keys the cumulative levels off that attribute. Order is contract v1.3 section 2: 1 = the model
+// identity detail, 2 = the utilities into More, 3 = the run chip shortens, 4 = the five areas into the
+// compact menu, and 4 is reachable only on a genuinely narrow header. Publish and Help never fold.
+// The stage as a person writes it. The registry stores canonical ids, which read like a typo in a sentence
+// ("to Contoso Sales · uat"). A label outside the standard four is somebody's own word, so it prints as typed.
+// This is display only: the permission sentence is still keyed off the raw label.
+
+const FOLD_AREAS_BELOW = 720;   // the five areas fold only below this header width
+const FOLD_CHIP_WIDTH = 95;     // must match the level-3 .studio-run-chip max-width in styles.css
+
+// One measuring pass, taken while data-fold="measure" has every part visible. Returns the shallowest level whose
+// cumulative saving covers the overflow, so the header never folds more than it has to.
+function measureHeaderFold(header: HTMLElement): number {
+  const style = getComputedStyle(header);
+  const gap = parseFloat(style.columnGap) || 0;
+  const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const available = header.clientWidth - padding;
+  if (available <= 0) return 0;
+  const width = (el: Element | null | undefined) => (el instanceof HTMLElement ? el.offsetWidth : 0);
+  const find = (selector: string) => header.querySelector(selector);
+  const brand = header.firstElementChild;
+  const identity = find('.studio-identity');
+  const groups = find('.studio-groups');
+  const actions = find('.studio-actions');
+  const utilities = find('.studio-utilities');
+  const more = find('.studio-more');
+  const chip = find('.studio-run-chip');
+  const identityLine = identity?.firstElementChild;
+  const identityWidth = width(identity);
+  const moreWidth = width(more);
+  // What the header needs with nothing folded. More is measured here but is not shown at level 0, so take it
+  // and its gap back out of the actions row.
+  // The areas nav carries its own left margin (ml-2); leaving it out under-counted the row by 8px, which the
+  // shrinkable nav then absorbed, so Workflows touched the run chip at 1280.
+  const groupsMargin = groups instanceof HTMLElement ? parseFloat(getComputedStyle(groups).marginLeft) || 0 : 0;
+  const needed = width(brand) + identityWidth + groupsMargin + (groups ? groups.scrollWidth : 0)
+    + Math.max(0, (actions ? actions.scrollWidth : 0) - (moreWidth ? moreWidth + gap : 0)) + gap * 3;
+  const overflow = needed - available;
+  if (overflow <= 0) return 0;
+
+  // Cumulative savings per level, in the contract's fold order.
+  const identityFolded = identity
+    ? Math.min(identityWidth, Math.max(0, (identityLine ? identityLine.scrollWidth : 0) - width(find('.studio-model-identity'))))
+    : 0;
+  const saving: number[] = [0];
+  saving[1] = identityWidth - identityFolded;
+  saving[2] = saving[1] + Math.max(0, width(utilities) - moreWidth);
+  saving[3] = saving[2] + (chip ? Math.max(0, width(chip) - FOLD_CHIP_WIDTH) : 0);
+  saving[4] = saving[3] + (groups ? width(groups) + gap : 0) + (identityFolded ? identityFolded + gap : 0);
+  // The last fold is decided by FIT, not by a number. The old rule allowed level 4 only under FOLD_AREAS_BELOW,
+  // so a header 769 CSS px wide stopped at level 3 while level 3's saving still did not cover the overflow. The
+  // nav then went on painting its buttons outside its own shrunken box: measured 2026-09-14 at 1000px and 130%
+  // Studio zoom (which IS a 769px header), Workflows spanned x=482.7 to 581.8 while the actions started at
+  // x=479.6, so clicking the middle of Workflows opened More. FOLD_AREAS_BELOW stays as the early shortcut: a
+  // header that narrow, and already overflowing, has no shallower fit to find.
+  if (header.clientWidth < FOLD_AREAS_BELOW) return 4;
+  for (let level = 1; level <= 3; level++) if (saving[level] >= overflow) return level;
+  return 4;
+}
+
+function useHeaderFold(ref: React.RefObject<HTMLElement | null>, signature: string) {
+  useLayoutEffect(() => {
+    const header = ref.current;
+    if (!header) return;
+    let frame = 0;
+    let lastWidth = -1;
+    const apply = () => {
+      frame = 0;
+      const el = ref.current;
+      if (!el) return;
+      lastWidth = el.clientWidth;
+      // Measure and apply inside one task: nothing paints in between, so this reads as a single state change
+      // rather than a flash of the unfolded header.
+      el.dataset.fold = 'measure';
+      el.dataset.fold = String(measureHeaderFold(el));
+    };
+    apply();
+    const observer = new ResizeObserver(() => {
+      // Folding changes the header's HEIGHT, which fires this observer again. Only a width change is news, so
+      // this cannot loop, and one rAF per resize frame keeps it to a single measure per frame.
+      if (!ref.current || ref.current.clientWidth === lastWidth || frame) return;
+      frame = requestAnimationFrame(apply);
+    });
+    observer.observe(header);
+    return () => { if (frame) cancelAnimationFrame(frame); observer.disconnect(); };
+  }, [ref, signature]);
+}
+
+function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, historyCount, pendingApprovalCount, firstPendingApprovalId,
+  onConnections, onJumpToCompare, activeRun, liveRunCount, onWorkflowRuns, onPublish, agentPolicy, hasPlan, children }: {
+  route: Route; onTab: (t: string, approvalId?: string, target?: string) => void; onGroup: (gid: string) => void;
+  onDone: () => void; onShortcuts: () => void; unseen: Set<string>; historyCount: number; pendingApprovalCount: number;
+  firstPendingApprovalId?: string; onConnections: (section?: HubView) => void; onJumpToCompare: () => void;
+  activeRun: WorkflowRunView | null; liveRunCount: number; onWorkflowRuns: () => void; onPublish: () => void;
+  agentPolicy: AgentPolicy | null | undefined; hasPlan: boolean; children: React.ReactNode;
+}) {
+  const tab = route.tool;
+  const activeGroup = route.destination === 'utility' ? null : route.destination;
+  const group = activeGroup ? TAB_GROUPS.find((item) => item.id === activeGroup) : undefined;
+  const { session: shellSession, context, contextResolved } = useConnection();
+  // Set by the Published page's own comparison against the destination. Null until something has actually tried.
+  const unreachable = usePublishReach();
+  // The tools this plan does not reach. The row keeps every one of them in its place and marks it; the
+  // pill is a label, and the gate is the render boundary in App above.
+  const lockedTools = useLockedTools();
   const lineageBusy = useLineageReportsBusy();
   const daxLabBusy = useDaxLabBusy();
   const storageBusy = useStorageBusy();
@@ -627,140 +932,389 @@ function Shell({ tab, onTab, onGroup, onShortcuts, unseen, historyCount, pending
     if (storageBusy) surfaces.push('stats');
     return busyAffordance(surfaces, tab, activeGroup, TAB_TO_GROUP);
   }, [lineageBusy, daxLabBusy, storageBusy, tab, activeGroup]);
+  const source = shellSession?.source ? shellSession.source.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : undefined;
+  const publishing = context?.publishing;
+  const publishTarget = publishing?.available ? (publishing.modelName || publishing.database || 'linked model') : null;
+  const publishStageLabel = publishing?.effectiveLabel || publishing?.label;
+  const publishStage = publishStageLabel ? publishStageName(publishStageLabel)
+    : (publishing?.unlabelled ? 'production' : 'destination needed');
+  const permissionLine = agentPolicy ? publishPermissionDescription(agentPolicy, publishing?.effectiveLabel || publishing?.label, !!publishTarget)
+    : agentPolicy === null ? 'assistant permissions unavailable' : 'checking your assistant permissions';
+  const publishLine = publishTarget ? `to ${publishTarget} · ${publishStage}` : 'no publish target · choose before publishing';
+  const permissionDetail = agentPolicy ? `${agentPolicy.preset}: ${permissionPresetDescription(agentPolicy)}` : permissionLine;
+  const toolLabel = tab === 'permissions' ? 'Assistant permissions' : tab === 'dataagent' ? 'Data Agent' : tab === 'compare' ? 'Published' : tab === 'modelhome' ? 'Overview'
+    : TAB_GROUPS.flatMap((item) => item.tabs).find((item) => item.id === tab)?.label ?? tab;
+  const isSettings = route.destination === 'utility';
+  const areaLabel = isSettings ? 'Settings' : group?.label ?? '';
+  // The second row is the SAME row on every page. It shows the area's segment strip when the open tool is one of
+  // that area's segments, and the tool's own name when it is not: a utility page (Assistant permissions) or an
+  // area with a single tool (Calculations, Workflows).
+  //
+  // It used to drop the strip the moment a route carried an object, and that is what stranded Kane on the Yoga on
+  // 2026-09-15: "went to data preview from overview and no way back, it hides all navigation buttons under model".
+  // Overview > Preview data lands on Data WITH the table in hand, so the row read "Model › Access Assignment ›
+  // Data" with no segments at all. Back had been retired the day before, and the Model button restored the
+  // remembered page in that area, which was the very page he was on. An object does not change WHICH tools an area
+  // has, so it gets no say in whether the strip is shown.
+  const showStrip = !!group && group.tabs.length > 1;
+  // The object itself is NOT on this row at all, in any form (Kane, 2026-09-15). The page already names what it
+  // was opened with — Data heads itself "Preview · Promotion", DAX Lab shows the measure in its wells — so a copy
+  // of that on the row is the same fact twice. A chip with a way to clear it was tried here and dropped: the row
+  // can only clear the route's object, while the page keeps its own selection, so the control would have said it
+  // did something it had not done. The row says where you are; the page says what you are looking at.
+  // Escape is the keyboard Done, and only on a Settings page. Two guards, both deliberate. Typing targets are left
+  // alone so Escape never eats a field's own cancel. And if ANY menu or dialog is mounted — the assistant menu, the
+  // page notes, the Connections hub, the shortcuts sheet — Escape belongs to that thing, not to the page behind it;
+  // this listener is on the bubble phase and checks defaultPrevented, so a handler that claims the key still wins.
+  const doneRef = useRef(onDone); doneRef.current = onDone;
+  useEffect(() => {
+    if (!isSettings) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+      if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
+      if (document.querySelector('[role="menu"], [role="dialog"]')) return;
+      event.preventDefault();
+      doneRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isSettings]);
+  const { zoom, stepZoom, toast } = useStudioZoom();
+  // Everything in the header whose text changes its width. A ResizeObserver only sees the header resize, so the
+  // fold has to be re-measured when the content inside it changes too.
+  const headerRef = useRef<HTMLElement | null>(null);
+  const headerSignature = [shellSession?.modelName, source, publishLine, permissionLine,
+    activeRun ? `${activeRun.title || activeRun.workflow}|${activeRun.stepIndex}|${activeRun.totalSteps}|${liveRunCount}` : '',
+    pendingApprovalCount, historyCount].join('|');
+  useHeaderFold(headerRef, headerSignature);
 
-  return (
-    <div className="h-full flex flex-col">
-      {/* primary row — analyst intents (left) + the standalone cross-cutting affordances (right) */}
-      <header className="studio-chrome flex items-center gap-3 px-4 py-2 border-b min-w-0" style={{ borderColor: 'var(--sem-border)' }}>
-        <BrandMark />
-        <div className="studio-title font-semibold tracking-tight">Semanticus Studio</div>
-        <nav className="studio-groups flex items-center gap-1 ml-3 min-w-0">
-          {TAB_GROUPS.map((g, i) => (
-            <GroupTab key={g.id} active={g.id === activeGroup} title={`${g.label} (Ctrl+Shift+${i + 1})`}
-              unseen={g.id !== activeGroup && g.tabs.some((t) => unseen.has(t.id))}
-              busy={busy.groups.has(g.id)}
-              onClick={() => onGroup(g.id)}>{g.label}</GroupTab>
-          ))}
-        </nav>
-        <div className="ml-auto flex items-center gap-3 shrink-0">
-          <div className="studio-standalone flex items-center gap-3">
-            <KnowledgeTab active={tab === 'knowledge'} onClick={() => onTab('knowledge')} />
-            <WorkflowsTab active={tab === 'workflows'} onClick={() => onTab('workflows')} />
-            <HistoryTab active={isHistory} count={historyCount} onClick={() => onTab('history')} />
-          </div>
-          <MoreStudioMenu tab={tab} onTab={onTab} onGroup={onGroup} />
-          <LicenseButton />
-          <span className="w-px h-5" style={{ background: 'var(--sem-border)' }} />
-          <HelpButton tab={tab} onGo={(t) => onTab(t as StudioTab)} onShortcuts={onShortcuts} />
-          <LiveActivity onOpen={onTab} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={firstPendingApprovalId} />
+  // CSS zoom on the app root scales every row, control and page together, so nothing has to be re-laid out for a
+  // text size. It is applied here rather than on <body> because the harness and the extension host both own that.
+  return <div className="studio-root h-full flex flex-col" style={{ zoom: zoom === ZOOM_DEFAULT ? undefined : `${zoom}%` }}>
+    <header ref={headerRef} data-fold="0" className="studio-chrome flex items-center gap-2 px-3 border-b min-w-0" style={{ borderColor: 'var(--sem-border)' }}>
+      <BrandMark />
+      <div className="studio-identity min-w-0">
+        <div className="font-semibold tracking-tight">Semanticus<span className="studio-model-identity">{shellSession?.modelName ? ` · ${shellSession.modelName}` : ''}</span></div>
+        {source && <div className="truncate" title={shellSession?.source}>{source}</div>}
+      </div>
+      <nav className="studio-groups flex items-center gap-0.5 ml-2 min-w-0" aria-label="Studio areas">
+        {TAB_GROUPS.map((item, index) => <GroupTab key={item.id} active={item.id === activeGroup}
+          title={`${item.label} (Ctrl+Shift+${index + 1})`} unseen={item.id !== activeGroup && item.tabs.some((tool) => unseen.has(tool.id))}
+          busy={busy.groups.has(item.id)} onClick={() => onGroup(item.id)}>{item.label}</GroupTab>)}
+      </nav>
+      <div className="studio-actions ml-auto flex items-center gap-2 shrink-0">
+        <MoreStudioMenu activeArea={activeGroup} onGroup={onGroup} tab={tab} onTab={onTab} onConnections={() => onConnections('open')} />
+        {activeRun && <button type="button" className="studio-run-chip" onClick={onWorkflowRuns} title="Continue in Workflows Runs">
+          {/* The label is its own element so a shortened chip can end in an ellipsis. Left as loose text it was an
+              anonymous flex item, which centres and gets cut at BOTH ends ("d a measure · step"). */}
+          <span /><span className="studio-run-chip-label">{activeRun.title || activeRun.workflow} · step {Math.min(activeRun.stepIndex + 1, activeRun.totalSteps)} of {activeRun.totalSteps}{liveRunCount > 1 ? ` · ${liveRunCount} live` : ''}</span>
+        </button>}
+        <div className="studio-utilities">
+          <ToolChooser tab={tab} locked={lockedTools} onTab={onTab} />
+          <button type="button" className="studio-header-action" onClick={() => onConnections('open')}>Connections</button>
         </div>
-      </header>
-      {/* secondary row — the active group's tabs (hidden for the standalone Edit History / Workflows surfaces) */}
-      {!isStandalone && (
-        <div className="flex items-center gap-1 px-4 py-1.5 border-b" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-          {group.tabs.map((t) => (
-            <Tab key={t.id} active={tab === t.id} unseen={unseen.has(t.id)} busy={busy.tabs.has(t.id)} onClick={() => onTab(t.id)}>
-              {t.label}
-              {t.id === 'permissions' && pendingApprovalCount > 0 && (
-                <span className="ml-1 inline-flex min-w-4 h-4 px-1 items-center justify-center rounded-full text-[9px] leading-none font-bold tnum"
-                  style={{ background: 'var(--sem-warn)', color: 'var(--sem-on-warn)' }} title={`${pendingApprovalCount} permission${pendingApprovalCount === 1 ? '' : 's'} waiting`}>
-                  {pendingApprovalCount > 99 ? '99+' : pendingApprovalCount}
-                </span>
-              )}
-            </Tab>
-          ))}
+        <HelpButton tab={tab} onGo={(next) => onTab(next as StudioTab)} onShortcuts={onShortcuts} onTextSize={stepZoom} />
+        <LiveActivity onOpen={onTab} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={firstPendingApprovalId} />
+        <div className="studio-publish-block">
+          {/* The one publish action in the app. The Published page no longer carries its own button; pressing this
+              while you are already on Published opens the review in place through the publish route seed. */}
+          {/* Contract v1.5: the two publish facts are this tooltip and the bottom bar's Publish to slot. They used
+              to hang under the row as a visible caption, which cost the header 19px on every page for a fact that
+              never changes while you work. permissionDetail stays the deep version, one click away on the row. */}
+          <button type="button" data-testid="publish-button" className="studio-publish" disabled={!contextResolved || !!unreachable}
+            title={unreachable ? `Cannot reach ${publishTarget || 'the publish destination'}. The comparison on Published could not read it, so there is nothing to publish against.`
+              : contextResolved ? `${publishLine}. ${permissionLine}. ${permissionDetail}` : 'Checking your connections'} onClick={onPublish}>Publish…</button>
         </div>
-      )}
-      <PageGuide tab={tab} />
-      <main className="flex-1 overflow-auto min-h-0">{children}</main>
-      {/* Context bar — a FOOTER pinned to the bottom of the Studio panel (VS Code convention: ambient state lives at the
-          bottom). flex:none so long tab content scrolls inside <main> above and never pushes it off screen. It replaces
-          the old flat "name · N measures · N tables" header line: it separates what you're EDITING from what you're
-          TESTING and PUBLISHING and flags when staged edits are absent from the queried model. Identity segments open
-          Connections; Review changes alone opens the seeded diff. */}
-      <ContextBar onConnections={onConnections} onReview={onJumpToCompare} />
+      </div>
+    </header>
+    {/* Row two, the same 40px on every page: the area name, then either the area's segment strip or the name of the
+        page you are on, then the page notes behind ⓘ. This replaces the old breadcrumb row AND the always-open page
+        guide, which together cost 93px above every tool.
+        There is no Back here any more (Kane, 2026-09-14). Settings is the one page with no segment of its own, so it
+        is the one page that gets a way out: Done, at the right-hand end, ahead of the ⓘ. */}
+    <div className="studio-arearow">
+      <span className="studio-arearow-area">{areaLabel} ›</span>
+      {showStrip
+        ? <AreaTabs group={group!} tab={tab} unseen={unseen} busyTabs={busy.tabs} locked={lockedTools} historyCount={historyCount} onTab={onTab} />
+        : <strong className="studio-arearow-tool">{toolLabel}</strong>}
+      {/* The right-hand end of the row, as ONE group. PageNotesButton carries its own margin-left:auto, so a second
+          auto margin on Done would split the free space between them and leave Done stranded in mid-row, which is
+          what it did on the first build. Inside a group sized to its content there is no free space left for the
+          notes button to claim, so the pair sits flush right with Done ahead of the ⓘ. */}
+      <div className="ml-auto flex items-center gap-2">
+        {isSettings && <button type="button" data-testid="settings-done" className="sem-btn sem-btn-sm" onClick={onDone}>Done</button>}
+        <PageNotesButton tab={tab} />
+      </div>
     </div>
-  );
+    {/* pb-4: the scroll region ends exactly where the context bar starts, so without it the last control on a page sits
+        flush against the bar at the end of the scroll. One rule here rather than per-page padding. */}
+    <main className="flex-1 overflow-auto min-h-0 pb-4">
+      {/* M23, kept and strengthened: the segment strip used to sticky-pin to the top of this scroll region. It now
+          sits in the chrome above it, so it cannot scroll away at all, on any page, at any scroll position. */}
+      {children}
+    </main>
+    <ContextBar onConnections={onConnections} onReview={onJumpToCompare} />
+    {toast && <div className="studio-zoom-toast" role="status">{toast}</div>}
+  </div>;
 }
 
-// Standalone, always-visible Edit-History affordance — pinned far-right, separate from the intent groups
-// because the co-authoring timeline is a session-wide record (a different axis from "what you do").
-// The live count badge makes accumulating edits an ambient signal of co-authoring without opening the tab.
-function HistoryTab({ active, count, onClick }: { active: boolean; count: number; onClick: () => void }) {
-  return (
-    <button onClick={onClick} title="Edit History: every change this session, yours and the AI Assistant's, on one undoable timeline"
-      className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-      style={active
-        ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-        : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3 2" />
-      </svg>
-      <span>Edits</span>
-      {count > 0 && (
-        <span className="text-[10px] tnum rounded-full px-1.5 text-center" style={{ minWidth: 16, lineHeight: '15px',
-          ...(active ? { background: 'rgba(6,33,15,0.20)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)' }) }}>
-          {count}
-        </span>
+// ---- Studio text size ---------------------------------------------------------------------------
+// Ctrl (or Cmd) and the wheel anywhere in Studio, Ctrl+0 to reset, and Help > Text size, all driving one level.
+// The level is a percentage applied as CSS zoom on the app root, so a bigger Studio is a bigger EVERYTHING and no
+// page has to re-lay itself out. The host remembers it per workspace.
+const ZOOM_MIN = 80;
+const ZOOM_MAX = 130;
+const ZOOM_STEP = 10;
+const ZOOM_DEFAULT = 100;
+const clampZoom = (value: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
+
+function useStudioZoom() {
+  const [zoom, setZoomState] = useState(ZOOM_DEFAULT);
+  const [toast, setToast] = useState<string | null>(null);
+  const level = useRef(ZOOM_DEFAULT);
+  const timer = useRef(0);
+  const setZoom = useCallback((value: number, announce = true) => {
+    const next = clampZoom(value);
+    // Nothing changed, so nothing is announced. Ctrl+0 at 100% must not flash a toast saying so.
+    if (next === level.current) return;
+    level.current = next;
+    setZoomState(next);
+    postStudioZoom(next);
+    if (!announce) return;
+    setToast(`Studio at ${next}%`);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setToast(null), 1000);
+  }, []);
+  const stepZoom = useCallback((direction: 'smaller' | 'larger' | 'reset') => {
+    if (direction === 'reset') setZoom(ZOOM_DEFAULT);
+    else setZoom(level.current + (direction === 'larger' ? ZOOM_STEP : -ZOOM_STEP));
+  }, [setZoom]);
+  useEffect(() => onStudioZoom((value) => { const next = clampZoom(value); level.current = next; setZoomState(next); }), []);
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      // A canvas zooms ITSELF on Ctrl+wheel and always has: React Flow's own handler, or anything that marks
+      // itself data-own-zoom. Leaving the event alone there is the whole reason this listener is not on <body>
+      // with a blanket preventDefault.
+      // `canvas` is the FLOOR, added 2026-09-14. The ECharts lineage graph carried neither marker, so a
+      // Ctrl+wheel on the part of its canvas that ZRender did not consume resized the whole of Studio: measured
+      // at 1000x768, x=70,y=450 took it to 110% while x=700,y=400 on the same canvas did not. Marking that
+      // container is the fix; matching the element means the next chart cannot lose its own gesture by being
+      // forgotten here. The cost is that Ctrl+wheel over a chart that does NOT zoom itself now does nothing
+      // rather than resizing Studio, which is the safer of the two surprises.
+      const target = e.target as Element | null;
+      if (target?.closest?.('.react-flow, [data-own-zoom], canvas')) return;
+      e.preventDefault();
+      setZoom(level.current + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+    };
+    // passive: false, or the browser refuses the preventDefault and the page zooms underneath Studio instead.
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
+  }, [setZoom]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === '0') { e.preventDefault(); setZoom(ZOOM_DEFAULT); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setZoom]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return { zoom, setZoom, stepZoom, toast };
+}
+
+function AreaTabs({ group, tab, unseen, busyTabs, locked, historyCount, onTab }: {
+  group: (typeof TAB_GROUPS)[number]; tab: StudioTab; unseen: Set<string>; busyTabs: Set<string>;
+  locked: Set<string>; historyCount: number; onTab: (tool: string) => void;
+}) {
+  const visibleTab = tab === 'compare' || tab === 'dataagent' ? 'deploy' : tab;
+  if (group.id === 'model') {
+    const primary = group.tabs.filter((t) => MODEL_PRIMARY_TAB_IDS.includes(t.id));
+    const create = group.tabs.filter((t) => MODEL_CREATE_TAB_IDS.includes(t.id));
+    const listed = (id: StudioTab) => MODEL_PRIMARY_TAB_IDS.includes(id) || MODEL_CREATE_TAB_IDS.includes(id);
+    const openElsewhere = group.tabs.find((t) => t.id === visibleTab && !listed(t.id));
+    return <nav className="area-tabs" aria-label={`${group.label} tools`}>
+      {primary.map((tool) => <Tab key={tool.id} id={tool.id} active={visibleTab === tool.id} unseen={unseen.has(tool.id)} busy={busyTabs.has(tool.id)} onClick={() => onTab(tool.id)}>
+        {tool.label}
+      </Tab>)}
+      <CreateTab items={create} activeTool={visibleTab} unseen={unseen} busyTabs={busyTabs} locked={locked} onTab={onTab} />
+      {openElsewhere && <Tab key={openElsewhere.id} id={openElsewhere.id} active unseen={false} busy={busyTabs.has(openElsewhere.id)} onClick={() => onTab(openElsewhere.id)}>
+        {openElsewhere.label}<ProBadge show={locked.has(openElsewhere.id)} />
+      </Tab>}
+    </nav>;
+  }
+  return <nav className="area-tabs" aria-label={`${group.label} tools`}>
+    {group.tabs.map((tool) => <Tab key={tool.id} id={tool.id} active={visibleTab === tool.id} unseen={unseen.has(tool.id)} busy={busyTabs.has(tool.id)} onClick={() => onTab(tool.id)}>
+      {tool.label}
+      <ProBadge show={locked.has(tool.id)} />
+      {tool.id === 'history' && historyCount > 0 && ' '}
+      {tool.id === 'history' && historyCount > 0 && (
+        <span className="ml-1.5 text-[9.5px] tnum font-semibold px-1.5 rounded-full" title={`${historyCount} edit${historyCount === 1 ? '' : 's'} on this model`}
+          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>{historyCount}</span>
       )}
-    </button>
-  );
+    </Tab>)}
+  </nav>;
 }
 
-// Standalone Workflows affordance — pinned far-right beside Edit History, separate from the Understand→Change→Improve→Prove→Ship
-// lifecycle groups because a workflow library is a cross-cutting concern (playbooks that orchestrate the lifecycle),
-// not a stage within it. Same button language as Edit History so the two standalone surfaces read as a pair.
-function WorkflowsTab({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} title="Workflows: follow saved steps for a modelling task, yourself or with your AI Assistant."
-      className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-      style={active
-        ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-        : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4" cy="6" r="1.6" /><circle cx="4" cy="12" r="1.6" /><circle cx="4" cy="18" r="1.6" />
-      </svg>
-      <span>Workflows</span>
+// The Model area's "Create" segment: a dropdown standing in for five modelling tools (Model Spec, Advanced
+// Modelling, Power Query, Docs, Model notes). While one of them is the open tool, the segment itself reads as
+// active and renames to "Create: <tool>" so the breadcrumb and this segment always agree on where you are.
+// Keyboard: Enter/Space (or ArrowDown) opens onto the current tool, arrow keys move the highlight, Enter/Space
+// picks it, Escape closes and returns focus to the segment button — the same contract as the header's menus.
+//
+// THE MENU IS RENDERED OUTSIDE THE STRIP. .area-tabs is overflow-x: auto, because the segment strip sits on a
+// fixed-height row and must shrink rather than wrap. An absolutely positioned menu INSIDE that scroll container
+// cost two things at once: it made the strip scrollable vertically as well as sideways, and focusing the
+// highlighted item made the browser scroll the strip to reveal it. Kane hit both on his first click on the
+// Yoga: the row was left showing one scrolled "Docs" segment with a scrollbar on two sides. So the menu is
+// portalled to the Studio root and placed by the same zoom-corrected helper the tool row menu uses, and every
+// focus() inside it passes preventScroll, so no container can move under a focused item ever again.
+function CreateTab({ items, activeTool, unseen, busyTabs, locked, onTab }: {
+  items: { id: StudioTab; label: string }[]; activeTool: StudioTab; unseen: Set<string>; busyTabs: Set<string>;
+  locked: Set<string>; onTab: (tool: string) => void;
+}) {
+  const activeItem = items.find((it) => it.id === activeTool);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const wrap = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ left: number; top: number } | null>(null);
+  // The host is resolved at open time rather than at module load: the Studio root exists by then, and a portal
+  // target that is missing would silently put the menu on the body in a different coordinate space.
+  const host = open ? (buttonRef.current?.closest('.studio-root') as HTMLElement | null) ?? document.body : null;
+  useEffect(() => {
+    if (!open) return;
+    // The menu is no longer inside `wrap`, so a click on one of its rows would read as "outside" and close it
+    // before the click landed. Both boxes count as inside now.
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (wrap.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', outside);
+    return () => document.removeEventListener('mousedown', outside);
+  }, [open]);
+  useLayoutEffect(() => {
+    if (!open) { setBox(null); return; }
+    const placed = anchorUnder(buttonRef.current, menuRef.current, 'start');
+    if (placed) setBox(placed);
+  }, [open, items.length]);
+  useEffect(() => {
+    if (!open) return;
+    // -1 when no Create tool is open. The menu used to fall back to 0, so the FIRST item was drawn
+    // highlighted the moment the menu opened and read as "you are here" when nothing was.
+    setHighlight(items.findIndex((it) => it.id === activeTool));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    // preventScroll on every one of these. Even out of the strip, a focus() that a browser decides to "reveal"
+    // can scroll ANY ancestor that scrolls, and the row this menu belongs to is one.
+    if (highlight >= 0) itemRefs.current[highlight]?.focus({ preventScroll: true });
+    else menuRef.current?.focus({ preventScroll: true });   // nothing highlighted: the menu itself takes the keys
+  }, [open, highlight]);
+  // Escape is a CANCEL: focus goes back to the segment you opened, ring and all, so the keyboard keeps its place.
+  const closeAndReturnFocus = () => { setOpen(false); buttonRef.current?.focus(); };
+  // Choosing a tool NAVIGATES. Returning the ring to the segment after that left "Create" wearing the accent
+  // outline while Overview wore the accent fill, so two segments read as current at once (M5). A keyboard pick
+  // still lands focus on the segment; a pointer pick drops it, exactly as a plain button click would.
+  const closeAfterPick = (fromKeyboard: boolean) => {
+    setOpen(false);
+    if (fromKeyboard) buttonRef.current?.focus(); else buttonRef.current?.blur();
+  };
+  const isActive = !!activeItem;
+  // The open tool shows its own state on the page itself, so the segment only advertises the other four — same
+  // rule the plain Tab uses when it hides its dot and spinner on the active tab.
+  const isUnseen = items.some((it) => unseen.has(it.id) && it.id !== activeTool);
+  const isBusy = items.some((it) => busyTabs.has(it.id) && it.id !== activeTool);
+  return <div ref={wrap} className="area-tabs-create relative inline-flex">
+    <button ref={buttonRef} type="button" aria-haspopup="menu" aria-expanded={open}
+      className="sem-tab"
+      style={isActive ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-muted)' }}
+      onClick={() => setOpen((v) => !v)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); }
+        else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+      }}>
+      {activeItem ? `Create: ${activeItem.label}` : 'Create'}
+      {/* All five Create tools are one feature, so the segment wears one pill when the plan does not reach them. */}
+      <ProBadge show={items.every((it) => locked.has(it.id)) && items.length > 0} />
+      <span aria-hidden="true" className="ml-1 opacity-60">▾</span>
+      {isBusy && <TabBusyGlyph title="An operation is running in Create" />}
+      {isUnseen && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} title="Your assistant ran something here" />}
     </button>
-  );
+    {open && host && createPortal(
+      // Placed, not flowed: left/top come from anchorUnder, in the zoomed root's own pixels. Until the first
+      // measuring pass has a box it is parked off-screen, the same way the tool row menu does it, so nothing
+      // flashes at 0,0.
+      <div ref={menuRef} tabIndex={-1} role="menu" aria-label="Create" className="area-tabs-create-menu"
+        style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => (h + 1 + items.length) % items.length); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => (h <= 0 ? items.length : h) - 1); }
+          else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const it = items[highlight]; if (it) { onTab(it.id); closeAfterPick(true); } }
+          else if (e.key === 'Tab') { setOpen(false); }
+        }}>
+        {items.map((it, i) => <button key={it.id} ref={(el) => { itemRefs.current[i] = el; }} role="menuitem" type="button" data-tab={it.id}
+          aria-current={it.id === activeTool ? 'page' : undefined} className={i === highlight ? 'is-highlighted' : undefined}
+          onMouseEnter={() => setHighlight(i)} onClick={() => { onTab(it.id); closeAfterPick(false); }}>
+          {it.label}<ProBadge show={locked.has(it.id)} />{unseen.has(it.id) && it.id !== activeTool ? ' •' : ''}
+        </button>)}
+      </div>, host)}
+  </div>;
 }
 
-// The Primer is the human-facing orientation document. Learning machinery remains behind it as a supplier.
-function KnowledgeTab({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} title="Primer: the business context and definitions that explain this model"
-      className="relative flex items-center gap-1.5 text-[12.5px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-      style={active
-        ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-        : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2Z" /><path d="M9 21h6" />
-      </svg>
-      <span>Primer</span>
-    </button>
-  );
+// One tool view's render error is that tool's problem. Before this, an absent number in the apply report
+// unmounted the whole Studio behind "Studio could not finish loading" and took the person's place with it
+// (B1, walkthrough 2026-09-14). The header, the area strip and every other tool keep working; only the broken
+// panel is replaced. The top-level boundary in main.tsx stays as the last resort for a shell-level failure.
+class ToolErrorBoundary extends Component<{ resetKey: string; children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('[Studio] tool view failed', error, info.componentStack); }
+  // Navigating to another tool clears it WITHOUT remounting the children, so views that must stay alive across
+  // navigation (Tests keeps its run evidence) are not thrown away by a neighbour's crash.
+  componentDidUpdate(prev: { resetKey: string }) { if (prev.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="sem-evidence-page">
+        <div className="rounded-xl border p-5" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)', maxWidth: 520 }}>
+          <div className="text-[15px] font-semibold">This page hit a problem</div>
+          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+            Nothing was changed and your model is still open. Move to another page, or reload to start this one again.
+          </div>
+          <button className="sem-btn sem-btn-primary mt-4" onClick={() => location.reload()}>Reload page</button>
+        </div>
+      </div>
+    );
+  }
 }
 
-// Primary lifecycle-group button (filled-accent when active). The secondary Tab below uses the lighter soft-accent style,
-// giving a clear two-tier hierarchy.
+// Primary area button.
 function GroupTab({ active, onClick, children, unseen, busy, title }: { active: boolean; onClick: () => void; children: React.ReactNode; unseen?: boolean; busy?: boolean; title?: string }) {
   return (
-    <button onClick={onClick} title={title} className="relative inline-flex items-center text-[13px] px-3 py-1 rounded-md font-semibold transition-colors"
+    <button onClick={onClick} title={title} aria-current={active ? 'page' : undefined} className="sem-tab sem-tab-lg"
       style={active ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { color: 'var(--sem-muted)' }}>
       {children}
       {busy && <TabBusyGlyph title="An operation is running in this group" />}
-      {unseen && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} title="The AI Assistant ran something in this group" />}
+      {unseen && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} title="Your assistant ran something in this group" />}
     </button>
   );
 }
 
-function Tab({ active, onClick, children, unseen, busy }: { active: boolean; onClick: () => void; children: React.ReactNode; unseen?: boolean; busy?: boolean }) {
+function Tab({ id, active, onClick, children, unseen, busy }: { id?: string; active: boolean; onClick: () => void; children: React.ReactNode; unseen?: boolean; busy?: boolean }) {
   return (
-    <button onClick={onClick} className="relative inline-flex items-center text-[12px] px-2.5 py-1 rounded-md font-medium"
+    // data-tab is the STABLE handle on a segment. A Pro pill changes the button's text, so a deep link or a
+    // driver that matched on the words would stop finding a tool the moment that tool was locked.
+    <button onClick={onClick} data-tab={id} className="sem-tab"
       style={active ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-muted)' }}>
       {children}
       {busy && !active && <TabBusyGlyph title="An operation is running on this tab" />}
-      {unseen && !active && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} title="The AI Assistant ran something here" />}
+      {unseen && !active && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--sem-accent)' }} title="Your assistant ran something here" />}
     </button>
   );
 }
@@ -778,19 +1332,19 @@ function TabBusyGlyph({ title }: { title: string }) {
   );
 }
 
-function Hero({ card, trend, busy, tier, onSafe, onRescan, onReviewAsPlan }: { card: Scorecard; trend: number[]; busy: boolean; tier: string; onSafe: () => void; onRescan: () => void; onReviewAsPlan?: () => void }) {
+function Hero({ card, trend, busy, onSafe, onRescan, onReviewAsPlan }: { card: Scorecard; trend: number[]; busy: boolean; onSafe: () => void; onRescan: () => void; onReviewAsPlan?: () => void }) {
   const color = GRADE_COLOR[card.grade] ?? 'var(--sem-muted)';
   return (
     <Panel>
       <div className="flex items-center gap-5">
-        <div className="flex flex-col items-center justify-center w-24 h-24 rounded-2xl" style={{ background: 'var(--sem-surface-2)', boxShadow: `inset 0 0 0 2px ${color}` }}>
+        <div className="flex flex-col items-center justify-center w-24 h-24 rounded-2xl shrink-0" title={`Grade ${card.grade}. This is the AI readiness score: how well this model explains itself to AI.`} style={{ background: 'var(--sem-surface-2)', boxShadow: `inset 0 0 0 2px ${color}` }}>
           <div className="text-5xl font-bold leading-none" style={{ color }}>{card.grade}</div>
           <div className="text-[11px] mt-1 tnum" style={{ color: 'var(--sem-muted)' }}>{card.overall.toFixed(0)}/100</div>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold">AI Readiness {card.overall.toFixed(1)}</div>
+          <div className="text-[15px] font-semibold">AI understanding</div>
           <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-            {card.findings.filter((f) => !f.waived).length} findings{card.waivedCount ? ` · ${card.waivedCount} waived` : ''} · {card.safeFixCount} safe fixes available
+            {card.findings.filter((f) => !f.waived).length} findings{card.waivedCount ? ` · ${card.waivedCount} accepted` : ''} · {card.safeFixCount} safe fixes available
           </div>
           {trend.length >= 2 && (
             <div className="mt-1 -mb-1" style={{ maxWidth: 320 }}><Sparkline values={trend} /></div>
@@ -803,13 +1357,10 @@ function Hero({ card, trend, busy, tier, onSafe, onRescan, onReviewAsPlan }: { c
             ))}
           </div>
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           <Button primary disabled={busy || card.safeFixCount === 0} onClick={onSafe}
-            title={tier === 'free'
-              ? `Pro applies all ${card.safeFixCount} in one undoable step and re-checks your score. Each fix below stays free, one at a time.`
-              : `Apply every safe fix in one undoable step and re-check the score.`}>
+            title={`Apply every safe fix in one undoable step and re-check the score.`}>
             {busy ? 'Applying…' : `Apply ${card.safeFixCount} safe fix${card.safeFixCount === 1 ? '' : 'es'}`}
-            <ProBadge show={tier === 'free'} variant="onAccent" />
           </Button>
           {onReviewAsPlan && card.findings.length > 0 && (
             <Button onClick={onReviewAsPlan} title="Review every fix as one change plan, then apply in bulk">Review as a plan →</Button>
@@ -826,7 +1377,13 @@ function Categories({ card }: { card: Scorecard }) {
   return (
     <Panel>
       <SectionTitle>Categories</SectionTitle>
-      <div className="flex flex-col gap-2.5 mt-2">
+      <div className="flex items-center gap-3 mt-2 text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>
+        <div className="w-36 shrink-0">What is checked</div>
+        <div className="flex-1">How well it scores</div>
+        <div className="w-12 text-right">Score</div>
+        <div className="w-28 text-right">Things to fix</div>
+      </div>
+      <div className="flex flex-col gap-2.5 mt-1.5">
         {cats.map((c) => {
           const col = c.score >= 90 ? 'var(--sem-good)' : c.score >= 70 ? 'var(--sem-warn)' : 'var(--sem-bad)';
           return (
@@ -836,7 +1393,7 @@ function Categories({ card }: { card: Scorecard }) {
                 <div className="h-full rounded-full transition-all" style={{ width: `${c.score}%`, background: col }} />
               </div>
               <div className="w-12 text-right text-[12px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.score.toFixed(0)}</div>
-              <div className="w-28 text-right text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.violations}/{c.applicable}{c.waived ? ` · ${c.waived} waived` : ''}</div>
+              <div className="w-28 text-right text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{c.violations}/{c.applicable}{c.waived ? ` · ${c.waived} accepted` : ''}</div>
             </div>
           );
         })}
@@ -889,24 +1446,31 @@ function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void })
       : <MiniButton onClick={() => ask(f.ruleId, f.objectRef)}>{st === 'copied' ? 'Copied ✓' : 'Ask AI'}</MiniButton>;
     return <span className="flex items-center gap-1">{fixBtn}<WaiveControl onWaive={(reason) => waive(r, reason)} onUnwaive={() => unwaive(r)} /></span>;
   };
-  // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Waive rule" made from the
+  // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Accept for the whole model" made from the
   // same spot it was made (it was a dead no-op before the 2026-07-07 hook-fix batch).
-  const ruleActions = (ruleId: string) => <WaiveControl label="Waive rule" title="Accept every instance of this rule, model-wide (Pro)" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => run(rpc('unwaiveFinding', 'air', ruleId, '*'))} />;
+  const ruleActions = (ruleId: string) => <WaiveControl subtle label="Accept for the whole model" title="Accept every instance of this rule across the model" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => run(rpc('unwaiveFinding', 'air', ruleId, '*'))} />;
 
   return (
     <div className="flex flex-col gap-4">
       <Panel>
         <div className="flex items-center gap-2">
-          <SectionTitle>Findings <span style={{ color: 'var(--sem-muted)' }}>({activeFindings.length}{card.waivedCount ? <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} waived</button></span> : ''})</span></SectionTitle>
-          <div className="ml-auto flex gap-1">
-            <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All</Chip>
-            <Chip active={filter === 'SafeFix'} onClick={() => setFilter('SafeFix')}>Safe {counts.SafeFix ?? 0}</Chip>
-            <Chip active={filter === 'AiContent'} onClick={() => setFilter('AiContent')}>AI {counts.AiContent ?? 0}</Chip>
-            <Chip active={filter === 'Proposal'} onClick={() => setFilter('Proposal')}>Review {counts.Proposal ?? 0}</Chip>
-          </div>
+          <SectionTitle>Findings <span style={{ color: 'var(--sem-muted)' }}>({activeFindings.length}{card.waivedCount ? <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} accepted</button></span> : ''})</span></SectionTitle>
         </div>
         {waiveErr && <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{waiveErr}</div>}
-        <div className="mt-2"><GroupedFindings rows={rows} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} /></div>
+        {/* The fix-type filter joins the level filter in ONE row. Stacked, the two rows each began with an
+            "All" and read as the same control shown twice. Its "All" is "Any fix" for the same reason. */}
+        <div className="mt-2"><GroupedFindings rows={rows} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)}
+          extraFilters={
+            <>
+              <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>By fix</span>
+              <div className="sem-seg flex-wrap" role="group" aria-label="Filter findings by who fixes them">
+                <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')} className="sem-seg-item" title="Show every finding">Any fix</button>
+                <button type="button" aria-pressed={filter === 'SafeFix'} onClick={() => setFilter('SafeFix')} className="sem-seg-item" title="Fixes this app can apply on its own"><span>Safe</span><span className="opacity-70 tnum ml-1">{counts.SafeFix ?? 0}</span></button>
+                <button type="button" aria-pressed={filter === 'AiContent'} onClick={() => setFilter('AiContent')} className="sem-seg-item" title="Wording your assistant can write"><span>AI</span><span className="opacity-70 tnum ml-1">{counts.AiContent ?? 0}</span></button>
+                <button type="button" aria-pressed={filter === 'Proposal'} onClick={() => setFilter('Proposal')} className="sem-seg-item" title="Changes that need your decision"><span>Review</span><span className="opacity-70 tnum ml-1">{counts.Proposal ?? 0}</span></button>
+              </div>
+            </>
+          } /></div>
       </Panel>
       <WaivedList rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
     </div>
@@ -950,12 +1514,50 @@ function Banner({ children, color }: { children: React.ReactNode; color: string 
   return <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,' + color + ' 14%, transparent)', color, border: `1px solid color-mix(in srgb,${color} 40%, transparent)` }}>{children}</div>;
 }
 function Loading() { return <Panel><div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Scanning model…</div></Panel>; }
-function Empty() {
+
+// The one frame between opening a Pro tool and the entitlement answering. Neither the real page nor the
+// locked preview is honest here: loading the page would run a paid read on a plan that may not have it, and
+// showing the preview would flash an upsell at a paying customer. So it says what it is doing.
+function FeatureChecking() {
+  return (
+    <div className="h-full flex items-center justify-center p-8" data-testid="feature-checking">
+      <div className="text-[12px]" role="status" style={{ color: 'var(--sem-muted)' }}>
+        {/* One sentence across all three surfaces that can be pending: this one, the Overview Checks card
+            and the Advanced body. It said "your plan" here and something else there, which is two answers
+            to the same question. */}
+        <span className="sem-spin" /> {PENDING_ACCESS}
+      </div>
+    </div>
+  );
+}
+// The page when there is no engine. It replaces the body inside the Shell, so the header and the areas stay where
+// they were. Every button is a HOST command: nothing here can reach the engine, because there is no engine to reach.
+// Kane, 2026-09-15: "Tried restart engine and it broke everything. Engine not connected now and no way back."
+function EngineDown() {
   return (
     <div className="h-full flex items-center justify-center p-8">
-      <div className="text-center max-w-sm">
-        <div className="text-[15px] font-semibold mb-1">No model open</div>
-        <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a model from the Semanticus tree (Open Model…), then this dashboard scores it for AI readiness and lets you and the AI Assistant fix it together.</div>
+      <div className="model-empty-shell text-center max-w-sm">
+        <div className="text-[15px] font-semibold mb-1">Semanticus is not connected to its engine.</div>
+        <div className="text-[12px] mb-3" style={{ color: 'var(--sem-muted)' }}>
+          The engine is the part that reads and edits your model. Start it again to carry on.
+        </div>
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <button type="button" className="sem-primary" onClick={() => runHostCommand('semanticus.restartEngine')}>Restart engine</button>
+          <button type="button" onClick={() => runHostCommand('semanticus.openModel')}>Open a model</button>
+          <button type="button" onClick={() => runHostCommand('semanticus.showOutput')}>Show details</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Empty({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div className="h-full flex items-center justify-center p-8">
+      <div className="model-empty-shell text-center max-w-sm">
+        <div className="text-[15px] font-semibold mb-1">Open a model to begin</div>
+        <div className="text-[12px] mb-3" style={{ color: 'var(--sem-muted)' }}>Choose local model files, a running Power BI Desktop model, or a published model.</div>
+        <button type="button" className="sem-primary" onClick={onOpen}>Open model</button>
       </div>
     </div>
   );
@@ -1324,7 +1926,7 @@ function StorageTabStateProvider({ active, children }: { active: boolean; childr
   );
 }
 
-function StatsView({ onReviewAsPlan }: { onReviewAsPlan?: () => void }) {
+function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void; navTarget?: { table: string; nonce: number } | null }) {
   const { conn, session, context } = useConnection();
   const {
     scanState, meta, stagedCols, colRows, unused, prevSnap, setPrevSnap, pinnedSnap, setPinnedSnap,
@@ -1332,6 +1934,7 @@ function StatsView({ onReviewAsPlan }: { onReviewAsPlan?: () => void }) {
     busy, err, setErr, claudeEvent, setClaudeEvent, anchor, scanUsable, scanCurrent, scan, sessionPrev, persistedFor,
   } = useStorageTabState();
   const oppsPanelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (navTarget?.table) setExplorerFilter(navTarget.table); }, [navTarget?.nonce]);
   const report = scanState?.report ?? null;
   const storageMode = normalizeStorageMode(report?.storageMode);
 
@@ -1616,7 +2219,11 @@ function StatsView({ onReviewAsPlan }: { onReviewAsPlan?: () => void }) {
 
       {report && storageMode !== 'import' && modeCaveat && <Banner color="var(--sem-warn)">{modeCaveat}</Banner>}
       {report && linkedCopyObservation && (
-        <Banner color="var(--sem-warn)">Storage bytes are read-only observations from the linked query copy. That copy may be stale or structurally different from the open editing copy, so its bytes are not measurements of same-named editing objects. Removal plans omit reduction estimates and re-verify editing-model references when applied.</Banner>
+        <Banner color="var(--sem-warn)">
+          <div>These sizes are measured on the model you are querying, not the copy you are editing.</div>
+          <div className="mt-1">The two can differ if you have edits that are not published yet, so treat a size here as a good guide rather than an exact figure for your edits.</div>
+          <div className="mt-1">A removal plan made from this page does not promise how much space you will save. It re-checks the model you are editing before it changes anything.</div>
+        </Banner>
       )}
 
       {/* Offline overview — model metadata while no live storage scan exists yet (before connect, or pre-scan). */}

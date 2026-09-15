@@ -21,6 +21,7 @@ namespace Semanticus.Engine
     {
         public async Task<SourceSchema> GetSourceSchemaAsync(string tableRef, string authMode, string tenantId, string origin = "human")
         {
+            RequireProFeature();
             var s = _sessions.Require();
 
             // Resolve the table + derive its SQL source coordinates on the model thread (a pure read — no mutation).
@@ -106,6 +107,7 @@ namespace Semanticus.Engine
 
         public async Task<SchemaDiff> DiffSchemaAsync(string tableRef, SourceColumn[] sourceColumns, string authMode, string tenantId, string origin = "human")
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var view = await s.ReadAsync(m =>
             {
@@ -127,6 +129,7 @@ namespace Semanticus.Engine
 
         public async Task<ApplySchemaResult> ApplySchemaUpdateAsync(string tableRef, SchemaUpdateItem[] items, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var list = (items ?? Array.Empty<SchemaUpdateItem>()).Where(i => i != null && !string.IsNullOrWhiteSpace(i.Column)).ToList();
             if (list.Count == 0) return new ApplySchemaResult { Revision = s.Revision, Changed = false };

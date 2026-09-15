@@ -278,7 +278,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Generate_time_intelligence_creates_ytd_on_the_selected_measure()
         {
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             await engine.CreateModelAsync("TiGen", 1604);
             var t = await engine.CreateTableAsync("Sales", "agent");
             await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "agent");

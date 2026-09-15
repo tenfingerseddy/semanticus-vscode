@@ -21,7 +21,7 @@ namespace Semanticus.Tests
     {
         private static async Task<LocalEngine> FreshModelAsync(int cl = 1701)
         {
-            var engine = new LocalEngine(new SessionManager());
+            var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             await engine.CreateModelAsync("CalTest", cl);
             return engine;
         }
@@ -140,7 +140,7 @@ namespace Semanticus.Tests
                     }, null, "agent");
                     await engine.SaveAsync(dir, "TMDL");
                 }
-                using (var reopened = new LocalEngine(new SessionManager()))
+                using (var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
                 {
                     await reopened.OpenAsync(dir);
                     var cal = Assert.Single((await reopened.ListCalendarsAsync(null)).Calendars);
@@ -186,7 +186,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Template_new_table_survives_opened_model_compatibility_upgrade_and_cross_driver_undo_redo()
         {
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             await engine.OpenAsync(TestModels.FindBim());   // real saved CL-1200 model, not the fresh-model fast path
             await engine.SetCompatibilityLevelAsync(1701, "human");
             using var unrelated = await FreshModelAsync();   // move the vendored process-global handler off this session
@@ -432,7 +432,7 @@ namespace Semanticus.Tests
         public async Task Calendar_mapping_readiness_fires_when_date_is_mapped_to_a_string_column()
         {
             var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("CalTest", 1701);
             await AddDateTableAsync(engine);
             await engine.CreateColumnAsync("table:Dim Date", "MonthName", "String", "MonthName", "agent");

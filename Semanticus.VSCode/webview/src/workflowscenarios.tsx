@@ -76,9 +76,9 @@ const SCENARIOS: Scenario[] = [
     title: 'Make the model AI-ready',
     tag: 'AI-ready',
     hero: true,
-    blurb: 'Get the model ready for Copilot and Q&A. The AI Assistant works through the gaps those tools rely on, and the readiness score shows whether the model held or improved.',
+    blurb: 'Get the model ready for Copilot and Q&A. Your assistant works through the gaps those tools rely on, and the readiness score shows whether the model held or improved.',
     kind: 'settings',
-    appliedNote: 'Nothing was changed here. Open "Make the model AI-ready" in your Workflows list, or ask the AI Assistant to make the model AI-ready, to begin.',
+    appliedNote: 'Nothing was changed here. Open "Make the model AI-ready" in your Workflows list, or ask your assistant to make the model AI-ready, to begin.',
     undo: 'This changes no settings. If the assistant later applies model edits, undo that batch from Edit History.',
   },
   {
@@ -96,7 +96,7 @@ const SCENARIOS: Scenario[] = [
     id: 'standard',
     title: 'Solo analyst',
     tag: 'Everyday',
-    blurb: 'Every playbook is on the menu and nothing is required. The AI Assistant can follow a workflow, but nothing blocks your work. The safe default.',
+    blurb: 'Every playbook is on the menu and nothing is required. Your assistant can follow a workflow, but nothing blocks your work. The safe default.',
     kind: 'settings',
     profile: 'standard',
     enforcement: 'default',
@@ -124,7 +124,7 @@ const SCENARIOS: Scenario[] = [
       { op: 'create_measure', require: ['verified-measure'], mode: 'warn' },
       { op: 'update_measure', require: ['verified-measure'], mode: 'warn' },
     ],
-    undo: 'Pick Solo analyst, or change individual workflow rules below. A Studio or AI Assistant policy change marks the profile Custom.',
+    undo: 'Pick Solo analyst, or change individual workflow rules below. A policy change in Studio, or one made by your assistant, marks the profile Custom.',
   },
   {
     id: 'consulting-delivery',
@@ -138,7 +138,7 @@ const SCENARIOS: Scenario[] = [
       { op: 'update_measure', require: ['verified-measure'], mode: 'hard' },
       { op: 'create_relationship', require: ['add-relationship'], mode: 'hard' },
     ],
-    undo: 'Pick Solo analyst, or change individual workflow rules below. A Studio or AI Assistant policy change marks the profile Custom.',
+    undo: 'Pick Solo analyst, or change individual workflow rules below. A policy change in Studio, or one made by your assistant, marks the profile Custom.',
   },
   {
     id: 'production-deployment',
@@ -172,7 +172,7 @@ const slug = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').
 const countSteps = (md: string) => (md.match(/^##\s+Step\b/gim) || []).length;
 
 const PRO_APPLY_REASON =
-  'Applying a profile that requires an action is a Pro capability. Browsing profiles, filling ready-made workflows and previewing changes are free.';
+  'Workflows is a Semanticus Pro feature. The app still shows any run already going and anything waiting for you.';
 
 interface PreviewLine { tone: PreviewTone; text: string }
 const TONE_GLYPH: Record<PreviewTone, string> = { add: '+', require: '●', set: '·', note: 'i' };
@@ -235,7 +235,7 @@ export function ScenariosPanel({ tier, library, onApplied, onActiveChange, varia
             <div>
               <div className="mb-2">
                 <div className="text-[11px] font-semibold">Featured workflows</div>
-                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Choose a task to work through with your AI Assistant. Each task explains what to do and how to check the result.</div>
+                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Choose a task to work through with your assistant. Each task explains what to do and how to check the result.</div>
               </div>
               <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
                 {SCENARIOS.filter((s) => s.hero).map((s) => (
@@ -257,7 +257,7 @@ export function ScenariosPanel({ tier, library, onApplied, onActiveChange, varia
               </>)}
               <div className="mt-4 mb-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
                 <div className="text-[11px] font-semibold">More ready-made workflows</div>
-                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Fill in your organisation's details once. The questions become a reusable workflow for people and the AI Assistant.</div>
+                <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Fill in your organisation's details once. The questions become a reusable workflow for people and your assistant.</div>
               </div>
               <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
                 {SCENARIOS.filter((s) => s.kind === 'template' && !s.hero).map((s) => (
@@ -352,7 +352,7 @@ function ScenarioWizard({ scenario, isPro, library, titleOf, onBack, onApplied }
     // settings bundle
     const lines: PreviewLine[] = [];
     if (scenario.id === 'make-model-ai-ready') {
-      lines.push({ tone: 'note', text: 'Opens the shipped AI-ready workflow, where the AI Assistant scans the model, works through the gaps, and rescans to check whether readiness held or improved.' });
+      lines.push({ tone: 'note', text: 'Opens the shipped AI-ready workflow, where your assistant scans the model, works through the gaps, and rescans to check whether readiness held or improved.' });
       lines.push({ tone: 'set', text: 'Choosing this card changes no workflow policy or model setting.' });
       return lines;
     }

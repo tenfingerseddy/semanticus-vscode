@@ -24,10 +24,6 @@ namespace Semanticus.Engine
         private const int VitalsValueBudgetMs = 15000;// wall-clock budget for the value half of one capture
         private const int VitalsOverlapRootCap = 16;  // changed refs walked per candidate when scoring overlap
 
-        private const string VitalsProInvite =
-            "See what moved a number, automatically, with Pro. You can still compare snapshots by hand: " +
-            "capture a baseline before an edit and compare after, free (capture_baseline / compare_baseline).";
-
         /// <summary>Ambient capture is HOST-ATTACHED (the ExperienceTee precedent): only the owner host
         /// (Program.Serve / owner-mode MCP) enables it, so engine instances in tests never write sidecar
         /// files beside fixture models unless a test opts in deliberately.</summary>
@@ -95,7 +91,6 @@ namespace Semanticus.Engine
             try
             {
                 if (!AmbientVitalsEnabled) return;
-                if (_entitlement == null || !_entitlement.IsPro) return;   // soft gate: free = silently skipped
                 if (DryRunScope.Current != null) return;                   // a rehearsal never leaves a record
                 if (s == null) return;
                 var file = VitalsFileFor(s);
@@ -244,7 +239,7 @@ namespace Semanticus.Engine
             return dirs;
         }
 
-        // ---- the ops (both doors; SOFT Pro gate) ---------------------------------------------------
+        // ---- the ops (both doors; free on every tier since 2026-09-15) ------------------------------
 
         /// <summary>"What moved this number?" — deterministic attribution over the recorded vital-signs
         /// history. Verdict semantics (honesty non-negotiable): a single recorded edit in the movement
@@ -254,8 +249,6 @@ namespace Semanticus.Engine
         public async Task<BlameResult> BlameValueAsync(string measureRef, string context, string sinceCheckpoint, string origin)
         {
             var s = _sessions.Require();
-            if (_entitlement == null || !_entitlement.IsPro)
-                return new BlameResult { Status = "pro", Verdict = "pro", MeasureRef = measureRef, Note = VitalsProInvite };
             if (string.IsNullOrWhiteSpace(measureRef))
                 return new BlameResult { Status = "error", Verdict = "inconclusive", Note = "measureRef is required: the measure whose number moved (e.g. 'measure:Sales/Total Sales')." };
 
@@ -399,8 +392,6 @@ namespace Semanticus.Engine
         public async Task<ValueHistoryResult> ListValueHistoryAsync(string measureRef, string context)
         {
             var s = _sessions.Require();
-            if (_entitlement == null || !_entitlement.IsPro)
-                return new ValueHistoryResult { Status = "pro", MeasureRef = measureRef, Note = VitalsProInvite };
             if (string.IsNullOrWhiteSpace(measureRef))
                 return new ValueHistoryResult { Status = "error", Note = "measureRef is required (e.g. 'measure:Sales/Total Sales')." };
 

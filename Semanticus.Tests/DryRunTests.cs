@@ -203,7 +203,9 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Dry_run_define_calendar_rehearses_and_rolls_back_the_custom_undo_batch()
         {
-            var (engine, sm) = await FreshAsync(cl: 1701);
+            // Calendars are Advanced Modelling, so define_calendar and list_calendars are both Pro. Without the tier
+            // the rehearsal would "fail" on the entitlement refusal and prove nothing about the undo batch.
+            var (engine, sm) = await FreshAsync(pro: true, cl: 1701);
             var t = await engine.CreateTableAsync("Dim Date", "human");
             await engine.CreateColumnAsync(t, "Date", "DateTime", "Date", "human");
 
@@ -219,8 +221,8 @@ namespace Semanticus.Tests
 
         // 10) Health delta (feature #4): a rehearsal never reaches the tracked-commit path, so it computes NO
         //     health delta — the agent mailbox stays empty (and test 2 already proves no broadcast rides out).
-        //     Pro engine, so the probe is genuinely installed and the suppression is the dry-run short-circuit,
-        //     not the free-tier gate.
+        //     The probe is installed on every tier now, so the only thing that can suppress it here is the
+        //     dry-run short-circuit.
         [Fact]
         public async Task Dry_run_emits_no_health_delta()
         {

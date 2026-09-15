@@ -83,7 +83,7 @@ export function cellContext(config: PivotConfig, m: Matrix, ri: number, ci: numb
 function describeShort(pf: { filter: any }): string {
   const f = pf.filter;
   if (f.kind === 'date') return f.mode === 'rel' ? `last ${f.n} ${f.unit}` : f.mode === 'cal' ? f.period : 'range';
-  if (f.kind === 'number') return f.op === 'between' ? `${f.a ?? '−∞'}–${f.b ?? '∞'}` : `${f.op} ${f.a}`;
+  if (f.kind === 'number') return f.op === 'between' ? `${f.a ?? '−∞'} to ${f.b ?? '∞'}` : `${f.op} ${f.a}`;
   if (f.kind === 'text') return f.picked?.length ? f.picked.slice(0, 2).join(', ') : `${f.op} "${f.value}"`;
   return String(f.value);
 }

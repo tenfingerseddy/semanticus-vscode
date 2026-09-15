@@ -23,7 +23,7 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-wfcheck-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            return (new LocalEngine(new SessionManager(), new Free(), ws), ws);
+            return (new LocalEngine(new SessionManager(), TestEntitlements.Pro, ws), ws);
         }
 
         // A distilled workflow: derived_from provenance in frontmatter, an unknown op, and a verify whose
@@ -130,7 +130,7 @@ verify:
             finally { Directory.Delete(ws, true); }
         }
 
-        // The shipped stock launch set is 15 workflows (Semanticus.Engine/workflows/*.md), all gated and all
+        // The shipped stock launch set is 16 workflows (Semanticus.Engine/workflows/*.md), all gated and all
         // covered below. Every case must survive the admission dry-run: its triggers/ops are real ops, every
         // verify probe/when names a collected input, and each dax_probe/dax_equivalence/object-bpa verify has
         // an objectRef target to act on. A future stock-workflow edit naming a phantom op or an unresolved probe
@@ -151,6 +151,7 @@ verify:
         [InlineData("secure-with-rls")]
         [InlineData("time-intelligence-variants")]
         [InlineData("verified-measure")]
+        [InlineData("reconcile-saved-tests-sql")]
         public async Task Every_stock_workflow_passes_the_admission_dry_run(string name)
         {
             var (e, ws) = Make();

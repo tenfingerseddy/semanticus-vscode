@@ -144,7 +144,7 @@ namespace Semanticus.Tests
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
                 throw new InvalidOperationException("unreachable");
             });
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -157,7 +157,7 @@ namespace Semanticus.Tests
             EntraToken.FabricTokenForTests = () => "test-bearer";
             FabricRest.TestClientFactory = () => Client((_, _) =>
                 Task.FromException<HttpResponseMessage>(new TaskCanceledException("HTTP client timeout")));
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
 
             var timedOut = await engine.FabricGitStatusAsync("workspace", "azcli", null, cancellationToken: CancellationToken.None);
             Assert.Contains("HTTP client timeout", timedOut.Error);
@@ -243,7 +243,7 @@ namespace Semanticus.Tests
             });
             var pipe = "semanticus-fabric-cancel-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             var sessions = new SessionManager();
-            using var owner = new LocalEngine(sessions);
+            using var owner = new LocalEngine(sessions, TestEntitlements.Pro);
             using var server = new RpcServer(sessions, owner, pipe);
             using var serverCts = new CancellationTokenSource();
             var serverTask = server.RunAsync(serverCts.Token);

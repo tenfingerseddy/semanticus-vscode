@@ -1,8 +1,8 @@
 {
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
-  "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your AI Assistant co-edits the same live model.",
-  "version": "1.1.3",
+  "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with one-click fixes, and an MCP door so your assistant co-edits the same live model.",
+  "version": "1.2.0",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -43,7 +43,8 @@
     "mcp"
   ],
   "activationEvents": [
-    "onFileSystem:semanticus"
+    "onFileSystem:semanticus",
+    "onWebviewPanel:semanticusStudio"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -99,12 +100,6 @@
           "id": "semanticusModel",
           "name": "Model",
           "icon": "media/icon.svg"
-        },
-        {
-          "id": "semanticusReference",
-          "name": "Reference Model",
-          "icon": "media/icon.svg",
-          "visibility": "collapsed"
         },
         {
           "id": "semanticusProperties",
@@ -169,6 +164,12 @@
         "icon": "$(debug-restart)"
       },
       {
+        "command": "semanticus.showOutput",
+        "title": "Show Details",
+        "category": "Semanticus",
+        "icon": "$(output)"
+      },
+      {
         "command": "semanticus.undo",
         "title": "Semanticus: Undo"
       },
@@ -217,12 +218,7 @@
       { "command": "semanticus.previewTableData", "title": "Preview Data", "category": "Semanticus", "icon": "$(table)" },
       { "command": "semanticus.updateSchema", "title": "Update Schema…", "category": "Semanticus", "icon": "$(sync)" },
       { "command": "semanticus.addToDiagram", "title": "Add to Studio Diagram", "category": "Semanticus", "icon": "$(type-hierarchy)" },
-      { "command": "semanticus.setReferenceModel", "title": "Set Reference Model…", "category": "Semanticus", "icon": "$(repo-pull)" },
-      { "command": "semanticus.refreshReferenceModel", "title": "Reload Reference Model", "category": "Semanticus", "icon": "$(refresh)" },
-      { "command": "semanticus.clearReferenceModel", "title": "Clear Reference Model", "category": "Semanticus", "icon": "$(clear-all)" },
-      { "command": "semanticus.copyRefToModel", "title": "Copy into Open Model", "category": "Semanticus", "icon": "$(arrow-left)" },
-      { "command": "semanticus.copyRefObject", "title": "Copy (to paste into the Model tree)", "category": "Semanticus" },
-      { "command": "semanticus.pasteIntoModel", "title": "Paste into Open Model", "category": "Semanticus" },
+      { "command": "semanticus.copyFromModel", "title": "Copy from another model…", "category": "Semanticus", "icon": "$(repo-pull)" },
       { "command": "semanticus.refreshPartition", "title": "Refresh Partition…", "category": "Semanticus" },
       { "command": "semanticus.relCrossFilter", "title": "Set Cross-Filter Direction…", "category": "Semanticus" },
       { "command": "semanticus.relToggleActive", "title": "Toggle Active", "category": "Semanticus" },
@@ -232,6 +228,8 @@
       { "command": "semanticus.deleteObject", "title": "Delete", "category": "Semanticus" },
       { "command": "semanticus.showLineage", "title": "Show Lineage & Impact", "category": "Semanticus", "icon": "$(type-hierarchy-sub)" },
       { "command": "semanticus.editMCode", "title": "Edit M Code", "category": "Semanticus", "icon": "$(code)" },
+      { "command": "semanticus.tryCalculation", "title": "Try Calculation", "category": "Semanticus", "icon": "$(beaker)" },
+      { "command": "semanticus.addTestForMeasure", "title": "Add Test", "category": "Semanticus", "icon": "$(add)" },
       { "command": "semanticus.amFieldParameter", "title": "New Field Parameter…", "category": "Semanticus" },
       { "command": "semanticus.amCalcGroup", "title": "New Calculation Group (builder)…", "category": "Semanticus" },
       { "command": "semanticus.amCalendar", "title": "New Calendar / Date Table…", "category": "Semanticus" },
@@ -260,58 +258,56 @@
         {
           "command": "semanticus.openStudio",
           "when": "view == semanticusModel",
-          "group": "navigation@0"
+          "group": "0_model@1"
         },
         {
           "command": "semanticus.openModel",
           "when": "view == semanticusModel",
-          "group": "navigation@1"
+          "group": "0_model@2"
         },
         {
           "command": "semanticus.manageConnections",
           "when": "view == semanticusModel",
-          "group": "navigation@1"
+          "group": "0_model@3"
         },
         {
           "command": "semanticus.findInModel",
           "when": "view == semanticusModel",
-          "group": "navigation@1"
+          "group": "0_model@4"
         },
         {
           "command": "semanticus.save",
           "when": "view == semanticusModel",
-          "group": "navigation@2"
+          "group": "0_model@5"
         },
         {
           "command": "semanticus.saveToLive",
           "when": "view == semanticusModel && semanticus.liveBound",
-          "group": "navigation@3"
+          "group": "0_model@6"
         },
         {
           "command": "semanticus.refresh",
           "when": "view == semanticusModel",
-          "group": "navigation@4"
+          "group": "0_model@7"
         },
         {
           "command": "semanticus.restartEngine",
           "when": "view == semanticusModel",
-          "group": "navigation@5"
+          "group": "0_model@8"
         },
         {
           "command": "semanticus.connectClaudeCode",
           "when": "view == semanticusModel",
-          "group": "navigation@6"
+          "group": "0_model@9"
         },
-        { "command": "semanticus.setReferenceModel", "when": "view == semanticusReference", "group": "navigation@0" },
-        { "command": "semanticus.refreshReferenceModel", "when": "view == semanticusReference && semanticus.hasReference", "group": "navigation@1" },
-        { "command": "semanticus.clearReferenceModel", "when": "view == semanticusReference && semanticus.hasReference", "group": "navigation@2" },
         { "command": "semanticus.newTable", "when": "view == semanticusModel", "group": "1_create@1" },
         { "command": "semanticus.newCalcTable", "when": "view == semanticusModel", "group": "1_create@2" },
         { "command": "semanticus.newCalcGroup", "when": "view == semanticusModel", "group": "1_create@3" },
         { "command": "semanticus.newRole", "when": "view == semanticusModel", "group": "1_create@4" },
         { "command": "semanticus.newFunction", "when": "view == semanticusModel", "group": "1_create@5" },
         { "submenu": "semanticus.advancedModelling", "when": "view == semanticusModel", "group": "1_create@6" },
-        { "command": "semanticus.updateSchema", "when": "view == semanticusModel", "group": "2_tools@1" }
+        { "command": "semanticus.updateSchema", "when": "view == semanticusModel", "group": "2_tools@1" },
+        { "command": "semanticus.copyFromModel", "when": "view == semanticusModel", "group": "2_tools@2" }
       ],
       "semanticus.advancedModelling": [
         { "command": "semanticus.amFieldParameter", "group": "1_build@1" },
@@ -327,8 +323,8 @@
         { "command": "semanticus.addToDiagram", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|column|calcColumn|measure|hierarchy)$/", "group": "0_open@2" },
         { "command": "semanticus.showLineage", "when": "view == semanticusModel && viewItem =~ /^(table|measure|column|calcColumn|function|calcitem)$/", "group": "0_open@3" },
         { "command": "semanticus.editMCode", "when": "view == semanticusModel && viewItem =~ /^(partition|table)$/", "group": "0_open@4" },
-        { "command": "semanticus.copyRefToModel", "when": "view == semanticusReference && viewItem =~ /^ref:(measure|calcColumn|calcitem)$/", "group": "inline" },
-        { "command": "semanticus.copyRefToModel", "when": "view == semanticusReference && viewItem =~ /^ref:(measure|calcColumn|calcitem)$/", "group": "0_copy@1" },
+        { "command": "semanticus.tryCalculation", "when": "view == semanticusModel && viewItem == measure", "group": "0_open@5" },
+        { "command": "semanticus.addTestForMeasure", "when": "view == semanticusModel && viewItem == measure", "group": "0_open@6" },
         { "command": "semanticus.newMeasure", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|dfolder)$/", "group": "1_create@1" },
         { "command": "semanticus.newFolder", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|dfolder)$/", "group": "1_create@6" },
         { "command": "semanticus.newCalcColumn", "when": "view == semanticusModel && viewItem == table", "group": "1_create@2" },
@@ -360,7 +356,6 @@
         { "command": "semanticus.pasteObject", "when": "view == semanticusModel && semanticus.treeClipboard == 'hierarchy' && viewItem =~ /^(table|hierarchy)$/", "group": "2_edit@7" },
         { "command": "semanticus.pasteObject", "when": "view == semanticusModel && semanticus.treeClipboard == 'calcitem' && viewItem =~ /^(calcgroup|calcitem)$/", "group": "2_edit@7" },
         { "command": "semanticus.pasteObject", "when": "view == semanticusModel && semanticus.treeClipboard =~ /^(table|calcgroup)$/ && viewItem =~ /^(table|calcgroup)$/", "group": "2_edit@7" },
-        { "command": "semanticus.pasteObject", "when": "view == semanticusModel && semanticus.treeClipboard == 'reference' && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem)$/", "group": "2_edit@7" },
         { "command": "semanticus.moveToFolder", "when": "view == semanticusModel && viewItem =~ /^(measure|column|calcColumn|hierarchy)$/", "group": "2_edit@5" },
         { "command": "semanticus.renameObject", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective)$/", "group": "2_edit@8" },
         { "command": "semanticus.renameObjectInputBox", "when": "view == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective)$/", "group": "2_edit@81" },
@@ -401,11 +396,11 @@
       { "command": "semanticus.applyPropertyField", "key": "ctrl+s", "mac": "cmd+s", "when": "focusedView == semanticusProperties" },
       { "command": "semanticus.studioPrevTab", "key": "ctrl+alt+left", "when": "activeWebviewPanelId == 'semanticusStudio'" },
       { "command": "semanticus.studioNextTab", "key": "ctrl+alt+right", "when": "activeWebviewPanelId == 'semanticusStudio'" },
-      { "command": "semanticus.studioGoGroup", "args": "understand", "key": "ctrl+shift+1", "when": "activeWebviewPanelId == 'semanticusStudio'" },
-      { "command": "semanticus.studioGoGroup", "args": "change", "key": "ctrl+shift+2", "when": "activeWebviewPanelId == 'semanticusStudio'" },
-      { "command": "semanticus.studioGoGroup", "args": "improve", "key": "ctrl+shift+3", "when": "activeWebviewPanelId == 'semanticusStudio'" },
-      { "command": "semanticus.studioGoGroup", "args": "prove", "key": "ctrl+shift+4", "when": "activeWebviewPanelId == 'semanticusStudio'" },
-      { "command": "semanticus.studioGoGroup", "args": "ship", "key": "ctrl+shift+5", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.studioGoGroup", "args": "model", "key": "ctrl+shift+1", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.studioGoGroup", "args": "calc", "key": "ctrl+shift+2", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.studioGoGroup", "args": "checks", "key": "ctrl+shift+3", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.studioGoGroup", "args": "changes", "key": "ctrl+shift+4", "when": "activeWebviewPanelId == 'semanticusStudio'" },
+      { "command": "semanticus.studioGoGroup", "args": "workflows", "key": "ctrl+shift+5", "when": "activeWebviewPanelId == 'semanticusStudio'" },
       { "command": "semanticus.findInModel", "key": "ctrl+f", "mac": "cmd+f", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.save", "key": "ctrl+s", "mac": "cmd+s", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.undo", "key": "ctrl+z", "mac": "cmd+z", "when": "focusedView == semanticusModel" },
@@ -414,8 +409,7 @@
       { "command": "semanticus.renameObjectInputBox", "key": "f2", "when": "focusedView == semanticusModel && viewItem =~ /^(table|calcgroup|measure|column|calcColumn|hierarchy|calcitem|function|perspective|dfolder)$/" },
       { "command": "semanticus.deleteObject", "key": "delete", "mac": "cmd+backspace", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.newMeasure", "key": "ctrl+alt+n", "when": "focusedView == semanticusModel" },
-      { "command": "semanticus.openStudio", "key": "ctrl+alt+s", "when": "focusedView =~ /^semanticus(Model|Reference)$/" },
-      { "command": "semanticus.copyRefObject", "key": "ctrl+c", "mac": "cmd+c", "when": "focusedView == semanticusReference" },
+      { "command": "semanticus.openStudio", "key": "ctrl+alt+s", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.copyObject", "key": "ctrl+c", "mac": "cmd+c", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.pasteObject", "key": "ctrl+v", "mac": "cmd+v", "when": "focusedView == semanticusModel" },
       { "command": "semanticus.applyDaxScript", "key": "ctrl+enter", "mac": "cmd+enter", "when": "editorTextFocus && editorLangId == dax && resourceScheme == untitled" },
@@ -445,6 +439,11 @@
           "type": "boolean",
           "default": true,
           "description": "In an F5 development host, rebuild the engine before restarting so code changes are picked up. Installed extensions never rebuild development source."
+        },
+        "semanticus.studio.openAutomatically": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the Studio tab by itself when a model is opened. Turn this off if you would rather open Studio from the side bar each time."
         },
         "semanticus.dax.maxLineLength": {
           "type": "number",

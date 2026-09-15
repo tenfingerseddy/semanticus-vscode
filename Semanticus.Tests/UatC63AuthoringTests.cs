@@ -125,7 +125,12 @@ namespace Semanticus.Tests
 
                 var partial = await engine.RunTestSuiteAsync(true, "human", new[] { a.Id }, null);
                 Assert.True(partial.Scope.Partial);
-                Assert.Equal("Partial", partial.Health.Grade);
+                // 1.2.0: a part-run is graded on what it ran, and says what the letter covers, instead of
+                // reporting the word "Partial" and telling the person nothing about the checks they asked for.
+                Assert.NotEqual("Partial", partial.Health.Grade);
+                Assert.Equal("the 1 check you picked", partial.Scope.GradeCovers);
+                Assert.Equal(new[] { "saved checks" }, partial.Scope.Ran);
+                Assert.Contains("only the part you ran", partial.Note, StringComparison.OrdinalIgnoreCase);
                 Assert.False(partial.Persisted);
                 Assert.Contains("full run", partial.Note, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("Ask the user", partial.Note ?? "", StringComparison.Ordinal);
@@ -134,7 +139,7 @@ namespace Semanticus.Tests
 
                 var full = await engine.RunTestSuiteAsync(false, "human");
                 Assert.False(full.Scope?.Partial ?? false);
-                Assert.NotEqual("Partial", full.Health.Grade);
+                Assert.Null(full.Scope.GradeCovers);
                 Assert.Contains(full.Reconciles, o => o.DefId == a.Id);
                 Assert.Contains(full.Reconciles, o => o.DefId == b.Id);
             }
@@ -381,6 +386,421 @@ inputs:
                 Assert.Contains("still needs an answer", ex.Message, StringComparison.OrdinalIgnoreCase);
             }
             finally { Directory.Delete(ws, true); }
+        }
+
+        // UX11 (1): a check saved from a FILTERED visual keeps the filter lines, and the runner narrows the DAX
+        // side with them. Without this a calculation filtered to one year silently became a check over the whole
+        // model — a wrong check that reads as a right one. Asserted on the DAX the runner builds, not a live query.
+        [Fact]
+        public async Task Saved_sql_check_keeps_the_visual_filters_and_narrows_the_dax()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilteredCheck");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Revenue", "190");
+                var stored = await engine.SaveTestDefinitionAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureReconcile,
+                    Title = "Revenue matches the warehouse for 2026",
+                    TargetRef = "measure:Sales/Revenue",
+                    ParamsJson = TestSuiteStore.Serialize(new ReconcileRequest
+                    {
+                        MeasureRef = "measure:Sales/Revenue",
+                        GroupBy = new[] { "'Date'[Year]" },
+                        Sql = "select year, sum(amount) from fact where year = 2026 group by year",
+                        BlankPolicy = "zero",
+                        FilterDax = "'Date'[Year] = 2026",
+                    }),
+                }, "human");
+
+                var listed = await engine.ListTestDefinitionsAsync();
+                var back = TestSuiteStore.Deserialize<ReconcileRequest>(
+                    Assert.Single(listed.Definitions, d => d.Id == stored.Id).ParamsJson);
+                Assert.Equal("'Date'[Year] = 2026", back.FilterDax);
+
+                var grouped = LocalEngine.BuildReconcileDaxQuery(back, "Revenue", new[] { "'Date'[Year]" });
+                Assert.Contains("CALCULATETABLE(", grouped, StringComparison.Ordinal);
+                Assert.Contains("'Date'[Year] = 2026", grouped, StringComparison.Ordinal);
+
+                var total = LocalEngine.BuildReconcileDaxQuery(back, "Revenue", Array.Empty<string>());
+                Assert.Contains("CALCULATE([Revenue], 'Date'[Year] = 2026)", total, StringComparison.Ordinal);
+
+                // No filter must leave the query exactly as it was: the narrowing is opt-in, never ambient.
+                var unfiltered = LocalEngine.BuildReconcileDaxQuery(
+                    new ReconcileRequest { MeasureRef = "measure:Sales/Revenue" }, "Revenue", new[] { "'Date'[Year]" });
+                Assert.DoesNotContain("CALCULATETABLE", unfiltered, StringComparison.Ordinal);
+            }
+            finally { Directory.Delete(ws, true); }
+        }
+
+        // UX11 (2): an EDITED formula can be saved as its own check. The definition holds the expression and the
+        // runner asks THAT, not the measure's saved formula.
+        [Fact]
+        public async Task Saved_expression_test_holds_the_expression_and_the_runner_asks_it()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "EditedFormula");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Revenue", "190");
+                const string edited = "CALCULATE([Revenue], 'Date'[Year] = 2026)";
+                var stored = await engine.SaveTestDefinitionAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "The edited Revenue totals 190",
+                    TargetRef = "measure:Sales/Revenue",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Revenue", ExpectedValue = "190", ExpressionDax = edited,
+                    }),
+                }, "human");
+
+                var listed = await engine.ListTestDefinitionsAsync();
+                var back = TestSuiteStore.Deserialize<MeasureValueRequest>(
+                    Assert.Single(listed.Definitions, d => d.Id == stored.Id).ParamsJson);
+                Assert.Equal(edited, back.ExpressionDax);
+
+                // The SUITE run is the real path, not just a one-off try: the saved definition must ask the
+                // edited expression when the whole suite runs.
+                var run = await engine.RunTestSuiteAsync();
+                var outcome = Assert.Single(run.Reconciles, o => o.DefId == stored.Id);
+                Assert.Contains(edited, outcome.Dax, StringComparison.Ordinal);
+
+                // The measure as saved stays the default shape when no expression was supplied.
+                Assert.Equal("EVALUATE ROW(\"v\", [Revenue])", LocalEngine.BuildMeasureValueDax("Revenue", null, null, out _));
+                // A complete query is the author's own, so it runs as written when the check has no filter of its
+                // own. A filter is NOT already inside it: Astra proved the saved filter was silently dropped
+                // (2026-09-14), so the query is scoped from outside instead.
+                Assert.Equal("EVALUATE ROW(\"x\", 1)",
+                    LocalEngine.BuildMeasureValueDax("Revenue", "EVALUATE ROW(\"x\", 1)", null, out _));
+                Assert.Equal("EVALUATE CALCULATETABLE(ROW(\"x\", 1), 'Date'[Year] = 2026)",
+                    LocalEngine.BuildMeasureValueDax("Revenue", "EVALUATE ROW(\"x\", 1)", "'Date'[Year] = 2026", out _));
+            }
+            finally { Directory.Delete(ws, true); }
+        }
+
+        // UX11 (3): the Tests-and-queries connection a check was AUTHORED against persists and is reported on the
+        // run. A record, never a pin — the run still uses whatever is current.
+        [Fact]
+        public async Task Authored_connection_persists_and_is_reported_on_the_run()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "AuthoredAgainst");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Revenue", "190");
+                var stored = await engine.SaveTestDefinitionAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Revenue totals 190",
+                    TargetRef = "measure:Sales/Revenue",
+                    AuthoredAgainst = "live:abc12345",
+                    AuthoredAgainstLabel = "Sales DW on powerbi://api.powerbi.com/v1.0/myorg/Finance",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Revenue", ExpectedValue = "190" }),
+                }, "human");
+                Assert.Equal("live:abc12345", stored.AuthoredAgainst);
+
+                var listed = await engine.ListTestDefinitionsAsync();
+                var reloaded = Assert.Single(listed.Definitions, d => d.Id == stored.Id);
+                Assert.Equal("live:abc12345", reloaded.AuthoredAgainst);
+                Assert.Equal("Sales DW on powerbi://api.powerbi.com/v1.0/myorg/Finance", reloaded.AuthoredAgainstLabel);
+
+                var run = await engine.RunTestSuiteAsync();
+                var outcome = Assert.Single(run.Reconciles, o => o.DefId == stored.Id);
+                Assert.Equal("live:abc12345", outcome.AuthoredAgainst);
+                Assert.Equal("Sales DW on powerbi://api.powerbi.com/v1.0/myorg/Finance", outcome.AuthoredAgainstLabel);
+                // Nothing is connected in this test, so the run reports no target rather than echoing the record.
+                Assert.Null(outcome.RanAgainstLabel);
+            }
+            finally { Directory.Delete(ws, true); }
+        }
+
+        // A trusted-answer check asks ONE number, so a result that is not a single cell has no verdict to give.
+        // Astra's spot review (2026-09-14) saved a grouped visual query as one of these: the run read the FIRST
+        // CELL of EVALUATE SUMMARIZECOLUMNS('Date'[Year], "Total Sales", [Total Sales]), which is the YEAR, and
+        // compared it with the trusted number 2024. It matched, so a check that never asked the measure read as
+        // a pass. Judging a table by its first cell is the defect; the shape is what must be refused.
+        [Fact]
+        public async Task MeasureValue_over_a_two_column_table_is_not_checked_even_when_the_first_cell_matches()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "ShapeGate");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-shape", "ShapeGate", _ => new ResultSet
+                {
+                    Columns = new[] { new ColumnDef { Name = "Date[Year]" }, new ColumnDef { Name = "Total Sales" } },
+                    Rows = new[] { new object[] { 2024, 4321m } },
+                    RowCount = 1,
+                }));
+                var outcome = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales totals 2024",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "2024",
+                        ExpressionDax = "EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Total Sales\", [Total Sales])",
+                    }),
+                }, "human");
+                Assert.NotEqual(Verdict.Pass, outcome.Verdict);
+                Assert.Equal(Verdict.NotVerifiable, outcome.Verdict);
+                Assert.Contains("1 row by 2 columns", outcome.Message);
+                Assert.Contains("one number", outcome.Message);
+                // No first-cell evidence may be left behind either: a Grand total row carrying 2024 would read as
+                // a checked answer in the saved-tests list even with the verdict withheld.
+                Assert.True(outcome.Rows == null || outcome.Rows.Length == 0);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        // More rows is the same defect wearing a different hat, and the shape gate must not swallow the honest
+        // single-cell case it exists to protect.
+        [Fact]
+        public async Task MeasureValue_judges_a_single_cell_and_refuses_a_many_row_table()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "ShapeGate2");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                var shape = "single";
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-shape-2", "ShapeGate2", _ => shape == "single"
+                    ? new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { 4321m } },
+                        RowCount = 1,
+                    }
+                    : new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "Product[Name]" } },
+                        Rows = new[] { new object[] { 4321m }, new object[] { 99m }, new object[] { 7m } },
+                        RowCount = 3,
+                    }));
+                var def = new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales", ExpectedValue = "4321",
+                    }),
+                };
+                var single = await engine.TryTestAsync(def, "human");
+                Assert.Equal(Verdict.Pass, single.Verdict);
+
+                shape = "many";
+                var many = await engine.TryTestAsync(def, "human");
+                Assert.Equal(Verdict.NotVerifiable, many.Verdict);
+                Assert.Contains("3 rows by 1 column", many.Message);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+
+        // Astra's re-check (2026-09-14): a saved check carried BOTH a complete EVALUATE query and a separate
+        // 'Date'[Year] = 2024 filter, and the engine ran the query verbatim. The year filter was silently
+        // dropped, so the check could Pass or Fail on the wrong scope. A single-cell query hides it best,
+        // because the shape gate has nothing to object to. The filter must be applied around the query.
+        [Fact]
+        public async Task MeasureValue_applies_a_saved_filter_around_a_complete_single_cell_query()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilterScope");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                string asked = null;
+                // The fake stands in for the model: 4321 only inside 2024, 999 over all years. A check that drops
+                // the filter therefore reads 999 and can never report the filtered number by accident.
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-filter", "FilterScope", q =>
+                {
+                    asked = q;
+                    var scoped = q.Contains("'Date'[Year] = 2024", StringComparison.Ordinal);
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { scoped ? 4321m : 999m } },
+                        RowCount = 1,
+                    };
+                }));
+                var outcome = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales in 2024 totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "4321",
+                        ExpressionDax = "EVALUATE ROW(\"v\", [Total Sales] + 1)",
+                        FilterDax = "'Date'[Year] = 2024",
+                    }),
+                }, "human");
+                Assert.NotNull(asked);
+                Assert.Contains("CALCULATETABLE", asked, StringComparison.Ordinal);
+                Assert.Contains("'Date'[Year] = 2024", asked, StringComparison.Ordinal);
+                Assert.Contains("ROW(\"v\", [Total Sales] + 1)", asked, StringComparison.Ordinal);
+                Assert.Equal(asked, outcome.Dax);
+                Assert.Equal(Verdict.Pass, outcome.Verdict);
+
+                // The same rule, provable without a connection: the query goes inside CALCULATETABLE, never verbatim.
+                Assert.Equal("EVALUATE CALCULATETABLE(ROW(\"v\", [Total Sales] + 1), 'Date'[Year] = 2024)",
+                    LocalEngine.BuildMeasureValueDax("Total Sales", "EVALUATE ROW(\"v\", [Total Sales] + 1)", "'Date'[Year] = 2024", out var refusal));
+                Assert.Null(refusal);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        // Some queries cannot be scoped from outside: a DEFINE block, a second EVALUATE, a trailing ORDER BY or
+        // START AT. Wrapping those is either invalid DAX or a different question. Refuse them in plain words
+        // BEFORE any verdict, and before the query is sent, rather than judging the wrong scope.
+        [Fact]
+        public async Task MeasureValue_refuses_a_query_it_cannot_scope_and_never_asks_it()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilterRefuse");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                var asked = 0;
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-refuse", "FilterRefuse", _ =>
+                {
+                    asked++;
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { 4321m } },
+                        RowCount = 1,
+                    };
+                }));
+                var define = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "4321",
+                        ExpressionDax = "DEFINE MEASURE 'Sales'[X] = [Total Sales] * 2 EVALUATE ROW(\"v\", [X])",
+                        FilterDax = "'Date'[Year] = 2024",
+                    }),
+                }, "human");
+                Assert.Equal(Verdict.NotVerifiable, define.Verdict);
+                Assert.Contains("DEFINE", define.Message, StringComparison.Ordinal);
+                Assert.Contains("filter", define.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(0, asked);
+                Assert.True(define.Rows == null || define.Rows.Length == 0);
+
+                var ordered = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "4321",
+                        ExpressionDax = "EVALUATE ROW(\"v\", [Total Sales]) ORDER BY [v]",
+                        FilterDax = "'Date'[Year] = 2024",
+                    }),
+                }, "human");
+                Assert.Equal(Verdict.NotVerifiable, ordered.Verdict);
+                Assert.Contains("ORDER BY", ordered.Message, StringComparison.Ordinal);
+                Assert.Equal(0, asked);
+
+                // A DEFINE block with no filter was never sendable either: the old builder wrapped it in
+                // ROW(), which is not valid DAX. Refuse it with a reason instead of a server syntax error.
+                LocalEngine.BuildMeasureValueDax("Total Sales", "DEFINE MEASURE 'Sales'[X] = 1 EVALUATE ROW(\"v\", [X])", null, out var noFilter);
+                Assert.NotNull(noFilter);
+                Assert.Contains("DEFINE", noFilter, StringComparison.Ordinal);
+
+                // A query may open with a comment. The body is cut at the keyword's own position, so chopping a
+                // fixed eight characters off the comment cannot mangle it.
+                Assert.Equal("EVALUATE CALCULATETABLE(ROW(\"v\", [Total Sales]), 'Date'[Year] = 2024)",
+                    LocalEngine.BuildMeasureValueDax("Total Sales", "// the 2024 total" + ((char)10) + "EVALUATE ROW(\"v\", [Total Sales])", "'Date'[Year] = 2024", out var commented));
+                Assert.Null(commented);
+
+                // The word EVALUATE sitting inside a name or a string is text, not a second query.
+                Assert.Equal("EVALUATE CALCULATETABLE(ROW(\"EVALUATE\", [Total Sales]), 'Date'[Year] = 2024)",
+                    LocalEngine.BuildMeasureValueDax("Total Sales", "EVALUATE ROW(\"EVALUATE\", [Total Sales])", "'Date'[Year] = 2024", out var literal));
+                Assert.Null(literal);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+        }
+
+        // The scalar and saved-measure paths are what the filter always worked on. The scoping fix must not
+        // move them: both still narrow with CALCULATE, through the one path both doors run.
+        [Fact]
+        public async Task MeasureValue_still_filters_a_scalar_expression_and_the_saved_measure()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilterScalar");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                string asked = null;
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-scalar", "FilterScalar", q =>
+                {
+                    asked = q;
+                    // The simple Column/Value filter quotes its value, so scope is read from the column, not the
+                    // whole text: both filter shapes must narrow, and neither may reach the model unscoped.
+                    var scoped = q.Contains("'Date'[Year] = ", StringComparison.Ordinal);
+                    return new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "v" } },
+                        Rows = new[] { new object[] { scoped ? 4321m : 999m } },
+                        RowCount = 1,
+                    };
+                }));
+                var scalar = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales in 2024 totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "4321",
+                        ExpressionDax = "[Total Sales] + 1",
+                        FilterDax = "'Date'[Year] = 2024",
+                    }),
+                }, "human");
+                Assert.Equal("EVALUATE ROW(\"v\", CALCULATE([Total Sales] + 1, 'Date'[Year] = 2024))", asked);
+                Assert.Equal(Verdict.Pass, scalar.Verdict);
+
+                var saved = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue,
+                    Title = "Total Sales in 2024 totals 4321",
+                    TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest
+                    {
+                        MeasureRef = "measure:Sales/Total Sales",
+                        ExpectedValue = "4321",
+                        FilterColumn = "'Date'[Year]",
+                        FilterValue = "2024",
+                    }),
+                }, "human");
+                Assert.Equal("EVALUATE ROW(\"v\", CALCULATE([Total Sales], 'Date'[Year] = \"2024\"))", asked);
+                Assert.Equal(Verdict.Pass, saved.Verdict);
+            }
+            finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
         private static string FindRepoFile(string relative)

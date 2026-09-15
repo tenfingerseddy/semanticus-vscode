@@ -17,6 +17,7 @@
   <script>
   (function () {
     const cfg = window.__UISHOT__ || {};
+    const homeScenario = new URLSearchParams(location.search).get('home');
 
     // ?view=connections → set the SAME initial-view flag the real host injects, so the bundle mounts ONLY the
     // Connections hub full-page (the standalone panel). Must run before studio.js (this IIFE does).
@@ -159,6 +160,16 @@
       ],
     };
 
+    // The instructions the assistant follows, as five written lines (Model Overview counts non-blank lines).
+    // A `var` on purpose: setAiInstructions rewrites it so an inline Save round-trips inside one shot session.
+    var AI_INSTRUCTIONS = [
+      'The fiscal year starts on 1 July. When someone says "this year" use the fiscal year unless they say calendar year.',
+      '"Sales" means net sales after returns and discounts. Use [Total Sales] for it, never [Gross Sales].',
+      'Prefer Net Revenue for financial questions. Qualify results by region when the question does not name one.',
+      'Dates come from the Date table only. Budget figures are monthly and must not be added up across years.',
+      'Say when a number is a forecast rather than an actual.',
+    ].join('\n\n');
+
     const specScenario = new URLSearchParams(location.search).get('spec');
     const SESSION = cfg.session || {
       sessionId: 'uishot', modelName: specScenario === 'empty' ? 'New model' : 'Contoso (mock)', measures: specScenario === 'empty' ? 0 : 12, tables: specScenario === 'empty' ? 0 : GRAPH.tables.length,
@@ -166,14 +177,27 @@
       // Live-bound endpoint carries the workspace NAME (url-encoded) — matches a WORKSPACES displayName so Lineage's
       // Published-reports picker can demo the auto-default (pre-select the model's own workspace once workspaces list).
       liveEndpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20%5BTest%5D', liveDatabase: 'Contoso',
+      // ?compat=<level> makes the open model report a compatibility level. ABSENT by default on purpose:
+      // no free read carried this number before 2026-09-15 (listCalendars, getDocModel and getSpec all did,
+      // and all three became Pro reads with their features), so the engine half of the feature-line slice
+      // adds it to sessionInfo. Overview shows its free "Raise compatibility level" action only when the
+      // number is present and low, so the default fixture is the honest "an engine that does not report it".
+      compatibilityLevel: Number(new URLSearchParams(location.search).get('compat')) || undefined,
     };
+    const hubMode = new URLSearchParams(location.search).get('hub');
+    const recoveryMode = hubMode === 'recovery';
+    const localFailureMode = hubMode === 'local-failure';
     // ?dirty=1 → the open model has unsaved changes, so the Connections hub's Create-new-model guard shows its
     // "replaces the open model, which has unsaved changes" consent state (the B1 review fix).
     if (new URLSearchParams(location.search).get('dirty') === '1') SESSION.hasUnsavedChanges = true;
+    // The recovery review keeps a dirty local session in place while a remembered XMLA query connection fails. This
+    // makes the retry proof check the editing session, not just the account-dialog copy.
+    if (recoveryMode) SESSION.hasUnsavedChanges = true;
     if (new URLSearchParams(location.search).get('live') === '1' || new URLSearchParams(location.search).get('deploy') === 'publish') {
       SESSION.liveBound = true;
       SESSION.liveDatabase = SESSION.liveDatabase || 'Contoso';
     }
+    if (homeScenario === 'nomodel') Object.assign(SESSION, { sessionId: null, modelName: null, source: null, tables: 0, measures: 0 });
     const cat = (category, score, weight, applicable, violations, waived) => ({ category, score, weight, applicable, violations, waived: waived || 0, hasRules: true });
     const find = (ruleId, ruleTitle, category, severity, fix, objectRef, objectName, message) =>
       ({ ruleId, ruleTitle, category, severity, fix, objectRef, objectName, message });
@@ -305,8 +329,10 @@
       col('GrossMargin', 'Sales', 'Decimal', 'None', { isCalculated: true, expression: '[SalesAmount] - [Cost]', sourceColumn: null }),
       col('CustomerKey', 'Customer', 'Int64', 'None', { isKey: true, isHidden: true }),
       col('CustomerName', 'Customer', 'String', 'None', { hasDescription: true, description: 'Full customer name.' }),
+      col('Region', 'Customer', 'String', 'None', { hasDescription: true, description: 'Customer sales region.' }),
       col('MiddleName', 'Customer', 'String', 'None'),   // large + unused → resolvable so its Delete/Reveal are enabled
       col('FullName', 'Customer', 'String', 'None', { isCalculated: true, expression: "[FirstName] & \" \" & [LastName]" }),
+      col('Category', 'Product', 'String', 'None', { hasDescription: true, description: 'Product category.' }),
       col('Year', 'Date', 'Int64', 'None', { hasDescription: true, description: 'Calendar year.' }),
       col('DateKey', 'Date', 'Int64', 'Sum', { isKey: true }),                       // visible key + aggregating (smell)
       col('Name', 'UAT Detail', 'String', 'None'),                                  // calculation group: OLS must not be offered
@@ -594,6 +620,36 @@
       { id: 'p1', displayName: 'Contoso Sales', description: 'Sales semantic model + report' },
       { id: 'p2', displayName: 'Finance', description: 'Finance model' },
     ];
+    // Every Fabric read mints a token first, so the FIRST thing it can fail on is the sign-in mode it was
+    // handed, not the call. These are the real messages: Azure.Identity's AzureCliCredential text (the one
+    // Kane read on his own laptop), and the client-secret failure on a machine with no service account.
+    // A browser or device-code sign-in succeeds here, so the fix a person presses can be driven end to end.
+    function signInGateText(mode) {
+      var m = String(mode || '').toLowerCase();
+      if (m === 'azcli' || m === '') return "AzureCliCredential authentication failed: ERROR: Please run 'az login' to set up account.";
+      if (m === 'serviceprincipal' || m === 'sp') return 'ClientSecretCredential authentication failed: AZURE_CLIENT_ID is not set on this machine.';
+      return null;
+    }
+    function signInGate(mode) {
+      var text = signInGateText(mode);
+      return text ? { __uishotError: text } : null;
+    }
+    // The Fabric Git reads and cicd_publish do NOT throw across the door: LocalEngine catches the token
+    // failure and returns it on the DTO's own .error (LocalEngine.cs:7296, :7306, and the cicd_publish
+    // catch), so their fixtures answer in that shape instead. Getting this wrong would send the failure to
+    // the panel-wide error line and never to the plain-words banner, which is the thing being proved.
+    function signInGateDto(mode, extra) {
+      var text = signInGateText(mode);
+      if (!text) return null;
+      var dto = { error: text };
+      for (var k in (extra || {})) dto[k] = extra[k];
+      return dto;
+    }
+    const FABRIC_GIT_CONNECTION = { state: 'ConnectedAndInitialized', providerType: 'AzureDevOps', organization: 'Contoso', repository: 'bi-models', branch: 'main', directory: '/', head: 'a1b2c3d4e5f6', lastSyncTime: '2026-06-25T08:00:00Z' };
+    const FABRIC_GIT_STATUS = { workspaceHead: 'a1b2c3d4', remoteCommitHash: 'f6e5d4c3', conflicts: true, changes: [
+      { objectId: 'o1', itemType: 'SemanticModel', displayName: 'Contoso', workspaceChange: 'Modified', conflictType: 'Conflict' },
+      { objectId: 'o2', itemType: 'Report', displayName: 'Sales Overview', remoteChange: 'Modified', conflictType: 'None' },
+      { objectId: 'o3', itemType: 'SemanticModel', displayName: 'Returns', workspaceChange: 'Added', conflictType: 'None' } ] };
     const PIPELINE_STAGES = cfg.pipelineStages || [
       { id: 's0', order: 0, displayName: 'Development', workspaceId: 'w0', workspaceName: 'Contoso [Dev]', isPublic: false },
       { id: 's1', order: 1, displayName: 'Test', workspaceId: 'w1', workspaceName: 'Contoso [Test]', isPublic: false },
@@ -700,6 +756,17 @@
     // Lineage Phase 3 (cloud): the non-admin per-workspace report list (carries datasetId + reportType) and the
     // report-aware analysis (which model fields each report uses + a safe-to-remove sweep that EXCLUDES report-used
     // fields). The analyze mock ignores args; the RDL report is greyed/disabled in the picker.
+    // Two workspaces of reports, so "discover and tick a new one" and "change workspace, keep the old report"
+    // are real journeys rather than one list pretending to be two.
+    const REPORTS_BY_WS = cfg.reportsByWorkspace || {
+      'ws-a': [
+        { id: 'r-ops', name: 'Warehouse ops', datasetId: 'ds-9f3a-contoso', reportType: 'PowerBIReport' },
+        { id: 'r-claims', name: 'sm_expense_claims', datasetId: 'ds-9f3a-contoso', reportType: 'PowerBIReport' },
+      ],
+      'ws-b': [
+        { id: 'r-old', name: 'Old report', datasetId: 'ds-9f3a-contoso', reportType: 'PowerBIReport' },
+      ],
+    };
     const REPORTS = cfg.reports || [
       { id: 'rep-0001-sales', name: 'Sales Overview', datasetId: 'ds-9f3a-contoso', reportType: 'PowerBIReport', webUrl: 'https://app.powerbi.com/r/rep-0001' },
       { id: 'rep-0002-exec', name: 'Executive Summary', datasetId: 'ds-9f3a-contoso', reportType: 'PowerBIReport', webUrl: 'https://app.powerbi.com/r/rep-0002' },
@@ -723,6 +790,206 @@
       },
       caveat: 'Includes field usage from 2 report(s); 1 report(s) could not be read (paginated/RDL, blocked by a sensitivity label, or unreadable). A field used only by a report NOT included here can still appear as unused.',
     };
+
+    // ================================================================================================
+    // The ONE report scope (list_report_scope / set_report_scope / check_reports), Kane's option A.
+    //
+    // This mock MUTATES, because the whole point of the repair is that a choice is not a reading. Ticking a
+    // report leaves it "not checked"; pressing Check is what turns it into "checked", stamps the time and
+    // changes the card and the cleanup reasons. A driver that could not show that difference would be
+    // proving nothing.
+    //
+    // ?scope=empty   nothing chosen yet (the first visit)
+    // ?scope=one     three chosen, one already read     (the default)
+    // ?scope=all     three chosen, all three read
+    // ?scope=partly  two chosen, one read, one unreadable
+    // ?scope=stale   one read, then the model changed
+    // ?impact=big    Date[Date] with 123 dependants, for the Show all list
+    // ================================================================================================
+    const scopeArg = new URLSearchParams(location.search).get('scope') || 'one';
+    const bigImpact = new URLSearchParams(location.search).get('impact') === 'big';
+    const CHECK_TIME = '2026-09-15T09:41:00Z';
+    const scopeRow = (id, name, source, state, when, coords) => Object.assign({
+      id: id, kind: id.indexOf('local:') === 0 ? 'local' : 'published', name: name, source: source,
+      state: state, checkedWhenUtc: when || null, note: null, fieldsUsed: 0, visuals: 0,
+    }, coords || {});
+    // ?scope=reopen simulates what the engine does on a reopen: the CHOICES come back, the reading does not.
+    // ?scope=unchecked is the branch that used to fall back to a model-only deletion with nobody told.
+    const SCOPE_PRESETS = {
+      empty: [],
+      one: [
+        scopeRow('published:ws-1/rep-warehouse', 'Warehouse ops', 'Fabric Reporting', 'checked', CHECK_TIME),
+        scopeRow('published:ws-1/rep-contoso', 'Contoso', 'Fabric Reporting', 'notChecked', null),
+        scopeRow('published:ws-1/rep-expense', 'sm_expense_claims', 'Fabric Reporting', 'notChecked', null),
+      ],
+      all: [
+        scopeRow('published:ws-1/rep-warehouse', 'Warehouse ops', 'Fabric Reporting', 'checked', CHECK_TIME),
+        scopeRow('published:ws-1/rep-contoso', 'Contoso', 'Fabric Reporting', 'checked', CHECK_TIME),
+        scopeRow('published:ws-1/rep-expense', 'sm_expense_claims', 'Fabric Reporting', 'checked', CHECK_TIME),
+      ],
+      partly: [
+        scopeRow('published:ws-1/rep-warehouse', 'Warehouse ops', 'Fabric Reporting', 'checked', CHECK_TIME),
+        scopeRow('published:ws-1/rep-expense', 'sm_expense_claims', 'Fabric Reporting', 'couldNotBeFullyChecked', CHECK_TIME),
+      ],
+      stale: [
+        scopeRow('published:ws-1/rep-warehouse', 'Warehouse ops', 'Fabric Reporting', 'needsChecking', CHECK_TIME),
+      ],
+      unchecked: [
+        scopeRow('published:ws-a/r-ops', 'Warehouse ops', 'Workspace A', 'notChecked', null, { workspaceId: 'ws-a', reportId: 'r-ops' }),
+      ],
+      reopen: [
+        scopeRow('published:ws-a/r-ops', 'Warehouse ops', 'Workspace A', 'notChecked', null, { workspaceId: 'ws-a', reportId: 'r-ops' }),
+        scopeRow('published:ws-b/r-old', 'Old report', 'Workspace B', 'notChecked', null, { workspaceId: 'ws-b', reportId: 'r-old' }),
+      ],
+      twoworkspaces: [
+        scopeRow('published:ws-b/r-old', 'Old report', 'Workspace B', 'checked', CHECK_TIME, { workspaceId: 'ws-b', reportId: 'r-old' }),
+      ],
+    };
+    let SCOPE_ROWS = (SCOPE_PRESETS[scopeArg] || SCOPE_PRESETS.one).map(function (r) { return Object.assign({}, r); });
+    let SCOPE_GENERATION = 0;
+    let REVIEWED_SCOPE = null;
+
+    const scopeCount = (n, one) => (n === 1 ? '1 ' + one : n + ' ' + one + 's');
+    const scopeNames = (rows, state) => {
+      const names = rows.filter(function (r) { return r.state === state; }).map(function (r) { return r.name; });
+      if (names.length === 0) return 'none';
+      if (names.length === 1) return names[0];
+      return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+    };
+    function composeScope(usage) {
+      const rows = SCOPE_ROWS.map(function (r) { return Object.assign({}, r); });
+      const count = function (st) { return rows.filter(function (r) { return r.state === st; }).length; };
+      const listed = rows.length, checked = count('checked'), partly = count('couldNotBeFullyChecked');
+      const not = count('notChecked'), needs = count('needsChecking');
+      const gaps = [];
+      if (listed === 0) gaps.push('Reports have not been checked. Choose reports to check this against.');
+      else {
+        if (needs > 0) gaps.push('Needs checking again. The model changed after ' + scopeCount(needs, 'report') + ' was last read.');
+        if (not > 0) gaps.push(scopeCount(not, 'listed report') + (not === 1 ? ' was' : ' were') + ' not checked: ' + scopeNames(rows, 'notChecked') + '.');
+        if (partly > 0) gaps.push(scopeCount(partly, 'listed report') + ' could not be fully checked: ' + scopeNames(rows, 'couldNotBeFullyChecked') + '.');
+        if (checked > 0) gaps.push('Only the reports listed here were checked. A report that is not on this list can still use this field.');
+      }
+      const out = {
+        modelName: 'Contoso', reports: rows, listed: listed, checked: checked,
+        couldNotBeFullyChecked: partly, notChecked: not, needsChecking: needs,
+        checkedWhenUtc: rows.filter(function (r) { return r.checkedWhenUtc; }).map(function (r) { return r.checkedWhenUtc; }).sort().reverse()[0] || null,
+        gaps: gaps, summary: listed === 0 ? 'Reports have not been checked.' : checked + ' of ' + listed + ' listed reports checked.',
+      };
+      if (usage) out.usage = usage;
+      return out;
+    }
+
+    // The big blast radius: a Date column 123 things depend on, so Show all has a real list to group and sort.
+    const BIG_NODES = (function () {
+      const out = [];
+      const direct = ['Total Sales', 'Sales YTD', 'Sales LY', 'Orders YTD'];
+      direct.forEach(function (n) { out.push({ ref: 'measure:Sales/' + n, name: n, kind: 'measure', table: 'Sales', depth: 1, via: 'dax', viaName: null }); });
+      out.push({ ref: 'measure:Sales/Sales vs LY %', name: 'Sales vs LY %', kind: 'measure', table: 'Sales', depth: 2, via: 'dax', viaName: 'Sales LY' });
+      out.push({ ref: 'measure:Sales/Margin', name: 'Margin', kind: 'measure', table: 'Sales', depth: 2, via: 'dax', viaName: 'Total Sales' });
+      out.push({ ref: 'measure:Sales/Margin %', name: 'Margin %', kind: 'measure', table: 'Sales', depth: 3, via: 'dax', viaName: 'Margin' });
+      out.push({ ref: 'measure:Sales/YoY %', name: 'YoY %', kind: 'measure', table: 'Sales', depth: 3, via: 'dax', viaName: 'Margin' });
+      out.push({ ref: 'measure:Customer/Customer Count', name: 'Customer Count', kind: 'measure', table: 'Customer', depth: 2, via: 'dax', viaName: 'Date[Year]' });
+      out.push({ ref: 'measure:Customer/Active Customers', name: 'Active Customers', kind: 'measure', table: 'Customer', depth: 3, via: 'dax', viaName: 'Customer Count' });
+      out.push({ ref: 'measure:Sales/Avg Order Value', name: 'Avg Order Value', kind: 'measure', table: 'Sales', depth: 2, via: 'dax', viaName: 'Total Sales' });
+      for (let i = 1; i <= 101; i++)
+        out.push({ ref: 'measure:Sales/Sales KPI ' + i, name: 'Sales KPI ' + i, kind: 'measure', table: 'Sales', depth: 2, via: 'dax', viaName: 'Total Sales' });
+      ['Year', 'Quarter', 'Month', 'Is Last 90 Days', 'Week', 'Day Name', 'Fiscal Year', 'Fiscal Quarter', 'Day Of Year'].forEach(function (n) {
+        out.push({ ref: 'column:Date/' + n, name: n, kind: 'calcColumn', table: 'Date', depth: 1, via: 'dax', viaName: null });
+      });
+      out.push({ ref: 'relationship:Sales[OrderDate]->Date[Date]', name: 'Sales[OrderDate] to Date[Date]', kind: 'relationship', table: 'Sales', depth: 1, via: 'relationship', viaName: null });
+      out.push({ ref: 'relationship:Returns[ReturnDate]->Date[Date]', name: 'Returns[ReturnDate] to Date[Date]', kind: 'relationship', table: 'Returns', depth: 1, via: 'relationship', viaName: null });
+      return out;
+    })();
+    const IMPACT_BIG = {
+      root: 'column:Date/Date', rootName: 'Date', rootKind: 'column', impacted: BIG_NODES,
+      measures: BIG_NODES.filter(function (n) { return n.kind === 'measure'; }).length,
+      columns: BIG_NODES.filter(function (n) { return n.kind === 'calcColumn'; }).length,
+      tables: 0, relationships: 2, other: 0,
+    };
+    if (bigImpact) {
+      LINEAGE.nodes.push(ln('column:Date/Date', 'Date', 'column', 'Date'));
+      LINEAGE.edges.push(le('table:Date', 'column:Date/Date', 'contains'));
+    }
+
+    // The cleanup candidates, with the reasons Astra's copy table asks for. The reason NAMES what was
+    // checked, so it changes with the reading rather than standing still while the strip moves.
+    function cleanupItems() {
+      const checked = SCOPE_ROWS.filter(function (r) { return r.state === 'checked'; }).length;
+      // R1: a report chosen and not read leaves this list unable to call anything unused.
+      const pendingNames = SCOPE_ROWS.filter(function (r) { return r.state === 'notChecked' || r.state === 'needsChecking'; })
+        .map(function (r) { return r.name; });
+      const basis = checked === 0 ? 'and no report has been checked' : 'nor by the ' + scopeCount(checked, 'report') + ' checked';
+      const demote = pendingNames.length > 0;
+      const items = [
+          { ref: 'measure:Sales/_Base Rate', name: '_Base Rate', kind: 'measure', table: 'Sales', isHidden: true, verdict: 'safe', refCount: 0, blockedBy: [], reason: 'Not used by any measure, column or relationship, ' + basis + '.' },
+          { ref: 'column:Customer/MiddleName', name: 'MiddleName', kind: 'column', table: 'Customer', isHidden: false, verdict: 'safe', refCount: 0, blockedBy: [], reason: 'Not used by any measure, column or relationship, ' + basis + '.' },
+          { ref: 'measure:Sales/Legacy Cost', name: 'Legacy Cost', kind: 'measure', table: 'Sales', isHidden: true, verdict: 'usedByUnusedOnly', refCount: 1, blockedBy: ['_Base Rate'], reason: 'Used by _Base Rate. No use of _Base Rate was found in these checks. Recheck after removing it.' },
+          { ref: 'column:Sales/CoverageKey', name: 'CoverageKey', kind: 'column', table: 'Sales', isHidden: false, verdict: 'caution', refCount: 1, blockedBy: ['Sales (partition coverage)'], reason: 'Used by a data-loading step. Open that step to check whether it needs this column.' },
+        ];
+      if (demote) items.forEach(function (i) {
+        if (i.verdict !== 'safe') return;
+        i.verdict = 'caution';
+        i.reason = 'A report chosen for this model has not been checked yet, so its use of this field is not known.';
+      });
+      return {
+        items: items,
+        safeCount: items.filter(function (i) { return i.verdict === 'safe'; }).length,
+        usedByUnusedOnlyCount: items.filter(function (i) { return i.verdict === 'usedByUnusedOnly'; }).length,
+        cautionCount: items.filter(function (i) { return i.verdict === 'caution'; }).length,
+        caveat: pendingNames.length === 0 ? null
+          : (pendingNames.length === 1 ? '1 chosen report still needs checking' : pendingNames.length + ' chosen reports still need checking')
+            + ' (' + pendingNames.join(', ') + '), so nothing here can be called unused yet. Check them, then look again.',
+      };
+    }
+
+    // The assessment, composed from whatever has actually been read. The card's two sentences come from here,
+    // so "after a check the card updated" is the component reacting to a new reading, not a second fixture.
+    function assessmentFor(ref) {
+      const candidate = cleanupItems().items.filter(function (i) { return i.ref === ref && i.verdict === 'safe'; })[0];
+      const impact = ref === 'column:Date/Date' ? IMPACT_BIG
+        : candidate ? { root: ref, rootName: candidate.name, rootKind: candidate.kind, impacted: [], measures: 0, columns: 0, tables: 0, relationships: 0, other: 0 }
+        : IMPACT;
+      const scope = composeScope();
+      const parts = [];
+      if (impact.measures) parts.push(impact.measures + (impact.measures === 1 ? ' measure' : ' measures'));
+      if (impact.columns) parts.push(impact.columns + (impact.columns === 1 ? ' column' : ' columns'));
+      if (impact.relationships) parts.push(impact.relationships + (impact.relationships === 1 ? ' relationship' : ' relationships'));
+      const list = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+      const summary = parts.length === 0
+        ? 'Nothing in the model uses ' + impact.rootName + '.'
+        : impact.rootName + ' is used by ' + list + '.';
+      const checkedNames = SCOPE_ROWS.filter(function (r) { return r.state === 'checked'; }).map(function (r) { return r.name; });
+      const hits = checkedNames.length > 0 && ref === 'column:Date/Date'
+        ? checkedNames.map(function (n) {
+            return {
+              path: n, name: n, visuals: 2, usedRefs: [impact.root],
+              // Report, page, visual, and whether the visual shows the field itself or only a measure that
+              // depends on it. The first build dropped all of this and hid the answer with the raw token.
+              details: [
+                { page: 'Overview', visual: 'Sales by month', visualKind: 'Bar chart', visualKindId: 'barChart', usedRefs: [impact.root], viaDependent: false },
+                { page: 'Detail', visual: null, visualKind: 'Card', visualKindId: 'card', usedRefs: ['measure:Sales/Total Sales'], viaDependent: true },
+              ],
+            };
+          })
+        : [];
+      let reportSummary;
+      if (scope.listed === 0) reportSummary = 'Report use is unknown. No reports have been chosen for this model yet.';
+      else if (checkedNames.length === 0) reportSummary = 'Report use is unknown. The ' + scope.listed + ' listed reports have not been checked.';
+      else if (hits.length > 0) reportSummary = impact.rootName + ' or something that depends on it appears in ' + hits.reduce(function (a, h) { return a + h.visuals; }, 0) + ' visuals across ' + scopeCount(hits.length, 'checked report') + ' (' + checkedNames.join(', ') + ').';
+      else reportSummary = 'No use of ' + impact.rootName + ' or the things that depend on it was found in the ' + scopeCount(checkedNames.length, 'report') + ' checked (' + checkedNames.join(', ') + ').'
+        + (scope.notChecked > 0 ? ' ' + scopeCount(scope.notChecked, 'listed report') + (scope.notChecked === 1 ? ' was' : ' were') + ' not checked.' : '');
+      return {
+        objectRef: impact.root, objectName: impact.rootName, objectKind: impact.rootKind, modelName: 'Contoso',
+        intent: 'change', scope: 'modelAndReports', verdict: 'NeedsReview', modelImpact: impact,
+        reportImpact: hits, reportsImpacted: hits.length, visualsImpacted: hits.reduce(function (a, h) { return a + h.visuals; }, 0),
+        replayChecks: [
+          { id: 'ambient-suite', kind: 'ambient-suite', title: 'Relationships and table integrity', reason: 'Run the automatic checks after the change to catch structural problems.' },
+          { id: 'sales-total', kind: 'saved-test', title: 'Total Sales reconciles to source', targetRef: 'measure:Sales/Total Sales', reason: 'This check is bound to something on this list. Run it after the change.' },
+        ],
+        replayChecksOmitted: 0, unknowns: scope.gaps, summary: summary, reportSummary: reportSummary,
+        checked: { model: 'Contoso', reports: scope.reports, reportsChecked: scope.checked, reportsListed: scope.listed, checkedWhenUtc: scope.checkedWhenUtc, gaps: scope.gaps },
+      };
+    }
 
     // ---- Verified Edits (the Pro audit layer on the Edit History tab) --------------------------------------------
     // The persistent, hash-chained trail the engine welds onto the model. Same sessionId 'uishot', so records weld to the
@@ -807,6 +1074,24 @@
               { Revision: 104, When: '2026-07-02T06:14:00Z', Op: 'apply_plan', Origin: 'agent', OverlapScore: 3, FormulaChanged: true, changedRefs: ['measure:Sales/m1', 'column:Sales/CustomerKey', 'measure:Sales/Total Cost'] },
               { Revision: 103, When: '2026-07-02T05:13:00Z', Op: 'save_model', Origin: 'human', OverlapScore: 0, FormulaChanged: false, changedRefs: [] } ],
             exprDiffs: [{ Ref: 'measure:Sales/Total Cost', before: 'SUMX ( Sales, Sales[Quantity] * Sales[Unit Cost] )', after: 'SUMX ( Sales, Sales[Quantity] * Sales[Net Unit Cost] )' }] }) }),
+        // Three more PUBLISHES that went ahead on a red safety check. The old fixture had one, so the red-check
+        // block on Edit History could never show its collapse (two rows, the rest behind "Show N older") and the
+        // wall of red slabs Kane actually met was never on screen for anyone reviewing the tab. seq 10 and 11
+        // carry the JULY sentence that is still sitting in real audit trails and cannot be rewritten there;
+        // seq 12 carries the sentence the engine writes now. Both have to read as plain words on the tab.
+        // vrec's when-builder only produces valid hours up to seq 7, so these pass their own `when`.
+        vrec(10, 0, 'human', 'deploy_live', undefined, 'overridden', 'gate RED (19 blocking BPA error(s)): override accepted to deploy to powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Test/Contoso [Test]', {
+          when: '2026-07-02T11:04:00Z',
+          overrideReason: 'testing',
+          evidence: JSON.stringify({ Grade: 'D', BpaViolations: 31, BpaBlocking: 19, Blockers: ['19 blocking BPA error(s)'] }) }),
+        vrec(11, 0, 'agent', 'deploy_live', undefined, 'overridden', 'gate RED (19 blocking BPA error(s)): override accepted to deploy to powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Test/Contoso [Test]', {
+          when: '2026-07-03T09:21:00Z',
+          overrideReason: 'Gate is RED only because this engine build counts WAIVED BPA findings as blockers (fixed in PR #46, engine not yet restarted). The model itself is clean.',
+          evidence: JSON.stringify({ Grade: 'D', BpaViolations: 31, BpaBlocking: 19, Blockers: ['19 blocking BPA error(s)'] }) }),
+        vrec(12, 0, 'human', 'deploy_live', undefined, 'overridden', 'Red safety check (2 errors and 41 warnings to fix before this model can ship. Start with: Avoid floating point data types (Sales[Unit Price] and 4 more). Fix each one, or record a waiver saying why you accept it.). Published anyway with a written reason, to powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Test/Contoso [Test]', {
+          when: '2026-09-11T16:40:00Z',
+          overrideReason: 'The board pack is due at nine tomorrow. The data owner signed off on shipping with the naming findings still open.',
+          evidence: JSON.stringify({ Grade: 'C', BpaViolations: 43, BpaBlocking: 43, Blockers: ['2 errors and 41 warnings to fix before this model can ship.'] }) }),
       ],
     };
     // The RICH evidence tier: the live ActivityEvent.result carries the FULL optimize result (candidate DAX,
@@ -878,26 +1163,30 @@
     // actually decides the rail sections.
     const wfInfo = (o) => Object.assign({ name: '', title: '', description: '', version: 1, source: 'stock', stepCount: 0, gated: false, triggers: [], error: null, enabled: true, active: true, activeReason: null }, o);
     const WORKFLOWS = cfg.workflows2 || [
-      // Build
-      wfInfo({ name: "add-relationship", title: "Relate two tables and prove the join did not fan out", description: "Relate two tables on their keys at the right cardinality and direction, review the graph for ambiguity or an unintended inactive path, then PROVE a known measure still equals its control total after relating. The relationship equivalent of import-table's control-total proof.", stepCount: 5, gated: true, triggers: ["create_relationship", "set_relationship_cardinality", "set_relationship_crossfilter"] }),
-      wfInfo({ name: "import-table", title: "Import a table and prove it loaded correctly", description: "Bring in an import table, type every column, tame datetime cardinality, hide the plumbing, lay the incremental-refresh groundwork, then PROVE the load against a control total from the source before you trust a single number.", stepCount: 6, gated: true, triggers: ["create_import_table", "set_column_data_type", "set_incremental_refresh_policy"] }),
-      wfInfo({ name: "calendar-setup", title: "Set up a calendar and prove its time intelligence", description: "Stand up calendar-based time intelligence (CL 1701+) from a template, then PROVE a calendar-aware YTD against a known-good figure before you trust it: modern time intelligence, verified, not eyeballed.", stepCount: 4, gated: true, triggers: ["define_calendar_from_template", "define_calendar", "list_calendars"] }),
-      wfInfo({ name: "time-intelligence-variants", title: "Expand one base measure into verified time-intelligence variants", description: "Take ONE base measure and author its period-over-period variants (PY, YoY %, YTD, QTD, MAT) as a consistent, well-named set (calendar-aware where calendars exist), then verify a representative PY and a representative YTD against known-good numbers before you trust the set. The single-measure counterpart to refactor-to-calculation-group, which collapses the SAME variants across MANY base measures into one calculation group.", stepCount: 5, gated: true, triggers: ["generate_time_intelligence", "create_measure"] }),
-      wfInfo({ name: "new-measure", title: "Author a verified measure", description: "Create a measure with declared intent, verified against a known-good number.", stepCount: 3, gated: true, triggers: ["create_measure", "update_measure"] }),
-      wfInfo({ name: "refactor-to-calculation-group", title: "Refactor repeated time-intelligence measures into one calculation group", description: "Collapse a family of copy-pasted time-intel measures (PY, YTD, MAT, %growth…) into a single calculation group, and prove, item by item, that not one number changed. A structural refactor most people are scared to do by hand.", stepCount: 5, gated: true, triggers: ["create_calculation_group", "create_calculation_item"] }),
+      // Build. Every field below is copied from the shipped seed frontmatter and step headings; keep it that
+      // way, because workflow-scenarios.test.mjs reads Semanticus.Engine/workflows and compares, field by field.
+      wfInfo({ name: "add-relationship", title: "Connect tables", description: "Inspect two endpoints, create the relationship with a deliberate shape, and check one meaningful result.", stepCount: 4, gated: true, triggers: ["create_relationship", "set_relationship_cardinality", "set_relationship_crossfilter"] }),
+      wfInfo({ name: "import-table", title: "Import a table", description: "Bring in one table, make its fields deliberate, and record an independent load check when available.", stepCount: 4, gated: true, triggers: ["create_import_table", "set_column_data_type", "set_incremental_refresh_policy"] }),
+      wfInfo({ name: "calendar-setup", title: "Set up a calendar", description: "Choose a calendar convention, create its mappings, and optionally check one time calculation before saving.", stepCount: 4, gated: true, triggers: ["define_calendar_from_template", "define_calendar", "list_calendars"] }),
+      wfInfo({ name: "time-intelligence-variants", title: "Add time comparisons", description: "Select the needed variants for one trusted measure, generate them, check a representative context and save.", stepCount: 4, gated: true, triggers: ["generate_time_intelligence", "create_measure"] }),
+      wfInfo({ name: "new-measure", title: "Add a measure", description: "Define a measure, check the cases that matter, and save the result with its meaning.", stepCount: 4, gated: true, triggers: ["create_measure", "update_measure"] }),
+      wfInfo({ name: "refactor-to-calculation-group", title: "Replace repeated measures with a calculation group", description: "Replace a selected repeated variant family with calculation items, compare representative outputs, and retire only chosen measures.", stepCount: 5, gated: true, triggers: ["create_calculation_group", "create_calculation_item"] }),
+      // Build, by fallback rather than by intent: reconcile-saved-tests-sql has no GROUP_OF entry in
+      // webview/src/workflows.tsx, so the real rail files it under Build. Grouped here where it actually renders.
+      wfInfo({ name: "reconcile-saved-tests-sql", title: "Reconcile saved tests with SQL", description: "Run saved SQL comparisons, inspect mismatches or missing access, and export the checked contexts and unresolved cases.", stepCount: 3, gated: true, triggers: ["run_tests", "export_test_report"] }),
       // Data
-      wfInfo({ name: "incremental-refresh-setup", title: "Set up incremental refresh and prove the window loads", description: "Add the RangeStart/RangeEnd plumbing that MUST fold, apply a rolling-window policy on a large fact table, verify the partitions it produced, then PROVE the loaded window against a source control total before you trust it.", stepCount: 5, gated: true, triggers: ["set_incremental_refresh_policy"] }),
+      wfInfo({ name: "incremental-refresh-setup", title: "Set up rolling refresh", description: "Check folding prerequisites, configure a rolling window, inspect partitions and record an optional control check.", stepCount: 4, gated: true, triggers: ["set_incremental_refresh_policy"] }),
       // Quality
-      wfInfo({ name: "check-blast-radius", title: "Check blast radius", description: "Assess a risky model change, preserve representative values when live evidence is available, replay the affected safety checks, record the decision, and produce one sealed evidence certificate.", stepCount: 5, gated: true, triggers: ["impact_assessment", "capture_baseline", "delete_object", "rename_object"] }),
-      wfInfo({ name: "governed-rename", title: "Safe rename", description: "Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.", version: 2, stepCount: 6, gated: true, triggers: ["rename_object", "add_plan_item"] }),
-      wfInfo({ name: "model-hygiene-pass", title: "Sweep the model for hygiene and AI-readiness", description: "A single enforced pass over the whole model: scan for gaps, fix types/hiding/summarization/formatting/descriptions, remove genuinely unused objects only after checking report usage and dependents, then prove the pass regressed nothing.", stepCount: 5, gated: true, triggers: ["apply_safe_fixes", "make_model_ai_ready"] }),
-      wfInfo({ name: "verified-measure", title: "Author a hard DAX measure, reconciled against the requirement at every grain", description: "Requirement-anchored verified authoring: pin conventions only from the requirement's own words, lock expected values from raw rows before authoring, reconcile one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicate disagreements cell-by-cell, and never let a speed pick or an invented convention overwrite a correct answer.", version: 7, stepCount: 7, gated: true, triggers: ["create_measure", "update_measure"] }),
-      wfInfo({ name: "optimize-dax", title: "Rewrite a measure and prove it unchanged, for speed or clarity", description: "Rewrite an existing measure (to make it faster, or just cleaner and more readable), then prove the rewrite returns the IDENTICAL result before you keep it. A hard equivalence gate stands between a rewrite and a silent behaviour change; the benchmark steps apply when the goal is speed and are skipped for a clarity-only cleanup.", stepCount: 5, gated: true, triggers: ["benchmark_dax", "profile_dax", "update_measure"] }),
-      wfInfo({ name: "make-ai-ready", title: "Make the model AI-ready", description: "Descriptions, synonyms, Q&A, and Prep-for-AI config in the order Microsoft's AI-readiness workflow prescribes, gated on a readiness rescan.", stepCount: 5, gated: true, triggers: ["make_model_ai_ready", "ai_readiness_scan", "set_description"] }),
+      wfInfo({ name: "check-blast-radius", title: "Review a risky change", description: "Assess a risky model change, capture relevant evidence, replay saved checks, and record the remaining risk without applying the change.", stepCount: 4, gated: true, triggers: ["impact_assessment", "capture_baseline", "delete_object", "rename_object"] }),
+      wfInfo({ name: "governed-rename", title: "Rename with impact review", description: "Review model and report uses, preview one reference-aware rename, apply it once, and record remaining external work.", version: 2, stepCount: 5, gated: true, triggers: ["rename_object", "add_plan_item"] }),
+      wfInfo({ name: "model-hygiene-pass", title: "Tidy a model", description: "Scan the model, apply only selected low-risk fixes, rescan the changed area and save with remaining findings visible.", stepCount: 4, gated: true, triggers: ["apply_safe_fixes", "make_model_ai_ready"] }),
+      wfInfo({ name: "verified-measure", title: "Test a complex measure", description: "Define the hard cases for a measure, compare a candidate with independent expected values, and report checked and unresolved cases.", version: 7, stepCount: 4, gated: true, triggers: ["create_measure", "update_measure"] }),
+      wfInfo({ name: "optimize-dax", title: "Fix a slow measure", description: "Freeze a measure, compare a rewrite across useful contexts, and keep it only when the evidence supports it.", stepCount: 4, gated: true, triggers: ["benchmark_dax", "profile_dax", "update_measure"] }),
+      wfInfo({ name: "make-ai-ready", title: "Explain the model to assistants", description: "Improve assistant-facing meaning for selected objects, review preparation settings, and show what remains unresolved.", stepCount: 3, gated: true, triggers: ["make_model_ai_ready", "ai_readiness_scan", "set_description"] }),
       // Security
-      wfInfo({ name: "secure-with-rls", title: "Secure the model with row-level security and attack-test it", description: "Design least-privilege RLS by filtering dimensions and letting propagation reach facts, review the propagation limits that silently break security, PROVE the filter bites against a figure the role should see, then ADVERSARIALLY attack-test it (prove out-of-scope rows do not leak) before the role is allowed to stand. With an honest note on offline impersonation.", stepCount: 6, gated: true, triggers: ["create_role", "set_table_permission", "set_role_permission"] }),
+      wfInfo({ name: "secure-with-rls", title: "Set up data access rules", description: "Define row access, inspect propagation, test allowed and denied cases, and record the remaining published-model check.", stepCount: 5, gated: true, triggers: ["create_role", "set_table_permission", "set_role_permission"] }),
       // Ship
-      wfInfo({ name: "deploy-to-production", title: "Promote a model to production safely", description: "Review the change like a pull request, gate on a clean BPA and a non-regressed readiness grade, dry-run against the target ALWAYS, then promote through separate stages; the live ops stay consent-gated and the run never bypasses them.", stepCount: 5, gated: true, triggers: ["deploy_stage", "deploy_live", "preview_deploy"] }),
+      wfInfo({ name: "deploy-to-production", title: "Publish changes", description: "Choose the configured destination, preview the actual change, publish under its current permission gate, and record what happened.", stepCount: 4, gated: true, triggers: ["deploy_stage", "deploy_live", "preview_deploy"] }),
       // Custom (user + learned + error), everything not in the journey map, labelled by origin
       wfInfo({ name: 'month-end-close', title: 'Month-end close checklist', description: 'Team playbook: refresh, reconcile against source, and sign off the finance model.', version: 3, source: 'user', stepCount: 6, gated: true, triggers: ['refresh_partition'] }),
       wfInfo({ name: 'loop-handoff', title: 'Loop and hand-off', description: 'A v2 file with forEach, call, and provenance for the rich-loss Boxes state.', version: 1, source: 'user', stepCount: 2, gated: true, triggers: [] }),
@@ -968,47 +1257,47 @@
     const gi = (name, question, type, required) => ({ name, question, type, required: required || 'answer-or-decline' });
     const WORKFLOW_DEFS = cfg.workflowDefs || {
       'new-measure': {
-        name: 'new-measure', title: 'Author a verified measure', description: 'Create a measure with declared intent, verified against a known-good number.',
+        name: 'new-measure', title: "Add a measure", description: "Define a measure, check the cases that matter, and save the result with its meaning.",
         version: 1, strictness: 'hard', triggers: ['create_measure', 'update_measure'], source: 'stock', filePath: 'workflows/new-measure.md', error: null,
         steps: [
-          { id: 'step-1', number: 1, title: 'Capture intent', ops: ['get_grounding'],
-            instructions: "Ask the user for the business definition (journey 4.1). Record **what the measure means**, at what grain it is meaningful, and what number it should produce for a context the user can check independently.\n\nPrefer a measure over a calculated column for anything context-dependent — push row-static values upstream to M/source, where they fold and cost no refresh memory.",
+          { id: 'step-1', number: 1, title: 'Define the question', ops: [],
+            instructions: "State what the measure means and where it is useful. Include the filter context or grain that would expose a likely mistake, such as Net sales by Product category and Customer region. Do not restate table or column facts the model already provides.\n\nAsk for an independent expected value when one is available; it may be declined when there is no trusted source number.",
             gate: { strictness: null, verify: [], inputs: [
-              gi('verificationValue', 'A known-good number (or per-group matrix) to verify against — from the user, not derived.', 'verification'),
-              gi('intendedFilterContext', 'Which dimensions/slicers must this measure respect?', 'text'),
-              gi('expectedGrain', 'At what grain is this measure meaningful?', 'text') ] } },
-          { id: 'step-2', number: 2, title: 'Author the DAX', ops: ['get_grounding', 'validate_dax', 'lint_dax'],
-            instructions: "Use `get_grounding` for naming, format, and sibling context (journey 4.2). Follow the DAX floor: `DIVIDE` over `/`, variables for readability and perf, `COUNTROWS` over `COUNT`, `SELECTEDVALUE` over VALUES-with-error-trap, no `FILTER` as a filter argument, fully-qualified column refs and unqualified measure refs.\n\nRun `validate_dax` and `lint_dax` before creating.",
+              gi('meaning', 'What business question does this measure answer, and which context or grain must it respect?', 'text', 'required'),
+              gi('verificationValue', 'An independently known result for a useful context, including its context if it is not the grand total; decline with why none is available.', 'verification') ] } },
+          { id: 'step-2', number: 2, title: 'Author and create the measure', ops: ['get_grounding', 'validate_dax', 'lint_dax', 'create_measure', 'set_measure_format', 'set_description'],
+            instructions: "Use `get_grounding` for the model's naming and sibling conventions. Write the DAX, run `validate_dax` and `lint_dax`, then call `create_measure` with the final name, format string and description.\n\nThe model holds the new measure ref; do not ask the user to copy table facts into this run.",
             gate: null },
-          { id: 'step-3', number: 3, title: 'Create and verify', ops: ['create_measure', 'set_measure_format', 'set_description'],
-            instructions: "Create via `create_measure`; set the format string and description in the same step (journey 4.3 — hygiene at authoring time, not cleanup debt). Confirm the number under the intended filter context (journey 4.4–4.5).\n\nGive `target` the ref of the measure you just created so the gate can probe it against the user's known-good value.",
+          { id: 'step-3', number: 3, title: 'Check the selected case', ops: ['probe_measure'],
+            instructions: "Use `probe_measure` or a focused live query for the context from Step 1. Give `target` the new measure ref. When an independent value was supplied, the engine's scalar probe compares that value; a mismatch holds the step for correction.\n\nWithout one, report that the measure was exercised but not reconciled to an independent number. A grand-total match alone does not prove the stated context.",
             gate: { strictness: 'hard',
-              inputs: [ gi('target', 'The ref of the measure you just created (e.g. measure:Sales/Total Sales).', 'objectRef', 'required') ],
+              inputs: [ gi('target', 'The ref of the measure just created, for example measure:Sales/Net Sales.', 'objectRef', 'required') ],
               verify: [ { kind: 'dax_probe', when: 'inputs.verificationValue.answered', probe: 'verificationValue', scope: null }, { kind: 'bpa_clean', when: null, probe: null, scope: 'object' } ] } },
+          { id: 'step-4', number: 4, title: 'Save the result', ops: ['save_model'],
+            instructions: "Call `save_model`. Record the meaning, checked context and any missing independent answer with the handoff so the next change knows what was actually checked.\n\nThe workflow does not claim coverage of every filter combination.",
+            gate: null },
         ],
       },
     };
     WORKFLOW_DEFS['check-blast-radius'] = {
-      name: 'check-blast-radius', title: 'Check blast radius', description: 'Assess a risky model change, preserve representative values when live evidence is available, replay the affected safety checks, record the decision, and produce one sealed evidence certificate.',
+      name: 'check-blast-radius', title: "Review a risky change", description: "Assess a risky model change, capture relevant evidence, replay saved checks, and record the remaining risk without applying the change.",
       version: 1, strictness: 'hard', triggers: ['impact_assessment', 'capture_baseline', 'delete_object', 'rename_object'], source: 'stock', filePath: 'workflows/check-blast-radius.md', error: null,
       steps: [
-        { id: 'step-1', number: 1, title: 'Assess the declared change', ops: ['impact_assessment'], instructions: 'Name the exact object and intended change. Supply local PBIR report paths or explicitly record model-only scope.', gate: { strictness: null, inputs: [gi('target', 'The exact object ref being changed.', 'objectRef', 'required'), gi('changeIntent', 'Describe the intended change and why it is needed.', 'text', 'required'), gi('reportPaths', 'Local PBIR report paths, or decline with why this is model-only.', 'text')], verify: [{ kind: 'impact_assessment', when: null, probe: null, scope: null }] } },
-        { id: 'step-2', number: 2, title: 'Preserve representative values where they can be measured', ops: ['capture_baseline'], instructions: 'Capture affected measures over representative group-by columns before editing.', gate: { strictness: null, inputs: [gi('baselineCapture', 'The captureId, or decline with why measured evidence is unavailable.', 'text')], verify: [{ kind: 'baseline_exists', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }] } },
-        { id: 'step-3', number: 3, title: 'Replay the safety net', ops: ['run_tests', 'run_interview'], instructions: 'Replay the complete Tests suite and the current-model Interview pack when scheduled.', gate: { strictness: null, inputs: [gi('replayInterview', 'Answer when Interview questions were scheduled, otherwise decline.', 'text')], verify: [{ kind: 'tests_replay', when: null, probe: null, scope: null }, { kind: 'interview_replay', when: 'inputs.replayInterview.answered', probe: null, scope: null }] } },
-        { id: 'step-4', number: 4, title: 'Record the decision and residual risk', ops: [], instructions: 'Record proceed, revise or reject from the collected evidence.', gate: { strictness: null, inputs: [gi('decision', 'Proceed, revise or reject, with the reason.', 'text', 'required'), gi('residualRisk', 'List every remaining gap or external binding.', 'text', 'required')], verify: [] } },
-        { id: 'step-5', number: 5, title: 'Produce the certificate', ops: ['export_workflow_evidence', 'save_evidence'], instructions: 'Complete the run, then export or save the sealed HTML and canonical JSON evidence pair.', gate: { strictness: null, inputs: [gi('certificateDelivery', 'Save with model, local export, or both?', 'text', 'required')], verify: [] } },
+        { id: 'step-1', number: 1, title: 'Assess the proposed change', ops: ['impact_assessment'], instructions: 'Name the exact object and intended change before editing. Supply local PBIR report paths when report-aware coverage is available, or decline them with a reason when this review is model-only.', gate: { strictness: null, inputs: [gi('target', 'The exact object ref being changed, for example measure:Sales/Net Sales or column:Sales/Amount.', 'objectRef', 'required'), gi('changeIntent', 'What change is being considered and why?', 'text', 'required'), gi('reportPaths', 'Local PBIR report folders in scope, separated by semicolons; decline with why the review is model-only when unavailable.', 'text')], verify: [{ kind: 'impact_assessment', when: null, probe: null, scope: null }] } },
+        { id: 'step-2', number: 2, title: 'Capture values when the change can be measured', ops: ['capture_baseline'], instructions: 'Before any edit, capture the target and its measurable dependants over representative group-by columns. A pasted number is not a baseline, and the later decision must carry that limit.', gate: { strictness: null, inputs: [gi('baselineCapture', 'The captureId from a representative baseline, or a reason measured evidence is unavailable.', 'text')], verify: [{ kind: 'baseline_exists', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }] } },
+        { id: 'step-3', number: 3, title: 'Replay the saved checks', ops: ['run_tests', 'export_test_report'], instructions: 'Run the saved suite for the current model and export the result. A missing endpoint, failed comparison or partial coverage stays NotVerifiable or failed in the report; it is never turned into a pass.', gate: { strictness: null, inputs: [], verify: [{ kind: 'tests_replay', when: null, probe: null, scope: null }] } },
+        { id: 'step-4', number: 4, title: 'Decide and preserve the review record', ops: ['export_workflow_evidence', 'save_evidence'], instructions: 'Record proceed, revise or reject, and list every remaining report binding, live-connection gap, failed check or unresolved dependency. This workflow stays apply-free.', gate: { strictness: null, inputs: [gi('decision', 'Proceed, revise or reject, with the evidence-based reason.', 'text', 'required'), gi('residualRisk', 'What coverage gaps or external bindings remain for an owner to review?', 'text', 'required')], verify: [] } },
       ],
     };
     WORKFLOW_DEFS['governed-rename'] = {
-      name: 'governed-rename', title: 'Safe rename', description: 'Assess every known consumer, stage the reference-aware rename for review, preserve representative values, record external-binding decisions, apply through FormulaFixup, replay the safety net, and produce one sealed certificate.',
+      name: 'governed-rename', title: "Rename with impact review", description: "Review model and report uses, preview one reference-aware rename, apply it once, and record remaining external work.",
       version: 2, strictness: 'hard', triggers: ['rename_object', 'add_plan_item'], source: 'stock', filePath: 'workflows/governed-rename.md', error: null,
       steps: [
-        { id: 'step-1', number: 1, title: 'Assess the rename scope', ops: ['impact_assessment'], instructions: 'Name the exact object and replacement name. Supply local PBIR report paths or explicitly record model-only scope.', gate: { strictness: null, inputs: [gi('target', 'The exact object ref being renamed.', 'objectRef', 'required'), gi('newName', 'The exact replacement name.', 'text', 'required'), gi('reportPaths', 'Local PBIR report paths, or decline with why this is model-only.', 'text')], verify: [{ kind: 'impact_assessment', intent: 'rename', when: null, probe: null, scope: null }] } },
-        { id: 'step-2', number: 2, title: 'Stage the rename for review', ops: ['add_plan_item'], instructions: 'Create one proposed Change Plan rename item. Do not approve or apply it yet.', gate: { strictness: null, inputs: [gi('planItemId', 'The proposed Change Plan item id.', 'text', 'required')], verify: [{ kind: 'plan_item_staged', when: null, probe: null, scope: null }] } },
-        { id: 'step-3', number: 3, title: 'Preserve representative values', ops: ['capture_baseline'], instructions: 'Capture the affected measures over representative contexts before applying the rename.', gate: { strictness: null, inputs: [gi('baselineCapture', 'The captureId, or decline with why measured evidence is unavailable.', 'text')], verify: [{ kind: 'baseline_exists', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }] } },
-        { id: 'step-4', number: 4, title: 'Review external bindings and decide', ops: [], instructions: 'Review supplied report paths plus M, bookmarks, scripts and any external consumer the engine cannot inspect.', gate: { strictness: null, inputs: [gi('externalBindingsReviewed', 'What external bindings were reviewed, and what remains unknown?', 'text', 'required'), gi('renameDecision', 'Proceed, revise or reject, with the reason.', 'text', 'required')], verify: [] } },
-        { id: 'step-5', number: 5, title: 'Apply FormulaFixup and replay proof', ops: ['approve_plan_item', 'apply_plan', 'compare_baseline', 'run_tests', 'run_interview'], instructions: 'Approve and apply only the reviewed rename item. FormulaFixup updates model references in the same undoable transaction; then replay the captured values and full Tests suite.', gate: { strictness: null, inputs: [gi('liveSyncConfirmed', 'Confirm the baseline comparison, or record why no baseline was captured.', 'text', 'required'), gi('replayInterview', 'Answer when Interview questions were scheduled, otherwise decline.', 'text')], verify: [{ kind: 'plan_item_applied', when: null, probe: null, scope: null }, { kind: 'baseline_unchanged', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }, { kind: 'tests_replay', when: null, probe: null, scope: null }, { kind: 'interview_replay', when: 'inputs.replayInterview.answered', probe: null, scope: null }] } },
-        { id: 'step-6', number: 6, title: 'Produce the rename certificate', ops: ['export_workflow_evidence', 'save_evidence'], instructions: 'Complete the run, then export or save the sealed HTML and canonical JSON evidence pair.', gate: { strictness: null, inputs: [gi('certificateDelivery', 'Save with model, local export, or both?', 'text', 'required')], verify: [] } },
+        { id: 'step-1', number: 1, title: 'Assess the rename', ops: ['impact_assessment'], instructions: 'Name the exact object and proposed new name. Supply local PBIR report folders or decline with why the review is model-only. FormulaFixup cannot prove free-form M, bookmarks, scripts or client bindings.', gate: { strictness: null, inputs: [gi('target', 'The exact object ref to rename, for example measure:Sales/Net Sales or column:Sales/Amount.', 'objectRef', 'required'), gi('newName', 'The proposed new object name.', 'text', 'required'), gi('reportPaths', 'Local PBIR report folders in scope, separated by semicolons; decline with why the review is model-only when unavailable.', 'text')], verify: [{ kind: 'impact_assessment', intent: 'rename', when: null, probe: null, scope: null }] } },
+        { id: 'step-2', number: 2, title: 'Stage and review the exact rename', ops: ['add_plan_item', 'get_plan'], instructions: 'Stage one rename plan item and inspect it. Do not apply until the target and new name match the Step 1 decision; a pasted description cannot stand in for the preview.', gate: { strictness: null, inputs: [gi('planItemId', 'The staged rename plan item id whose target and proposed name were reviewed.', 'planItem', 'required')], verify: [{ kind: 'plan_item_staged', when: null, probe: 'planItemId', scope: null }] } },
+        { id: 'step-3', number: 3, title: 'Capture representative values when possible', ops: ['capture_baseline'], instructions: 'Capture before applying, including measurable dependants and a useful group-by grid. A model-only rename can continue, but the missing value evidence stays in the run.', gate: { strictness: null, inputs: [gi('baselineCapture', 'The captureId from the representative baseline, or the exact reason a live value baseline is unavailable.', 'text')], verify: [{ kind: 'baseline_exists', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }] } },
+        { id: 'step-4', number: 4, title: 'Apply once and replay the relevant evidence', ops: ['set_plan_item', 'apply_plan', 'compare_baseline', 'run_tests', 'export_test_report'], instructions: 'Record the external bindings that need owners, decide, then approve the exact plan item and apply it. A baseline comparison is only valid once the local change reaches the same query model. Moved or missing values, failed tests and unresolved bindings remain review findings.', gate: { strictness: null, inputs: [gi('externalBindingsReviewed', 'Which M text, reports, bookmarks, scripts or clients need follow-up, and who owns each one? Decline with the remaining gap when unknown.', 'text'), gi('renameDecision', 'Proceed, revise or reject this rename based on the assessment, plan preview and external-binding review.', 'text', 'required')], verify: [{ kind: 'plan_item_applied', when: null, probe: 'planItemId', scope: null }, { kind: 'baseline_unchanged', when: 'inputs.baselineCapture.answered', probe: 'baselineCapture', scope: null }, { kind: 'tests_replay', when: null, probe: null, scope: null }] } },
+        { id: 'step-5', number: 5, title: 'Export the rename record', ops: ['export_workflow_evidence', 'save_evidence'], instructions: 'Export the terminal workflow evidence and save the artifact when the project needs it. The record contains the impact scope, exact plan item, baseline result, test report and every external gap.', gate: null },
       ],
     };
     // A DISTILLED (learned) workflow — carries derived_from provenance (Learning Loop L3). The Knowledge tab's
@@ -1038,15 +1327,79 @@
       steps: [],
     };
 
+    const WORKFLOW_EDIT_CHOICES = {
+      strictness: ['hard', 'warn', 'off'], kinds: ['workflow', 'template'],
+      inputTypes: ['verification', 'text', 'enum', 'number', 'objectRef', 'planItem'],
+      slotTypes: ['verification', 'text', 'enum', 'number', 'objectRef', 'planItem'],
+      inputRequired: ['answer-or-decline', 'required', 'optional'], inputScopes: ['iteration', 'run'],
+      daxPurity: ['no-bare-measures'], slotRequired: ['required', 'optional'],
+      verifyKinds: ['dax_probe', 'dax_equivalence', 'expected_values', 'anchor_coverage', 'readiness_rescan', 'bpa_clean', 'benchmark_delta', 'workflow_admissible', 'interview_replay', 'baseline_captured', 'impact_assessment', 'baseline_exists', 'baseline_unchanged', 'tests_replay', 'plan_item_staged', 'plan_item_applied'],
+      verifyScopes: ['object', 'model'], verifyIntents: ['change', 'rename', 'remove', 'restructure'],
+      shapeIds: ['grand_total', 'cross', 'axis:<column>'], openMismatch: ['countersign'],
+      defaultMaxIterations: 100, maxIterations: 1000,
+    };
+    const workflowEditModel = function (def, format) {
+      const modelFormat = format || (def.schemaVersion === 1 ? 'v1' : 'v2');
+      const entryList = function (value, prefix) {
+        return Object.entries(value || {}).map(function (entry) { return { key: prefix + ':' + entry[0], name: entry[0], value: String(entry[1]) }; });
+      };
+      const steps = (def.steps || []).map(function (step, index) {
+        const key = 'step:' + (step.id || String(index + 1));
+        const gate = step.gate ? {
+          strictness: step.gate.strictness || null,
+          inputs: (step.gate.inputs || []).map(function (input, inputIndex) { return {
+            key: key + '/input:' + input.name, fingerprint: 'input-' + inputIndex, name: input.name,
+            question: input.question || '', type: input.type || 'text', required: input.required || 'answer-or-decline',
+            daxPurity: input.daxPurity || null, scope: input.scope || null,
+          }; }),
+          verify: (step.gate.verify || []).map(function (verify, verifyIndex) { return {
+            key: key + '/verify:' + verify.kind + ':' + verifyIndex, fingerprint: 'verify-' + verifyIndex,
+            kind: verify.kind, when: verify.when || null, probe: verify.probe || null, scope: verify.scope || null,
+            intent: verify.intent || null, pinnedShapes: verify.pinnedShapes || [], openShapes: verify.openShapes || [],
+            openShapesFrom: verify.openShapesFrom || null, openMismatch: verify.openMismatch || null, anchors: verify.anchors || null,
+          }; }),
+        } : null;
+        return {
+          key, fingerprint: 'step-' + index, id: step.id || 'step-' + (index + 1), number: index + 1,
+          idKind: modelFormat === 'v1' ? 'implicit-positional' : step.hasExplicitId === false ? 'implicit-positional' : 'explicit-stable',
+          title: step.title || '', instructions: step.instructions || '', ops: step.ops || [], when: step.when || null,
+          forEach: step.forEach ? { source: step.forEach.inInput
+            ? { kind: 'input', name: step.forEach.inInput, values: [] }
+            : { kind: 'literal', values: step.forEach.inLiteral || [], name: null },
+            as: step.forEach.as || 'item', maxIterations: step.forEach.maxIterations || 100 } : null,
+          call: step.call ? { workflow: step.call.workflow || '', with: entryList(step.call.with, key + '/call.with'), returns: step.call.returns || [] } : null,
+          gate,
+        };
+      });
+      return {
+        format: modelFormat, restrictions: [], choices: structuredClone(WORKFLOW_EDIT_CHOICES),
+        definition: {
+          key: 'workflow', schemaVersion: modelFormat === 'v1' ? 1 : 2, name: def.name,
+          kind: def.kind || 'workflow', title: def.title || def.name, description: def.description || '',
+          whenToUse: def.whenToUse || null, version: def.version || 1, strictness: def.strictness || null,
+          triggers: def.triggers || [], tags: def.tags || [], provenance: entryList(def.provenance, 'provenance'), slots: [], steps,
+        },
+      };
+    };
+    const projectedWorkflowDocument = function (name) {
+      const def = WORKFLOW_DEFS[name] || WORKFLOW_DEFS['new-measure'];
+      const exactText = ['---', 'schemaVersion: 2', 'name: ' + name, 'title: ' + def.title, 'version: ' + (def.version || 1), '---', '']
+        .concat((def.steps || []).flatMap(function (step) { return ['## Step ' + step.number + ': ' + step.title, step.instructions || '', '']; })).join(String.fromCharCode(10));
+      return { name, library: def.source || 'stock', path: (def.source === 'user' ? '/project/.semanticus/workflows/' : '/engine/workflows/') + name + '.md',
+        exactText, byteHash: 'sha256:' + name.padEnd(64, '0').slice(0, 64), editModel: workflowEditModel(def, 'v2'),
+        metadata: { schemaVersion: 2, title: def.title, version: def.version || 1, stepIds: (def.steps || []).map(function (step) { return step.id; }), explicitIds: true, parses: true, parseError: null } };
+    };
+
     // Exact-source fixtures deliberately keep encoding and formatting outside the parsed definition.
-    const documentMode = (wfParam || '').startsWith('document');
+    const documentMode = (wfParam || '').startsWith('document') || (wfParam || '').startsWith('editor');
     const upgradeMode = (wfParam || '').startsWith('document-upgrade');
+    const legacyMode = upgradeMode || wfParam === 'editor-v1';
     if (documentMode) {
-      const stock = wfParam === 'document-stock' || wfParam === 'document-upgrade-stock';
+      const stock = wfParam === 'document-stock' || wfParam === 'document-upgrade-stock' || wfParam === 'editor-stock' || wfParam === 'editor-copy';
       const invalid = wfParam === 'document-invalid';
       const name = 'loop-handoff';
       const crlf = String.fromCharCode(13, 10);
-      const source = String.fromCharCode(0xfeff) + (upgradeMode ? [
+      const source = String.fromCharCode(0xfeff) + (legacyMode ? [
         '---', 'name: loop-handoff', 'title: Loop and hand-off', 'version: 1',
         '# Keep the source comment', '---', '', '<!-- Keep this comment and spacing -->',
         '## Step 1: Review each table', 'Walk the list once per table.  ', '```yaml step',
@@ -1055,7 +1408,8 @@
         '---', 'schemaVersion: 2', 'name: loop-handoff', 'title: Loop and hand-off', 'version: 1',
         '# Keep the source comment', '---', '', '<!-- Keep this comment and spacing -->',
         '## Step 1: Review each table', 'Walk the list once per table.  ', '```yaml step',
-        'id: review', 'forEach:', '  in: [Sales, Product]', '  as: table', '  maxIterations: 40',
+        'id: review', 'when: inputs.go.answered', 'forEach:', '  in: [Sales, Product]', '  as: table', '  maxIterations: 40',
+        'call:', '  workflow: hygiene-pass', '  with:', '    target: "[[loop.table]]"', '  returns: [grade]',
         '```', '', '## Step 2: Finish', 'Record the outcome.', '```yaml step', 'id: finish', '```', '',
       ]).join(crlf);
       let revision = 0;
@@ -1069,18 +1423,21 @@
         },
         notify() { window.dispatchEvent(new MessageEvent('message', { data: { type: 'workflowLibraryDidChange', payload: structuredClone(WORKFLOWS) } })); },
         set(text, library = 'user', parses = true, notify = true) {
-          const schemaVersion = upgradeMode && !text.includes('schemaVersion: 2') ? 1 : 2;
+          const schemaVersion = legacyMode && !text.includes('schemaVersion: 2') ? 1 : 2;
           this.document = { name, library, path: (library === 'stock' ? '/engine/workflows/' : '/project/.semanticus/workflows/') + name + '.md',
             exactText: text, byteHash: 'sha256:' + String(++revision).padStart(64, '0'),
-            metadata: { schemaVersion, title: 'Loop and hand-off', version: 1, stepIds: upgradeMode ? ['step-1', 'step-2'] : ['review', 'finish'], explicitIds: schemaVersion === 2,
+            metadata: { schemaVersion, title: 'Loop and hand-off', version: 1, stepIds: legacyMode ? ['step-1', 'step-2'] : ['review', 'finish'], explicitIds: schemaVersion === 2,
               parses, parseError: parses ? null : 'Invalid schemaVersion in saved file.' } };
           WORKFLOW_DEFS[name] = { ...WORKFLOW_DEFS[name], schemaVersion, source: library, error: this.document.metadata.parseError,
-            provenance: upgradeMode ? null : WORKFLOW_DEFS[name].provenance,
+            provenance: legacyMode ? null : WORKFLOW_DEFS[name].provenance,
             steps: [
-              { id: upgradeMode ? 'step-1' : 'review', number: 1, title: 'Review each table', instructions: text.includes('Review every table carefully.') ? 'Review every table carefully.' : 'Walk the list once per table.', ops: upgradeMode ? ['list_tables'] : [], hasExplicitId: schemaVersion === 2,
-                forEach: upgradeMode ? null : { inLiteral: ['Sales', 'Product'], as: 'table', maxIterations: 40 }, gate: null },
-              { id: upgradeMode ? 'step-2' : 'finish', number: 2, title: 'Finish', instructions: 'Record the outcome.', ops: [], hasExplicitId: schemaVersion === 2, gate: null },
+              { id: legacyMode ? 'step-1' : 'review', number: 1, title: 'Review each table', instructions: text.includes('Review every table carefully.') ? 'Review every table carefully.' : 'Walk the list once per table.', ops: legacyMode ? ['list_tables'] : [], hasExplicitId: schemaVersion === 2,
+                when: legacyMode ? null : 'inputs.go.answered', forEach: legacyMode ? null : { inLiteral: ['Sales', 'Product'], as: 'table', maxIterations: 40 },
+                call: legacyMode ? null : { workflow: 'hygiene-pass', with: { target: '[[loop.table]]' }, returns: ['grade'] },
+                gate: legacyMode ? null : { strictness: 'hard', inputs: [gi('go', 'Continue?', 'text')], verify: [{ kind: 'bpa_clean', scope: 'object' }] } },
+              { id: legacyMode ? 'step-2' : 'finish', number: 2, title: 'Finish', instructions: 'Record the outcome.', ops: [], hasExplicitId: schemaVersion === 2, gate: null },
             ] };
+          this.document.editModel = parses ? workflowEditModel(WORKFLOW_DEFS[name], schemaVersion === 1 ? 'v1' : 'v2') : null;
           const info = WORKFLOWS.find((item) => item.name === name);
           if (info) { info.source = library; info.error = this.document.metadata.parseError; }
           if (notify) this.notify();
@@ -1092,7 +1449,7 @@
     // getWorkflowRun / startWorkflow — a mid-flight run of new-measure: step 1 PASSED (with one declined input +
     // dax_probe evidence), step 2 CURRENT (with gate questions + a verify checklist), step 3 pending.
     const RUN = cfg.workflowRun || {
-      runId: 'wfr-1', workflow: 'new-measure', title: 'Author a verified measure', workflowVersion: 1, status: 'active',
+      runId: 'wfr-1', workflow: 'new-measure', title: "Add a measure", workflowVersion: 1, status: 'active',
       abortReason: null, stepIndex: 1, totalSteps: 3,
       steps: [
         { stepId: 'step-1', title: 'Capture intent', status: 'passed', note: null, effectiveStrictness: 'hard',
@@ -1166,7 +1523,7 @@
       { kind: 'call', stepId: 'review', parentFrameIndex: 2, workflow: 'review-table', depth: 2, state: 'in_progress', passed: [], returned: [], steps: [CALL_RUN.steps[5]] },
     ];
     const TERMINAL_RUN = {
-      runId: 'wfr-1', workflow: 'new-measure', title: 'Author a verified measure', workflowVersion: 1, status: 'completed',
+      runId: 'wfr-1', workflow: 'new-measure', title: "Add a measure", workflowVersion: 1, status: 'completed',
       abortReason: null, startedUtc: '2026-07-12T09:30:00Z', finishedUtc: '2026-07-12T09:34:18Z', modelName: 'Contoso Retail', modelFingerprint: 'fp-contoso',
       stepIndex: 3, totalSteps: 3, currentStep: null,
       steps: [
@@ -1179,7 +1536,7 @@
     // in the engine). Drives the honest per-run skipped state — the gate FORM is replaced, not annotated — and is
     // the case a mid-run model-wide toggle must NOT be able to fake either way.
     const RUN_OFF = {
-      runId: 'wfr-off', workflow: 'new-measure', title: 'Author a verified measure', workflowVersion: 1, status: 'active',
+      runId: 'wfr-off', workflow: 'new-measure', title: "Add a measure", workflowVersion: 1, status: 'active',
       abortReason: null, stepIndex: 1, totalSteps: 3,
       steps: [
         Object.assign({}, RUN.steps[0], { effectiveStrictness: 'off', verifyResults: [] }),
@@ -1192,7 +1549,7 @@
     // case BLOCKER 1 guards (the focused-run subtree is keyed by runId so switching can't carry A's typed answers
     // onto B) and HIGH 2 exercises (the switcher must list every live run so none becomes unreachable).
     const RUN_B = {
-      runId: 'wfr-2', workflow: 'make-ai-ready', title: 'Make the model AI-ready', workflowVersion: 1, status: 'active',
+      runId: 'wfr-2', workflow: 'make-ai-ready', title: "Explain the model to assistants", workflowVersion: 1, status: 'active',
       abortReason: null, stepIndex: 0, totalSteps: 3,
       steps: [
         { stepId: 'step-1', title: 'Scan for gaps', status: 'in_progress', note: null, effectiveStrictness: 'hard', answers: {}, verifyResults: [] },
@@ -1433,6 +1790,16 @@
       { id: 'cn8', kind: 'localDesktop', endpoint: 'localhost:52100', database: '493c64f4-b0f5-4a1e-9c2d-77a1e6b0f3aa', authMode: 'interactive', label: 'local', useCount: 4, lastUsedUtc: ago(5) },
       { id: 'cn9', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Ops', database: 'Ops', modelName: 'Operations', authMode: 'interactive', label: 'prod', tenantId: 'fabrikam.com', useCount: 6, lastUsedUtc: ago(400) },
     ];
+    // ?g=workspace puts the shape Kane hit at the TOP of the list: a WORKSPACE-level record — no database, no model
+    // name, and an endpoint whose workspace segment is percent-encoded. Every name surface used to show
+    // "Contoso%20Fabric%20Monitoring" for this record. It is a SCENARIO, not a default fixture, on purpose: the default
+    // list is what the reference connections capture measures for a scrollbar, and an extra row would move that
+    // baseline sideways for a lane that does not own this fix.
+    const WORKSPACE_ONLY = { id: 'cnw', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring', authMode: 'interactive', label: null, tenantId: 'contoso.com', lastAccount: 'megan@contoso.com', useCount: 1, lastUsedUtc: ago(30) };
+    // Spliced in at index 2, never at 0 or 1: the connection-context fixture below names CONNECTIONS[0] and
+    // CONNECTIONS[1] by position for the reference and publish roles, and shifting those would quietly restage two
+    // unrelated cards in this scenario's shots.
+    if (scenario === 'workspace') CONNECTIONS.splice(2, 0, WORKSPACE_ONLY);
     // The silent probe: cn1's tenant-wide sign-in now points at Bob (a sibling switched), while cn1's own last-used hint
     // still says Kane → the drawer shows "as bob@contoso.com (was megan@contoso.com)". SP/local rows keep no record.
     const ACCOUNT_PROBES = cfg.accountProbes || [
@@ -1451,12 +1818,75 @@
       { id: 'pf3', username: 'avery@fabrikam.com', tenantId: 'fabrikam.com', family: 'interactive', isDefault: true, signedIn: true, lastSignInUtc: ago(1500), lastUseUtc: ago(1440) },
       { id: 'pf4', username: 'sandbox@contoso.com', tenantId: 'contoso.com', family: 'interactive', isDefault: false, signedIn: false, lastSignInUtc: ago(4000), lastUseUtc: ago(3000) },
     ];
+
+    // ---- the effective feature grant --------------------------------------------------------------------------
+    // The four ids the engine and the page share, spelled here exactly as webview/src/features.ts spells them.
+    var PRO_FEATURE_IDS = ['modelCreate', 'tests', 'publishedAdvanced', 'workflows'];
+    var entitlementTier = (function () {
+      var q = new URLSearchParams(location.search);
+      if (q.get('tier') === 'pro' || q.get('features')) return 'pro';
+      return (wfParam === 'bind' || wfParam === 'bindcond' || wfParam === 'activate' || wfParam === 'activatelint') ? 'pro' : 'free';
+    })();
+    var entitlementFeatures = (function () {
+      var named = new URLSearchParams(location.search).get('features');
+      if (named !== null) return named.split(',').map(function (x) { return x.trim(); }).filter(function (x) { return PRO_FEATURE_IDS.indexOf(x) >= 0; });
+      return entitlementTier === 'pro' ? PRO_FEATURE_IDS.slice() : [];
+    })();
+    var featureGranted = function (feature) { return ((RESPONSES.getEntitlement || {}).features || []).indexOf(feature) >= 0; };
+
+    // ---- named SQL sources: the fourth role in Connections ------------------------------------------------------
+    // Mirrors Engine SqlSourceRecord exactly (cp/tests-engine-b): no password field, `authMode` is a mode NAME, and
+    // a never-tested source carries NEITHER lastTestedUtc nor lastTestOk, so "never tested" stays a third state.
+    // Two sources, one of which FAILED its last test, because the failed row is a state the shots have to show.
+    const SQL_SOURCES = cfg.sqlSources || [
+      { id: 'sql-3f21a9c4e0b7d5a2', name: 'Contoso warehouse', server: 'contoso-sql.database.windows.net', database: 'Warehouse',
+        authMode: 'interactive', tenantId: 'contoso.com', createdUtc: ago(4000), lastTestedUtc: ago(35), lastTestOk: true },
+      { id: 'sql-77b1e6c0f3aa4d12', name: 'Finance month-end', server: 'finance-sql.database.windows.net', database: 'MonthEnd',
+        authMode: 'devicecode', tenantId: 'contoso.com', createdUtc: ago(6000), lastTestedUtc: ago(180), lastTestOk: false },
+    ];
+    // What USES a source, per model: the saved checks and the table mappings. The check half is filled in further
+    // down, from the Tests page's OWN definitions, so both lanes read one listing and the titles are real.
+    const SQL_SOURCE_USE = [];
+    const SQL_TABLE_MAPPINGS = [
+      { modelTable: 'Sales', source: 'mapping', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sqlSourceName: 'Contoso warehouse', schema: 'sales', entity: 'orders', canCount: true },
+      { modelTable: 'Customer', source: 'mapping', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sqlSourceName: 'Contoso warehouse', schema: 'sales', entity: 'customer', canCount: true },
+      { modelTable: 'Returns', source: 'none', canCount: false, reason: 'this table is not mapped to a SQL source yet. Map it to a SQL source, a schema and a table name' },
+    ];
+    // Titles for the refusal, keyed by check id. The delete result carries the NAMES, sorted, the way the engine
+    // does; this map is filled from the real saved-check definitions further down.
+    const SQL_CHECK_TITLES = {};
+
+    if (recoveryMode) {
+      window.__uishotRecovery = {
+        // This is the actual RPC error shape: extension.ts forwards String(e?.message ?? e), so the webview sees the
+        // engine's AMO message and never an exception type envelope. The text is pinned by CompareAuthFallbackTests.
+        targetId: 'cn1', purpose: 'query', failure: 'Authentication failed for all authenticators. Technical Details: RootActivityId: 00000000-0000-0000-0000-000000000000',
+        connectCalls: [], successes: [], sessionReads: [], sessionBefore: { sessionId: SESSION.sessionId, modelName: SESSION.modelName, hasUnsavedChanges: SESSION.hasUnsavedChanges },
+        defaultBefore: (ACCOUNT_PROFILES.find(function (p) { return p.id === 'pf1'; }) || {}).id,
+      };
+    }
+    if (localFailureMode) {
+      window.__uishotLocalFailure = {
+        calls: [], endpoint: 'localhost:51000', message: 'The local model at localhost:51000 is not ready. Open Power BI Desktop and retry.',
+      };
+    }
+    // ?auth= is the same switch under a name that fits all three panels now (Promote, Fabric Git, publish);
+    // ?promote= stays for the drivers that already use it.
+    const promoteAuth = new URLSearchParams(location.search).get('auth') || new URLSearchParams(location.search).get('promote') || CONNECTIONS[1].authMode;
     const CONNECTION_CONTEXT = cfg.connectionContext || {
-      editing: { available: true, modelName: 'Contoso Retail', source: 'C:\\Models\\Contoso\\Contoso.SemanticModel\\definition', kind: 'file', workingFolder: 'C:\\Models\\Contoso\\Contoso.SemanticModel', sourceConnectionId: 'cn3', live: false, sourceControlled: true, repositoryRoot: 'C:\\Models\\Contoso' },
+      // Under ?g=workspace the OPEN NOW panel is pointed at the same workspace-level target, with no model name and no
+      // database — the state that used to print the encoded endpoint segment in the nav panel as well as the list.
+      editing: scenario === 'workspace'
+        ? { available: true, source: WORKSPACE_ONLY.endpoint, connectionId: 'cnw', kind: 'xmla', endpoint: WORKSPACE_ONLY.endpoint, live: true, sourceControlled: false }
+        : { available: true, modelName: 'Contoso Retail', source: 'C:\\Models\\Contoso\\Contoso.SemanticModel\\definition', kind: 'file', workingFolder: 'C:\\Models\\Contoso\\Contoso.SemanticModel', sourceConnectionId: 'cn3', live: false, sourceControlled: true, repositoryRoot: 'C:\\Models\\Contoso' },
       querying: connected
         ? { available: true, modelName: 'Contoso local test', source: 'localhost:51000', connectionId: 'cn3', kind: 'localDesktop', endpoint: 'localhost:51000', database: 'Contoso', live: true }
         : { available: false, live: false },
-      publishing: { available: true, modelName: 'Contoso Sales', source: CONNECTIONS[1].endpoint, connectionId: 'cn2', kind: 'xmla', endpoint: CONNECTIONS[1].endpoint, database: 'Contoso', live: true },
+      // The engine copies the remembered record's identity onto every side of the context
+      // (ConnectionContext.FromRecord), and Promote now starts on the way the destination was really
+      // opened. ?promote=azcli stands in for a destination opened with the Azure command line on a
+      // machine that has never run it, which is the failure Kane reported from his own laptop.
+      publishing: { available: true, modelName: 'Contoso Sales', source: CONNECTIONS[1].endpoint, connectionId: 'cn2', kind: 'xmla', endpoint: CONNECTIONS[1].endpoint, database: 'Contoso', label: 'uat', effectiveLabel: 'uat', live: true, authMode: promoteAuth, tenantId: CONNECTIONS[1].tenantId, account: CONNECTIONS[1].lastAccount },
       // The "copy FROM" reference model, when one is bound — the drawer's 4th role card + a "reference" pill on its row.
       reference: { available: true, modelName: 'Finance', source: CONNECTIONS[0].endpoint, connectionId: 'cn1', kind: 'workspace', endpoint: CONNECTIONS[0].endpoint, database: 'Finance', live: true },
       relationship: connected ? 'workingCopyAndLocalRuntime' : 'editingOnly', twoModelsInPlay: connected,
@@ -1557,13 +1987,73 @@
         }, 0);
         return next;
       },
-      sessionInfo: SESSION,
+      sessionInfo: recoveryMode ? function () {
+        window.__uishotRecovery.sessionReads.push({ sessionId: SESSION.sessionId, modelName: SESSION.modelName, hasUnsavedChanges: SESSION.hasUnsavedChanges });
+        return SESSION;
+      } : SESSION,
       connectionContext: CONNECTION_CONTEXT,
       getAgentPolicy: AGENT_POLICY,
       listPendingApprovals: PENDING_APPROVALS,
       listConnections: CONNECTIONS,
       probeConnectionAccounts: ACCOUNT_PROBES,
       listAccountProfiles: ACCOUNT_PROFILES,
+
+      // ---- the fourth role: named SQL sources --------------------------------------------------------------
+      // The four source ops plus the two the hub reads use-counts from. These MUTATE the fixture arrays, so a
+      // shot of "after Save" or "after a refused Remove" is the real component state, not a painted picture.
+      listSqlSources: function () { return SQL_SOURCES.slice(); },
+      // Create (no id) or update (an id that exists). The engine's own refusals are reproduced here so the error
+      // states can be driven: a connection-string shape, a duplicate name, and an unknown id.
+      saveSqlSource: function (params) {
+        var id = params && params[0], name = String((params && params[1]) || '').trim();
+        var server = String((params && params[2]) || '').trim(), database = String((params && params[3]) || '').trim();
+        var mode = String((params && params[4]) || '').trim().toLowerCase(), tenant = (params && params[5]) || null;
+        if (/[;=]/.test(server) || /[;=]/.test(database))
+          return { __uishotError: 'Enter just the server address, like contoso-sql.database.windows.net, not a connection string. Semanticus signs in for you and never stores a password.' };
+        if (mode === 'token')
+          return { __uishotError: 'Semanticus never holds a password or a token for you. Pick how to sign in instead.' };
+        var existing = id ? SQL_SOURCES.find(function (r) { return r.id === id; }) : null;
+        if (id && !existing) return { __uishotError: 'No SQL source with that id. Open Connections to see the saved sources.' };
+        var clash = SQL_SOURCES.find(function (r) { return r.name.toLowerCase() === name.toLowerCase() && (!existing || r.id !== existing.id); });
+        if (clash) return { __uishotError: "There is already a SQL source called '" + clash.name + "'. Give this one a different name." };
+        var rec = existing || { id: 'sql-' + Math.random().toString(16).slice(2, 18), createdUtc: new Date().toISOString() };
+        rec.name = name; rec.server = server; rec.database = database; rec.authMode = mode || 'interactive'; rec.tenantId = tenant || null;
+        if (!existing) SQL_SOURCES.unshift(rec);
+        return rec;
+      },
+      // One constant, no user table. The Finance source fails on purpose: a failing test is a state, not an error.
+      testSqlSource: function (params) {
+        var id = params && params[0];
+        var rec = SQL_SOURCES.find(function (r) { return r.id === id; });
+        if (!rec) return { id: id, ok: false, note: 'There is no saved SQL source with that id.', elapsedMs: 0, testedUtc: new Date().toISOString() };
+        var ok = rec.id !== 'sql-77b1e6c0f3aa4d12';
+        rec.lastTestOk = ok; rec.lastTestedUtc = new Date().toISOString();
+        return { id: rec.id, name: rec.name, server: rec.server, database: rec.database, ok: ok,
+          note: ok ? 'Connected to ' + rec.database + ' on ' + rec.server + '.'
+                   : 'We could not sign in to ' + rec.server + '. The saved sign-in for this source no longer works. Sign in again, then test it.',
+          elapsedMs: ok ? 412 : 2180, testedUtc: rec.lastTestedUtc };
+      },
+      // Refused while anything in the OPEN model still points at it, with the counts AND the sorted names.
+      deleteSqlSource: function (params) {
+        var id = params && params[0];
+        var rec = SQL_SOURCES.find(function (r) { return r.id === id; });
+        if (!rec) return { deleted: false, note: 'There is no saved SQL source with that id.', checksUsing: 0, tableMappingsUsing: 0, checkTitles: [], mappedTables: [] };
+        var titles = SQL_SOURCE_USE.filter(function (u) { return u.sqlSourceId === id; })
+          .map(function (u) { return SQL_CHECK_TITLES[u.defId]; }).filter(Boolean).sort();
+        var tables = SQL_TABLE_MAPPINGS.filter(function (m) { return m.sqlSourceId === id; })
+          .map(function (m) { return m.modelTable; }).sort();
+        if (titles.length === 0 && tables.length === 0) {
+          SQL_SOURCES.splice(SQL_SOURCES.indexOf(rec), 1);
+          return { deleted: true, note: "'" + rec.name + "' was removed.", checksUsing: 0, tableMappingsUsing: 0, checkTitles: [], mappedTables: [] };
+        }
+        return { deleted: false, checksUsing: titles.length, tableMappingsUsing: tables.length,
+          checkTitles: titles, mappedTables: tables,
+          note: "'" + rec.name + "' is still in use, so it was not removed." };
+      },
+      // listTests is the Tests page's own fixture further down; the sqlSourceUse field is attached to it there,
+      // because the engine adds a field to that ONE listing rather than a second op. Defining it here would
+      // overwrite the checks, which is exactly what happened on the first run of this driver.
+      listTableMappings: function () { return { rows: SQL_TABLE_MAPPINGS.slice(), note: null }; },
       // The advanced-auth preflight (service identity / command-line). Presence + names only, never a value. The
       // service-principal fixture leaves the SECRET unset so the review shows the present (fill) vs not-set (hollow)
       // states and the "Not ready" verdict; the azcli fixture reports a detected az login session.
@@ -1712,8 +2202,107 @@
       },
       getWorkflowDocument: function (params) {
         const fixture = window.__workflowDocument;
+        if (!fixture) return structuredClone(projectedWorkflowDocument(params[0]));
         fixture.calls.push({ method: 'getWorkflowDocument', params });
         return structuredClone(fixture.document);
+      },
+      previewWorkflowEdit: function (params) {
+        const [name, hash, path, editsJson, draftText, create, sessionId] = params;
+        const fixture = window.__workflowDocument;
+        const current = fixture ? fixture.document : (create ? null : projectedWorkflowDocument(name));
+        if (fixture) fixture.calls.push({ method: 'previewWorkflowEdit', params });
+        const refuse = function (outcome, reason, code) { return {
+          name, outcome, canApply: false, requiresReview: false, reason,
+          document: current ? structuredClone(current) : null, proposedText: draftText,
+          proposedByteHash: null, diff: '', editModel: current?.editModel ? structuredClone(current.editModel) : null,
+          issues: [{ code, severity: 'error', target: 'workflow', field: null, relatedTargets: [], message: reason }], keyChanges: [],
+        }; };
+        if (create && current?.library === 'user') return refuse('conflict', 'A project workflow with this name already exists. Nothing was written.', 'create_collision');
+        if (!create && path !== current.path) return refuse('conflict', 'The workflow now resolves to a different file. Keep your draft and review the current saved file.', 'stale_path');
+        if (!create && hash !== current.byteHash) return refuse('conflict', 'The workflow changed on disk. Keep your draft and reconcile it with the current saved file.', 'stale_content');
+        let operations;
+        try { operations = JSON.parse(editsJson || '[]'); } catch (_) { return refuse('invalid', 'editsJson must be a JSON array.', 'invalid_edits_json'); }
+        let model = current?.editModel ? structuredClone(current.editModel) : workflowEditModel({ name, title: name, description: '', version: 1, source: 'user', steps: [] }, 'v2');
+        const keyChanges = [];
+        const locate = function (key) {
+          if (model.definition.key === key) return { value: model.definition };
+          const slot = model.definition.slots.find(function (item) { return item.key === key; });
+          if (slot) return { value: slot, owner: model.definition.slots };
+          for (const step of model.definition.steps) {
+            if (step.key === key) return { value: step, owner: model.definition.steps, step };
+            const input = (step.gate?.inputs || []).find(function (item) { return item.key === key; });
+            if (input) return { value: input, owner: step.gate.inputs, step };
+            const verify = (step.gate?.verify || []).find(function (item) { return item.key === key; });
+            if (verify) return { value: verify, owner: step.gate.verify, step };
+          }
+          return null;
+        };
+        const afterIndex = function (items, after) { return after == null ? 0 : items.findIndex(function (item) { return item.key === after; }) + 1; };
+        const setNested = function (target, field, value) {
+          const bits = field.split('.');
+          if (bits.length === 1) { target[bits[0]] = structuredClone(value); return; }
+          if (bits[0] === 'gate') target.gate ||= { strictness: null, inputs: [], verify: [] };
+          target[bits[0]][bits[1]] = structuredClone(value);
+        };
+        for (const operation of operations) {
+          if (operation.op === 'stabilize_step_ids') {
+            const used = new Set(model.definition.steps.filter(function (step) { return step.idKind === 'explicit-stable'; }).map(function (step) { return step.id; }));
+            model.definition.steps.forEach(function (step, index) {
+              if (step.idKind === 'explicit-stable') return;
+              const old = step.id, basis = (step.title || 'step').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'step';
+              let next = basis, suffix = 2; while (used.has(next)) next = basis + '-' + suffix++;
+              used.add(next); step.id = next; step.idKind = 'explicit-stable';
+              keyChanges.push({ oldKey: step.key, newKey: step.key, oldStepId: old, newStepId: next });
+            });
+          } else if (operation.op === 'set_field') {
+            const target = locate(operation.target); if (target) setNested(target.value, operation.field, operation.value);
+          } else if (operation.op === 'set_map_entry' || operation.op === 'remove_map_entry') {
+            const target = locate(operation.target); const list = operation.field === 'provenance' ? target?.value.provenance : target?.value.call?.with;
+            if (list) { const index = list.findIndex(function (entry) { return entry.name === operation.name; });
+              if (operation.op === 'remove_map_entry') { if (index >= 0) list.splice(index, 1); }
+              else if (index >= 0) list[index].value = operation.value;
+              else list.push({ key: 'new:map:' + operation.name, name: operation.name, value: operation.value }); }
+          } else if (operation.op === 'insert_item') {
+            const target = locate(operation.target); let list = operation.field === 'slots' ? target?.value.slots : operation.field === 'gate.inputs' ? target?.value.gate?.inputs : target?.value.gate?.verify;
+            if (!list && target && operation.field.startsWith('gate.')) { target.value.gate = { strictness: null, inputs: [], verify: [] }; list = operation.field === 'gate.inputs' ? target.value.gate.inputs : target.value.gate.verify; }
+            if (list) list.splice(afterIndex(list, operation.after), 0, { key: operation.tempKey, fingerprint: '', ...structuredClone(operation.value) });
+          } else if (operation.op === 'move_item' || operation.op === 'remove_item') {
+            const target = locate(operation.target); if (target?.owner) { const index = target.owner.indexOf(target.value), moving = target.owner.splice(index, 1)[0];
+              if (operation.op === 'move_item') target.owner.splice(afterIndex(target.owner, operation.after), 0, moving); }
+          } else if (operation.op === 'add_step') {
+            const steps = model.definition.steps; steps.splice(afterIndex(steps, operation.after), 0, { key: operation.tempKey, fingerprint: '', id: operation.value.id,
+              idKind: 'explicit-stable', number: 0, title: operation.value.title, instructions: operation.value.instructions || '', ops: operation.value.ops || [], when: null, forEach: null, call: null, gate: null });
+          } else if (operation.op === 'copy_step') {
+            const steps = model.definition.steps, source = locate(operation.target)?.value;
+            if (source) steps.splice(afterIndex(steps, operation.after), 0, { ...structuredClone(source), key: operation.tempKey, fingerprint: '', id: operation.newId, idKind: 'explicit-stable' });
+          } else if (operation.op === 'move_step' || operation.op === 'remove_step') {
+            const steps = model.definition.steps, target = locate(operation.target), index = target ? steps.indexOf(target.value) : -1;
+            if (index >= 0) { const moving = steps.splice(index, 1)[0]; if (operation.op === 'move_step') steps.splice(afterIndex(steps, operation.after), 0, moving); }
+          }
+        }
+        model.definition.steps.forEach(function (step, index) { step.number = index + 1; });
+        let proposedText = draftText ?? current?.exactText ?? ['---', 'schemaVersion: 2', 'name: ' + name, 'title: ' + name, 'version: 1', '---', ''].join(String.fromCharCode(10));
+        const frontTitle = proposedText.match(/^title:\s*(.+)$/m);
+        if (frontTitle) model.definition.title = frontTitle[1].trim();
+        const headings = Array.from(proposedText.matchAll(/^##\s+Step\s+\d+:\s*(.+)$/gm));
+        headings.forEach(function (match, index) { if (model.definition.steps[index]) model.definition.steps[index].title = match[1].trim(); });
+        if (operations.length) proposedText += String.fromCharCode(10) + '<!-- workflow editor preview: ' + operations.map(function (operation) { return operation.op; }).join(', ') + ' -->';
+        if (proposedText.includes('schemaVersion: broken')) return { ...refuse('invalid', 'Invalid schemaVersion in submitted text.', 'parse_error'), proposedText, editModel: null };
+        const noChange = !create && proposedText === current.exactText && operations.length === 0;
+        const stock = !create && current.library !== 'user';
+        const warning = wfParam === 'editor-warning';
+        const outcome = noChange ? 'no_change' : stock ? 'stock_read_only' : 'ready';
+        const reason = noChange ? 'The requested edit already has these exact bytes. Nothing was written.' : stock
+          ? 'Stock workflows are read-only. Create an exact project copy before applying this preview.'
+          : warning ? 'The draft is valid and has warnings to review before saving.' : 'The draft is valid and ready to save through the existing exact-text writer.';
+        const diff = noChange ? '' : ['--- saved', '+++ proposed', '@@ workflow source @@', '- saved workflow bytes', '+ proposed workflow draft', '+ ' + operations.map(function (operation) { return operation.op; }).join(', ')].join(String.fromCharCode(10));
+        if (fixture) fixture.pendingEditModel = structuredClone(model);
+        return { name, outcome, canApply: outcome === 'ready', reason, document: current ? structuredClone(current) : null,
+          proposedText, proposedByteHash: 'sha256:preview', diff, editModel: model,
+          issues: warning ? [{ code: 'admission_warn', severity: 'warning', target: 'workflow', field: 'description', relatedTargets: [], message: 'Add a clearer description before sharing this workflow.' }] : [],
+          keyChanges, requiresReview: warning,
+          suggested_next_action: create ? { op: 'save_workflow', args: { name, markdown: proposedText, createOnly: true, sessionId }, why: 'Create this checked workflow.' }
+            : { op: 'edit_workflow_document', args: { name, expectByteHash: hash, expectPath: path, exactText: proposedText, sessionId }, why: 'Write these exact checked bytes.' } };
       },
       upgradeWorkflow: function (params) {
         const f = window.__workflowDocument;
@@ -1754,7 +2343,12 @@
         else if (text.includes('schemaVersion: broken')) reason = 'Invalid schemaVersion in submitted text.';
         else if (fixture.refuseNext) { reason = 'File is temporarily unavailable. Your edit was refused.'; fixture.refuseNext = false; }
         const changed = !reason && text !== fixture.document.exactText;
-        if (changed) fixture.set(text);
+        if (changed) {
+          const pendingEditModel = fixture.pendingEditModel;
+          fixture.set(text);
+          if (pendingEditModel) fixture.document.editModel = pendingEditModel;
+          fixture.pendingEditModel = null;
+        }
         const result = { name, changed, reason, byteHash: fixture.document.byteHash, document: structuredClone(fixture.document) };
         if (fixture.deferred) { fixture.pending = result; return '__uishotNever'; }
         return result;
@@ -1912,15 +2506,68 @@
         };
       })(),
       getLineage: LINEAGE,
-      impactOf: IMPACT,
+      impactOf: function (params) {
+        var ref = (params && params[0]) || '';
+        if (ref === 'column:Date/Date') return IMPACT_BIG;
+        // A cleanup candidate is on that list precisely because nothing uses it, so its impact must be empty:
+        // otherwise Propose removal is blocked on the one row where it is supposed to be offered.
+        var candidate = cleanupItems().items.filter(function (i) { return i.ref === ref && i.verdict === 'safe'; })[0];
+        if (candidate) return {
+          root: ref, rootName: candidate.name, rootKind: candidate.kind, impacted: [],
+          measures: 0, columns: 0, tables: 0, relationships: 0, other: 0,
+        };
+        return IMPACT;
+      },
       impactAssessment: function (params) {
         var req = (params && params[0]) || {};
-        return Object.assign({}, IMPACT_ASSESSMENT, { intent: req.intent || 'change' });
+        return assessmentFor(req.objectRef || '');
       },
-      unusedObjects: UNUSED,
+      // The one report scope. A choice is saved and stays NOT CHECKED; a check is what reads.
+      listReportScope: function () { return composeScope(); },
+      setReportScope: function (params) {
+        var choices = (params && params[0]) || [];
+        var byId = {};
+        SCOPE_ROWS.forEach(function (r) { byId[r.id] = r; });
+        SCOPE_ROWS = choices.map(function (c) {
+          var prior = byId[c.id];
+          // Each report keeps its OWN workspace: the mock must be able to SHOW P3 being wrong if it comes back.
+          return scopeRow(c.id, c.name, c.workspaceName || c.path || (prior && prior.source) || 'Fabric Reporting',
+            'notChecked', null, { workspaceId: c.workspaceId, reportId: c.reportId });
+        });
+        SCOPE_GENERATION++;
+        return composeScope();
+      },
+      checkReports: function (params) {
+        var ids = (params && params[0]) || [];
+        var want = {};
+        ids.forEach(function (i) { want[i] = true; });
+        SCOPE_ROWS = SCOPE_ROWS.map(function (r) {
+          if (ids.length && !want[r.id]) return r;
+          // One report in the fixture is deliberately unreadable, so a partly-checked reading is drivable.
+          var unreadable = r.name === 'sm_expense_claims';
+          return Object.assign({}, r, {
+            state: unreadable ? 'couldNotBeFullyChecked' : 'checked',
+            checkedWhenUtc: CHECK_TIME,
+            note: unreadable ? 'Part of this report could not be read.' : null,
+          });
+        });
+        return composeScope(REPORT_ANALYSIS);
+      },
+      unusedObjects: function () { return cleanupItems(); },
       // The sweep's act half: echo the requested refs (or the whole mock safe set) as removed, one skipped to
       // exercise the removed/skipped result banner.
       removeSafeObjects: function (params) {
+        // R1 on the page: a report is chosen for this model and has not been read, so nothing may be swept.
+        var pending = SCOPE_ROWS.filter(function (r) { return r.state === 'notChecked' || r.state === 'needsChecking'; });
+        if (SCOPE_ROWS.length > 0 && pending.length > 0) {
+          var asked = (params && params[0]) || [];
+          return {
+            revision: 43, removed: [], count: 0,
+            skipped: asked.map(function (r) { return { ref: r, reason: 'a report chosen for this model has not been checked yet, so its use of this field is not known.' }; }),
+            verification: 'reports chosen, ' + (SCOPE_ROWS.length - pending.length) + ' of ' + SCOPE_ROWS.length + ' read',
+            note: 'Nothing removed. The chosen reports still need checking.',
+          };
+        }
         var refs = (params && params[0]) || UNUSED.items.filter(function (i) { return i.verdict === 'safe'; }).map(function (i) { return i.ref; });
         var removed = refs.slice(0, Math.max(refs.length - 1, 1)).map(function (r) {
           var name = r.indexOf('/') >= 0 ? r.slice(r.lastIndexOf('/') + 1) : r;
@@ -1930,7 +2577,12 @@
         return { revision: 43, removed: removed, skipped: skipped, count: removed.length, verification: 'model-only', note: 'Removed ' + removed.length + ' item(s) in one undoable step.' };
       },
       deleteObject: { revision: 44, changed: true },
-      listReports: REPORTS,
+      // Per workspace, so changing the picker changes what is discovered and the save can be seen keeping the
+      // report that came from the OTHER one.
+      listReports: function (params) {
+        var ws = (params && params[0]) || '';
+        return REPORTS_BY_WS[ws] || REPORTS;
+      },
       analyzeCloudReports: REPORT_ANALYSIS,
       analyzeReports: REPORT_ANALYSIS,   // offline PBIR path (same shape) — lets the driver exercise the report-merge leg
 
@@ -1996,7 +2648,15 @@
       gitStatus: GITSTATUS,
       // includeEqual (3rd param) → append a few identical objects so the Model Diff view's "Only differences" OFF
       // state renders (Deploy calls with 2 params → only differences, unchanged). Real engine omits equal bodies by default.
-      compareModels: function (p) { return (p && p[2]) ? MODELDIFF_EQ : MODELDIFF; },
+      // A comparison against a PUBLISHED destination has to reach it. Without a live connection this fixture
+      // cannot, and returning a complete-looking diff anyway is what hid M17 for a whole walkthrough.
+      compareModels: function (p) {
+        var target = p && p[1];
+        if (!connected && target && target.kind === 'workspace') {
+          return { error: 'Could not connect to ' + (target.database || 'the published model') + ' at ' + (target.endpoint || 'the destination') + '. Check the connection and try again.' };
+        }
+        return (p && p[2]) ? MODELDIFF_EQ : MODELDIFF;
+      },
       applyDiff: cfg.applyDiff || { applied: false, count: 6, appliedRefs: [], failedRefs: ['measure:Sales/Avg Order Value'], target: 'C:/models/PROD/Sales.bim', note: '6 of 7 selected change(s) would apply into Sales.bim · 1 would fail (missing parent table).' },
       deployGate: GATE,
       deployLive: function (p) {
@@ -2013,22 +2673,46 @@
       rollbackPush: function (p) { return p && p[1]
         ? Object.assign({}, ROLLBACK_PREVIEW, { applied: true, note: 'Rolled Contoso Sales back: restored 3 objects, removed 2.' })
         : ROLLBACK_PREVIEW; },
-      listDeploymentPipelines: PIPELINES,
-      getPipelineStages: PIPELINE_STAGES,
-      listWorkspaces: WORKSPACES,
+      listDeploymentPipelines: cfg.pipelines ? PIPELINES : function (p) { return signInGate(p && p[0]) || PIPELINES; },
+      getPipelineStages: cfg.pipelineStages ? PIPELINE_STAGES : function (p) { return signInGate(p && p[1]) || PIPELINE_STAGES; },
+      listWorkspaces: function () {
+        return [{ id: 'ws-a', displayName: 'Workspace A' }, { id: 'ws-b', displayName: 'Workspace B' }];
+      },
       deployStage: DEPLOY_PREVIEW,
-      deploymentHistory: DEPLOY_HISTORY,
-      fabricGitConnection: cfg.fabricGitConnection || { state: 'ConnectedAndInitialized', providerType: 'AzureDevOps', organization: 'Contoso', repository: 'bi-models', branch: 'main', directory: '/', head: 'a1b2c3d4e5f6', lastSyncTime: '2026-06-25T08:00:00Z' },
-      fabricGitStatus: cfg.fabricGitStatus || { workspaceHead: 'a1b2c3d4', remoteCommitHash: 'f6e5d4c3', conflicts: true, changes: [
-        { objectId: 'o1', itemType: 'SemanticModel', displayName: 'Contoso', workspaceChange: 'Modified', conflictType: 'Conflict' },
-        { objectId: 'o2', itemType: 'Report', displayName: 'Sales Overview', remoteChange: 'Modified', conflictType: 'None' },
-        { objectId: 'o3', itemType: 'SemanticModel', displayName: 'Returns', workspaceChange: 'Added', conflictType: 'None' } ] },
+      deploymentHistory: cfg.deployHistory ? DEPLOY_HISTORY : function (p) { return signInGate(p && p[1]) || DEPLOY_HISTORY; },
+      fabricGitConnection: cfg.fabricGitConnection || function (p) { return signInGateDto(p && p[1]) || FABRIC_GIT_CONNECTION; },
+      fabricGitStatus: cfg.fabricGitStatus || function (p) { return signInGateDto(p && p[1]) || FABRIC_GIT_STATUS; },
+      // commit/update are the gated two-step writes: authMode is the 5th positional arg on both.
+      fabricGitCommit: cfg.fabricGitCommit || function (p) {
+        var commit = !!(p && p[3]);
+        return signInGateDto(p && p[4], { action: 'commit', direction: 'workspace→git', changeCount: 0, conflicts: false, plan: 'Could not read git status.' })
+          || { committed: commit, action: 'commit', direction: 'workspace→git', changeCount: 2, conflicts: false,
+            plan: commit ? 'Committed 2 workspace item(s) to git.' : 'DRY RUN. Would commit 2 workspace item(s) to git.' };
+      },
+      fabricGitUpdate: cfg.fabricGitUpdate || function (p) {
+        var commit = !!(p && p[3]);
+        return signInGateDto(p && p[4], { action: 'update', direction: 'git→workspace', changeCount: 0, conflicts: false, plan: 'Could not read git status.' })
+          || { committed: commit, action: 'update', direction: 'git→workspace', changeCount: 1, conflicts: true,
+            plan: commit ? 'Updated 1 workspace item(s) from git.' : 'DRY RUN. Would overwrite 1 workspace item(s) from git.' };
+      },
       cicdGenerate: cfg.cicdGenerate || { written: false, writtenPaths: [], skippedPaths: [], note: 'fabric-cicd scaffold for GitHub Actions. Edit parameter.yml + set the workspace id/secrets, commit, and CI runs the real fabric-cicd publish_all_items. No live write was made.', files: [
         { path: 'parameter.yml', content: 'find_replace:\n  - find_value: "00000000-0000-0000-0000-000000000000"  # dev workspace id\n    replace_value:\n      PROD: "$workspace.$id"\n' },
         { path: '.deploy/deploy.py', content: 'from fabric_cicd import FabricWorkspace, publish_all_items\n# ... publishes this repo to the target workspace ...\npublish_all_items(target)\n' },
         { path: '.github/workflows/fabric-cicd.yml', content: 'name: Deploy Fabric semantic model\njobs:\n  deploy:\n    steps:\n      - run: pip install fabric-cicd\n      - run: python .deploy/deploy.py\n' } ] },
-      cicdPublish: cfg.cicdPublish || { committed: false, action: 'publish', partCount: 9, sampleParts: ['definition.pbism', 'definition/model.tmdl', 'definition/tables/Sales.tmdl'], plan: 'DRY RUN — would publish 9 part(s) to workspace ws-1 / model model-1.' },
-      getModelGraph: GRAPH,
+      // cicd_publish mints a token too, and returns the failure on the DTO (LocalEngine catches it). authMode
+      // is the 4th positional arg. cicd_generate is deliberately absent from this treatment: it takes no
+      // authMode at all (EngineRpcTarget.cs cicdGenerate) because it only writes files on this computer.
+      cicdPublish: cfg.cicdPublish || function (p) {
+        var commit = !!(p && p[2]);
+        return signInGateDto(p && p[3], { action: 'publish', committed: false, partCount: 0, sampleParts: [], plan: 'Publish failed.' })
+          || { committed: commit, action: 'publish', workspaceId: (p && p[0]) || 'ws-1', itemId: (p && p[1]) || 'model-1', partCount: 9,
+            sampleParts: ['definition.pbism', 'definition/model.tmdl', 'definition/tables/Sales.tmdl'],
+            plan: commit ? 'Published 9 part(s) to workspace ws-1 / model model-1.' : 'DRY RUN. Would publish 9 part(s) to workspace ws-1 / model model-1.' };
+      },
+      getModelGraph: homeScenario === 'loading' ? '__uishotNever'
+        : homeScenario === 'error' ? { __uishotError: 'The model graph could not be read.' }
+        : homeScenario === 'empty' ? { tables: [], relationships: [] }
+        : GRAPH,
       // Engine-owned diagram layout (.semanticus/layout.json). Default empty (canvas auto-arranges); ?lay=1 seeds a
       // distinctive single column so a screenshot proves the engine layout drove the All-tables diagram. saveLayout
       // (fired on drag-commit) just acks.
@@ -2047,6 +2731,18 @@
       getIncrementalRefreshPolicy: cfg.refreshPolicy || { table: 'Sales', enabled: pqMode !== 'incremental', policyType: 'Basic', mode: 'Import', rollingWindowGranularity: 'Year', rollingWindowPeriods: 5, incrementalGranularity: 'Day', incrementalPeriods: 10, incrementalPeriodsOffset: 0, sourceExpression: null, pollingExpression: null, wiredDateField: 'OrderDateKey' },
       getDocOutline: DOCOUTLINE,
       aiReadinessScan: SCORECARD,
+      // Model Overview: the instructions saved for the assistant (LSDL CustomInstructions). ?home=noinstr is the
+      // never-written model, so the card's empty state and the hero sentence WITHOUT its instructions clause can
+      // both be shot. setAiInstructions acks the inline editor's Save and the harness re-reads what it acked, so a
+      // screenshot session round-trips an edit without persisting anything.
+      getAiInstructions: cfg.aiInstructions || function () {
+        if (homeScenario === 'noinstr') return { present: false, instructions: null, length: 0, limit: 2000, culture: 'en-US', note: null };
+        return { present: true, instructions: AI_INSTRUCTIONS, length: AI_INSTRUCTIONS.length, limit: 2000, culture: 'en-US', note: null };
+      },
+      setAiInstructions: cfg.setAiInstructions || function (params) {
+        AI_INSTRUCTIONS = (params && params[0]) || '';
+        return { revision: 44, changed: true, length: AI_INSTRUCTIONS.length, culture: 'en-US', note: null };
+      },
       // The Model Interview card (AI Readiness tab): saved questions covering every plain-label outcome —
       // Right (green) / Safely said it couldn't answer (grey) / Confidently wrong (RED, with the plain fix
       // line) / Couldn't check (amber) / Not asked yet (no lastRun). runInterview echoes a deterministic
@@ -2118,7 +2814,11 @@
       loadReadinessRules: cfg.loadReadinessRules || { revision: 43, source: 'inline', loaded: 1, builtinRules: 74, modelRules: 1, activeRules: 75, note: '1 rule(s) loaded (merged).' },
       resetBpaRules: { revision: 44, source: 'reset', loaded: 0, modelRules: 0, activeRules: 74, note: 'Custom rules cleared.' },
       resetReadinessRules: { revision: 44, source: 'reset', loaded: 0, modelRules: 0, activeRules: 74, note: 'Custom readiness rules cleared.' },
-      vertiPaqScan: VPAQ,
+      // ?home=noscan fails the scan, so Model Overview's Scan sizes button can be shot showing the plain error
+      // line while the band stays on its columns fallback instead of pretending to a measurement.
+      vertiPaqScan: homeScenario === 'noscan'
+        ? { __uishotError: 'No model is connected for queries, so table sizes could not be measured.' }
+        : VPAQ,
       listMeasures: MEASURES,
       listColumns: COLUMNS,
       // Offline DAX check for the <DaxField> linter + validity pill: a trivial bracket-balance so a well-formed
@@ -2204,14 +2904,39 @@
       daxLibListInstalled: cfg.daxLibListInstalled || [
         { packageId: 'Daxlib.Sample', version: '1.0.0', functions: ['Sample.Add', 'Sample.Mul', 'Sample.Clamp'], authors: 'DaxLib', by: 'human', when: '2026-06-30T10:00:00Z' },
       ],
-      // ?wf=bind renders the PRO (editable) binding state; ?tier=pro forces Pro for any variant (the Scenarios
-      // Apply affordance). Permissions: ?perm=free forces Free; the #Permissions tab (or any other perm param)
-      // shows Pro so the editable matrix renders. Everything else keeps the prior wf-driven default.
-      getEntitlement: cfg.getEntitlement || { tier: permParam === 'free' ? 'free' : (permTab || permParam) ? 'pro' : (new URLSearchParams(location.search).get('tier') === 'pro' || wfParam === 'bind' || wfParam === 'bindcond' || wfParam === 'activate' || wfParam === 'activatelint') ? 'pro' : 'free' },
+      // The entitlement is a FEATURE GRANT now, not a tier alone (Kane's line by feature, 2026-09-15). The
+      // engine adds `features` to get_entitlement, and a page reads that array rather than inferring anything
+      // from the word "pro". Kept tier-compatible on purpose: a paid tier with no features array still grants
+      // all four, because a token minted before the claim existed must not become a new, emptier tier.
+      //
+      // ?tier=pro forces Pro for any variant; ?features=<comma list> grants exactly those four ids, so a
+      // driver can show one feature locked while the rest are open. Permissions no longer moves the tier at
+      // all: the agent policy matrix is free from 2026-09-15 and its ?perm=free variant only means the
+      // guardrail switch fixture, which is what that flag always really drove.
+      // ?ent=fail makes the read FAIL. A failed entitlement is not a grant either: pro.tsx publishes
+      // 'unknown' on a rejection, and the page must stay in its checking state rather than fall open.
+      getEntitlement: cfg.getEntitlement || (new URLSearchParams(location.search).get('ent') === 'fail'
+        ? { __uishotError: 'The engine could not read your licence.' }
+        : { tier: entitlementTier, features: entitlementFeatures }),
       listLocalInstances: [],
       connectionStatus: connected
         ? { connected: true, kind: 'local', dataSource: 'localhost:51000', database: 'Contoso', message: 'Connected to a local Power BI Desktop instance.' }
         : { connected: false, message: 'Open a model with a live engine (Power BI Desktop or XMLA) to run queries.' },
+      connectLocal: function (params) {
+        if (!localFailureMode) return {};
+        window.__uishotLocalFailure.calls.push((params || []).slice());
+        return { connected: false, message: window.__uishotLocalFailure.message };
+      },
+      // The recovery scenario fails the remembered query once, then succeeds only when the explicit saved-profile
+      // retry carries pf2. It is a deterministic host seam, never a claim about live token expiry persistence.
+      connectXmla: function (params) {
+        if (!recoveryMode) return { connected: true, kind: 'xmla', dataSource: (params && params[0]) || CONNECTIONS[0].endpoint, database: (params && params[1]) || 'Finance', account: 'megan@contoso.com' };
+        window.__uishotRecovery.connectCalls.push((params || []).slice());
+        if (window.__uishotRecovery.connectCalls.length === 1) return { __uishotError: window.__uishotRecovery.failure };
+        const success = { connected: true, kind: 'xmla', dataSource: (params && params[0]) || CONNECTIONS[0].endpoint, database: (params && params[1]) || 'Finance', account: 'admin@contoso.com' };
+        window.__uishotRecovery.successes.push({ account: success.account, profileId: (params && params[6]) || null });
+        return success;
+      },
       // Real ADOMD labels EVALUATE TOPN columns 'Table[Column]' — the webview must normalize to the bare model
       // name before building profile DAX / M ops. Return QUALIFIED names so a normalization regression is
       // visible in the capture (a plain-name mock masked exactly that bug).
@@ -2222,11 +2947,72 @@
         });
       },
       runDax: daxMode === 'hang' ? '__uishotNever' : (pqMode === 'profile' ? PQ_PROFILE : PIVOT),
+      // A proposal from Impact lands in the SAME plan Changes shows, so the driver can follow one removal from
+      // the card to Changes > Proposed instead of being told it went somewhere.
+      addPlanItem: function (params) {
+        REVIEWED_SCOPE = SCOPE_GENERATION;
+        var ref = (params && params[0]) || '';
+        var kind = (params && params[1]) || 'delete_if_unused';
+        var title = (params && params[3]) || 'Remove object';
+        var name = ref.indexOf('/') >= 0 ? ref.slice(ref.lastIndexOf('/') + 1) : ref;
+        if (!PLAN.items.some(function (i) { return i.objectRef === ref && i.kind === kind; })) {
+          PLAN.items.push(pitem({
+            id: 'imp-' + PLAN.items.length, category: 'Structure', objectRef: ref, objectName: name,
+            kind: kind, source: 'human', risk: 'structural', target: 'object',
+            title: title, rationale: 'Proposed from Impact. It is rechecked against the same model and the same checked reports when the plan is applied.',
+            before: name, status: 'proposed',
+          }));
+          PLAN.summary = Object.assign({}, PLAN.summary, { total: PLAN.items.length });
+        }
+        return PLAN;
+      },
       getPlan: function () {
         if (FR_EMPTY) return EMPTY_REPLACE_PLAN;
         return REPLACE_NOTE ? Object.assign({}, PLAN, { note: REPLACE_NOTE }) : PLAN;
       },
       getChangePlan: PLAN,
+    };
+
+    // ── The three Pro-gated bulk primitives ───────────────────────────────────────────────────────────────
+    // Every unmocked method answers {}. That made "Fix all N auto-fixable" and "Apply N safe fixes" look
+    // like dead buttons on the free tier (B3) and made applyPlan answer with a report that had no numbers in
+    // it, which crashed Studio (B1). The engine gates all three through EntitlementGuard.RequirePro and
+    // returns a complete report on Pro; the fixture now does both, so ?tier=pro and the default free tier are
+    // each a real state you can drive.
+    // The exact wording EntitlementGuard.RequirePro emits (Semanticus.Engine/Entitlement/IEntitlement.cs:47-51),
+    // byte for byte. The closing clause this used to carry was a paraphrase that never matched the engine, so
+    // a copy drift in the real refusal would have been invisible in every shot taken through this harness.
+    function proRefusal(feature, freeAlternative) {
+      return { __uishotError: feature + ' is a Semanticus Pro feature. ' + freeAlternative + ' Unlock Pro from Pro Plans and Support.' };
+    }
+    var isPro = function () { return (RESPONSES.getEntitlement || {}).tier === 'pro'; };
+    RESPONSES.bpaFixAll = function () {
+      if (!isPro()) return proRefusal('Fixing all BPA violations at once', 'Fix violations one at a time with bpa_fix.');
+      var cleared = BPA.violations.filter(function (v) { return v.canAutoFix && v.ruleId !== 'ORG_HIDE_KEYS'; });
+      var left = BPA.violations.filter(function (v) { return cleared.indexOf(v) < 0; });
+      return {
+        applied: cleared.length,
+        scorecard: Object.assign({}, BPA, { violationCount: left.length, autoFixable: 1, violations: left }),
+        unfixed: [{ ruleId: 'ORG_HIDE_KEYS', ruleName: 'Hide key columns', objectRef: 'column:Store/StoreKey', objectName: 'Store[StoreKey]', reason: 'the column is a relationship key on an active relationship, so hiding it was refused' }],
+      };
+    };
+    RESPONSES.applySafeFixes = function () {
+      if (!isPro()) return proRefusal('Applying all safe fixes at once', 'Apply fixes one at a time with apply_fix.');
+      return { revision: 12, applied: ['SUMMARIZE', 'FK-HIDDEN', 'FORMAT-STRING'], scorecard: Object.assign({}, SCORECARD, { overall: 88, rawOverall: 88, grade: 'B', safeFixCount: 3 }) };
+    };
+    RESPONSES.applyPlan = function (p) {
+      var ids = p && p[0];
+      var free = !isPro();
+      // Free applies ONE item at a time; a bulk apply (null = every approved item, or more than one id) is gated.
+      if (free && (!ids || ids.length > 1)) return proRefusal('Applying a change plan in bulk', 'Apply one change at a time with Apply on each row.');
+      var count = ids ? ids.length : 4;
+      return {
+        revision: 13, appliedCount: count, skippedCount: 0, failedCount: 0, items: [],
+        bpaViolationsBefore: 6, bpaViolationsAfter: 6 - Math.min(count, 3),
+        gradeBefore: 'B', gradeAfter: 'A',
+        overallBefore: 82, overallAfter: 91,
+        note: 'Applied as one undoable step.',
+      };
     };
 
     // The below-1701 fixture is interactive: a successful upgrade must change the next listCalendars read.
@@ -2251,6 +3037,14 @@
         RESPONSES[m] = { __uishotError: 'The engine did not answer (mock failure for review).' };
       });
     }
+
+    // ?sql=empty   → no saved SQL sources (the first visit).
+    // ?sql=loading → the list never answers (the loading state).
+    // ?sql=error   → the list FAILS (the state that must never be drawn as "you have none").
+    var sqlParam = new URLSearchParams(location.search).get('sql');
+    if (sqlParam === 'empty') SQL_SOURCES.length = 0;
+    else if (sqlParam === 'loading') RESPONSES.listSqlSources = '__uishotNever';
+    else if (sqlParam === 'error') RESPONSES.listSqlSources = { __uishotError: 'The engine did not answer (mock failure for review).' };
 
     // ── Agent Permissions mutators (echo a plausible result so a headless click never errors) ────
     RESPONSES.setAgentPolicyEnabled = function (p) { return Object.assign({}, AGENT_POLICY, { enabled: !!(p && p[0]) }); };
@@ -2359,6 +3153,9 @@
       var SQL2 = 'SELECT c.SalesTerritory,\n  SUM(s.SalesAmount - s.ReturnAmount - s.DiscountAmount) AS NetRevenue\nFROM fact.Sales s\nLEFT JOIN dim.Customer c ON s.CustomerKey = c.CustomerKey\nGROUP BY GROUPING SETS ((c.SalesTerritory), ())';
       var DAX1 = 'EVALUATE\nSUMMARIZECOLUMNS(\n    \'Customer\'[Sales Territory],\n    "__recon_value", [Total Sales],\n    "__recon_present", 1\n)\n\n// Grand total, evaluated independently\nEVALUATE\nROW("__recon_value", [Total Sales])';
       var DAX2 = 'EVALUATE\nSUMMARIZECOLUMNS(\n    \'Customer\'[Sales Territory],\n    "__recon_value", [Net Revenue],\n    "__recon_present", 1\n)\n\n// Grand total, evaluated independently\nEVALUATE\nROW("__recon_value", [Net Revenue])';
+      var histHealth = function (grade, cov, roots) {
+        return { overall: 0, grade: grade, gatedBy: [], coveragePct: cov, checked: 23, passed: 23 - roots - 1, failed: roots, suspect: 0, notVerifiable: 1, missing: 0, rootFailures: roots, categories: [] };
+      };
       var RECON = [
         {
           defId: 'd1', title: 'Total Sales ties to the GL', targetRef: 'measure:Total Sales', verdict: 'Pass',
@@ -2421,47 +3218,196 @@
         },
       ];
       // HEALTH mirrors TestHealthAnalyzer's real math for the reports above (trust-UI law: every number
-      // reconciles). Correctness 1P/1F/1NV(+1 missing) = 50; Integrity 11P/2F/1S/3NV = 84.6; Security
-      // 2P/1F = 66.7; Performance (two budgeted timing runs) 1P/1F = 50. Weighted raw = 63.7, gated to 60
-      // by the integrity fails => D. Checked 25, decisive 20 => coverage 80. RootFailures = 5 fails.
+      // reconciles). ACCESS RULES NO LONGER RUN HERE, so the Security category and its three checks are
+      // gone and the weights normalise over the rest: Correctness 2P/2F/1NV(+1 missing) = 50;
+      // Integrity 11P/2F/1S/3NV = 84.6; Performance 1P/1F = 50. Checked 22, decisive 18 => coverage 81.8.
       var HEALTH = {
         overall: 60.0, grade: 'D',
-        gatedBy: ['2 integrity check(s) failed: capped at D until the data is fixed'],
-        coveragePct: 80.0, checked: 25, passed: 15, failed: 5, suspect: 1, notVerifiable: 4, missing: 1, rootFailures: 5,
+        gatedBy: ['2 data checks failed. The grade cannot rise above D until they are fixed.'],
+        coveragePct: 81.8, checked: 22, passed: 14, failed: 5, suspect: 1, notVerifiable: 4, missing: 1, rootFailures: 5,
         categories: [
-          { category: 'Correctness', weight: 0.4, hasChecks: true, checked: 3, passed: 1, failed: 1, suspect: 0, notVerifiable: 1, score: 50.0 },
+          { category: 'Correctness', weight: 0.4, hasChecks: true, checked: 4, passed: 2, failed: 2, suspect: 0, notVerifiable: 1, score: 50.0 },
           { category: 'Integrity', weight: 0.3, hasChecks: true, checked: 17, passed: 11, failed: 2, suspect: 1, notVerifiable: 3, score: 84.6 },
-          { category: 'Security', weight: 0.2, hasChecks: true, checked: 3, passed: 2, failed: 1, suspect: 0, notVerifiable: 0, score: 66.7 },
           { category: 'Performance', weight: 0.1, hasChecks: true, checked: 2, passed: 1, failed: 1, suspect: 0, notVerifiable: 0, score: 50.0 },
         ],
       };
-      RESPONSES.runTests = {
+      var FULL_RUN = {
         runId: 'run-1', when: new Date('2026-07-11T09:30:00Z').toISOString(), live: true,
         durationMs: 138000, environment: 'Contoso Retail on localhost:51542', cacheCleared: true,
+        modelName: 'Contoso Retail',
         health: HEALTH,
-        relationships: { relationships: RELS, tableRowCounts: TABLE_ROWS, summary: { relationships: 5, checked: 15, passed: 10, failed: 2, suspect: 1, notVerifiable: 2, coveragePct: 86.7 } },
-        security: { filters: SEC, ols: OLS, summary: { filters: 3, passed: 2, failed: 1, notVerifiable: 0, coveragePct: 100 } },
+        relationships: { relationships: RELS, summary: { relationships: 5, checked: 15, passed: 10, failed: 2, suspect: 1, notVerifiable: 2, coveragePct: 86.7 } },
         reconciles: RECON,
-        interview: [
-          { questionId: 'iq-a1', question: 'What were total sales in 2024?', tier: 'value', replayStatus: 'replayed', outcome: 'Correct', previousOutcome: 'Correct', changed: false, when: '2026-07-11T09:30:00Z', detail: 'The answer matched the trusted value.' },
-          { questionId: 'iq-b2', question: 'Which region had the highest revenue?', tier: 'paraphrase', replayStatus: 'replayed', outcome: 'SilentlyWrong', previousOutcome: 'Correct', changed: true, when: '2026-07-11T09:30:01Z', detail: 'The two phrasings returned different results.' },
-          { questionId: 'iq-c3', question: 'What was our customer churn rate last quarter?', tier: 'refusal', replayStatus: 'chat-only', outcome: 'Refused', previousOutcome: 'Refused', changed: false, when: '2026-07-10T12:00:00Z', detail: 'Safe-decline questions are checked in an AI chat.' },
-        ],
-        interviewNote: 'Behavioral contracts are evidence only: replayed 2, right 1, confidently wrong 1, could not check 0, chat-only 1, changed since last observation 1.',
-        definitionCount: 4, persisted: false,
+        definitionCount: 5, persisted: false,
+        scope: { mode: 'everything', ran: ['saved checks', 'relationships', 'table counts'], skipped: [] },
       };
-      RESPONSES.listTests = {
+      // A mock has to answer like the wire. This used to hand back the SAME full run whatever scope was
+      // asked for, so "Only this" and a ticked run were indistinguishable from "run everything" in every
+      // screenshot ever taken of this page, and Astra's finding 4 could not be seen either way. The three
+      // families are separated here exactly as LocalEngine.RunTestSuiteAsync separates them.
+      RESPONSES.runTests = function (params) {
+        var only = (params && params[1]) || null;
+        var sections = (params && params[2]) || null;
+        var selected = !!(only && only.length);
+        var named = (sections || []).filter(function (x) { return !!x; });
+        var has = function (name) { return !named.length || named.some(function (x) { return String(x).toLowerCase() === name.toLowerCase(); }); };
+        var runMeasures = selected || has('measures');
+        var runRels = !selected && has('relationships');
+        var runCounts = !selected && has('tableCounts');
+        var ran = [], skipped = [];
+        (runMeasures ? ran : skipped).push('saved checks');
+        (runRels ? ran : skipped).push('relationships');
+        (runCounts ? ran : skipped).push('table counts');
+        var outcomes = !runMeasures ? []
+          : selected ? RECON.filter(function (o) { return only.indexOf(o.defId) >= 0; })
+            : RECON;
+        return Object.assign({}, FULL_RUN, {
+          reconciles: outcomes,
+          relationships: runRels
+            ? FULL_RUN.relationships
+            : { relationships: [], summary: { relationships: 0, checked: 0, passed: 0, failed: 0, suspect: 0, notVerifiable: 0, coveragePct: 0 } },
+          scope: {
+            mode: skipped.length === 0 ? 'everything' : selected ? 'selected' : 'section',
+            only: selected ? only : null, sections: named.length ? named : null,
+            ran: ran, skipped: skipped,
+            gradeCovers: skipped.length === 0 ? undefined
+              : selected ? (only.length === 1 ? 'the 1 check you picked' : 'the ' + only.length + ' checks you picked')
+                : ran.join(' and '),
+          },
+        });
+      };
+      // cp/tests-engine-a: every outcome says what it looked for, what it got and by how much. A
+      // trusted-answer outcome carries NO rows and NO sql: it never had a SQL side to show.
+      RECON[0].expected = '18,185,050.80'; RECON[0].actual = '18,185,050.80'; RECON[0].difference = 0;
+      RECON[1].expected = '18,185,050.80'; RECON[1].actual = '18,142,732.76'; RECON[1].difference = -42318.04;
+      RECON[2].expected = 'blank'; RECON[2].actual = 'blank';
+      // d4's measure no longer exists, so there is nothing it was looking for. Absent, not a number.
+      RECON.push({
+        defId: 'd5', title: 'Total Sales 2024 totals 1,234', targetRef: 'measure:Sales/Total Sales', verdict: 'Fail',
+        message: 'the model returned 1,200 where 1,234 was the agreed answer.',
+        expected: '1,234', actual: '1,200', difference: -34,
+        createdBy: 'human', createdWhen: '2026-09-12T00:00:00Z', rowsTotal: 0,
+        authoredAgainstLabel: 'Contoso local test',
+      });
+      // ONE source list, the hub's own, reachable through the hub's own live mock. This block used to
+      // ASSIGN RESPONSES.listSqlSources a static array, which replaced the function that returns
+      // SQL_SOURCES, so a source saved in the hub never reached the check drawer. That is the whole of the
+      // hub-save-return journey, faked away by the harness (found by driving it, 2026-09-15).
+      // cp/tests-engine-b list_table_mappings: one row per model table, mapped or not, carrying the last
+      // counts from this session. Absent last* fields mean "not counted yet".
+      RESPONSES.listTableMappings = {
+        rows: [
+          { modelTable: 'Sales', source: 'mapping', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sqlSourceName: 'Contoso warehouse', schema: 'dbo', entity: 'fact_sales', canCount: true, reason: null, editable: true, overridesDetected: true, setWhenUtc: '2026-09-15T04:13:10Z', lastVerdict: 'Pass', lastMessage: 'model and source both returned 1,236,402 rows', lastModelCount: 1236402, lastSourceCount: 1236402, lastRunUtc: '2026-09-15T09:02:00Z' },
+          { modelTable: 'Returns', source: 'mapping', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sqlSourceName: 'Contoso warehouse', schema: 'dbo', entity: 'fact_returns', canCount: true, reason: null, editable: true, lastVerdict: 'NotVerifiable', lastMessage: 'counts differ (model 88,410, source 88,405), but the independent connections may have observed different snapshots', lastModelCount: 88410, lastSourceCount: 88405, lastRunUtc: '2026-09-15T09:02:00Z' },
+          { modelTable: 'Promotion', source: 'none', canCount: false, editable: true, reason: 'this table is not mapped to a SQL source yet. Map it to a SQL source, a schema and a table name' },
+          { modelTable: 'Budget', source: 'none', canCount: false, editable: false, reason: 'this table is worked out inside the model, so there is no source table to count it against' },
+        ],
+      };
+      RESPONSES.setTableSourceMapping = function (params) {
+        return { modelTable: (params && params[0]) || 'Sales', sqlSourceId: (params && params[1]) || '', sqlSourceName: 'Contoso warehouse', schema: (params && params[2]) || '', entity: (params && params[3]) || '', setWhenUtc: new Date().toISOString(), note: 'Mapped.' };
+      };
+      RESPONSES.clearTableSourceMapping = function (params) {
+        var table = (params && params[0]) || '';
+        RESPONSES.listTableMappings.rows.forEach(function (row) {
+          if (row.modelTable !== table) return;
+          row.source = 'none'; row.sqlSourceId = undefined; row.sqlSourceName = undefined;
+          row.schema = undefined; row.entity = undefined; row.canCount = false; row.overridesDetected = false;
+          row.reason = 'this table is not mapped to a SQL source yet. Map it to a SQL source, a schema and a table name';
+        });
+        return true;
+      };
+      RESPONSES.getTestRun = function (params) {
+        var id = (params && params[0]) || '';
+        if (id === 'r1') return { run: { runId: 'r1', when: '2026-09-05T11:30:00Z', live: true, health: histHealth('C', 78.0, 7) }, gradedBeforeSecurityLeftTests: true, note: 'Outcomes were not recorded before 1.2.0, so this run kept its grade and totals but not what each check found.' };
+        return { gradedBeforeSecurityLeftTests: false, run: { runId: id, when: '2026-09-12T16:10:00Z', live: true, modelName: 'Contoso Retail', environment: 'Contoso Retail on localhost:51542', definitionCount: 5, durationMs: 41000, health: histHealth('A', 82.6, 0), outcomes: {
+          contextCap: 20,
+          note: 'Up to 20 comparisons are kept for each check. The rest were counted but not stored.',
+          checks: [
+            { kind: 'savedCheck', defId: 'd1', name: 'Total Sales ties to the GL', verdict: 'Pass', expected: '18,185,050.80', actual: '18,185,050.80', difference: 0, contextsTotal: 48,
+              query: SQL1, filter: "'Date'[Year] = 2026", tolerance: 'Allowed difference: 0.000000001 or 0.00001%, whichever is larger. Blanks read as zero.', source: 'Contoso warehouse',
+              contexts: [
+                { context: 'Grand total', expected: 18185050.80, actual: 18185050.80, difference: 0, verdict: 'Pass', grandTotal: true },
+                { context: 'Europe', expected: 5206771.20, actual: 5206771.20, difference: 0, verdict: 'Pass' },
+                { context: 'North America', expected: 8114058.12, actual: 8114058.12, difference: 0, verdict: 'Pass' },
+              ] },
+            { kind: 'savedCheck', defId: 'd2', name: 'Net Revenue ties to finance extract', verdict: 'Fail', expected: '18,185,050.80', actual: '18,142,732.76', difference: -42318.04, contextsTotal: 48,
+              query: SQL2, filter: null, tolerance: 'Allowed difference: 0.000001234567 or 0.00001%, whichever is larger. Blanks read as zero.', source: 'Contoso warehouse',
+              note: '3 comparisons differ; 45 match.',
+              contexts: [
+                { context: 'Grand total', expected: 18185050.80, actual: 18142732.76, difference: -42318.04, verdict: 'Fail', grandTotal: true, note: 'the grand total disagrees by -42,318.04' },
+                { context: 'Europe', expected: 5206771.20, actual: 5169048.82, difference: -37722.38, verdict: 'Fail' },
+                { context: '(blank)', expected: 42318.04, actual: 0, difference: -42318.04, verdict: 'Fail' },
+                { context: 'Australia', expected: 4821903.44, actual: 4821903.44, difference: 0, verdict: 'Pass' },
+              ] },
+            { kind: 'relationship', name: 'Sales[CustomerKey] to Customer[CustomerKey]', check: 'ReferentialIntegrity', verdict: 'Fail', expected: '0', actual: '1847', difference: 1847, note: '1,847 Sales rows reference customers that do not exist' },
+            { kind: 'relationship', name: 'Sales[CustomerKey] to Customer[CustomerKey]', check: 'KeyUniqueness', verdict: 'Pass', expected: '0', actual: '0', difference: 0 },
+            { kind: 'tableRowCount', name: 'Returns', verdict: 'NotVerifiable', expected: '88,405', actual: '88,410', difference: 5, note: 'matching snapshots were not confirmed', query: 'dbo.fact_returns', source: 'Contoso warehouse' },
+          ],
+        } } };
+      };
+      // Recording keeps the run ON SCREEN and History re-reads. The fixture used to answer recorded:true and
+      // leave the list exactly as it was, so a refreshed History was indistinguishable from a stale one and
+      // Astra could not prove the repair either way.
+      var RECORDED_EXTRA = [];
+      RESPONSES.recordTestRun = function () {
+        if (!RECORDED_EXTRA.length) RECORDED_EXTRA.push({ runId: 'run-1', when: '2026-09-15T11:58:00Z', live: true, health: HEALTH });
+        return { recorded: true, runId: 'run-1', note: 'Saved this run in History.' };
+      };
+      RESPONSES.getUnmatchedRows = function () {
+        return { relationship: 'Sales[CustomerKey] to Customer[CustomerKey]', manyTable: 'Sales', manyColumn: 'CustomerKey',
+          oneTable: 'Customer', oneColumn: 'CustomerKey', columns: ['CustomerKey', 'rows'],
+          rows: [[884213, 902], [884219, 411], [884301, 288], [884477, 141], [884512, 105]],
+          rowsReturned: 5, cap: 200, truncated: false,
+          note: 'This reads the data as it is now, so it can differ from what the check counted when it ran.' };
+      };
+      // The store behind listTests. The RESPONSE is a fresh object every call, the way a real wire reply is:
+      // handing the same live object back meant a page re-reading the list got a reference it already held,
+      // and React skipped the render even though the array had grown (shell-journey, 2026-09-15).
+      var TEST_DEFS = {
         definitions: [
-          { id: 'd1', kind: 'measureReconcile', title: 'Total Sales ties to the GL', targetTag: 'lt-1', targetRef: 'measure:Total Sales', enabled: true, createdBy: 'human', createdWhen: '2026-07-01T00:00:00Z', budgetMs: 500,
-            paramsJson: JSON.stringify(Object.assign({ sql: SQL1, groupBy: ["'Customer'[Sales Territory]"], blankPolicy: 'zero', toleranceAbsolute: 1e-9, toleranceRelative: 1e-7, maxRows: 100000 }, TESTMAP === 'override' ? { server: 'finance-override.datawarehouse.fabric.microsoft.com', database: 'FinanceWarehouse' } : {})) },
+          { id: 'd1', kind: 'measureReconcile', title: 'Total Sales ties to the GL', targetTag: 'lt-1', targetRef: 'measure:Sales/Total Sales', enabled: true, createdBy: 'human', createdWhen: '2026-07-01T00:00:00Z', budgetMs: 500,
+            paramsJson: JSON.stringify(Object.assign({ sql: SQL1, groupBy: ['column:Product/Category', 'column:Customer/Region', 'column:Date/Year'], blankPolicy: 'zero', toleranceAbsolute: 1e-9, toleranceRelative: 1e-7, maxRows: 100000, sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sqlSourceName: 'Contoso warehouse', server: 'contoso-sql.datawarehouse.fabric.microsoft.com', database: 'LH_Gold' }, TESTMAP === 'override' ? { server: 'finance-override.datawarehouse.fabric.microsoft.com', database: 'FinanceWarehouse' } : {})) },
           { id: 'd2', kind: 'measureReconcile', title: 'Net Revenue ties to finance extract', targetTag: 'lt-2', targetRef: 'measure:Net Revenue', enabled: true, createdBy: 'agent', createdWhen: '2026-07-08T00:00:00Z', budgetMs: 500,
             paramsJson: JSON.stringify({ sql: SQL2, groupBy: ["'Customer'[Sales Territory]"], blankPolicy: 'zero', toleranceAbsolute: 1e-9, toleranceRelative: 1e-7, maxRows: 100000 }) },
           { id: 'd3', kind: 'measureReconcile', title: 'Returns rate ties to ops report', targetTag: 'lt-3', targetRef: 'measure:Returns Rate', enabled: true, createdBy: 'human', createdWhen: '2026-07-03T00:00:00Z',
             paramsJson: JSON.stringify({ sql: 'SELECT SUM(r.ReturnQty) * 1.0 / NULLIF(SUM(s.OrderQty), 0) FROM fact.Sales s LEFT JOIN fact.Returns r ON r.OrderKey = s.OrderKey', blankPolicy: 'distinct', toleranceAbsolute: 1e-9, toleranceRelative: 1e-7 }) },
           { id: 'd4', kind: 'measureReconcile', title: 'Discount Amount ties to POS extract', targetTag: 'lt-4', targetRef: 'measure:Discount Amount', enabled: true, createdBy: 'human', createdWhen: '2026-07-04T00:00:00Z' },
+          { id: 'd5', kind: 'measureValue', title: 'Total Sales 2024 totals 1,234', targetTag: 'lt-5', targetRef: 'measure:Sales/Total Sales', enabled: true, createdBy: 'human', createdWhen: '2026-09-12T00:00:00Z',
+            authoredAgainstLabel: 'Contoso local test',
+            paramsJson: JSON.stringify({ measureRef: 'measure:Sales/Total Sales', expectedValue: '1,234', filterColumn: 'Year', filterValue: '2024', provenance: 'Finance month-end pack, July', toleranceAbsolute: 1e-6, toleranceRelative: 1e-9 }) },
+          { id: 'd6', kind: 'measureValue', title: 'Gross Margin % totals 41.2%', targetTag: 'lt-6', targetRef: 'measure:Sales/Gross Margin %', enabled: false, createdBy: 'human', createdWhen: '2026-08-30T00:00:00Z',
+            paramsJson: JSON.stringify({ measureRef: 'measure:Sales/Gross Margin %', expectedValue: '41.2%', toleranceAbsolute: 1e-6, toleranceRelative: 1e-9 }) },
         ],
         unreadableLines: 0,
+        sqlSourceUse: '2 checks use Contoso warehouse.',
       };
+      // Astra's two P1 cases, as fixtures: a check saved BEFORE named sources existed, carrying its own
+      // server and database, and a check naming a source that has since been removed. Both had their
+      // binding silently replaced by the only source in the list.
+      var CHECKSRC = new URLSearchParams(location.search).get('checksrc');
+      if (CHECKSRC === 'inline' || CHECKSRC === 'missing') {
+        var subject = TEST_DEFS.definitions.find(function (d) { return d.id === 'd2'; });
+        var base = { measureRef: 'measure:Net Revenue', sql: SQL2, groupBy: ["'Customer'[Sales Territory]"],
+          blankPolicy: 'zero', toleranceAbsolute: 1e-9, toleranceRelative: 1e-7 };
+        subject.paramsJson = JSON.stringify(CHECKSRC === 'inline'
+          ? Object.assign(base, { server: 'finance.example', database: 'Finance' })
+          : Object.assign(base, { sqlSourceId: 'sql-removed-0000', sqlSourceName: 'Finance month-end' }));
+      }
+      RESPONSES.listTests = function () {
+        return { definitions: TEST_DEFS.definitions.slice(), unreadableLines: TEST_DEFS.unreadableLines, sqlSourceUse: TEST_DEFS.sqlSourceUse };
+      };
+      // The engine adds ONE field to the same listing rather than a second op, so the fixture does the same: which
+      // named SQL source each saved check uses. Attached here, AFTER the Tests page's own fixture is assigned, so
+      // the two lanes share one listing instead of overwriting each other (the first draft of this lost the checks).
+      // The defIds are the REAL definitions above, so a refusal names titles a person would actually see.
+      SQL_SOURCE_USE.length = 0;
+      SQL_SOURCE_USE.push(
+        { defId: 'd1', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sourceName: 'Contoso warehouse', missing: false },
+        { defId: 'd2', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sourceName: 'Contoso warehouse', missing: false },
+        { defId: 'd3', sqlSourceId: 'sql-3f21a9c4e0b7d5a2', sourceName: 'Contoso warehouse', missing: false },
+        { defId: 'd4', sqlSourceId: 'sql-77b1e6c0f3aa4d12', sourceName: 'Finance month-end', missing: false });
+      TEST_DEFS.definitions.forEach(function (d) { SQL_CHECK_TITLES[d.id] = d.title; });
+      TEST_DEFS.sqlSourceUse = SQL_SOURCE_USE;
       RESPONSES.reviewReconcileMapping = function (params) {
         var req = (params && params[0]) || {};
         var ambiguous = TESTMAP === 'ambiguous';
@@ -2483,19 +3429,37 @@
           ],
         };
       };
-      RESPONSES.saveTest = function (params) { return (params && params[0]) || {}; };
-      RESPONSES.tryTest = function () { return { verdict: 'NotVerifiable', message: "Can't try this now: no live model to ask." }; };
-      RESPONSES.deleteTest = function () { return true; };
-      var histHealth = function (grade, cov, roots) {
-        return { overall: 0, grade: grade, gatedBy: [], coveragePct: cov, checked: 23, passed: 0, failed: 0, suspect: 0, notVerifiable: 0, missing: 0, rootFailures: roots, categories: [] };
+      // Astra could not prove the turn-off and delete failure states because nothing could make them fail.
+      // ?testfail=turnoff / =delete makes exactly one of them refuse, the way a locked sidecar would.
+      var TESTFAIL = new URLSearchParams(location.search).get('testfail');
+      RESPONSES.saveTest = function (params) {
+        var incoming = (params && params[0]) || {};
+        if (TESTFAIL === 'turnoff') return { __uishotError: 'The file holding your checks is open somewhere else, so this could not be saved.' };
+        var stored = Object.assign({}, incoming, { id: incoming.id || 'd-calculation-handoff' });
+        var at = TEST_DEFS.definitions.findIndex(function (item) { return item.id === stored.id; });
+        if (at >= 0) TEST_DEFS.definitions[at] = stored;
+        else TEST_DEFS.definitions.push(stored);
+        return stored;
       };
-      RESPONSES.listTestRuns = {
-        runs: [
+      RESPONSES.tryTest = function () { return { verdict: 'NotVerifiable', message: "Can't try this now: no live model to ask." }; };
+      RESPONSES.deleteTest = function (params) {
+        if (TESTFAIL === 'delete') return { __uishotError: 'The file holding your checks is read only, so this could not be removed.' };
+        var id = params && params[0];
+        TEST_DEFS.definitions = TEST_DEFS.definitions.filter(function (item) { return item.id !== id; });
+        return true;
+      };
+      var histHealthUnused = function (grade, cov, roots) {
+        // Counts that add up: the root failures ARE the failures, one check is always unverifiable offline, and the
+        // rest pass. Model Overview's Checks card reads the newest run, and all-zero counts made it read "0 of 23".
+        return { overall: 0, grade: grade, gatedBy: [], coveragePct: cov, checked: 23, passed: 23 - roots - 1, failed: roots, suspect: 0, notVerifiable: 1, missing: 0, rootFailures: roots, categories: [] };
+      };
+      RESPONSES.listTestRuns = function () {
+        return { runs: [
           { runId: 'r1', when: '2026-07-04T09:00:00Z', live: true, health: histHealth('A', 82.6, 0) },
           { runId: 'r2', when: '2026-07-07T09:00:00Z', live: true, health: histHealth('A', 81.0, 0) },
           { runId: 'r3', when: '2026-07-09T09:00:00Z', live: false, health: histHealth('B', 34.8, 0) },
           { runId: 'r4', when: '2026-07-11T09:30:00Z', live: true, health: histHealth('D', 80.0, 5) },
-        ],
+        ].concat(RECORDED_EXTRA) };
       };
       var TEST_REPORT_MD = '# Semanticus test report\n\n- Model: Contoso Retail\n- Environment: Contoso Retail on localhost:51542\n- Run: 2026-07-11T09:30:00Z\n- Duration: 138000 ms\n\n**Grade D | Coverage 80%**\n\n## Root causes\n\n- Measure Net Revenue ties to finance extract: mismatch at total.\n- Relationship Sales to Customer, referential integrity: 1,847 orphan rows.\n\n## Behavioral contracts (Model Interview)\n\nSaved questions replay as behavioral evidence only; they do not change the test grade or coverage.\n\n- **What were total sales in 2024?**: Right. Replayed in this Tests run. Unchanged from the previous observation.\n- **Which region had the highest revenue?**: Confidently wrong. Replayed in this Tests run. Changed from Right.\n- **What was customer churn last month?**: Safely said it could not answer. Chat-only contract; this Tests run did not grade an assistant response.\n\n## Measures\n\n- **Net Revenue ties to finance extract**: Fail. Mismatch in 3 of 48 cells.\n\n## Relationships\n\n- Data types: Pass 5, Fail 0, Suspect 0, Not verifiable 0.\n- Key uniqueness: Pass 4, Fail 1, Suspect 0, Not verifiable 0.\n\n## Security\n\n- Filter Auditors on Sales: Fail. The filter admits every row.\n';
       RESPONSES.exportTestReport = {
@@ -2528,9 +3492,148 @@
       if (seeded) STATE = Object.assign({}, STATE, JSON.parse(seeded));
     } catch (e) { /* a bad seed just falls back to defaults */ }
 
+    // ---- list_sql_source_usage: the ONE free projection Connections reads ------------------------------------
+    // Built from the same fixtures the refusal uses, so the counts a driver sees and the names a refusal prints
+    // cannot disagree. Shape is the contract the engine lane builds: per source, its id, its name, how many
+    // saved checks use it with their titles, and how many table mappings use it with their table names. No
+    // check definitions, no expected values, no saved verdicts, no row counts: those stay inside Pro Tests.
+    // A BARE ARRAY, because that is what EngineRpcTarget.listSqlSourceUsage returns. The mock used to wrap it
+    // in { sources: ... } and the page used to unwrap the same invented field, so the two agreed with each
+    // other and with nothing on the real wire: every scene showed counts the real engine could not produce.
+    RESPONSES.listSqlSourceUsage = cfg.listSqlSourceUsage || SQL_SOURCES.map(function (rec) {
+      var titles = SQL_SOURCE_USE.filter(function (u) { return u.sqlSourceId === rec.id; })
+        .map(function (u) { return SQL_CHECK_TITLES[u.defId]; }).filter(Boolean).sort();
+      var tables = SQL_TABLE_MAPPINGS.filter(function (m) { return m.sqlSourceId === rec.id; })
+        .map(function (m) { return m.modelTable; }).sort();
+      return { id: rec.id, name: rec.name, checksUsing: titles.length, checkTitles: titles,
+        tableMappingsUsing: tables.length, mappedTables: tables };
+    });
+
+    // ---- paid operations refuse, they do not answer --------------------------------------------------------
+    // Pro is four whole FEATURES, reads included, so a mock that answered a Tests read on the free plan would
+    // make a page look correct that the real engine would refuse. Each name below is wrapped: on a plan that
+    // does not grant its feature the call comes back as the engine's own refusal, before any fixture work.
+    //
+    // This is what proves the page never reaches these on free. If a preview or a suppressed card ever calls
+    // one, the shot shows the refusal instead of data, and the driver's call trace names it.
+    var PAID_OPS = {
+      modelCreate: ['getSpec', 'setSpec', 'saveSpec', 'loadSpec', 'clearSpec', 'autogenerateSpecFromModel',
+        'autogenerateSpecFromFabric', 'buildModelFromSpec', 'getPartitionM', 'setPartitionM', 'listPartitions',
+        'listNamedExpressions', 'getNamedExpression', 'createNamedExpression', 'updateNamedExpression',
+        'getSourceSchema', 'diffSchema', 'applySchemaUpdate', 'getIncrementalRefreshPolicy',
+        'setIncrementalRefreshPolicy', 'removeIncrementalRefreshPolicy', 'createDataSource',
+        'getDocModel', 'getDocOutline', 'getDocSection', 'setDocSection',
+        'getPrimer', 'setPrimer', 'listInsights', 'addInsight', 'editInsight', 'deleteInsight', 'approveInsight',
+        'upvoteInsight', 'downvoteInsight', 'purgeKnowledge', 'recallExperience',
+        'listCalculationGroups', 'getPerspectives', 'listCalendars', 'listRoles', 'daxLibSearch',
+        'daxLibListInstalled', 'daxLibPackageInfo', 'daxLibVersions', 'daxLibInstall', 'daxLibUninstall',
+        'createCalculationGroup', 'createCalculationItem', 'setCalcGroupPrecedence', 'setCalcItemFormatString',
+        'createFunction', 'defineCalendar', 'generateTimeIntelligence',
+        'createFieldParameter', 'createPerspective', 'setPerspectiveMember', 'createRole', 'deleteRole',
+        'setRoleMember', 'setRolePermission', 'setTablePermission', 'setColumnObjectPermission',
+        'setTableObjectPermission', 'defineCalendarFromTemplate', 'deleteCalendar', 'tagCalendarColumn',
+        'generateDateTable', 'markDateTable'],
+      tests: ['listTests', 'listTableMappings', 'runTests', 'listTestRuns', 'getTestRun', 'saveTest', 'deleteTest',
+        'tryTest', 'recordTestRun', 'exportTestReport', 'getUnmatchedRows', 'setTableSourceMapping',
+        'clearTableSourceMapping', 'listEvidence', 'getEvidence', 'saveEvidence', 'captureBaseline',
+        'compareBaseline', 'reconcileMeasure', 'reviewReconcileMapping'],
+      publishedAdvanced: ['gitCommit', 'gitPull', 'gitPush', 'gitBranch', 'gitCheckout', 'gitClone', 'gitDiff',
+        'gitLog', 'fabricGitConnect', 'fabricGitDisconnect', 'fabricGitCommit', 'fabricGitUpdate',
+        'fabricGitStatus', 'fabricGitConnection', 'cicdGenerate', 'cicdPublish', 'listDataAgents', 'getDataAgent',
+        'createDataAgent', 'updateDataAgent', 'publishDataAgent', 'deleteDataAgent', 'generateDataAgentConfig'],
+      workflows: ['listWorkflows', 'getWorkflow', 'getWorkflowDocument', 'getWorkflowLayout', 'getWorkflowPolicy',
+        'getWorkflowEnforcement', 'getWorkflowTemplate', 'listWorkflowTemplates', 'listWorkflowProfiles',
+        'saveWorkflow', 'saveWorkflowLayout', 'saveWorkflowTemplate', 'deleteWorkflow', 'deleteWorkflowTemplate',
+        'startWorkflow', 'submitWorkflowStep', 'skipWorkflowStep', 'abortWorkflow', 'checkWorkflow',
+        'replayCheckWorkflow', 'editWorkflowDocument', 'previewWorkflowEdit', 'exportWorkflowEvidence',
+        'instantiateWorkflowTemplate', 'upgradeWorkflow', 'activateWorkflowProfile', 'setWorkflowActivation',
+        'setWorkflowBinding', 'setWorkflowEnabled', 'setWorkflowEnforcement'],
+    };
+    // The same words the engine's own refusal carries for each feature.
+    var FEATURE_REFUSAL = {
+      modelCreate: ['Create in Model', 'You can still edit measures, columns and relationships anywhere else in the model.'],
+      tests: ['Tests', 'Model quality and AI understanding still check your model for free, and probe_measure still checks one number.'],
+      publishedAdvanced: ['Advanced publishing', 'Publish, Promote, compare and restore points stay free.'],
+      workflows: ['Workflows', 'The App still shows you any run already in flight and anything waiting for your approval.'],
+    };
+    Object.keys(PAID_OPS).forEach(function (feature) {
+      PAID_OPS[feature].forEach(function (name) {
+        var inner = RESPONSES[name];
+        RESPONSES[name] = function (params) {
+          if (!featureGranted(feature)) return proRefusal(FEATURE_REFUSAL[feature][0], FEATURE_REFUSAL[feature][1]);
+          return typeof inner === 'function' ? inner(params) : (inner === undefined ? {} : inner);
+        };
+      });
+    });
+
+    // ---- holding a call PENDING, and releasing it later ----------------------------------------------------
+    // ?hold=<comma list of rpc names> parks those calls instead of answering them, and
+    // window.__uishotHarness.release(name) answers every parked call with whatever RESPONSES holds AT THAT
+    // MOMENT. That is the seam a pending entitlement needs, and it is a different thing from '__uishotNever':
+    // a never-answering call can only ever show a loading state, while this one can be answered LATE, after
+    // the fixture has changed underneath it, which is how a superseded fetch result is reproduced at all.
+    var HELD_METHODS = new Set((new URLSearchParams(location.search).get('hold') || '')
+      .split(',').map(function (x) { return x.trim(); }).filter(Boolean));
+    var HELD_CALLS = [];   // { id, method }
+
+    var HOST_MESSAGES = [];
+    const initialSelection = new URLSearchParams(location.search).get('initialSelection');
+    // THE COLD HAND-OFF FIXTURE. The real host queues a navigation while Studio is still mounting and flushes it the
+    // moment the webview posts 'studioReady' (extension.ts flushNav), which can beat the webview's own sessionInfo
+    // call home. Nothing here could reproduce that ordering before, so every session-identity defect in the routing
+    // block was invisible to the harness. Two knobs, both off by default:
+    //   ?sessionDelay=<ms>          hold the sessionInfo answer, so the shell renders with no session for that long
+    //   ?coldNav=<tab>[:<target>]   dispatch the queued navigation on studioReady, exactly as flushNav does
+    //   ?coldNavStamp=none          send that navigation WITHOUT a sessionId, the shape the host sends when it has
+    //                               no current session id of its own yet
+    // ?engine=down → the host holds NO engine connection, so every relayed request comes back with the host's own
+    // 'Engine not connected.' answer and nothing else is served. This is the state Kane was stranded in on
+    // 2026-09-15 after a failed restart; without a fixture for it the recovery panel could only be reviewed
+    // against a genuinely broken engine.
+    const engineDown = new URLSearchParams(location.search).get('engine') === 'down';
+    const sessionDelay = Number(new URLSearchParams(location.search).get('sessionDelay')) || 0;
+    const coldNav = new URLSearchParams(location.search).get('coldNav');
+    const coldNavStamped = new URLSearchParams(location.search).get('coldNavStamp') !== 'none';
+    window.__uishotHarness = {
+      messages: HOST_MESSAGES,
+      setResponse: function (method, value) { RESPONSES[method] = value; },
+      // Park every future call to this method. Used to reproduce a reconnect whose answer has not landed yet.
+      hold: function (method) { HELD_METHODS.add(method); return true; },
+      // Answer every parked call to this method with the CURRENT fixture, and stop parking new ones.
+      release: function (method) {
+        HELD_METHODS.delete(method);
+        var mine = HELD_CALLS.filter(function (c) { return c.method === method; });
+        HELD_CALLS = HELD_CALLS.filter(function (c) { return c.method !== method; });
+        mine.forEach(function (call) {
+          var raw = Object.prototype.hasOwnProperty.call(RESPONSES, method) ? RESPONSES[method] : {};
+          var value = typeof raw === 'function' ? raw(call.params || []) : raw;
+          window.dispatchEvent(new MessageEvent('message', { data: value && value.__uishotError
+            ? { type: 'rpcResult', id: call.id, error: value.__uishotError }
+            : { type: 'rpcResult', id: call.id, result: value } }));
+        });
+        return mine.length;
+      },
+      heldCount: function (method) {
+        return HELD_CALLS.filter(function (c) { return !method || c.method === method; }).length;
+      },
+      dispatch: function (data) { window.dispatchEvent(new MessageEvent('message', { data: data })); },
+      state: function () { return STATE; },
+    };
     window.acquireVsCodeApi = function () {
       return {
         postMessage: function (msg) {
+          HOST_MESSAGES.push(msg);
+          if (msg && msg.type === 'studioReady' && coldNav) {
+            const colon = coldNav.indexOf(':');
+            const navMessage = { type: 'navigate', tab: colon > 0 ? coldNav.slice(0, colon) : coldNav };
+            if (colon > 0) navMessage.target = coldNav.slice(colon + 1);
+            if (coldNavStamped) navMessage.sessionId = SESSION.sessionId;
+            setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: navMessage })); }, 0);
+          }
+          if (msg && msg.type === 'studioReady' && initialSelection) {
+            setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: { type: 'treeSelection', sessionId: SESSION.sessionId, ref: initialSelection } })); }, 0);
+            return;
+          }
           if (msg && msg.type === 'pickWorkingCopyFolder') {
             setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: { type: 'workingCopyFolder', id: msg.id, folder: 'C:\\Models\\Working' } })); }, 0);
             return;
@@ -2543,6 +3646,15 @@
           }
           if (msg && msg.type === 'openLocalModel') return;
           if (!msg || msg.type !== 'rpc') return;
+          if (engineDown) {
+            setTimeout(function () {
+              window.dispatchEvent(new MessageEvent('message', { data: { type: 'rpcResult', id: msg.id, error: 'Engine not connected.' } }));
+            }, 0);
+            return;
+          }
+          // Parked, not answered. The page must behave correctly while this call is in flight, which is the
+          // whole point: an entitlement that has not answered yet is NOT an entitlement that granted anything.
+          if (HELD_METHODS.has(msg.method)) { HELD_CALLS.push({ id: msg.id, method: msg.method, params: msg.params || [] }); return; }
           if (documentMode && msg.method === 'editWorkflowDocument') window.__workflowDocument.pendingId = msg.id;
           if (upgradeMode && msg.method === 'upgradeWorkflow') window.__workflowDocument.upgradePendingId = msg.id;
           const has = Object.prototype.hasOwnProperty.call(RESPONSES, msg.method);
@@ -2559,7 +3671,7 @@
             } else {
               window.dispatchEvent(new MessageEvent('message', { data: { type: 'rpcResult', id: msg.id, result } }));
             }
-          }, 0);
+          }, msg.method === 'sessionInfo' ? (sessionDelay || (initialSelection ? 120 : 0)) : 0);
         },
         getState: function () { return STATE; },
         setState: function (s) { STATE = s; return s; },
@@ -2626,7 +3738,7 @@
       return Array.prototype.find.call(document.querySelectorAll('[data-workflow] button'), function (b) { return (b.textContent || '').indexOf(title) > -1; });
     };
 
-    if (documentMode) setTimeout(function () {
+    if ((wfMode || '').startsWith('document')) setTimeout(function () {
       wfPoll(function () { return wfSection('library'); }, function () {
         wfPoll(function () { return document.querySelector('[data-workflow="loop-handoff"] button'); }, function () {
           wfPoll(function () { return wfBtn('Edit workflow', true); }, function () {
@@ -2636,12 +3748,22 @@
       });
     }, 500);
 
+    if ((wfMode || '').startsWith('editor')) setTimeout(function () {
+      wfPoll(function () { return wfSection('library'); }, function () {
+        wfPoll(function () { return document.querySelector('[data-workflow="loop-handoff"] button'); }, function () {
+          wfPoll(function () { return wfBtn('Edit workflow', true); });
+        });
+      });
+    }, 500);
+
     // ?wf=library / ?wf=avail → the browsing rows (avail pre-sets one OFF + one hidden-now on the WORKFLOWS mock).
     if (wfMode === 'library' || wfMode === 'avail') setTimeout(function () { wfPoll(function () { return wfSection('library'); }); }, 500);
 
     // ?wf=playbook → open a playbook page (the document view) from the Library.
     if (wfMode === 'playbook') setTimeout(function () {
-      wfPoll(function () { return wfSection('library'); }, function () { setTimeout(function () { var l = wfRowLink('Author a verified measure'); if (l) l.click(); }, 300); });
+      wfPoll(function () { return wfSection('library'); }, function () {
+        wfPoll(function () { return document.querySelector('[data-workflow="verified-measure"] button'); });
+      });
     }, 500);
 
     // ?wf=run → dispatch a live workflow/didChange, then land on Runs (the focused run view: step 1 passed, step 2
@@ -2726,7 +3848,9 @@
     }, 500);
     if (wfMode === 'design') setTimeout(function () {
       wfPoll(function () { return wfSection('library'); }, function () {
-        setTimeout(function () { var l = wfRowLink('Author a verified measure'); if (l) { l.click(); setTimeout(function () { var e = wfBtn('Edit workflow', true); if (e) e.click(); }, 350); } }, 300);
+        wfPoll(function () { return document.querySelector('[data-workflow="verified-measure"] button'); }, function () {
+          wfPoll(function () { return wfBtn('Edit workflow', true); });
+        });
       });
     }, 500);
     if (wfMode === 'boxes') setTimeout(function () {
@@ -2768,6 +3892,9 @@
     //   ?wf=scenfill     → the same form, filled from each field's example, advanced to the plain-words preview
     //   ?wf=scenapplied  → the flow carried through Apply → the applied "To undo:" result card
     // React-controlled fields need the native value setter + an input event, so fill via setNativeValue.
+    if (wfMode === 'profilepicker') setTimeout(function () {
+      wfPoll(function () { return wfBtn('Choose a project profile', false); });
+    }, 500);
     if (wfMode === 'scenform' || wfMode === 'scenfill' || wfMode === 'scenapplied') {
       var setNativeValue = function (el, val) {
         var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -2778,7 +3905,7 @@
       var fillThenPreview = (wfMode === 'scenfill' || wfMode === 'scenapplied');
       setTimeout(function () {
         // open the guided-setup overlay from Home, then pick the hero card inside the templates panel.
-        wfPoll(function () { return wfBtn('Ready-made playbooks', false); }, function () {
+        wfPoll(function () { return wfBtn('Ready-made playbooks', false) || wfBtn('Choose a project profile', false); }, function () {
           var scnTries = 0;
           var scnIv = setInterval(function () {
             var card = Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
@@ -2851,8 +3978,18 @@
     var iv = setInterval(function () {
       var buttons = [].slice.call(document.querySelectorAll('button'));
       if (mode === 'publish') {
-        var pub = document.querySelector('[data-testid="publish-button"]');
-        if (pub && !pub.disabled) { pub.click(); clearInterval(iv); }
+        // The one Publish button now lives in the header and exists from first paint, so pressing it straight away
+        // fires before the model and the connection context have loaded and the review never opens. Land on
+        // Changes > Published first, wait for that page, and only then press it — which is the human order anyway.
+        if (!document.querySelector('[data-testid="deploy-header"]')) {
+          var changesArea = buttons.find(function (b) { return (b.textContent || '').trim() === 'Changes'; });
+          if (changesArea) changesArea.click();
+          var publishedTab = buttons.find(function (b) { return (b.textContent || '').trim() === 'Published' && b.getClientRects().length; });
+          if (publishedTab) publishedTab.click();
+        } else {
+          var pub = document.querySelector('.studio-chrome [data-testid="publish-button"]');
+          if (pub && !pub.disabled) { pub.click(); clearInterval(iv); }
+        }
       } else if (step === 0) {
         var label = mode === 'rollback' ? 'Roll back' : mode === 'promote' ? 'Promote' : 'Advanced';
         var primary = buttons.find(function (b) { return (b.textContent || '').trim() === label; });
@@ -2881,28 +4018,53 @@
   <!-- Auto-select the tab named in the URL hash (e.g. harness.html#Diagram) once the webview has mounted,
        so a CLI screenshot (Edge --screenshot) lands on the right tab with no driver. Polls under virtual time. -->
   <script>
+  // ?tab=<tool id> is the DEEP LINK, and it is a different mechanism from the hash route below on purpose.
+  //
+  // The hash route matches a button by its exact visible text. A Pro pill changes that text (the button
+  // reads "TestsPro" once Tests is locked), so the hash route cannot reach a locked tool at all. The deep
+  // link never looks at text: it sends the host's own navigate message, which is exactly what a real deep
+  // link becomes. extension.ts posts { type: 'navigate', tab } for a link, a palette command and a tree
+  // right-click alike, so this is the faithful mechanism rather than a shortcut around the UI.
+  //
+  // Clicking the tab row is a DIFFERENT entry path and is driven separately, by data-tab, in cp-pro-drive.
+  // Trying to do both here was flaky: Find a tool is a toggle held in React state, and a poller that opened
+  // it and read its rows in the same tick landed six scenes out of thirty five on the wrong page.
+  (function () {
+    var want = (new URLSearchParams(location.search).get('tab') || '').trim();
+    if (!want) return;
+    // Sent REPEATEDLY, not once, and that is not belt and braces. Studio resets its route to Overview when
+    // the session id arrives (App's session effect: the page you were on belongs to the model you left), so
+    // a single navigate that wins the race against sessionInfo is thrown away a moment later and the shot
+    // lands on Overview. Measured: every one of nine deep-link scenes did exactly that. Navigating to the
+    // same tab again is idempotent, so the last one after the session lands is the one that sticks.
+    var sent = 0;
+    var tries = 0;
+    var iv = setInterval(function () {
+      // A navigate posted before the webview's listener is bound is simply dropped, so wait for the shell.
+      if (document.querySelector('[data-tab], [data-testid="pro-preview"], .studio-root')) {
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'navigate', tab: want } }));
+        if (++sent >= 6) { clearInterval(iv); return; }
+      }
+      if (++tries > 400) clearInterval(iv);
+    }, 300);
+  })();
   (function () {
     var want = decodeURIComponent((location.hash || '').slice(1)).trim();
     if (!want) return;
     var w = want.toLowerCase();
-    w = ({ 'edit history': 'edits', 'bpa': 'best practices' })[w] || w;
-    var tries = 0, groupIdx = 0;
+    w = ({
+      'edit history': 'history', 'bpa': 'model quality', 'best practices': 'model quality',
+      'ai readiness': 'ai understanding', 'evidence': 'results', 'search': 'find and replace',
+      'storage': 'size by table', 'm code': 'power query', 'change plan': 'proposed',
+      'deploy': 'published', 'primer': 'model notes',
+    })[w] || w;
+    var tries = 0;
     var iv = setInterval(function () {
-      // 1. Exact match on ANY button (primary lifecycle groups + the active group's secondary tab row + the
-      //    standalone far-right buttons). Secondary tabs (Compare/Deploy/Data Agent/Docs) only exist in the DOM
-      //    while their lifecycle GROUP is active — so if the exact match isn't found yet we cycle the group buttons
-      //    (step 3) to reveal each group's secondary row, then a later tick finds + clicks the target.
-      var exact = [].slice.call(document.querySelectorAll('button'))
-        .find(function (x) { return x.getBoundingClientRect().top < 180 && (x.textContent || '').trim().toLowerCase() === w; });
+      var buttons = [].slice.call(document.querySelectorAll('button'));
+      var exact = buttons.find(function (x) { return (x.textContent || '').trim().toLowerCase() === w; });
       if (exact) { exact.click(); clearInterval(iv); return; }
-      // 2. Buttons carrying a trailing badge (Edit History's count, Data Agent's Pro pill) — startsWith fallback
-      //    on ANY button, after the exact pass so a shorter sibling label (e.g. 'Data') still wins its exact match.
-      var near = [].slice.call(document.querySelectorAll('button'))
-        .find(function (x) { return x.getBoundingClientRect().top < 180 && (x.textContent || '').trim().toLowerCase().indexOf(w) === 0; });
-      if (near) { near.click(); clearInterval(iv); return; }
-      // 3. Not visible yet — advance to the next lifecycle group to reveal its secondary tab row.
-      var groups = [].slice.call(document.querySelectorAll('nav button'));
-      if (groups.length) { groups[groupIdx % groups.length].click(); groupIdx++; }
+      var chooser = buttons.find(function (x) { return (x.textContent || '').trim() === 'Find a tool'; });
+      if (chooser && !document.querySelector('[role="menu"][aria-label="Find a tool"]')) chooser.click();
       if (++tries > 400) clearInterval(iv);
     }, 20);
   })();

@@ -35,4 +35,5 @@ and `verifyGroupBy`, or use the appropriate typed edit tool. Read the actual app
 An in-session edit does not change the deployed model used by live queries. Benchmark an inline
 candidate in the same query, or re-measure after a requested publish. Do not benchmark an unchanged
 server measure and credit the local rewrite. Use `save_model` for local work; publish within the
-requested scope through `deploy_live`'s preview and commit flow. Report timings and tested contexts.
+requested scope through `deploy_live`'s preview and commit flow. The VS Code view updates an edit at
+once; your assistant sees it on its next call. Report timings and tested contexts.

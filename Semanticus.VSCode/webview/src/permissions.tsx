@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { rpc, onReconnect } from './bridge';
 import { Panel, Banner, SectionTitle, Pill } from './workflows';
-import { useTier, ProBadge, UpsellNotice, isEntitlementError } from './pro';
 import { uiLabel } from './copy';
 
 // ===================================================================================================
@@ -27,7 +26,7 @@ import { uiLabel } from './copy';
 // ===================================================================================================
 
 // ---- wire shapes (camelCase, mirror Policy/AgentPolicy.cs · ApprovalLedger.cs · Connect/ConnectionRegistry.cs) ----
-interface AgentPolicy { enabled: boolean; preset: string; matrix: Record<string, Record<string, string>>; }
+export interface AgentPolicy { enabled: boolean; preset: string; matrix: Record<string, Record<string, string>>; }
 interface ApprovalRecord {
   id: string; capability: string; label: string; intentHash: string;
   summary: string; target: string; requestedUtc: string; grantedUtc?: string | null; expiresUtc?: string | null;
@@ -55,9 +54,6 @@ const LABELS = ['local', 'dev', 'uat', 'prod'] as const;
 type Label = typeof LABELS[number];
 
 const errMsg = (e: unknown) => String((e as Error)?.message ?? e);
-// The policy-store's Pro refusal is worded differently from EntitlementGuard's stock phrase, so match BOTH
-// (this file's own belt-and-braces on top of the shared isEntitlementError).
-const proGated = (e: unknown) => isEntitlementError(e) || /pro feature/i.test(errMsg(e));
 
 // True after the component has mounted, false after unmount — the guard for setState in event handlers
 // whose awaits can resolve post-unmount. Polling effects use their OWN local `cancelled` flag instead
@@ -80,6 +76,26 @@ const PRESETS: { id: string; name: string; desc: string }[] = [
   { id: 'locked', name: 'Locked', desc: 'Writes to published models are refused. Even local writes ask first.' },
 ];
 
+// The shell's publish line reuses these exact policy words rather than inventing a second interpretation.
+export function permissionPresetDescription(policy: AgentPolicy): string {
+  if (!policy.enabled) return 'your assistant permission checks are off';
+  const preset = PRESETS.find((item) => item.id === policy.preset);
+  if (preset) return preset.desc.charAt(0).toLowerCase() + preset.desc.slice(1);
+  if (policy.preset === 'custom') return 'uses your custom assistant permissions';
+  return 'live actions are blocked until your assistant permissions are restored';
+}
+
+export function publishPermissionDescription(policy: AgentPolicy, targetLabel?: string, hasTarget = false): string {
+  if (!policy.enabled) return 'assistant permissions are off';
+  if (!hasTarget) return `assistant permissions: ${PRESETS.find((item) => item.id === policy.preset)?.name ?? policy.preset}`;
+  const candidate = targetLabel?.trim().toLowerCase();
+  const label = candidate === 'local' || candidate === 'dev' || candidate === 'uat' ? candidate : 'prod';
+  const action = policy.matrix?.DeployLive?.[label]?.trim().toLowerCase();
+  if (action === 'allow') return 'your assistant may publish here without asking';
+  if (action === 'ask') return 'your assistant asks you before publishing here';
+  return 'your assistant cannot publish here';
+}
+
 // The matrix rows, in reading order. `cap` is the engine capability (shown only in a tooltip); `kind` decides how a
 // row renders: an editable gated row, a structurally-always-allow local row, or a pinned info strip (allow/deny).
 type RowKind = 'gated' | 'localAllow' | 'infoAllow' | 'infoDeny';
@@ -96,23 +112,21 @@ const ROWS: RowDef[] = [
   { cap: 'Governance', title: 'Change these settings', sub: 'Never allowed for the assistant.', kind: 'infoDeny' },
 ];
 
-const TEACH_PRESET = 'Choosing a preset is a Pro feature. The default guardrail and the on/off switch are free; Pro lets you pick a posture and tune any cell.';
-const TEACH_CELL = 'Tuning an individual permission is a Pro feature. The default guardrail and the on/off switch are free; Pro unlocks per-target control.';
+// The preset picker and every cell are FREE from 2026-09-15 (Kane set the line by feature; the agent
+// policy is not one of the four). What did NOT change is who may write them: the engine still refuses a
+// policy write that did not come from a person, and that refusal is an authority check, not a payment one.
 
 // ---------------------------------------------------------------------------------------------------
-export function PermissionsView({ focusApproval, onApprovalChanged }: {
+export function PermissionsView({ focusApproval, onFocusConsumed, onApprovalChanged, onPolicyChanged }: {
   focusApproval?: { id: string; nonce: number } | null;
-  onApprovalChanged?: () => void;
+  onFocusConsumed?: (nonce: number) => void; onApprovalChanged?: () => void;
+  onPolicyChanged?: (policy: AgentPolicy) => void;
 }) {
-  const tier = useTier();                 // 'unknown' until the entitlement answers — a quiet checking state
-  const isPro = tier === 'pro';
-  const isFree = tier === 'free';
   const mounted = useMountedRef();
 
   const [policy, setPolicy] = useState<AgentPolicy | null>(null);
   const [policyErr, setPolicyErr] = useState<string | null>(null);   // getAgentPolicy failed (load, or retry)
-  const [writeErr, setWriteErr] = useState<string | null>(null);     // a policy write failed for a non-Pro reason
-  const [upsell, setUpsell] = useState<string | null>(null);
+  const [writeErr, setWriteErr] = useState<string | null>(null);     // a policy write failed
   // The one policy write in flight, by control key ('switch' | 'preset:<id>' | 'cell:<cap>:<label>').
   // Writes are SERIALIZED: while one is in flight every policy control is disabled, so rapid clicks can
   // never stack ("three clicks from Allow" must end at deny, not fire three identical writes).
@@ -132,18 +146,17 @@ export function PermissionsView({ focusApproval, onApprovalChanged }: {
     loadPolicy();   // gen + mounted guard the async parts; a StrictMode re-run issues its own (newer) load
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const teach = (msg: string) => { setUpsell(msg); setWriteErr(null); };
+  useEffect(() => { if (policy) onPolicyChanged?.(policy); }, [policy, onPolicyChanged]);
 
   // One serialized, generation-guarded policy write: optimistic locally, latest response wins, rollback
   // on failure. `optimistic` may be identity when the client can't know the result (a preset swap builds
   // a whole matrix server-side — showing a guessed matrix would be its own lie).
-  async function policyWrite(key: string, run: () => Promise<AgentPolicy>, optimistic: (p: AgentPolicy) => AgentPolicy, teachMsg?: string) {
+  async function policyWrite(key: string, run: () => Promise<AgentPolicy>, optimistic: (p: AgentPolicy) => AgentPolicy) {
     if (!policy || inflight) return;             // controls are disabled in these states; belt-and-braces
     const before = policy;                       // exact rollback snapshot (writes are serialized)
     const gen = ++genRef.current;
     setInflight(key);
-    setWriteErr(null); setUpsell(null);
+    setWriteErr(null);
     setPolicy(optimistic(before));
     try {
       const p = await run();
@@ -151,7 +164,7 @@ export function PermissionsView({ focusApproval, onApprovalChanged }: {
     } catch (e) {
       if (mounted.current && gen === genRef.current) {
         setPolicy(before);                       // never leave the optimistic state standing over a refusal
-        if (teachMsg && proGated(e)) teach(teachMsg); else setWriteErr(errMsg(e));
+        setWriteErr(errMsg(e));
       }
     } finally {
       if (mounted.current) setInflight((cur) => (cur === key ? null : cur));
@@ -159,13 +172,11 @@ export function PermissionsView({ focusApproval, onApprovalChanged }: {
   }
 
   const setPreset = (id: string) => {
-    if (isFree) { teach(TEACH_PRESET); return; }
-    void policyWrite(`preset:${id}`, () => rpc<AgentPolicy>('setAgentPolicyPreset', id, 'human'), (p) => p, TEACH_PRESET);
+    void policyWrite(`preset:${id}`, () => rpc<AgentPolicy>('setAgentPolicyPreset', id, 'human'), (p) => p);
   };
   const setCell = (cap: string, label: Label, action: Action) => {
     void policyWrite(`cell:${cap}:${label}`, () => rpc<AgentPolicy>('setAgentPolicyCell', cap, label, action, 'human'),
-      (p) => ({ ...p, preset: 'custom', matrix: { ...p.matrix, [cap]: { ...(p.matrix?.[cap] ?? {}), [label]: action } } }),
-      TEACH_CELL);
+      (p) => ({ ...p, preset: 'custom', matrix: { ...p.matrix, [cap]: { ...(p.matrix?.[cap] ?? {}), [label]: action } } }));
   };
   // The kill-switch is FREE and operable as soon as the policy is known — a user who finds the guardrail
   // in the way must be able to turn it off honestly rather than route around it.
@@ -176,13 +187,11 @@ export function PermissionsView({ focusApproval, onApprovalChanged }: {
   return (
     <div className="h-full overflow-auto">
       <div className="sem-evidence-page sem-centered-page flex flex-col gap-4 min-w-0">
-        <HeaderPanel policy={policy} policyErr={policyErr} tier={tier} inflight={inflight}
+        <HeaderPanel policy={policy} policyErr={policyErr} inflight={inflight}
           onToggle={setEnabled} onPreset={setPreset} onRetry={loadPolicy} />
         {writeErr && <Banner color="var(--sem-bad)">{writeErr}</Banner>}
-        {upsell && <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>}
-        {policy && <MatrixPanel policy={policy} isPro={isPro} isFree={isFree} inflight={inflight}
-          onCell={setCell} onLocked={() => teach(TEACH_CELL)} />}
-        <ApprovalsPanel focusApproval={focusApproval} onApprovalChanged={onApprovalChanged} />
+        {policy && <MatrixPanel policy={policy} inflight={inflight} onCell={setCell} />}
+        <ApprovalsPanel focusApproval={focusApproval} onFocusConsumed={onFocusConsumed} onApprovalChanged={onApprovalChanged} />
         <TargetsPanel />
         <FooterLine />
       </div>
@@ -191,8 +200,8 @@ export function PermissionsView({ focusApproval, onApprovalChanged }: {
 }
 
 // ---- Header: intro + the free guardrail switch + the preset picker -------------------------------
-function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, onRetry }: {
-  policy: AgentPolicy | null; policyErr: string | null; tier: string; inflight: string | null;
+function HeaderPanel({ policy, policyErr, inflight, onToggle, onPreset, onRetry }: {
+  policy: AgentPolicy | null; policyErr: string | null; inflight: string | null;
   onToggle: (v: boolean) => void; onPreset: (id: string) => void; onRetry: () => void;
 }) {
   const isCustom = policy?.preset === 'custom';
@@ -203,11 +212,11 @@ function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, on
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <ShieldIcon />
-            <div className="text-[15px] font-semibold">Agent permissions</div>
+            <div className="text-[15px] font-semibold">Assistant permissions</div>
           </div>
           <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            Decide what your AI Assistant may do on its own, and where. A preset sets a sensible baseline; tune any
-            cell for full control. This governs the assistant to prevent accidents; it is not a security boundary.
+            A preset sets a sensible baseline; tune any cell for full control. This governs the assistant to
+            prevent accidents; it is not a security boundary.
           </div>
         </div>
         {/* The switch renders ONLY once the policy is known — a toggle with a defaulted position would be a
@@ -220,10 +229,9 @@ function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, on
       {policyErr && !policy && (
         <div className="mt-3 flex items-start gap-2">
           <div className="flex-1 min-w-0">
-            <Banner color="var(--sem-bad)">Couldn’t load the agent policy: {policyErr}</Banner>
+            <Banner color="var(--sem-bad)">Couldn’t load the permission settings: {policyErr}</Banner>
           </div>
-          <button onClick={onRetry} className="shrink-0 text-[12px] px-3 py-1.5 rounded-lg font-medium"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+          <button onClick={onRetry} className="sem-btn shrink-0">
             Retry
           </button>
         </div>
@@ -246,7 +254,7 @@ function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, on
           <div className="flex flex-wrap gap-2 mt-2">
             {PRESETS.map((p) => (
               <PresetCard key={p.id} preset={p} active={!isCustom && !isUnreadable && policy.preset === p.id}
-                tier={tier} busy={inflight === `preset:${p.id}`} disabled={!!inflight}
+                busy={inflight === `preset:${p.id}`} disabled={!!inflight}
                 onClick={() => onPreset(p.id)} />
             ))}
           </div>
@@ -262,23 +270,20 @@ function HeaderPanel({ policy, policyErr, tier, inflight, onToggle, onPreset, on
   );
 }
 
-function PresetCard({ preset, active, tier, busy, disabled, onClick }: {
-  preset: { id: string; name: string; desc: string }; active: boolean; tier: string; busy: boolean; disabled: boolean; onClick: () => void;
+function PresetCard({ preset, active, busy, disabled, onClick }: {
+  preset: { id: string; name: string; desc: string }; active: boolean; busy: boolean; disabled: boolean; onClick: () => void;
 }) {
-  // Free clicks stay ENABLED (they teach locally, no RPC); an in-flight write and the unknown-tier
-  // checking window disable the card instead.
-  const blocked = disabled || tier === 'unknown';
+  // Only an in-flight write disables a card now. There is no plan to check: choosing a preset is free.
   return (
-    <button onClick={onClick} disabled={blocked && tier !== 'free'}
-      title={tier === 'unknown' ? 'Checking your plan…' : active ? 'Current preset' : `Switch to the ${preset.name} preset`}
-      className="text-left rounded-lg px-3 py-2 transition-colors disabled:opacity-60"
+    <button onClick={onClick} disabled={disabled}
+      title={active ? 'Current preset' : `Switch to the ${preset.name} preset`}
+      className="text-left rounded-lg px-3 py-2 transition-colors disabled:opacity-60 flex flex-col items-start justify-start"
       style={{ width: 190, background: active ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)',
         border: `1px solid ${active ? 'var(--sem-accent)' : 'var(--sem-border)'}`, opacity: busy ? 0.6 : undefined }}>
       <div className="flex items-center gap-1.5">
         <span className="text-[12.5px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{preset.name}</span>
         {busy ? <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>applying…</span>
           : active && <span className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--sem-accent)' }}>Current</span>}
-        <ProBadge show={tier === 'free'} />
       </div>
       <div className="text-[11px] mt-0.5 leading-snug" style={{ color: 'var(--sem-muted)' }}>{preset.desc}</div>
     </button>
@@ -290,7 +295,7 @@ function GuardrailSwitch({ enabled, disabled, onToggle }: { enabled: boolean; di
   return (
     <div className="flex flex-col items-end shrink-0">
       <div className="flex items-center gap-2">
-        <span className="text-[12px] font-medium">Agent guardrail</span>
+        <span className="text-[12px] font-medium">Permission checks</span>
         <button role="switch" aria-checked={enabled} disabled={disabled} onClick={() => onToggle(!enabled)}
           title={enabled ? 'On: these permission checks apply to the assistant. Click to turn off.' : 'Off: these permission checks are disabled. Click to turn on.'}
           className="relative rounded-full transition-colors disabled:opacity-60" style={{ width: 40, height: 22,
@@ -306,9 +311,9 @@ function GuardrailSwitch({ enabled, disabled, onToggle }: { enabled: boolean; di
 }
 
 // ---- The capability × target matrix --------------------------------------------------------------
-function MatrixPanel({ policy, isPro, isFree, inflight, onCell, onLocked }: {
-  policy: AgentPolicy; isPro: boolean; isFree: boolean; inflight: string | null;
-  onCell: (cap: string, label: Label, action: Action) => void; onLocked: () => void;
+function MatrixPanel({ policy, inflight, onCell }: {
+  policy: AgentPolicy; inflight: string | null;
+  onCell: (cap: string, label: Label, action: Action) => void;
 }) {
   const off = !policy.enabled;
   const grid = ROWS.filter((r) => r.kind === 'gated' || r.kind === 'localAllow');
@@ -321,7 +326,7 @@ function MatrixPanel({ policy, isPro, isFree, inflight, onCell, onLocked }: {
       <SectionTitle>What the assistant may do</SectionTitle>
       <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
         Columns are your target labels. <strong style={{ color: 'var(--sem-fg)' }}>Unlabelled targets are treated as production.</strong>
-        {isPro && !off && <> Click a cell to change it (allow → ask → deny).</>}
+        {!off && <> Click a cell to change it (allow → ask → deny).</>}
       </div>
 
       {off && (
@@ -365,14 +370,9 @@ function MatrixPanel({ policy, isPro, isFree, inflight, onCell, onLocked }: {
                   ) : off ? (
                     // Guardrail off: only the TUNABLE cells dim (they are what stood down).
                     <span style={{ opacity: 0.35 }}><ActionChip action={action} /></span>
-                  ) : isPro ? (
+                  ) : (
                     <ActionCell action={action} disabled={!!inflight} pending={inflight === key}
                       onClick={() => onCell(row.cap, l, next(action))} />
-                  ) : isFree ? (
-                    <LockedCell action={action} onClick={onLocked} />
-                  ) : (
-                    // Tier still resolving — a quiet read-only chip, neither editable nor lock-adorned.
-                    <span title="Checking your plan…"><ActionChip action={action} /></span>
                   )}
                 </div>
               );
@@ -460,24 +460,10 @@ function ActionCell({ action, disabled, pending, onClick }: { action: Action; di
   );
 }
 
-// The Free-tier cell: read-only, but never a dead end — the lock is the affordance, and a click teaches
-// (a local upsell notice; no RPC is attempted).
-function LockedCell({ action, onClick }: { action: Action; onClick: () => void }) {
-  const m = ACTION_META[action];
-  return (
-    <button onClick={onClick} title={`${m.label}. Configuring the matrix is a Pro feature; click to learn more.`}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md"
-      style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 16%, transparent)` }}>
-      <ActionIcon action={action} />{m.label}
-      <span style={{ color: 'var(--sem-muted)', display: 'inline-flex' }}><LockMini /></span>
-    </button>
-  );
-}
-
 // ---- "Waiting for you" — the approval queue ------------------------------------------------------
-function ApprovalsPanel({ focusApproval, onApprovalChanged }: {
+function ApprovalsPanel({ focusApproval, onFocusConsumed, onApprovalChanged }: {
   focusApproval?: { id: string; nonce: number } | null;
-  onApprovalChanged?: () => void;
+  onFocusConsumed?: (nonce: number) => void; onApprovalChanged?: () => void;
 }) {
   const mounted = useMountedRef();
   const [items, setItems] = useState<ApprovalRecord[] | null>(null);
@@ -540,10 +526,12 @@ function ApprovalsPanel({ focusApproval, onApprovalChanged }: {
       setFocusNotice(record?.grantedUtc
         ? 'That request has already been approved, so it is no longer waiting for you.'
         : 'That request is no longer waiting. It may already have been approved, denied, or expired.');
+      onFocusConsumed?.(focusApproval.nonce);
       return;
     }
     setFocusNotice(null);
     setDirectedId(focusApproval.id);
+    onFocusConsumed?.(focusApproval.nonce);
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card.focus({ preventScroll: true });
     const clear = window.setTimeout(() => setDirectedId((id) => id === focusApproval.id ? null : id), 1800);
@@ -558,8 +546,7 @@ function ApprovalsPanel({ focusApproval, onApprovalChanged }: {
         // The load itself failed — say so and offer a retry; never an eternal "Loading…" under an error.
         <div className="mt-2 flex items-start gap-2">
           <div className="flex-1 min-w-0"><Banner color="var(--sem-bad)">Couldn’t load the approval queue: {err}</Banner></div>
-          <button onClick={() => { setErr(null); void pull(); }} className="shrink-0 text-[12px] px-3 py-1.5 rounded-lg font-medium"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+          <button onClick={() => { setErr(null); void pull(); }} className="sem-btn shrink-0">
             Retry
           </button>
         </div>
@@ -675,8 +662,7 @@ function TargetsPanel() {
       {conns === null && err ? (
         <div className="mt-2 flex items-start gap-2">
           <div className="flex-1 min-w-0"><Banner color="var(--sem-bad)">Couldn’t load the connection list: {err}</Banner></div>
-          <button onClick={() => { setErr(null); void pull(); }} className="shrink-0 text-[12px] px-3 py-1.5 rounded-lg font-medium"
-            style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+          <button onClick={() => { setErr(null); void pull(); }} className="sem-btn shrink-0">
             Retry
           </button>
         </div>
@@ -755,7 +741,7 @@ function LabelPicker({ value, busy, onPick }: { value: Label | null; busy: boole
 function FooterLine() {
   return (
     <div className="text-[11px] leading-relaxed px-1 pb-2" style={{ color: 'var(--sem-muted)' }}>
-      This guardrail governs your AI Assistant and prevents accidents. It is not a security boundary against a hostile
+      This guardrail governs your assistant and prevents accidents. It is not a security boundary against a hostile
       agent; the credential you give the assistant is the real boundary.
     </div>
   );
@@ -847,9 +833,6 @@ function EyeIcon() {
 }
 function LockIcon() {
   return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
-}
-function LockMini() {
-  return <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
 }
 function WarnDot() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sem-warn)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><path d="M12 9v4" /><path d="M12 17h.01" /><circle cx="12" cy="12" r="9" /></svg>;

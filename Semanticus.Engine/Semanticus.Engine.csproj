@@ -78,6 +78,7 @@
        Copied transitively to referencing projects' output so the parse-proof tests see it too. -->
   <ItemGroup>
     <None Include="workflows\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="workflows-compat\**\*.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- Stock workflow TEMPLATES (docs/pro-mode-spec.md §10 — the customisation layer): ship the seed

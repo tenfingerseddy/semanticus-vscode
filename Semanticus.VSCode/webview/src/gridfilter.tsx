@@ -221,7 +221,7 @@ export function describe(f: ColumnFilter): string {
       if (f.op === 'blank') return 'is blank';
       if (f.op === 'nblank') return 'is not blank';
       if (f.op === 'between') {
-        if (f.a != null && f.b != null) return `is between ${f.a} – ${f.b}`;
+        if (f.a != null && f.b != null) return `is between ${f.a} and ${f.b}`;
         if (f.a != null) return `≥ ${f.a}`;
         return `≤ ${f.b}`;
       }
@@ -230,7 +230,7 @@ export function describe(f: ColumnFilter): string {
     case 'date':
       if (f.mode === 'rel') return `in the last ${f.n} ${UNIT_LABEL[f.unit]}${f.n === 1 ? '' : 's'}`;
       if (f.mode === 'cal') return `is ${CAL_LABEL[f.period]}`;
-      if (f.from && f.to) return `is ${f.from} – ${f.to}`;
+      if (f.from && f.to) return `is ${f.from} to ${f.to}`;
       if (f.from) return `is on/after ${f.from}`;
       return `is on/before ${f.to}`;
     case 'text': {
@@ -426,7 +426,7 @@ function NumberBody({ draft, setDraft }: { draft: Extract<ColumnFilter, { kind: 
           <input type="number" value={draft.a ?? ''} onChange={(e) => setDraft({ ...draft, a: num(e.target.value) })} placeholder={draft.op === 'between' ? 'min' : 'value'}
             className="rounded-md px-2 py-1.5 outline-none tnum text-right flex-1 min-w-0" style={sel} />
           {draft.op === 'between' && <>
-            <span style={{ color: 'var(--sem-muted)' }}>–</span>
+            <span style={{ color: 'var(--sem-muted)' }}>to</span>
             <input type="number" value={draft.b ?? ''} onChange={(e) => setDraft({ ...draft, b: num(e.target.value) })} placeholder="max"
               className="rounded-md px-2 py-1.5 outline-none tnum text-right flex-1 min-w-0" style={sel} />
           </>}

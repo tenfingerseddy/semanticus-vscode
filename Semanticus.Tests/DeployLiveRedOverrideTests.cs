@@ -111,6 +111,20 @@ namespace Semanticus.Tests
             var chain = await engine.ListVerifiedEditsAsync();
             var rec = Assert.Single(chain.Records.Where(r => r.Op == "deploy_live" && r.Verdict == "overridden"));
             Assert.Equal("data owner approved the hotfix", rec.OverrideReason);
+
+            // The record's SUMMARY is the sentence both doors show a person, and it used to open "gate RED (…):
+            // override accepted to deploy to …" — three pieces of engine vocabulary in the one line Kane reads off
+            // Changes > History. It says the same facts in plain words now: what the check found, that the publish
+            // still went ahead because a reason was written, and where it went. The destination ends the sentence
+            // with NO full stop, because gluing one onto an endpoint changes an address a person may copy.
+            Assert.StartsWith("Red safety check (", rec.Summary);
+            Assert.Contains("Published anyway with a written reason, to " + LocalEndpoint + "/Blocked", rec.Summary);
+            Assert.EndsWith(LocalEndpoint + "/Blocked", rec.Summary);
+            Assert.DoesNotContain("gate RED", rec.Summary);
+            Assert.DoesNotContain("override accepted", rec.Summary);
+            // Every fact the old line carried is still there: the gate's own blocker text is unedited inside it.
+            var blockers = string.Join("; ", (await engine.DeployGateAsync(null, "human")).Blockers);
+            Assert.Contains(blockers, rec.Summary);
         }
 
         // ---- an agent WITHOUT a reason gets the HUMAN-only refusal too: the origin check deliberately runs BEFORE

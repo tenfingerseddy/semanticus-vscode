@@ -1,0 +1,98 @@
+{
+  "what": "The report half of an Impact answer, as one committed set of inputs and the exact sentence each one must produce.",
+  "why": [
+    "Astra's ruling 2 on the 653f741c build: the two doors already drifted. The engine called a stale reading",
+    "'not been checked' while the page said it needed checking again, which is a difference in MEANING, not a",
+    "difference in clock formatting. The engine also named EVERY checked report in a hit sentence when only",
+    "some of them contained the field.",
+    "This file is read independently by Semanticus.Tests/ReportScopeRejectionTests.cs and by",
+    "Semanticus.VSCode/test/impact-one-page.test.mjs. Neither suite builds the other and neither compares a",
+    "localized clock string: times are supplied here already formatted, because a time is the one part that is",
+    "genuinely the reader's own and is not what drifted."
+  ],
+  "cases": [
+    {
+      "name": "nothing chosen",
+      "field": "Total Sales",
+      "scope": { "model": "Contoso", "reports": [] },
+      "hits": [],
+      "reportSentence": "Report use is unknown. No reports have been chosen for this model yet."
+    },
+    {
+      "name": "chosen, none read",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "notChecked" },
+          { "id": "published:ws-1/r-2", "name": "sm_expense_claims", "source": "Fabric Reporting", "state": "notChecked" }
+        ]
+      },
+      "hits": [],
+      "reportSentence": "Report use is unknown. The chosen reports still need checking."
+    },
+    {
+      "name": "a reading the model has moved past",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "needsChecking", "checkedWhenUtc": "2026-09-15T09:41:00Z" }
+        ]
+      },
+      "hits": [],
+      "reportSentence": "Report use needs checking again. The model changed after 1 listed report was read."
+    },
+    {
+      "name": "two read, only one contains the field",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "checked", "checkedWhenUtc": "2026-09-15T09:41:00Z" },
+          { "id": "published:ws-1/r-2", "name": "sm_expense_claims", "source": "Fabric Reporting", "state": "checked", "checkedWhenUtc": "2026-09-15T09:41:00Z" }
+        ]
+      },
+      "hits": ["Warehouse ops"],
+      "reportSentence": "Total Sales or something that depends on it appears in 1 checked report (Warehouse ops). The other checked report does not use it."
+    },
+    {
+      "name": "read and not used anywhere",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "checked", "checkedWhenUtc": "2026-09-15T09:41:00Z" }
+        ]
+      },
+      "hits": [],
+      "reportSentence": "No use of Total Sales or the things that depend on it was found in the 1 report checked (Warehouse ops)."
+    },
+    {
+      "name": "one read, one still to read",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "checked", "checkedWhenUtc": "2026-09-15T09:41:00Z" },
+          { "id": "published:ws-1/r-2", "name": "sm_expense_claims", "source": "Fabric Reporting", "state": "notChecked" }
+        ]
+      },
+      "hits": [],
+      "reportSentence": "No use of Total Sales or the things that depend on it was found in the 1 report checked (Warehouse ops). 1 listed report was not checked."
+    },
+    {
+      "name": "one read, one could not be fully read",
+      "field": "Total Sales",
+      "scope": {
+        "model": "Contoso",
+        "reports": [
+          { "id": "published:ws-1/r-1", "name": "Warehouse ops", "source": "Fabric Reporting", "state": "checked", "checkedWhenUtc": "2026-09-15T09:41:00Z" },
+          { "id": "published:ws-1/r-2", "name": "sm_expense_claims", "source": "Fabric Reporting", "state": "couldNotBeFullyChecked", "checkedWhenUtc": "2026-09-15T09:41:00Z" }
+        ]
+      },
+      "hits": [],
+      "reportSentence": "No use of Total Sales or the things that depend on it was found in the 1 report checked (Warehouse ops). 1 listed report could not be fully checked."
+    }
+  ]
+}

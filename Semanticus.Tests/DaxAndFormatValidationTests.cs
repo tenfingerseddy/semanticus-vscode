@@ -10,13 +10,13 @@ namespace Semanticus.Tests
     /// offline arity diagnostics, and Analysis Services markup stripped from query errors.</summary>
     public sealed class DaxAndFormatValidationTests
     {
-        private static LocalEngine NewEngine() => new LocalEngine(new SessionManager());
+        private static LocalEngine NewEngine() => new LocalEngine(new SessionManager(), TestEntitlements.Pro);
 
         [Fact]
         public async Task Dax_writes_refuse_bad_text_arity_and_unknown_references_without_mutation()
         {
             using var sessions = new SessionManager();
-            using var engine = new LocalEngine(sessions);
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             await engine.CreateModelAsync("DaxFence", 1604);
             var table = await engine.CreateTableAsync("Sales", "human");
             await engine.CreateColumnAsync(table, "Amount", "Decimal", "Amount", "human");

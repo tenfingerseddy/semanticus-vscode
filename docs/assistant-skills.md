@@ -1,8 +1,8 @@
 # Semanticus assistant skills
 
-Semanticus 1.1.3 includes seven guides that help an AI assistant find the right tools and work with
-the open model. They use your existing Semanticus MCP connection and load when relevant to a task.
-The engine also supplies essential startup guidance through MCP, so skills are optional.
+Semanticus includes seven optional guides that help your assistant choose the right tools and work
+with the open model. They use your existing Semanticus MCP connection and load when relevant to a
+task. The engine supplies essential session guidance through MCP, so skills are optional.
 
 ## Install from the workbench
 
@@ -39,9 +39,47 @@ Ask naturally: "Use Semanticus to explain this model", "Optimise this measure ac
 and product contexts", or "Save this process as a workflow". You can also select a skill in your
 assistant's skills menu. Plugin installations add the plugin's command namespace.
 
+## Work in the same session
+
+The VS Code workbench has five areas: **Model**, **Calculations**, **Checks**, **Changes** and
+**Workflows**. The areas are a starting point for people. The MCP tool names stay stable, so an
+assistant can use the same model work from any client:
+
+- Model: inspect tables, relationships, diagrams, lineage, search, data previews, Power Query and notes.
+- Calculations: try and compare DAX in DAX Lab.
+- Checks: run Tests, Model quality checks and AI understanding checks, then review saved Results.
+- Changes: review proposed edits, inspect history and publish to a selected destination.
+- Workflows: browse, run and author repeatable steps, including Steps, Canvas and Source views.
+
+The two doors share one session and one undo history. The VS Code view updates when an edit lands.
+Your assistant sees that edit on its next call. Keep the editing model, test model and publishing
+destination distinct in your instructions because they can be different connections.
+
+Use these words precisely. **Apply** puts selected proposed changes into the working model as one
+undoable edit. **Save** keeps an edit in the working model or writes the current workflow or spec to
+its local file. **Publish** sends reviewed model definitions to the chosen live destination after a
+preview and confirmation. **Restore** returns a chosen live destination to a saved restore point.
+Publish and Restore do not refresh data, and local Undo does not reverse either remote write.
+
+## Author workflows safely
+
+For an existing workflow, read the current document before editing it. The assistant can use
+`get_workflow_document` to receive the exact source, path, byte hash and editable fields. Use
+`preview_workflow_edit` to prepare typed edits or preview a shared draft from Steps, Canvas or
+Source. Review the full-context diff and warnings, then use `edit_workflow_document` with the
+returned path and byte hash to write the exact text. Use `save_workflow` with `createOnly: true`
+for a new project workflow. `upgrade_workflow` previews version 1 to version 2 changes and keeps
+the same path and hash checks when writing. Stock workflows are read-only and must be copied into
+the project before editing. `get_workflow_layout` and `save_workflow_layout` store Canvas positions
+only; they do not change steps or checks.
+
+If a workflow file changed after it was read, refresh and reconcile the draft. Do not overwrite a
+newer file from an old hash. A workflow check or replay that was skipped, incomplete or unavailable
+is not a pass.
+
 ## Download as a plugin or portable skills
 
-[Download the 1.1.3 skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/download/v1.1.3/semanticus-assistant-skills-1.1.3.zip).
+[Download the 1.2.0 skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/download/v1.2.0/semanticus-assistant-skills-1.2.0.zip).
 Extract it into a permanent folder. Replace `PACK_PATH` with the extracted folder containing its README.
 
 Claude Code:
@@ -55,7 +93,7 @@ Codex:
 
 ```text
 codex plugin marketplace add "PACK_PATH"
-codex plugin install semanticus@semanticus
+codex plugin add semanticus@semanticus
 ```
 
 For another skills-compatible assistant, copy the folders under `plugins/semanticus/skills/` into

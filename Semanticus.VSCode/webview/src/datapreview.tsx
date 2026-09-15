@@ -9,6 +9,10 @@ import type { ResultSet } from './wire';
 import { useClaudeReflection, ClaudeRanBanner, type ActivityEvent } from './activity';
 import { isSignInError, SIGN_IN_AGAIN } from './authcopy';
 
+// A table preview names one table, so every header repeating "Sales[...]" is noise in DAX's notation.
+// Show the field name; keep the full reference in the header's tooltip.
+const fieldName = (raw: string) => { const m = /^.*\[(.+)\]$/.exec(raw.trim()); return m ? m[1] : raw; };
+
 // `target` is a table handed in from elsewhere (a Model-tree "Preview data" right-click) — its nonce changes on
 // every navigation so re-selecting the same table re-fires the preview.
 export function DataPreviewView({ target }: { target?: { table: string; nonce: number } | null }) {
@@ -101,7 +105,7 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
       </div>
 
       {/* preview */}
-      <div className="flex-1 min-w-0 flex flex-col p-4 gap-3">
+      <div className="flex-1 min-w-0 flex flex-col sem-tool-page gap-3">
         <div className="flex items-center gap-3">
           <div className="text-[13px] font-semibold">{selected ? `Preview · ${selected}` : 'Data Preview'}</div>
           <div className="ml-auto flex items-center gap-2">
@@ -133,7 +137,7 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
         {res ? (
           <>
             <div className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{res.rowCount} rows{res.truncated ? ' (truncated)' : ''} · {res.columns.length} cols · {res.elapsedMs} ms</div>
-            <div className="flex-1 min-h-0"><ResultGrid columns={res.columns} rows={res.rows} height="100%" /></div>
+            <div className="flex-1 min-h-0"><ResultGrid columns={res.columns.map((c) => ({ ...c, name: fieldName(c.name) }))} rows={res.rows} height="100%" /></div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>

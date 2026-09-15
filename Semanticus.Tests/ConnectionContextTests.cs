@@ -267,6 +267,43 @@ namespace Semanticus.Tests
             Assert.True(context.TwoModelsInPlay);
         }
 
+        // ---- A workspace-level target still has a readable name (Kane, 2026-09-15). It has no dataset, so the old
+        // fallbacks (record.ModelName ?? live.Database, and the publish side's ModelName ?? Database) left the name
+        // EMPTY, and every surface then showed the endpoint's encoded last segment: "Contoso%20Fabric%20Monitoring"
+        // (Contoso stands in for the real tenant name, which the public-mirror gate refuses to carry).
+        // The workspace segment, decoded, is the honest thing we do know about that target. ----
+
+        [Fact]
+        public async Task A_workspace_only_query_target_is_named_by_its_decoded_workspace()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var record = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring", null, null, null, "interactive");
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", record.Endpoint, null));
+
+            var context = await engine.ConnectionContextAsync();
+
+            Assert.Equal(record.Id, context.Querying.ConnectionId);
+            Assert.Equal("Contoso Fabric Monitoring", context.Querying.ModelName);
+            Assert.DoesNotContain("%20", context.Querying.ModelName);
+        }
+
+        [Fact]
+        public async Task A_workspace_only_publish_destination_is_named_by_its_decoded_workspace()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var record = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring", null, null, null, "interactive");
+            ConnectionRegistry.SetWorkingFolder(record.Id, Path.GetDirectoryName(sessions.Current.SourcePath));
+
+            var context = await engine.ConnectionContextAsync();
+
+            Assert.Equal(record.Id, context.Publishing.ConnectionId);
+            Assert.Equal("Contoso Fabric Monitoring", context.Publishing.ModelName);
+        }
+
         [Fact]
         public void Live_origin_write_authority_is_compiled_only_into_the_editing_open_paths()
         {

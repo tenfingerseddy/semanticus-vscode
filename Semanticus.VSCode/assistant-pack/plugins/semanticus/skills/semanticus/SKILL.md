@@ -21,6 +21,13 @@ Distinguish the editable model, the live query connection, and the publishing de
 They can differ. Check `connection_status` before measuring or testing. A local metadata edit
 does not update the query server.
 
+The VS Code workbench is organised as five areas: Model, Calculations, Checks, Changes and
+Workflows. Use the area that matches the user's first question, then open its named tool. Model
+holds diagrams, lineage, search, previews, Power Query and notes. Calculations holds DAX Lab.
+Checks holds Tests, Model quality, AI understanding and Results. Changes holds Proposed,
+History and Published. Workflows holds the library, runs, governance and Author. The area labels
+are navigation only; existing tool ids and MCP names remain stable.
+
 ## Choose the route that fits
 
 | Task | Starting point |
@@ -38,6 +45,17 @@ Companion skills cover DAX optimisation, AI readiness, interviews, Change Plans,
 and model knowledge. Read only the relevant skill. Get workflow definitions through MCP rather
 than reconstructing them from memory. Inspect an existing run or plan before starting another.
 
+For workflow authoring, read `get_workflow_document` first. It returns the exact source, path,
+byte hash and the editable projection used by Steps, Canvas and Source. Use `preview_workflow_edit`
+with that path and hash plus typed edits, or with the current unsaved draft, to inspect the exact
+proposed text, full-context diff and warnings without writing. For an existing user file, apply the
+reviewed exact text with `edit_workflow_document`; for a new project workflow use `save_workflow`
+with `createOnly: true`. `upgrade_workflow` is a dry-run by default and needs the reviewed path and
+byte hash to write. Stock workflows are read-only, so copy one into the project before editing.
+Use `get_workflow_layout` and `save_workflow_layout` only for Canvas positions. After a successful
+edit, reread the library on the next call. The VS Code view updates at once; your assistant sees
+the change on its next call.
+
 ## Work on the shared model
 
 Model edits share one undo history. Assistant edits appear in the UI immediately; user edits reach
@@ -49,6 +67,13 @@ Choose test contexts from the tables relevant to the calculation, including tota
 edge cases. Matching tested contexts is evidence for those contexts, not a universal proof.
 Live DAX needs a suitable query endpoint; SQL reconciliation also needs a SQL connection.
 Without those connections, complete useful metadata work and identify what remains untested.
+
+Use these action meanings consistently. `apply_plan` changes the working model and creates one
+undoable edit. `save_model` writes local model files. `save_workflow` or
+`edit_workflow_document` writes a reviewed workflow file. `deploy_live` is a separate remote write
+after its preview and confirmation. Restore-point tools change a live destination and local Undo
+does not reverse them. A no-model, no-live-connection, stale-query or permission result should name
+one useful next action instead of pretending the requested check ran.
 
 Report what changed, where it was saved or published, and checks actually run. Errors, skips and
 unavailable traces are not successful verification. Respect the user's chosen workflow profile

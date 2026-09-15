@@ -1,55 +1,55 @@
 ---
 name: new-measure
-title: Author a verified measure
-description: Create a measure with declared intent, verified against a known-good number.
-whenToUse: "A single straightforward measure verified against one known-good number: the everyday default. For an edge-heavy or hard measure that must be correct across every filter context, use verified-measure; to rewrite an existing measure for speed or clarity, use optimize-dax."
+title: Add a measure
+description: Define a measure, check the cases that matter, and save the result with its meaning.
+whenToUse: "Use for a straightforward measure with a clear business meaning. For ratios, time logic or other context-sensitive measures, use Test a complex measure; to improve an existing measure, use Fix a slow measure."
 version: 1
 strictness: hard
 triggers: [create_measure, update_measure]
 ---
 
-## Step 1: Capture intent
+## Step 1: Define the question
 
-Ask the user for the business definition. Record what the measure means, at
-what grain it is meaningful, and what number it should produce for a context the user can
-check independently. Prefer a measure over a calculated column for anything context-dependent;
-push row-static values upstream to M/source, where they fold and cost no refresh memory.
+State what the measure means and where it is useful. Include the filter context or grain that would
+expose a likely mistake, such as Net sales by Product category and Customer region. Do not restate table
+or column facts the model already provides. Ask for an independent expected value when one is available;
+it may be declined when there is no trusted source number.
 
 ```yaml gate
 inputs:
+  - name: meaning
+    question: "What business question does this measure answer, and which context or grain must it respect?"
+    type: text
+    required: required
   - name: verificationValue
-    question: "A known-good number (or per-group matrix) to verify against, from the user, not derived."
+    question: "An independently known result for a useful context, including its context if it is not the grand total; decline with why none is available."
     type: verification
-    required: answer-or-decline
-  - name: intendedFilterContext
-    question: "Which dimensions/slicers must this measure respect?"
-    type: text
-    required: answer-or-decline
-  - name: expectedGrain
-    question: "At what grain is this measure meaningful?"
-    type: text
     required: answer-or-decline
 ```
 
-## Step 2: Author the DAX
+## Step 2: Author and create the measure
 
-Use `get_grounding` for naming, format, and sibling context. Follow the DAX
-floor: DIVIDE over `/`, variables for readability and perf, COUNTROWS over COUNT,
-SELECTEDVALUE over VALUES-with-error-trap, no FILTER as a filter argument, fully-qualified
-column refs and unqualified measure refs. Run `validate_dax` and `lint_dax` before creating.
+Use `get_grounding` for the model's naming and sibling conventions. Write the DAX, run `validate_dax`
+and `lint_dax`, then call `create_measure` with the final name, format string and description. The model
+holds the new measure ref; do not ask the user to copy table facts into this run.
 
-## Step 3: Create and verify
+```yaml gate
+ops: [get_grounding, validate_dax, lint_dax, create_measure, set_measure_format, set_description]
+```
 
-Create via `create_measure`; set the format string and description in the same step
-(hygiene at authoring time, not cleanup debt). Confirm the number under the
-intended filter context. Give `target` the ref of the measure you just
-created so the gate can probe it against the user's known-good value.
+## Step 3: Check the selected case
+
+Use `probe_measure` or a focused live query for the context from Step 1. Give `target` the new measure
+ref. When an independent value was supplied, the engine's scalar probe compares that value; a mismatch
+holds the step for correction. Without one, report that the measure was exercised but not reconciled to
+an independent number. A grand-total match alone does not prove the stated context.
 
 ```yaml gate
 strictness: hard
+ops: [probe_measure]
 inputs:
   - name: target
-    question: "The ref of the measure you just created (e.g. measure:Sales/Total Sales)."
+    question: "The ref of the measure just created, for example measure:Sales/Net Sales."
     type: objectRef
     required: required
 verify:
@@ -58,4 +58,14 @@ verify:
     probe: verificationValue
   - kind: bpa_clean
     scope: object
+```
+
+## Step 4: Save the result
+
+Call `save_model`. Record the meaning, checked context and any missing independent answer with the handoff
+so the next change knows what was actually checked. The workflow does not claim coverage of every filter
+combination.
+
+```yaml gate
+ops: [save_model]
 ```

@@ -100,14 +100,24 @@ assert.doesNotMatch(propCss, /\.rowx label[^}]*text-overflow:\s*ellipsis/,
 // --- D-164 Studio top-level navigation has an overflow control ---------------------------------------
 assert.match(styles, /studio-chrome/,
   'D-164: the Studio header is a named container so it can collapse without a thin scrollbar');
-assert.match(styles, /@container studio-chrome/,
-  'D-164: a container query, not overflow-x, owns the narrow header');
-assert.match(app, /studio-standalone/,
-  'D-164: Primer / Workflows / Edits are the cluster that collapses');
-assert.match(app, /More Studio pages/,
+// The fixed 1500px container query was itself the next defect: it hid the utilities on a 1440 window that had
+// room for them. A measured fold owns the narrow header now, and it must still never be overflow-x.
+assert.doesNotMatch(styles, /@container studio-chrome/,
+  'D-164: no fixed-width container query decides the fold any more');
+assert.match(styles, /\.studio-chrome\[data-fold="measure"\]/,
+  'D-164: the measuring pass has a state in which every header part is visible');
+assert.match(styles, /\[data-fold="4"\][^}]*\.studio-groups \{ display: none/,
+  'D-164: the five areas are the LAST thing to fold, at the deepest level');
+assert.match(app, /new ResizeObserver/,
+  'D-164: the fold is measured from the real header width, not guessed from a breakpoint');
+assert.match(app, /dataset\.fold = String\(measureHeaderFold\(el\)\)/,
+  'D-164: one measure per resize frame writes one data attribute');
+assert.match(app, /studio-groups/,
+  'D-164: the five primary areas are the cluster that collapses');
+assert.match(app, /More Studio tools/,
   'D-164: the overflow control is named for a screen reader');
 assert.match(app, />More</,
-  'D-164: a visible More button hints that Primer / Workflows / Edits still exist');
+  'D-164: a visible More button keeps the five areas and shared actions reachable');
 assert.doesNotMatch(app, /<header[^>]*overflow-x:\s*auto/,
   'D-164: the header must not rely on a thin horizontal scrollbar');
 
@@ -120,5 +130,96 @@ assert.ok(itemCtx.some((m) => m.command === 'semanticus.newTable' && /emptyModel
   'D-153: right-click on that row offers New Table');
 assert.match(ext, /emptyModel[\s\S]{0,400}semanticus\.newTable|command: 'semanticus\.newTable'[\s\S]{0,200}emptyModel/,
   'D-153: clicking the empty-tree row runs New Table');
+
+// --- the Model row's Create dropdown is reachable from the keyboard alone ----------------------------
+const createSegment = (app.match(/function CreateTab\(\{[\s\S]*?\n\/\/ Primary area button\./) || [''])[0];
+assert.ok(createSegment, 'the Create dropdown segment must exist in the Studio shell');
+assert.match(createSegment, /aria-haspopup="menu"/, 'the segment announces that it opens a menu');
+assert.match(createSegment, /aria-expanded=\{open\}/, 'the segment announces whether the menu is open');
+assert.match(createSegment, /role="menu"/, 'the list is a menu, and its children are menu items');
+assert.match(createSegment, /e\.key === 'Enter' \|\| e\.key === ' ' \|\| e\.key === 'ArrowDown'/,
+  'Enter, Space and the arrows all open the menu from the segment');
+assert.match(createSegment, /key === 'ArrowDown'[\s\S]{0,160}key === 'ArrowUp'/,
+  'arrow keys move the highlight inside the menu');
+assert.match(createSegment, /key === 'Escape'[\s\S]{0,120}closeAndReturnFocus/,
+  'Escape closes the menu and hands focus back to the segment');
+assert.match(createSegment, /closeAndReturnFocus = \(\) => \{ setOpen\(false\); buttonRef\.current\?\.focus\(\); \}/,
+  'closing always returns focus to the segment button, never to the document');
+// This used to pin a bare focus(). preventScroll joined it on 2026-09-14: the menu used to live inside
+// .area-tabs, which is overflow-x: auto, and focusing the highlighted item made the browser scroll the segment
+// strip to reveal it, leaving the row showing one scrolled segment. The menu is portalled out of the strip now,
+// but the argument stays, because a focus() a browser decides to "reveal" can scroll any ancestor that scrolls.
+assert.match(createSegment, /itemRefs\.current\[highlight\]\?\.focus\(\{ preventScroll: true \}\)/,
+  'the highlighted item actually holds focus, and taking it never scrolls a container underneath');
+assert.match(styles, /\.area-tabs-create-menu button\.is-highlighted/,
+  'the highlighted item is visibly marked, not only focused');
+
+// --- the Your assistant chip and Help open menus on the same keyboard contract -----------------------
+// Both grew from a plain button when the gear left the header, so they must follow the contract the Create
+// segment already set: Enter or ArrowDown opens, arrows move, Enter picks, Escape closes and hands focus
+// back. A menu you can only reach with a mouse is not a replacement for a header button.
+const activity = read('webview/src/activity.tsx');
+const help = read('webview/src/help.tsx');
+for (const [name, source, button] of [['Your assistant', activity, 'chipRef'], ['Help', help, 'buttonRef']]) {
+  assert.match(source, /aria-haspopup="menu"/, `${name} announces that it opens a menu`);
+  assert.match(source, /aria-expanded=\{open\}/, `${name} announces whether the menu is open`);
+  assert.match(source, /role="menu"/, `${name} renders a real menu of menu items`);
+  assert.match(source, /e\.key === 'Enter' \|\| e\.key === ' ' \|\| e\.key === 'ArrowDown'/,
+    `Enter, Space and ArrowDown all open ${name}`);
+  assert.match(source, /key === 'ArrowDown'[\s\S]{0,200}key === 'ArrowUp'/,
+    `arrow keys move the highlight inside ${name}`);
+  assert.match(source, /key === 'Escape'[\s\S]{0,140}closeAndReturnFocus/,
+    `Escape closes ${name} and hands focus back`);
+  assert.match(source, new RegExp(`closeAndReturnFocus = \\(\\) => \\{ setOpen\\(false\\); ${button}\\.current\\?\\.focus\\(\\); \\}`),
+    `${name} returns focus to the control you opened, never to the document`);
+  assert.match(source, /itemRefs\.current\[highlight\]\?\.focus\(\)/,
+    `the highlighted item in ${name} actually holds focus`);
+}
+assert.match(styles, /\.studio-chip-menu button\.is-highlighted/,
+  'the highlighted item in a header chip menu is visibly marked, not only focused');
+
+// --- Astra finding 4: the live feed is a focus target of its own -------------------------------------
+// Picking Live activity REPLACES the menu with the feed, so focusing the menu on the way out put the ring on a
+// node that was about to unmount and it fell to the document. Escape is handled on the feed, which never had
+// focus, so the feed stayed open behind an expanded chip with no keyboard way out.
+assert.match(activity, /const feedRef = useRef<HTMLDivElement>\(null\);/, 'the feed needs a ref to focus');
+assert.match(activity, /if \(view === 'feed'\) \{ feedRef\.current\?\.focus\(\); return; \}/,
+  'the focus effect moves the ring INTO the newly mounted feed');
+assert.doesNotMatch(activity, /item\.id === 'feed'[^\n]*menuRef\.current\?\.focus\(\)/,
+  'picking the feed must not focus the menu it is about to unmount');
+assert.match(activity, /ref=\{feedRef\} tabIndex=\{-1\}/, 'the feed is focusable so its own Escape handler receives keys');
+assert.match(activity, /key === 'Tab'\) \{ e\.preventDefault\(\); closeAndReturnFocus\(\); \}/,
+  'Tab dismisses the menu to its chip instead of stranding focus on an unmounting row');
+
+
+// --- Astra spot review 3 (2026-09-14): a popover may not survive losing the keyboard ----------------
+// Open the page notes with Space, press Tab once, press Escape: focus moved into the tool behind the notes,
+// so Escape belonged to that tool and the notes stayed over the canvas with no keyboard way out. Reproduced on
+// Overview, Diagram and Lineage. The same shape on Live activity: Tab out of the feed and Escape did nothing
+// while the chip still read aria-expanded="true". Two rules close it: a small dialog keeps Tab inside itself,
+// and any popover that loses focus to something outside itself closes. The behaviour is proved in the browser
+// by tools/uishot/shell-journey.mjs; these patterns pin the decision in the source.
+const helpSrc = read('webview/src/help.tsx');
+const activitySrc = read('webview/src/activity.tsx');
+
+assert.match(helpSrc, /function PageNotesButton[\s\S]{0,3000}onBlur=\{/,
+  'the page notes must close when focus leaves them, not only on Escape');
+assert.match(helpSrc, /document\.hasFocus\(\)/,
+  'but a window losing focus is not a person leaving the notes, so that case is excluded');
+assert.match(helpSrc, /relatedTarget/,
+  'the decision is where focus actually went, not merely that it left an element');
+assert.match(helpSrc, /if \(e\.key !== 'Tab'\) return;/,
+  'Tab is handled by the notes dialog itself');
+assert.match(helpSrc, /stops\[stops\.length - 1\]/,
+  'and Shift+Tab from the dialog wraps to the last stop inside it, never to the page behind');
+assert.match(helpSrc, /studio-page-notes-close/,
+  'the dialog has a close affordance, so trapping Tab always has somewhere to put the ring');
+
+assert.match(activitySrc, /onBlur=\{/,
+  'the assistant chip popovers close when focus leaves the surface');
+assert.match(activitySrc, /relatedTarget/,
+  'decided by where focus went, so a click or Tab inside the feed never closes it');
+assert.match(activitySrc, /Tab stays native/,
+  'the feed still lets Tab walk its entries: it is a list, not a dialog');
 
 console.log('keyboard and grids tests passed');

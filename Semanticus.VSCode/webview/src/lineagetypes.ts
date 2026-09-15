@@ -113,6 +113,16 @@ export function resolveColor(v: string | undefined, fallback = '#9aa0aa'): strin
 // small margin). Recomputes on viewport resize via a ResizeObserver on the document element (fires when the VS Code
 // panel / webview resizes) plus a window resize listener; `extraDeps` forces a remeasure when toolbars above it grow
 // (e.g. a control row wraps). Put the returned ref on the chart's wrapper div and feed the height to the chart.
+// Nearest ancestor that actually scrolls. The lineage panes live inside the shell's scrolling <main>, which stops
+// above the context bar; the window bottom is NOT where their visible space ends.
+function scrollHost(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if (oy === 'auto' || oy === 'scroll') return p;
+  }
+  return null;
+}
+
 export function useFillHeight(minH = 420, extraDeps: unknown[] = []): [(el: HTMLDivElement | null) => void, number] {
   const elRef = useRef<HTMLDivElement | null>(null);
   const [h, setH] = useState(minH);
@@ -120,10 +130,20 @@ export function useFillHeight(minH = 420, extraDeps: unknown[] = []): [(el: HTML
   const recompute = useCallback(() => {
     const el = elRef.current; if (!el) return;
     const top = el.getBoundingClientRect().top;   // viewport-relative — shrinks (can go negative) when <main> is scrolled
-    // Cap at the viewport (minus a header allowance) so a measurement taken while the scroll container is scrolled
+    // Fill to the bottom of the SCROLLING ANCESTOR, not to window.innerHeight. The shell's <main> ends where the
+    // context bar begins, so measuring against the window overshot by the bar's height and pushed the canvas (and the
+    // minimap pinned to its bottom-right) below the visible area. `minH` is a floor only while the space allows it:
+    // a floor taller than the room available is what put the box out of view in the first place.
+    const host = scrollHost(el);
+    const hostRect = host?.getBoundingClientRect();
+    const hostPad = host ? parseFloat(getComputedStyle(host).paddingBottom) || 0 : 0;
+    const bottom = Math.min(hostRect ? hostRect.bottom - hostPad : window.innerHeight, window.innerHeight);
+    const hostH = hostRect ? hostRect.height : window.innerHeight;
+    const avail = Math.round(bottom - top - 16);
+    // Cap at the host height (minus a header allowance) so a measurement taken while the scroll container is scrolled
     // can't overshoot into a taller-than-window chart. The cap only binds when top < ~56px (i.e. scrolled); at rest
     // (toolbars push top well below that) the exact fill-to-bottom value is used.
-    const next = Math.max(minH, Math.min(Math.round(window.innerHeight - top - 16), Math.round(window.innerHeight - 72)));
+    const next = Math.max(200, Math.min(minH, avail), Math.min(avail, Math.round(hostH - 72)));
     setH((prev) => (Math.abs(prev - next) > 1 ? next : prev));   // guard: avoid a resize→setState→resize loop
   }, [minH]);
 

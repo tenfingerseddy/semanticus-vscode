@@ -73,7 +73,10 @@ const CHIP_FIELDS = new Set(['name', 'expression', 'rlsFilter', 'mExpression', '
 // chip carrying everything its label promises instead of losing field hits to the kind chips.
 const isOtherHit = (h: Hit) => !TYPE_CHIPS.some((c) => c.match(h)) || !CHIP_FIELDS.has(h.field);
 
-export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: string; nonce: number } | null; onOpenPlan?: () => void }) {
+export function SearchView({ sessionId, navQuery, onNavConsumed, onOpenPlan }: {
+  sessionId: string; navQuery?: { query: string; scope?: string; nonce: number } | null;
+  onNavConsumed?: (nonce: number) => void; onOpenPlan?: () => void;
+}) {
   // Query state is persisted so a round-trip through another tab (e.g. reviewing a Replace-all plan on the
   // Change Plan tab) comes back to the same search, not a blank box.
   const [find, setFindRaw] = useState(() => loadState<string>('searchFind', ''));
@@ -100,6 +103,9 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
   const [busyAll, setBusyAll] = useState(false);
   // Selected type-filter chips (empty = All). Persisted like other tab state so the filter survives hide/show.
   const [typeFilter, setTypeFilter] = useState<string[]>(() => loadState<string[]>('searchTypeFilter', []));
+  const scopeKey = 'searchScope.' + sessionId;
+  const [scope, setScopeRaw] = useState<string | null>(() => loadState<string | null>(scopeKey, null));
+  const setScope = (value: string | null) => { setScopeRaw(value); saveState(scopeKey, value); setPreview(null); };
   useEffect(() => { saveState('searchTypeFilter', typeFilter); }, [typeFilter]);
   const timer = useRef<number | undefined>(undefined);
   const findRef = useRef<HTMLInputElement | null>(null);
@@ -115,6 +121,8 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
   useEffect(() => {
     if (!navQuery) return;
     if (navQuery.query) setFind(navQuery.query);
+    setScope(navQuery.scope ?? null);
+    onNavConsumed?.(navQuery.nonce);
     const raf = requestAnimationFrame(() => { findRef.current?.focus(); findRef.current?.select(); });
     return () => cancelAnimationFrame(raf);
   }, [navQuery?.nonce]);
@@ -183,23 +191,25 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
     finally { setBusyAll(false); }
   }
 
-  // Per-chip match counts over the returned hits (what the list can actually show — the total line covers truncation).
+  const scopeTable = scope?.startsWith('table:') ? scope.slice('table:'.length) : null;
+  const scopedHits = useMemo(() => (result?.hits ?? []).filter((hit) => !scopeTable || hit.table === scopeTable || hit.ref === scope), [result, scope, scopeTable]);
+  // Per-chip match counts over the returned hits in the current object scope.
   const chipCounts = useMemo(() => {
     const counts: Record<string, number> = { other: 0 };
     for (const c of TYPE_CHIPS) counts[c.key] = 0;
-    for (const h of result?.hits ?? []) {
+    for (const h of scopedHits) {
       for (const c of TYPE_CHIPS) if (c.match(h)) counts[c.key]++;
       if (isOtherHit(h)) counts.other++;   // same predicate the filter uses — the count is exactly what the chip shows
     }
     return counts;
-  }, [result]);
+  }, [scopedHits]);
 
   const visibleHits = useMemo(() => {
-    const hits = result?.hits ?? [];
+    const hits = scopedHits;
     if (typeFilter.length === 0) return hits;
     const sel = new Set(typeFilter);
     return hits.filter((h) => TYPE_CHIPS.some((c) => sel.has(c.key) && c.match(h)) || (sel.has('other') && isOtherHit(h)));
-  }, [result, typeFilter]);
+  }, [scopedHits, typeFilter]);
 
   const toggleType = (key: string) => setTypeFilter((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
 
@@ -212,14 +222,19 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
   return (
     <div className="sem-evidence-page sem-centered-page flex flex-col gap-3 min-w-0">
       {/* Query bar */}
+      {scopeTable && <div className="search-scope"><span>Searching in table <strong>{scopeTable}</strong></span><button type="button" onClick={() => setScope(null)}>Search all tables</button></div>}
       <div className="rounded-xl border p-3 flex flex-col gap-2" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
         <div className="flex items-center gap-2">
           <input ref={findRef} autoFocus value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in names, descriptions, folders…"
             className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg outline-none"
             style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-          <Toggle on={caseSensitive} onClick={() => setMode(setCase)(!caseSensitive)} title="Match case">Aa</Toggle>
-          <Toggle on={wholeWord} onClick={() => setMode(setWord)(!wholeWord)} title="Whole word">\b</Toggle>
-          <Toggle on={regex} onClick={() => setMode(setRegex)(!regex)} title="Regular expression">.*</Toggle>
+          {/* These said "Aa", "\b" and ".*". Two of the three were bare regex tokens with nothing a person
+              could read, so they say what they do now and share the app's one selected-state look. */}
+          <div className="sem-seg shrink-0 flex-wrap" role="group" aria-label="How to match what you typed">
+            <button type="button" className="sem-seg-item" aria-pressed={caseSensitive} onClick={() => setMode(setCase)(!caseSensitive)} title="Match case: treat capitals and lower case as different.">Match case</button>
+            <button type="button" className="sem-seg-item" aria-pressed={wholeWord} onClick={() => setMode(setWord)(!wholeWord)} title="Whole word: only match the word on its own, not inside a longer word.">Whole word</button>
+            <button type="button" className="sem-seg-item" aria-pressed={regex} onClick={() => setMode(setRegex)(!regex)} title="Regular expression: read what you typed as a search pattern.">Regular expression</button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <input value={replace} onChange={(e) => setReplace(e.target.value)} placeholder="Replace with…"
@@ -228,8 +243,8 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
           <label className="flex items-center gap-1.5 text-[11px] whitespace-nowrap" style={{ color: 'var(--sem-muted)' }} title="Also search DAX formulas, M/query code and security filters (power-user fields)">
             <input type="checkbox" checked={includePower} onChange={(e) => setPower(e.target.checked)} /> Include DAX &amp; M
           </label>
-          <button onClick={() => void replaceAll()} disabled={busyAll || find.trim().length < 2 || !result || result.total === 0}
-            title="Plans every match of this search (the type filter chips do not narrow it) as a reviewable change list. Nothing changes until you apply it there."
+          <button onClick={() => void replaceAll()} disabled={busyAll || !!scopeTable || find.trim().length < 2 || !result || result.total === 0}
+            title={scopeTable ? 'Search all tables before planning a model-wide replacement.' : 'Plans every match of this search as a reviewable change list. Nothing changes until you apply it there.'}
             className="text-[11px] px-2.5 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
             style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
             {busyAll ? 'Planning…' : 'Replace all…'}
@@ -241,10 +256,10 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
       {note && <Banner color="var(--sem-good)">{note}</Banner>}
 
       {/* Filter by result type — multi-select chips with counts; All resets. */}
-      {result && result.total > 0 && (
+      {result && scopedHits.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] mr-1" style={{ color: 'var(--sem-muted)' }}>
-            {result.total} match{result.total === 1 ? '' : 'es'}{result.truncated ? ' (showing the first ' + result.hits.length + ')' : ''}
+            {scopeTable ? `${scopedHits.length} shown in ${scopeTable}` : `${result.total} match${result.total === 1 ? '' : 'es'}${result.truncated ? ' (showing the first ' + result.hits.length + ')' : ''}`}
           </span>
           <FilterChip on={typeFilter.length === 0} onClick={() => setTypeFilter([])}>All</FilterChip>
           {TYPE_CHIPS.filter((c) => chipCounts[c.key] > 0 || typeFilter.includes(c.key)).map((c) => (
@@ -261,8 +276,10 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
         <Hint>Type at least 2 characters. Tick “Include DAX &amp; M” to search formulas and query code.</Hint>
       ) : !result || result.total === 0 ? (
         <Hint>{err ? '' : `No matches for “${find.trim()}”. Try turning off whole-word, or Include DAX & M.`}</Hint>
+      ) : scopedHits.length === 0 ? (
+        <Hint>No matches for “{find.trim()}” in {scopeTable}. Search all tables to see the other results.</Hint>
       ) : visibleHits.length === 0 ? (
-        <Hint>All {result.total} matches are hidden by the type filter above. Click All to show every match.</Hint>
+        <Hint>All {scopedHits.length} matches are hidden by the type filter above. Click All to show every match.</Hint>
       ) : (
         groups.map(([cls, hits]) => (
           <div key={cls} className="rounded-xl border" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
@@ -297,10 +314,8 @@ export function SearchView({ navQuery, onOpenPlan }: { navQuery?: { query: strin
                       {h.replaceable
                         ? <button onClick={() => void previewReplace(h, key)}
                             title="Preview this change before it happens"
-                            className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-                            style={preview?.key === key
-                              ? { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-accent)' }
-                              : { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Replace</button>
+                            className={preview?.key === key ? 'sem-btn sem-btn-sm' : 'sem-btn sem-btn-sm sem-btn-primary'}
+                            style={preview?.key === key ? { borderColor: 'var(--sem-accent)' } : undefined}>Replace</button>
                         : <span className="text-[10px] max-w-[220px] text-right" style={{ color: 'var(--sem-muted)' }} title={h.replaceHint}>read-only</span>}
                     </div>
                     {preview?.key === key && (
@@ -391,17 +406,6 @@ function highlight(snippet: string, find: string, regex: boolean) {
   return <>{parts}</>;
 }
 
-function Toggle({ children, on, onClick, title }: { children: React.ReactNode; on: boolean; onClick: () => void; title: string }) {
-  return (
-    <button onClick={onClick} title={title}
-      className="text-[12px] w-7 h-7 rounded-md font-mono transition-opacity"
-      style={on
-        ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }
-        : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-      {children}
-    </button>
-  );
-}
 function FilterChip({ children, on, onClick }: { children: React.ReactNode; on: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick}

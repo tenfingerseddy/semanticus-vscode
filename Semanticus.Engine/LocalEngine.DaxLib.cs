@@ -10,8 +10,9 @@ namespace Semanticus.Engine
     /// <summary>
     /// The DaxLib UDF package-manager ops (Studio v2 Advanced Modelling, 6th area) — dual-drive (RPC + MCP), the same
     /// as every other capability. Browse/versions/info are anonymous READ-ONLY network calls (no session, no model
-    /// needed); install/uninstall/list operate on the open model. <b>install is the bulk primitive → Pro-gated</b>
-    /// (it authors many UDFs as one atomic, undoable transaction; Free authors them one at a time with create_function).
+    /// needed); install/uninstall/list operate on the open model. All six belong to Advanced Modelling, which is a
+    /// Pro feature as a whole, reads included (Kane 2026-09-15). install authors many UDFs as one atomic, undoable
+    /// transaction.
     /// All network I/O happens BEFORE the model lock — <see cref="ModelSession.MutateAsync"/> only ever runs synchronous
     /// TOM mutation. Once installed, the functions are ordinary TOM UDFs with no runtime DaxLib dependency.
     /// </summary>
@@ -20,13 +21,20 @@ namespace Semanticus.Engine
         private static readonly CancellationToken DaxLibCt = CancellationToken.None;   // the feed has its own 100s timeout
 
         public Task<DaxLibPackage[]> DaxLibSearchAsync(string text, int skip, int take)
-            => DaxLibRest.SearchAsync(text, skip, take, DaxLibCt);
+        {
+            RequireProFeature();
+            return DaxLibRest.SearchAsync(text, skip, take, DaxLibCt);
+        }
 
         public Task<string[]> DaxLibVersionsAsync(string id)
-            => DaxLibRest.VersionsAsync(id, DaxLibCt);
+        {
+            RequireProFeature();
+            return DaxLibRest.VersionsAsync(id, DaxLibCt);
+        }
 
         public async Task<DaxLibPackageDetail> DaxLibPackageInfoAsync(string id, string version)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
             var ver = await ResolveVersionAsync(id, version, DaxLibCt).ConfigureAwait(false);
             DaxLibMetadata meta = null;
@@ -55,9 +63,8 @@ namespace Semanticus.Engine
 
         public async Task<DaxLibInstallResult> DaxLibInstallAsync(string id, string version, bool replaceExisting, string origin)
         {
-            // FREE (Kane, 2026-07-04 — was Pro-gated at launch of the lane): installing community UDFs is
-            // top-of-funnel adoption, not the enforcement/bulk-referee value Pro charges for. Still one
-            // atomic, undoable batch.
+            RequireProFeature();
+            // One atomic, undoable batch.
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
 
             var s = _sessions.Require();   // a model must be open to install into
@@ -134,6 +141,7 @@ namespace Semanticus.Engine
 
         public Task<DaxLibInstalledRecord[]> DaxLibListInstalledAsync()
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m => DaxLibStore.Load(m).ToArray());
         }
@@ -142,6 +150,7 @@ namespace Semanticus.Engine
         // free; trapping installed UDFs behind a paywall would be hostile, like un-waiving a finding is never gated).
         public async Task<SetResult> DaxLibUninstallAsync(string id, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_list_installed shows the packages recorded in this model and their ids.");
             var s = _sessions.Require();
             var changed = false;

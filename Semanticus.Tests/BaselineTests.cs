@@ -10,9 +10,10 @@ namespace Semanticus.Tests
 {
     /// <summary>
     /// Value-capture-at-edit-start (capture_baseline / compare_baseline) — the RESTRUCTURE pipeline's
-    /// load-bearing primitive. Offline contract pinned here: FREE on both ops (Kane 2026-07-07 — the
-    /// manual capture/compare safety net must never be gated; only ambient auto-capture + blame_value
-    /// are Pro); structured refusals (no-connection / not-found), never a crash; blast-radius target
+    /// load-bearing primitive. Offline contract pinned here: BOTH OPS ARE PRO (Kane 2026-09-15: they are
+    /// part of the whole Tests feature; the old split, where the manual side was free and the ambient
+    /// capture side was Pro, is gone and blame_value/list_value_history are free now);
+    /// structured refusals (no-connection / not-found), never a crash; blast-radius target
     /// selection is deterministic (self-inclusion for a measure root, unresolvable ref throws, capped
     /// overflow is REPORTED); the pure diff uses equivalence semantics (numeric tolerance, blank ≠ 0,
     /// a context present on one side only IS a moved number) and discloses truncated coverage. The live
@@ -34,35 +35,26 @@ namespace Semanticus.Tests
             return e;
         }
 
-        // ---- free tier + structured refusals ----
+        // ---- the tier line + structured refusals ----
 
-        // Pins the 2026-07-07 gate line: the MANUAL safety net is free. A free-tier capture/compare must
-        // never throw an EntitlementException — offline it reaches the honest structured refusal instead
-        // (no-connection / not-found). If this test starts failing with a gate throw, someone re-locked
-        // the pre-2026-07-07 bug.
+        // Both ops belong to the Tests feature now, so the entitled caller still gets the HONEST structured
+        // refusal offline (no-connection / not-found) and the free caller is turned away at the entry with the
+        // one refusal sentence. A gate throw on the entitled side would mean the gate leaked past its feature.
         [Fact]
-        public async Task Both_ops_are_free_and_refuse_honestly_offline()
+        public async Task Both_ops_are_pro_and_still_refuse_honestly_offline()
         {
-            using var e = await OpenAsync(pro: false);
+            using var e = await OpenAsync();
             var cap = await e.CaptureBaselineAsync("measure:Date/Days In Current Quarter", null, null, true, 25, 2000, null, "human");
             Assert.Equal("no-connection", cap.Status);
             var cmp = await e.CompareBaselineAsync(null, null, "human");
             Assert.Equal("not-found", cmp.Status);
-        }
 
-        // The FULL 2026-07-07 gate line in one place: manual capture/compare = FREE; the automatic side
-        // (ambient vital-signs capture + blame_value + list_value_history, feature #3) = Pro with a SOFT
-        // gate — free callers get Status="pro" + a plain invitation, never an EntitlementException.
-        // Deep coverage lives in ValueBlameTests; this pins the tier split next to the free half it names.
-        [Fact]
-        public async Task Automatic_what_moved_side_is_pro_soft_while_manual_stays_free()
-        {
-            using var e = await OpenAsync(pro: false);
-            var blame = await e.BlameValueAsync("measure:Date/Days In Current Quarter", null, null, "human");
-            Assert.Equal("pro", blame.Status);
-            Assert.Contains("capture a baseline", blame.Note);   // the invitation names the free manual path
-            var hist = await e.ListValueHistoryAsync("measure:Date/Days In Current Quarter", null);
-            Assert.Equal("pro", hist.Status);
+            using var free = await OpenAsync(pro: false);
+            var capRefusal = await Assert.ThrowsAsync<EntitlementException>(() =>
+                free.CaptureBaselineAsync("measure:Date/Days In Current Quarter", null, null, true, 25, 2000, null, "human"));
+            Assert.Contains("Tests is a Semanticus Pro feature.", capRefusal.Message);
+            var cmpRefusal = await Assert.ThrowsAsync<EntitlementException>(() => free.CompareBaselineAsync(null, null, "human"));
+            Assert.Contains("Tests is a Semanticus Pro feature.", cmpRefusal.Message);
         }
 
         [Fact]

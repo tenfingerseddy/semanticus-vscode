@@ -169,7 +169,7 @@ namespace Semanticus.Engine.Lineage
                         var ro = (ITabularObject)r;
                         if (seen.Add(ro))
                         {
-                            impacted.Add(NodeOf(ro, d + 1, r is TablePermission ? "rls" : "dax"));
+                            impacted.Add(NodeOf(ro, d + 1, r is TablePermission ? "rls" : "dax", obj));
                             queue.Enqueue((ro, d + 1));
                         }
                     }
@@ -177,22 +177,22 @@ namespace Semanticus.Engine.Lineage
 
                 if (obj is Column col)                                  // structural dependants (columns only)
                 {
-                    foreach (var r in col.UsedInRelationships) if (seen.Add(r)) impacted.Add(NodeOf(r, d + 1, "relationship"));
-                    foreach (var h in col.UsedInHierarchies) if (seen.Add(h)) impacted.Add(NodeOf(h, d + 1, "hierarchy"));
-                    foreach (var sc in col.UsedInSortBy) if (seen.Add(sc)) { impacted.Add(NodeOf(sc, d + 1, "sortBy")); queue.Enqueue((sc, d + 1)); }
-                    foreach (var v in col.UsedInVariations) if (seen.Add(v)) impacted.Add(NodeOf(v, d + 1, "variation"));
-                    foreach (var a in col.UsedInAlternateOfs) if (seen.Add(a)) impacted.Add(NodeOf(a, d + 1, "aggregation"));
+                    foreach (var r in col.UsedInRelationships) if (seen.Add(r)) impacted.Add(NodeOf(r, d + 1, "relationship", obj));
+                    foreach (var h in col.UsedInHierarchies) if (seen.Add(h)) impacted.Add(NodeOf(h, d + 1, "hierarchy", obj));
+                    foreach (var sc in col.UsedInSortBy) if (seen.Add(sc)) { impacted.Add(NodeOf(sc, d + 1, "sortBy", obj)); queue.Enqueue((sc, d + 1)); }
+                    foreach (var v in col.UsedInVariations) if (seen.Add(v)) impacted.Add(NodeOf(v, d + 1, "variation", obj));
+                    foreach (var a in col.UsedInAlternateOfs) if (seen.Add(a)) impacted.Add(NodeOf(a, d + 1, "aggregation", obj));
                 }
 
                 if (obj is Table tbl)                                   // a table root impacts its own children (+ their dependants)
                 {
                     foreach (var c in tbl.Columns.Where(c => c.Type != ColumnType.RowNumber))
-                        if (seen.Add(c)) { impacted.Add(NodeOf(c, d + 1, "contains")); queue.Enqueue((c, d + 1)); }
+                        if (seen.Add(c)) { impacted.Add(NodeOf(c, d + 1, "contains", obj)); queue.Enqueue((c, d + 1)); }
                     foreach (var ms in tbl.Measures)
-                        if (seen.Add(ms)) { impacted.Add(NodeOf(ms, d + 1, "contains")); queue.Enqueue((ms, d + 1)); }
+                        if (seen.Add(ms)) { impacted.Add(NodeOf(ms, d + 1, "contains", obj)); queue.Enqueue((ms, d + 1)); }
                     if (tbl is CalculationGroupTable cg)
                         foreach (var ci in cg.CalculationItems)
-                            if (seen.Add(ci)) { impacted.Add(NodeOf(ci, d + 1, "contains")); queue.Enqueue((ci, d + 1)); }
+                            if (seen.Add(ci)) { impacted.Add(NodeOf(ci, d + 1, "contains", obj)); queue.Enqueue((ci, d + 1)); }
                 }
             }
 
@@ -267,7 +267,9 @@ namespace Semanticus.Engine.Lineage
             var deep = rb.Count == 0 ? null : rb.Deep();
             if (deep != null && (UsedInRls(deep) || UsedInCalcItem(deep) || AnyVisibleReferencer(deep))) return null;
             return Verdict(ms, "measure", ms.Table?.Name, ms.IsHidden, rb, deep,
-                "No model object references this measure.");
+                reportUsedRefs != null
+                    ? "Nothing in the model uses this measure, and it was not found in the reports that were checked."
+                    : "Nothing in the model uses this measure. No report has been checked.");
         }
 
         private static UnusedItem EvaluateColumn(Column c, HashSet<Column> structural, ISet<string> reportUsedRefs)
@@ -284,7 +286,9 @@ namespace Semanticus.Engine.Lineage
             var deep = rb.Count == 0 ? null : rb.Deep();
             if (deep != null && (UsedInRls(deep) || UsedInCalcItem(deep) || AnyVisibleReferencer(deep))) return null;
             return Verdict(c, c is CalculatedColumn ? "calcColumn" : "column", c.Table?.Name, c.IsHidden, rb, deep,
-                "No measure / relationship / hierarchy / sort-by / variation / aggregation / OLS uses this column (model-only).");
+                reportUsedRefs != null
+                    ? "Nothing in the model uses this column, and it was not found in the reports that were checked."
+                    : "Nothing in the model uses this column. No report has been checked.");
         }
 
         private static UnusedItem Verdict(ITabularNamedObject obj, string kind, string table, bool hidden,
@@ -295,9 +299,16 @@ namespace Semanticus.Engine.Lineage
             else if (deep != null && HasUnclassifiableReferencer(deep))
             {
                 verdict = "caution";
-                reason = "Referenced by an object whose live-ness can't be determined offline (e.g. a partition data-coverage expression). Verify before removing.";
+                reason = "Used by a data-loading step. Open that step to check whether it needs this field.";
             }
-            else { verdict = "usedByUnusedOnly"; reason = "Referenced only by objects that are themselves unused (hidden/dead)."; }
+            else
+            {
+                verdict = "usedByUnusedOnly";
+                var by = ReferrerLabels(rb);
+                reason = by.Length > 0
+                    ? "Used by " + string.Join(", ", by.Take(3)) + ". No use of " + (by.Length == 1 ? "it" : "those") + " was found in these checks. Recheck after removing " + (by.Length == 1 ? "it" : "them") + "."
+                    : "Used only by things that are themselves unused. Recheck after removing them.";
+            }
 
             return new UnusedItem
             {
@@ -422,6 +433,16 @@ namespace Semanticus.Engine.Lineage
         // reports for a different model — might use the field). Flip those items to the tri-state "caution" (the same
         // posture the offline sweep uses for an unclassifiable referencer) and recount, so neither door can act on a
         // false "safe". Leaves usedByUnusedOnly / already-caution items untouched.
+        /// <summary>R1: a chosen report that has not been read is MISSING coverage, and a sweep computed without it
+        /// must not present its "safe" set as safe. This is the same demotion an unreadable report already causes;
+        /// it is internal so the report scope can apply it for a report nobody has read yet.</summary>
+        internal static UnusedResult WithMissingCoverage(UnusedResult r, string reason, string caveat)
+        {
+            var demoted = DemoteSafeToCaution(r, reason);
+            demoted.Caveat = string.IsNullOrEmpty(caveat) ? demoted.Caveat : caveat;
+            return demoted;
+        }
+
         private static UnusedResult DemoteSafeToCaution(UnusedResult r, string reason)
         {
             foreach (var i in r.Items)
@@ -550,13 +571,17 @@ namespace Semanticus.Engine.Lineage
               .Take(12)
               .ToArray();
 
-        private static ImpactNode NodeOf(ITabularObject o, int depth, string via) => new ImpactNode
+        // `through` is the object this one was reached THROUGH, at depth > 1. The page says "via Margin" with it,
+        // instead of the old "depth 2" - which told a person nothing they could act on.
+        private static ImpactNode NodeOf(ITabularObject o, int depth, string via, ITabularObject through = null) => new ImpactNode
         {
             Ref = ObjectRefs.For(o),
             Name = (o as ITabularNamedObject)?.Name,
             Kind = o is CalculatedColumn ? "calcColumn" : ObjectRefs.KindOf(o),   // match the graph-side kind + UI glyph
             Depth = depth,
             Via = via,
+            ViaName = depth > 1 ? (through as ITabularNamedObject)?.Name : null,
+            Table = (o as ITabularTableObject)?.Table?.Name,
         };
 
         private static string TableKind(Table t) =>

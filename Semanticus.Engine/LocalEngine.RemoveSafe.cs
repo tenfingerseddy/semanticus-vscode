@@ -15,14 +15,23 @@ namespace Semanticus.Engine
     ///    single-writer mutation delegate — a verdict that went stale since the caller's scan (a new referencer
     ///    from either door, a report now using the field) downgrades the item to SKIPPED, never a stale delete;
     ///  • one append-only audit record carries the evidence (what was removed, what was skipped and why);
-    ///  • removing MORE THAN ONE item at once is Pro (the bulk/atomic primitive); a single item stays free —
-    ///    same per-item path delete_object offers.
+    ///  • the whole sweep is free, one item or a hundred (Kane 2026-09-15); delete_object is still the per-item
+    ///    path for anyone who wants it.
     /// Dry-runnable by design: the pre-pass is a read, the deletes ride one MutateAsync (the dry_run chokepoint),
     /// and the audit/activity writers are DryRunScope-guarded, so dry_run(remove_safe_objects) rehearses the whole
     /// sweep — including the would-be removed/skipped report — and leaves nothing.
     /// </summary>
     public sealed partial class LocalEngine
     {
+        /// <summary>B2: the removal's own way out of its mutation turn. It is thrown INSIDE the single-writer
+        /// delegate, so MutateAsync rolls the (still empty) batch back and never bumps the revision or publishes a
+        /// change, which is the honest shape for "nothing happened". It never escapes RemoveSafeObjectsAsync: the catch
+        /// turns it into the ordinary refusal report, carrying the sentence it was thrown with.</summary>
+        private sealed class ScopeMovedDuringRemoval : Exception
+        {
+            public ScopeMovedDuringRemoval(string message) : base(message) { }
+        }
+
         public async Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin)
         {
             var s = _sessions.Require();
@@ -30,22 +39,54 @@ namespace Semanticus.Engine
             // Report definitions are parsed OFF the dispatcher once (file IO, same leg as analyze_reports); the
             // candidate pass and the at-apply re-verification then run the SAME report-aware sweep, so "safe"
             // means the same thing at scan and at apply. No paths = the model-only sweep (with its honesty caveat).
-            var parsed = (reportPaths ?? Array.Empty<string>())
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .Select(p => (path: p, result: Lineage.ReportDefinitionReader.ReadLocalPbir(p)))
-                .ToList();
+            // The model's OWN report scope is the default basis, so a sweep is checked against exactly the reports
+            // the page and the assistant were shown (Astra's UAT: a cloud-checked report was invisible here, and a
+            // field it displayed could be deleted). Explicit reportPaths are folded in on top for a caller that has
+            // a local folder in hand.
+            // B2: ONE reading of the basis, kept whole. The candidate pass below is built from it, and the SAME
+            // basis is re-taken inside the mutation to prove the selection did not move underneath the answer.
+            var reviewedBasis = CaptureScopeBasis(s);
+            var coverage = reviewedBasis.Coverage;
+            var parsed = coverage.Parts.Count > 0
+                ? coverage.Parts.ToList()
+                : new List<(string path, string error, Lineage.ReportDefinitionReader.ParseResult result)>();
+            foreach (var p in (reportPaths ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                if (parsed.Any(x => string.Equals(x.path, p, StringComparison.OrdinalIgnoreCase))) continue;
+                var pr = Lineage.ReportDefinitionReader.ReadLocalPbir(p);
+                parsed.Add((p, pr.DefinitionFound ? null : "No readable report definition was found at that path.", pr));
+            }
             UnusedResult Sweep(Model m) => parsed.Count == 0
                 ? Lineage.LineageGraph.Unused(m)
                 : Lineage.LineageGraph.AnalyzeReports(m, parsed).Unused;
-            // The verification label counts reports actually READ (DefinitionFound), never paths supplied — a
-            // sweep must not claim report-awareness on the strength of unreadable files.
-            var readable = parsed.Count(p => p.result.DefinitionFound);
+            // The verification label counts reports actually READ (DefinitionFound and no error), never paths
+            // supplied — a sweep must not claim report-awareness on the strength of unreadable files.
+            var readable = parsed.Count(p => p.result.DefinitionFound && p.error == null);
             var verification = parsed.Count == 0 ? "model-only"
-                : $"report-aware ({readable} of {parsed.Count} report file(s) readable)";
+                : $"report-aware ({readable} of {parsed.Count} report(s) readable)";
 
             var requested = (refs ?? Array.Empty<string>())
                 .Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            // R1. Reports were CHOSEN for this model and at least one of them has not been read. The protection
+            // was asked for and has not been established, so this is not a model-only sweep that happens to have
+            // no reports: it is a sweep whose intended basis is missing. Refuse it, in the one sentence both
+            // doors say, before anything is touched.
+            if (coverage.HasChoices && !coverage.Complete)
+                return new RemoveSafeReport
+                {
+                    Revision = s.Revision,
+                    Skipped = requested.Select(r => new SkippedObject
+                    {
+                        Ref = r,
+                        Reason = "a report chosen for this model has not been checked yet, so its use of this field is not known.",
+                    }).ToArray(),
+                    Count = 0,
+                    Verification = "reports chosen, " + coverage.Read + " of " + coverage.Chosen + " read",
+                    Caveat = coverage.Caveat,
+                    Note = ReportScopeCoverage.NothingRemoved,
+                };
 
             // FAIL-LOUD: the caller passed report paths for PROTECTION, and none could be read — a "report-aware"
             // sweep would silently degrade to model-only and could delete a field the intended report uses. Refuse
@@ -88,13 +129,6 @@ namespace Semanticus.Engine
                 return (picked, sweep.Caveat);
             });
 
-            // Pro gate — the bulk/atomic primitive. Thrown BEFORE any mutation, so a refusal leaves the model
-            // intact; a single item (or the per-item delete_object path) stays free.
-            if (candidates.Count > 1)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement,
-                    $"Removing {candidates.Count} objects in one sweep",
-                    $"Each item can be deleted one at a time free (delete_object); Pro removes all {candidates.Count} verified-safe items in one undoable step.");
-
             if (candidates.Count == 0)
                 return new RemoveSafeReport
                 {
@@ -109,38 +143,72 @@ namespace Semanticus.Engine
             // delegate, immediately before the deletes — nothing can interleave between this re-verification and
             // the removal, so a "safe" that held at the top of the delegate still holds at each delete (removing
             // a zero-referencer object can only shrink other objects' referencer sets, never grow them).
+            //
+            // B2: the REPORT BASIS is re-taken here too, in the same turn as the deletes, and it is the last
+            // word. Everything above (the parse, the candidate pass, the coverage refusals) happened off the
+            // dispatcher and describes the basis as it was when the caller asked. Since a scope write now rides
+            // this same dispatcher, a basis that still matches here cannot change again before the deletes run.
             var removed = new List<RemovedObject>();
-            var rev = await s.MutateAsync(origin, $"remove {candidates.Count} safe-to-remove object(s)", m =>
+            string refusedInTurn = null;
+            long rev;
+            try
             {
-                var fresh = Sweep(m);
-                var freshByRef = fresh.Items.ToDictionary(i => i.Ref, StringComparer.OrdinalIgnoreCase);
-                foreach (var c in candidates)
+                rev = await s.MutateAsync(origin, $"remove {candidates.Count} safe-to-remove object(s)", m =>
                 {
-                    if (!freshByRef.TryGetValue(c.Ref, out var now) || now.Verdict != "safe")
+                    var atApply = CaptureScopeBasis(s);
+                    // Nothing is deleted against a selection nobody checked. Throwing rolls the (still empty) batch
+                    // back, so a refusal costs no revision and publishes no change: nothing happened, and the report
+                    // below says so in the one sentence both doors use.
+                    if (atApply.MovedSince(reviewedBasis))
+                        throw new ScopeMovedDuringRemoval(ReportScopeCoverage.SelectionChanged);
+                    // R1, restated inside the turn: the intended protection has to be established HERE, not only at
+                    // the top of the call, or the refusal is once more a check of a moment that has passed.
+                    if (atApply.Coverage.HasChoices && !atApply.Coverage.Complete)
+                        throw new ScopeMovedDuringRemoval(ReportScopeCoverage.NothingRemoved);
+                    var fresh = Sweep(m);
+                    var freshByRef = fresh.Items.ToDictionary(i => i.Ref, StringComparer.OrdinalIgnoreCase);
+                    foreach (var c in candidates)
                     {
-                        // The stale-verdict downgrade the feature promises: changed since the scan ⇒ skipped, never deleted.
-                        skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "its status changed between the scan and the apply: " + NotSafeReason(m, c.Ref, freshByRef, parsed.Count > 0) });
-                        continue;
+                        if (!freshByRef.TryGetValue(c.Ref, out var now) || now.Verdict != "safe")
+                        {
+                            // The stale-verdict downgrade the feature promises: changed since the scan ⇒ skipped, never deleted.
+                            skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "its status changed between the scan and the apply: " + NotSafeReason(m, c.Ref, freshByRef, parsed.Count > 0) });
+                            continue;
+                        }
+                        var obj = ObjectRefs.Resolve(m, c.Ref);
+                        if (obj == null)
+                        {
+                            skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "not found at apply time. It may have been deleted or renamed since the scan." });
+                            continue;
+                        }
+                        try
+                        {
+                            obj.Delete();
+                            removed.Add(new RemovedObject { Ref = c.Ref, Name = c.Name, Kind = c.Kind, Table = c.Table });
+                        }
+                        // A per-item delete failure (e.g. a column kind the wrapper refuses to delete) must not abort the
+                        // whole sweep — it is reported as skipped with the wrapper's reason; the batch stays one undo step.
+                        catch (Exception ex)
+                        {
+                            skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "delete failed: " + ex.Message });
+                        }
                     }
-                    var obj = ObjectRefs.Resolve(m, c.Ref);
-                    if (obj == null)
-                    {
-                        skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "not found at apply time. It may have been deleted or renamed since the scan." });
-                        continue;
-                    }
-                    try
-                    {
-                        obj.Delete();
-                        removed.Add(new RemovedObject { Ref = c.Ref, Name = c.Name, Kind = c.Kind, Table = c.Table });
-                    }
-                    // A per-item delete failure (e.g. a column kind the wrapper refuses to delete) must not abort the
-                    // whole sweep — it is reported as skipped with the wrapper's reason; the batch stays one undo step.
-                    catch (Exception ex)
-                    {
-                        skipped.Add(new SkippedObject { Ref = c.Ref, Reason = "delete failed: " + ex.Message });
-                    }
-                }
-            });
+                });
+            }
+            catch (ScopeMovedDuringRemoval moved) { refusedInTurn = moved.Message; rev = s.Revision; }
+
+            if (refusedInTurn != null)
+                return new RemoveSafeReport
+                {
+                    Revision = rev,
+                    Removed = Array.Empty<RemovedObject>(),
+                    Skipped = candidates.Select(c => new SkippedObject { Ref = c.Ref, Reason = refusedInTurn })
+                        .Concat(skipped).ToArray(),
+                    Count = 0,
+                    Verification = verification,
+                    Caveat = caveat,
+                    Note = refusedInTurn,
+                };
 
             var report = new RemoveSafeReport
             {

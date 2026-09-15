@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceHash": "be7303b4bed86cd40006f3d7d7555df857f1f66e7213f951a841a227e7070b94",
+  "sourceHash": "c2659f4781798190f444a9b53d12d56d82d2d2d570b926c92dc53d9e0be41ce3",
   "sources": [
     "Semanticus.Engine/McpTools.cs",
     "Semanticus.Engine/McpTools.Evidence.cs",
@@ -11,14 +11,15 @@
     "Semanticus.Engine/EngineRpcTarget.cs",
     "Semanticus.Engine/HumanGovernanceRpcTarget.cs",
     "Semanticus.Engine/IEngine.cs",
-    "Semanticus.VSCode/webview/src/App.tsx"
+    "Semanticus.VSCode/webview/src/App.tsx",
+    "Semanticus.VSCode/webview/src/route.ts"
   ],
   "summary": {
-    "mcpOperations": 313,
-    "rpcActions": 320,
-    "engineMethods": 318,
-    "studioDestinations": 22,
-    "groupedStudioDestinations": 17,
+    "mcpOperations": 328,
+    "rpcActions": 335,
+    "engineMethods": 333,
+    "studioDestinations": 23,
+    "groupedStudioDestinations": 20,
     "trackedEvidenceFiles": [
       "Semanticus.AirSmoke/Program.cs",
       "Semanticus.CicdSmoke/Program.cs",
@@ -81,6 +82,7 @@
       "Semanticus.Tests/DualDriveUndoTests.cs",
       "Semanticus.Tests/DuplicateObjectTests.cs",
       "Semanticus.Tests/EngineBrokerTests.cs",
+      "Semanticus.Tests/EntitlementContractTests.cs",
       "Semanticus.Tests/EntitlementGateTests.cs",
       "Semanticus.Tests/EntitlementVerifierTests.cs",
       "Semanticus.Tests/EquivalenceMultiShapeTests.cs",
@@ -94,6 +96,7 @@
       "Semanticus.Tests/FieldParameterTests.cs",
       "Semanticus.Tests/FormatTemplatesTests.cs",
       "Semanticus.Tests/FreeMcpSurfaceTests.cs",
+      "Semanticus.Tests/FreeSessionContractTests.cs",
       "Semanticus.Tests/GitPublicOperationTests.cs",
       "Semanticus.Tests/HardMeasureWorkflowTests.cs",
       "Semanticus.Tests/HarnessFixTests.cs",
@@ -121,6 +124,7 @@
       "Semanticus.Tests/MarkDateTableTests.cs",
       "Semanticus.Tests/McpAnswerContractTests.cs",
       "Semanticus.Tests/McpAttachTests.cs",
+      "Semanticus.Tests/McpDescriptionTierTests.cs",
       "Semanticus.Tests/McpSessionTargetingTests.cs",
       "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
       "Semanticus.Tests/MeasureReconcilerTests.cs",
@@ -135,6 +139,9 @@
       "Semanticus.Tests/PerspectiveTests.cs",
       "Semanticus.Tests/PlanVerifyGateTests.cs",
       "Semanticus.Tests/PrimerTests.cs",
+      "Semanticus.Tests/ProFeatureGateTests.cs",
+      "Semanticus.Tests/ProFeatureMapTests.cs",
+      "Semanticus.Tests/ProGateRemovalTests.cs",
       "Semanticus.Tests/ProbeMeasureTests.cs",
       "Semanticus.Tests/PropertyGridPrefillTests.cs",
       "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
@@ -154,6 +161,7 @@
       "Semanticus.Tests/ReadinessScopedScanTests.cs",
       "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
       "Semanticus.Tests/ReadinessStarShapeTests.cs",
+      "Semanticus.Tests/ReconcileContractTests.cs",
       "Semanticus.Tests/ReconcileGateTests.cs",
       "Semanticus.Tests/ReconcileMappingTests.cs",
       "Semanticus.Tests/ReconcileRunnerTests.cs",
@@ -165,6 +173,8 @@
       "Semanticus.Tests/ReplacePlanTests.cs",
       "Semanticus.Tests/ReplayCheckTests.cs",
       "Semanticus.Tests/ReportDefinitionReaderTests.cs",
+      "Semanticus.Tests/ReportScopeRejectionTests.cs",
+      "Semanticus.Tests/ReportScopeTests.cs",
       "Semanticus.Tests/RestorePointTests.cs",
       "Semanticus.Tests/ResultContractTests.cs",
       "Semanticus.Tests/ReviewFenceTests.cs",
@@ -185,7 +195,15 @@
       "Semanticus.Tests/SkillNamingTests.cs",
       "Semanticus.Tests/SnapshotCleanupTests.cs",
       "Semanticus.Tests/SpecCardinalityTests.cs",
+      "Semanticus.Tests/SqlSourceDoorTests.cs",
+      "Semanticus.Tests/SqlSourceProbeTests.cs",
+      "Semanticus.Tests/SqlSourceRegistryTests.cs",
+      "Semanticus.Tests/SqlSourceResolutionTests.cs",
+      "Semanticus.Tests/SqlSourceUsageTests.cs",
+      "Semanticus.Tests/TableMappingListTests.cs",
       "Semanticus.Tests/TableRowCountTests.cs",
+      "Semanticus.Tests/TableSourceMappingTests.cs",
+      "Semanticus.Tests/TestEntitlements.cs",
       "Semanticus.Tests/TestEnvironment.cs",
       "Semanticus.Tests/TestHealthAnalyzerTests.cs",
       "Semanticus.Tests/TestModels.cs",
@@ -195,6 +213,8 @@
       "Semanticus.Tests/TestSuiteCascadeTests.cs",
       "Semanticus.Tests/TestSuiteCoverageTests.cs",
       "Semanticus.Tests/TestSuiteStoreTests.cs",
+      "Semanticus.Tests/TestsFixesTests.cs",
+      "Semanticus.Tests/TestsRedesignTests.cs",
       "Semanticus.Tests/TimeCalcValidationTests.cs",
       "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
       "Semanticus.Tests/TomCalendarAvailabilityTests.cs",
@@ -261,8 +281,10 @@
       "Semanticus.VSCode/test/check-evidence-contract.test.mjs",
       "Semanticus.VSCode/test/ci-gate-path.test.mjs",
       "Semanticus.VSCode/test/column-relationship-safety.test.mjs",
+      "Semanticus.VSCode/test/compact-shell.test.mjs",
       "Semanticus.VSCode/test/compare-registry-picker.test.mjs",
       "Semanticus.VSCode/test/connections-hub.test.mjs",
+      "Semanticus.VSCode/test/control-scale.test.mjs",
       "Semanticus.VSCode/test/copy-rules.test.mjs",
       "Semanticus.VSCode/test/corpus-pin.test.mjs",
       "Semanticus.VSCode/test/coverage-oracle-ci.test.mjs",
@@ -276,6 +298,7 @@
       "Semanticus.VSCode/test/docs-relationship.test.mjs",
       "Semanticus.VSCode/test/engine-provenance.test.mjs",
       "Semanticus.VSCode/test/engine-reconnect.test.mjs",
+      "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
       "Semanticus.VSCode/test/evidence-library.test.mjs",
       "Semanticus.VSCode/test/findings-register.test.mjs",
       "Semanticus.VSCode/test/fixall-and-severity.test.mjs",
@@ -283,6 +306,7 @@
       "Semanticus.VSCode/test/full-width-layout.test.mjs",
       "Semanticus.VSCode/test/history-recovery.test.mjs",
       "Semanticus.VSCode/test/honest-live-diff.test.mjs",
+      "Semanticus.VSCode/test/impact-one-page.test.mjs",
       "Semanticus.VSCode/test/incremental-refresh.test.mjs",
       "Semanticus.VSCode/test/keyboard-and-grids.test.mjs",
       "Semanticus.VSCode/test/knowledge-surfaces.test.mjs",
@@ -295,27 +319,37 @@
       "Semanticus.VSCode/test/lockfile-drift.test.mjs",
       "Semanticus.VSCode/test/mcode-lifecycle.test.mjs",
       "Semanticus.VSCode/test/mirror-release-tools.test.mjs",
+      "Semanticus.VSCode/test/model-overview.test.mjs",
       "Semanticus.VSCode/test/navigation.test.mjs",
       "Semanticus.VSCode/test/open-progress.test.mjs",
+      "Semanticus.VSCode/test/pro-feature-line.test.mjs",
       "Semanticus.VSCode/test/publish-surface.test.mjs",
       "Semanticus.VSCode/test/release-docs.test.mjs",
       "Semanticus.VSCode/test/release-mirror-gate.test.mjs",
       "Semanticus.VSCode/test/release-security.test.mjs",
+      "Semanticus.VSCode/test/reopen-behaviour.mjs",
       "Semanticus.VSCode/test/rls-ols.test.mjs",
       "Semanticus.VSCode/test/rpc-auth.test.mjs",
+      "Semanticus.VSCode/test/rpc-name-parity.test.mjs",
       "Semanticus.VSCode/test/save-honesty.test.mjs",
       "Semanticus.VSCode/test/selection-bus.test.mjs",
+      "Semanticus.VSCode/test/sidebar-identity.test.mjs",
       "Semanticus.VSCode/test/source-byte-hygiene.test.mjs",
       "Semanticus.VSCode/test/spec-save-and-print.test.mjs",
       "Semanticus.VSCode/test/storage-logic.test.mjs",
       "Semanticus.VSCode/test/studio-model-swap.test.mjs",
       "Semanticus.VSCode/test/tab-state-preservation.test.mjs",
       "Semanticus.VSCode/test/tasks-register.test.mjs",
+      "Semanticus.VSCode/test/tests-fixes.test.mjs",
+      "Semanticus.VSCode/test/tests-new-check-drawer.test.mjs",
+      "Semanticus.VSCode/test/tests-page-surface.test.mjs",
+      "Semanticus.VSCode/test/tests-reading-rules.test.mjs",
       "Semanticus.VSCode/test/uishot-runtime.test.mjs",
       "Semanticus.VSCode/test/undo-redraw.test.mjs",
       "Semanticus.VSCode/test/unsaved-work-prompt.test.mjs",
       "Semanticus.VSCode/test/vsix-matrix.test.mjs",
       "Semanticus.VSCode/test/vsix-payload.test.mjs",
+      "Semanticus.VSCode/test/workflow-author-canvas.test.mjs",
       "Semanticus.VSCode/test/workflow-boxes.test.mjs",
       "Semanticus.VSCode/test/workflow-document.test.mjs",
       "Semanticus.VSCode/test/workflow-layout.test.mjs",
@@ -341,6 +375,7 @@
     "knowledge",
     "lineage",
     "mcode",
+    "modelhome",
     "optimize",
     "permissions",
     "readiness",
@@ -359,15 +394,18 @@
     "diagram",
     "docs",
     "evidence",
+    "history",
+    "knowledge",
     "lineage",
     "mcode",
+    "modelhome",
     "optimize",
-    "permissions",
     "readiness",
     "search",
     "spec",
     "stats",
-    "tests"
+    "tests",
+    "workflows"
   ],
   "operations": [
     {
@@ -387,7 +425,10 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/PrimerTests.cs"
+        "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -424,8 +465,12 @@
         "Semanticus.Tests/ImpactAssessmentTests.cs",
         "Semanticus.Tests/InterviewFastFollowTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/RunDaxQueryGateTests.cs",
-        "Semanticus.Tests/UatC63AuthoringTests.cs"
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.Tests/UatC63AuthoringTests.cs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
       ]
     },
     {
@@ -442,8 +487,11 @@
         "Semanticus.Tests/MarkDateTableTests.cs",
         "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
         "Semanticus.Tests/PlanVerifyGateTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs",
         "Semanticus.VSCode/test/lineage-actions.test.mjs"
@@ -472,7 +520,8 @@
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.Tests/SetSynonymsCollisionTests.cs",
-        "Semanticus.Tests/WaiverTests.cs"
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.VSCode/test/model-overview.test.mjs"
       ]
     },
     {
@@ -501,6 +550,7 @@
       "referenceEvidence": [
         "Semanticus.Tests/AgentNonInteractiveTests.cs",
         "Semanticus.Tests/CloudReportLineageTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.VSCode/test/lineage-actions.test.mjs",
         "Semanticus.VSCode/test/tab-state-preservation.test.mjs"
       ]
@@ -513,6 +563,7 @@
       "referenceEvidence": [
         "Semanticus.Tests/CloudReportLineageTests.cs",
         "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/RemoveSafeObjectsTests.cs"
       ]
     },
@@ -526,6 +577,8 @@
         "Semanticus.Tests/BatchPropertyEditsTests.cs",
         "Semanticus.Tests/DaxWriteValidationTests.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
     },
@@ -549,9 +602,10 @@
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.Tests/AgentPolicyGateTests.cs",
         "Semanticus.Tests/AgentPolicyTests.cs",
-        "Semanticus.Tests/EntitlementGateTests.cs",
         "Semanticus.Tests/LiveDeployStructureTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/RestorePointTests.cs",
         "Semanticus.Tests/ReviewFenceTests.cs",
         "Semanticus.Tests/SessionMergeDoorTests.cs",
@@ -575,13 +629,18 @@
         "Semanticus.Tests/MarkDateTableTests.cs",
         "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
         "Semanticus.Tests/PlanVerifyGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ReadinessCatalogCompletionBatch7Tests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/ValueBlameTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs",
-        "Semanticus.VSCode/test/copy-rules.test.mjs"
+        "Semanticus.VSCode/test/copy-rules.test.mjs",
+        "Semanticus.VSCode/test/fixall-and-severity.test.mjs"
       ]
     },
     {
@@ -592,7 +651,10 @@
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
-        "Semanticus.Tests/WaiverTests.cs"
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.Tests/WaiverTests.cs",
+        "Semanticus.VSCode/test/fixall-and-severity.test.mjs"
       ]
     },
     {
@@ -615,6 +677,8 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/DaxWriteValidationTests.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs"
       ]
     },
@@ -688,6 +752,8 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ValueBlameTests.cs",
         "Semanticus.VSCode/test/copy-rules.test.mjs"
       ]
@@ -702,6 +768,8 @@
         "Semanticus.Tests/BpaCorpusTests.cs",
         "Semanticus.Tests/BpaFixAllTests.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.VSCode/test/fixall-and-severity.test.mjs"
       ]
     },
@@ -715,6 +783,8 @@
         "Semanticus.Tests/BpaCorpusTests.cs",
         "Semanticus.Tests/BpaFixAllTests.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.VSCode/test/fixall-and-severity.test.mjs"
       ]
     },
@@ -796,6 +866,22 @@
       ]
     },
     {
+      "operation": "check_reports",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
+        "Semanticus.VSCode/test/impact-one-page.test.mjs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
+      ]
+    },
+    {
       "operation": "check_workflow",
       "family": "workflows",
       "releaseClass": "supported",
@@ -831,7 +917,10 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.Tests/CompareAuthFallbackTests.cs",
-        "Semanticus.Tests/ModelCompareTests.cs"
+        "Semanticus.Tests/ModelCompareTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs"
       ]
     },
     {
@@ -842,7 +931,8 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
-        "Semanticus.Tests/DeployFeatureTests.cs"
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -853,7 +943,9 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
-        "Semanticus.Tests/DeployFeatureTests.cs"
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -884,6 +976,16 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs"
+      ]
+    },
+    {
+      "operation": "clear_table_source_mapping",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/TableSourceMappingTests.cs"
       ]
     },
     {
@@ -1074,6 +1176,7 @@
         "Semanticus.Tests/MarkDateTableTests.cs",
         "Semanticus.Tests/McpAnswerContractTests.cs",
         "Semanticus.Tests/OrphanedWaiverTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
@@ -1095,6 +1198,7 @@
         "Semanticus.Tests/RoleSecurityTests.cs",
         "Semanticus.Tests/SchemaSyncTests.cs",
         "Semanticus.Tests/SetSynonymsCollisionTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
         "Semanticus.Tests/TimeCalcValidationTests.cs",
         "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs",
@@ -1113,6 +1217,7 @@
         "Semanticus.Tests/DataAgentTests.cs",
         "Semanticus.Tests/FabricContainmentTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
     },
@@ -1161,7 +1266,8 @@
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/VerifiedMeasureV7CounterfactualTests.cs",
-        "Semanticus.VSCode/test/dax-header.test.mjs"
+        "Semanticus.VSCode/test/dax-header.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -1204,9 +1310,14 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/IncrementalRefreshWiringTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
+        "Semanticus.Tests/ReconcileContractTests.cs",
         "Semanticus.Tests/ReconcileMappingTests.cs",
         "Semanticus.Tests/SchemaSyncTests.cs",
-        "Semanticus.Tests/TableRowCountTests.cs"
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
+        "Semanticus.Tests/TableRowCountTests.cs",
+        "Semanticus.Tests/TableSourceMappingTests.cs"
       ]
     },
     {
@@ -1261,6 +1372,7 @@
         "Semanticus.Tests/McpSessionTargetingTests.cs",
         "Semanticus.Tests/PlanVerifyGateTests.cs",
         "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs",
         "Semanticus.Tests/ReadinessCatalogBatch1Tests.cs",
@@ -1272,11 +1384,14 @@
         "Semanticus.Tests/ReadinessCatalogCompletionBatch7Tests.cs",
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessScopedScanTests.cs",
+        "Semanticus.Tests/ReconcileContractTests.cs",
         "Semanticus.Tests/ReconcileMappingTests.cs",
         "Semanticus.Tests/RemoveSafeObjectsTests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
         "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/ReviewFenceTests.cs",
         "Semanticus.Tests/RpcRoleBindingTests.cs",
@@ -1284,7 +1399,12 @@
         "Semanticus.Tests/SessionMergeDoorTests.cs",
         "Semanticus.Tests/SessionObserverTests.cs",
         "Semanticus.Tests/SkillDebtSafetyTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
         "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/TimeCalcValidationTests.cs",
         "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
@@ -1303,8 +1423,7 @@
         "Semanticus.Tests/WorkflowV2YamlReaderExitTests.cs",
         "Semanticus.Tests/WorkflowVerifyEnforcementTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
-        "Semanticus.VSCode/test/dax-header.test.mjs",
-        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
+        "Semanticus.VSCode/test/dax-header.test.mjs"
       ]
     },
     {
@@ -1357,6 +1476,7 @@
         "Semanticus.Tests/OpTaxonomyTests.cs",
         "Semanticus.Tests/OrphanedWaiverTests.cs",
         "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs",
@@ -1372,6 +1492,7 @@
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessSecurityAwarenessTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
+        "Semanticus.Tests/ReconcileContractTests.cs",
         "Semanticus.Tests/ReconcileMappingTests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplayCheckTests.cs",
@@ -1382,9 +1503,15 @@
         "Semanticus.Tests/SessionObserverTests.cs",
         "Semanticus.Tests/SetSynonymsCollisionTests.cs",
         "Semanticus.Tests/SpecCardinalityTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
         "Semanticus.Tests/TableRowCountTests.cs",
+        "Semanticus.Tests/TableSourceMappingTests.cs",
         "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
         "Semanticus.Tests/TestReportExportTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/TimeCalcValidationTests.cs",
         "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
         "Semanticus.Tests/TomVersionPinTests.cs",
@@ -1400,8 +1527,7 @@
         "Semanticus.Tests/WorkflowEvidenceTests.cs",
         "Semanticus.Tests/WorkflowVerifyEnforcementTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs"
       ]
     },
     {
@@ -1446,6 +1572,7 @@
         "Semanticus.Tests/ReadinessRefsParityTests.cs",
         "Semanticus.Tests/ReadinessStarShapeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
         "Semanticus.VSCode/test/dax-header.test.mjs"
       ]
     },
@@ -1469,6 +1596,7 @@
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/RoleSecurityTests.cs",
         "Semanticus.Tests/SaveHonestyTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
         "Semanticus.VSCode/test/rls-ols.test.mjs"
       ]
@@ -1521,6 +1649,7 @@
         "Semanticus.Tests/McpSessionTargetingTests.cs",
         "Semanticus.Tests/OrphanedWaiverTests.cs",
         "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs",
@@ -1544,6 +1673,8 @@
         "Semanticus.Tests/SessionObserverTests.cs",
         "Semanticus.Tests/SetSynonymsCollisionTests.cs",
         "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/TimeCalcValidationTests.cs",
         "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
         "Semanticus.Tests/UatC52PartitionTests.cs",
@@ -1624,7 +1755,8 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CalendarWrapperCharacterizationTests.cs",
-        "Semanticus.Tests/DryRunTests.cs"
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -1692,11 +1824,13 @@
         "Semanticus.Tests/HeaderSaveModelFenceTests.cs",
         "Semanticus.Tests/McpAnswerContractTests.cs",
         "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ReadinessCatalogCompletionBatch7Tests.cs",
         "Semanticus.Tests/ReadinessScopedScanTests.cs",
-        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
         "Semanticus.Tests/WorkflowTemplateTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
+        "Semanticus.VSCode/test/calendar-mapping.test.mjs",
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs",
         "Semanticus.VSCode/test/undo-redraw.test.mjs"
       ]
     },
@@ -1724,6 +1858,17 @@
       ]
     },
     {
+      "operation": "delete_sql_source",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs"
+      ]
+    },
+    {
       "operation": "delete_test",
       "family": "tests-and-evidence",
       "releaseClass": "supported",
@@ -1743,8 +1888,7 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/WorkflowDesignerTests.cs",
         "Semanticus.Tests/WorkflowDocumentTests.cs",
-        "Semanticus.Tests/WorkflowTemplateTests.cs",
-        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
       ]
     },
     {
@@ -1772,6 +1916,7 @@
         "Semanticus.Tests/DeployLiveRedOverrideTests.cs",
         "Semanticus.Tests/HarnessFixTests.cs",
         "Semanticus.Tests/InterviewFastFollowTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/TimeCalcValidationTests.cs"
       ]
     },
@@ -1799,6 +1944,7 @@
         "Semanticus.Tests/LiveDeploySyncTests.cs",
         "Semanticus.Tests/LiveMatchDeleteTests.cs",
         "Semanticus.Tests/LocalEndpointTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/RecordedLiveTarget.cs",
         "Semanticus.Tests/RecordedLiveTargetTests.cs",
         "Semanticus.Tests/RestorePointTests.cs",
@@ -1808,6 +1954,7 @@
         "Semanticus.Tests/VerifiedEditsAuditTests.cs",
         "Semanticus.Tests/WorkflowEvidenceTests.cs",
         "Semanticus.Tests/WorkspacePushTests.cs",
+        "Semanticus.VSCode/test/history-recovery.test.mjs",
         "Semanticus.VSCode/test/honest-live-diff.test.mjs",
         "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
@@ -1822,7 +1969,9 @@
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
         "Semanticus.Tests/DryRunTests.cs",
-        "Semanticus.Tests/FabricContainmentTests.cs"
+        "Semanticus.Tests/FabricContainmentTests.cs",
+        "Semanticus.VSCode/test/history-recovery.test.mjs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -1833,7 +1982,8 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
-        "Semanticus.Tests/DeployFeatureTests.cs"
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -1863,6 +2013,7 @@
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.VSCode/test/column-relationship-safety.test.mjs",
         "Semanticus.VSCode/test/docs-relationship.test.mjs",
+        "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
         "Semanticus.VSCode/test/rpc-auth.test.mjs"
       ]
     },
@@ -1936,7 +2087,8 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/WorkflowDocumentTests.cs"
+        "Semanticus.Tests/WorkflowDocumentTests.cs",
+        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
       ]
     },
     {
@@ -1996,6 +2148,8 @@
       "releaseClass": "supported",
       "risk": "critical",
       "referenceEvidence": [
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs"
       ]
     },
@@ -2034,7 +2188,8 @@
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
-        "Semanticus.Tests/FabricContainmentTests.cs"
+        "Semanticus.Tests/FabricContainmentTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2046,7 +2201,8 @@
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/AgentPolicyHardeningTests.cs",
-        "Semanticus.Tests/DeployFeatureTests.cs"
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2056,7 +2212,8 @@
       "risk": "critical",
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
-        "Semanticus.Tests/DeployFeatureTests.cs"
+        "Semanticus.Tests/DeployFeatureTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2080,7 +2237,9 @@
         "Semanticus.Tests/AgentNonInteractiveTests.cs",
         "Semanticus.Tests/AgentSigninObservedTests.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
-        "Semanticus.Tests/FabricContainmentTests.cs"
+        "Semanticus.Tests/FabricContainmentTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2091,7 +2250,8 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
-        "Semanticus.Tests/FabricContainmentTests.cs"
+        "Semanticus.Tests/FabricContainmentTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2131,7 +2291,8 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
-        "Semanticus.Tests/TimeIntelligenceVariantsTests.cs"
+        "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2140,7 +2301,8 @@
       "releaseClass": "supported",
       "risk": "critical",
       "referenceEvidence": [
-        "Semanticus.McpSmoke/Program.cs"
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -2149,7 +2311,9 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/HarnessFixTests.cs"
+        "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.VSCode/test/model-overview.test.mjs"
       ]
     },
     {
@@ -2216,7 +2380,8 @@
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
-        "Semanticus.Tests/DocumentationExportTests.cs"
+        "Semanticus.Tests/DocumentationExportTests.cs",
+        "Semanticus.Tests/FreeSessionContractTests.cs"
       ]
     },
     {
@@ -2225,7 +2390,8 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.RpcSmoke/Program.cs"
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -2243,9 +2409,14 @@
       "releaseClass": "supported",
       "risk": "critical",
       "referenceEvidence": [
+        "Semanticus.Tests/EntitlementContractTests.cs",
         "Semanticus.Tests/EntitlementGateTests.cs",
         "Semanticus.Tests/HarnessFixTests.cs",
-        "Semanticus.VSCode/test/licensing-path.test.mjs"
+        "Semanticus.Tests/McpDescriptionTierTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.VSCode/test/licensing-path.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2276,8 +2447,8 @@
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/CalendarTests.cs",
-        "Semanticus.Tests/WorkflowKernelTests.cs",
-        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
+        "Semanticus.Tests/HardMeasureWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowKernelTests.cs"
       ]
     },
     {
@@ -2324,6 +2495,7 @@
         "Semanticus.Tests/KnowledgePoisoningSafetyTests.cs",
         "Semanticus.Tests/KnowledgeStoreTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.VSCode/test/knowledge-surfaces.test.mjs"
       ]
     },
@@ -2345,6 +2517,7 @@
         "Semanticus.Tests/SpecCardinalityTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
         "Semanticus.VSCode/test/diagram-field-parameter.test.mjs",
+        "Semanticus.VSCode/test/model-overview.test.mjs",
         "Semanticus.VSCode/test/selection-bus.test.mjs"
       ]
     },
@@ -2365,7 +2538,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
-        "Semanticus.Tests/OrientationTests.cs"
+        "Semanticus.Tests/OrientationTests.cs",
+        "Semanticus.Tests/PrimerTests.cs"
       ]
     },
     {
@@ -2410,6 +2584,8 @@
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/RemoveSafeObjectsTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SearchReplaceTests.cs",
         "Semanticus.VSCode/test/keyboard-and-grids.test.mjs"
@@ -2423,8 +2599,10 @@
       "referenceEvidence": [
         "Semanticus.Tests/DryRunTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
-        "Semanticus.Tests/WorkflowDesignerTests.cs"
+        "Semanticus.Tests/WorkflowDesignerTests.cs",
+        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
       ]
     },
     {
@@ -2435,8 +2613,10 @@
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/IncrementalRefreshWiringTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
-        "Semanticus.Tests/ReplacePlanTests.cs"
+        "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2458,7 +2638,8 @@
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
-        "Semanticus.Tests/ResultContractTests.cs"
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2470,7 +2651,6 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/ChangePlanDeleteTests.cs",
-        "Semanticus.Tests/ReplacePlanTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs"
       ]
@@ -2486,7 +2666,8 @@
         "Semanticus.Tests/ColumnRelationshipSafetyTests.cs",
         "Semanticus.Tests/ModelCompareTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
-        "Semanticus.Tests/ResultContractTests.cs"
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/SqlSourceUsageTests.cs"
       ]
     },
     {
@@ -2519,8 +2700,11 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/DaxWriteValidationTests.cs",
         "Semanticus.Tests/FabricSpecPublicDoorTests.cs",
+        "Semanticus.Tests/FreeSessionContractTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
-        "Semanticus.Tests/SpecCardinalityTests.cs"
+        "Semanticus.Tests/SpecCardinalityTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2534,12 +2718,36 @@
       ]
     },
     {
+      "operation": "get_test_run",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
+      ]
+    },
+    {
+      "operation": "get_unmatched_rows",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
+      ]
+    },
+    {
       "operation": "get_verified_mode",
       "family": "change-plan-and-verified-edits",
       "releaseClass": "supported",
       "risk": "critical",
       "referenceEvidence": [
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/VerifiedModeTests.cs"
       ]
     },
@@ -2554,6 +2762,7 @@
         "Semanticus.Tests/ExpectedValuesVerifyTests.cs",
         "Semanticus.Tests/HardMeasureWorkflowTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
@@ -2575,7 +2784,7 @@
         "Semanticus.Tests/WorkflowV2SolUnscopedFourTests.cs",
         "Semanticus.Tests/WorkflowVerifyEnforcementTests.cs",
         "Semanticus.Tests/WorkflowVerifyExecutorTests.cs",
-        "Semanticus.VSCode/test/workflow-boxes.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs",
         "Semanticus.VSCode/test/workflowruns.test.mjs"
       ]
     },
@@ -2585,6 +2794,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.Tests/WorkflowBindingTests.cs",
         "Semanticus.Tests/WorkflowDocumentTests.cs",
         "Semanticus.Tests/WorkflowUpgradeTests.cs"
       ]
@@ -2596,7 +2806,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/WorkflowActivationTests.cs",
-        "Semanticus.Tests/WorkflowBindingTests.cs"
+        "Semanticus.Tests/WorkflowBindingTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2620,7 +2831,8 @@
         "Semanticus.Tests/WorkflowOpsTests.cs",
         "Semanticus.Tests/WorkflowProfileTests.cs",
         "Semanticus.Tests/WorkflowV2SilentDropTests.cs",
-        "Semanticus.Tests/WorkflowV2SolUnscopedFourTests.cs"
+        "Semanticus.Tests/WorkflowV2SolUnscopedFourTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2633,6 +2845,7 @@
         "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
         "Semanticus.Tests/ExpectedValuesVerifyTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
         "Semanticus.Tests/WorkflowActivationTests.cs",
@@ -2696,7 +2909,8 @@
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
         "Semanticus.Tests/FabricContainmentTests.cs",
-        "Semanticus.Tests/SaveHonestyTests.cs"
+        "Semanticus.Tests/SaveHonestyTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2715,7 +2929,8 @@
       "releaseClass": "supported",
       "risk": "high",
       "referenceEvidence": [
-        "Semanticus.CicdSmoke/Program.cs"
+        "Semanticus.CicdSmoke/Program.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -2734,7 +2949,8 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
-        "Semanticus.Tests/OpTaxonomyTests.cs"
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -2748,7 +2964,9 @@
         "Semanticus.Tests/AgentNonInteractiveTests.cs",
         "Semanticus.Tests/AgentSigninObservedTests.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
-        "Semanticus.Tests/FabricContainmentTests.cs"
+        "Semanticus.Tests/FabricContainmentTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2758,7 +2976,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/HarnessReportTests.cs",
-        "Semanticus.Tests/OpTaxonomyTests.cs"
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -2768,11 +2987,16 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/BlastRadiusWorkflowTests.cs",
         "Semanticus.Tests/FreeMcpSurfaceTests.cs",
         "Semanticus.Tests/ImpactAssessmentTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
+        "Semanticus.Tests/WorkflowDocumentTests.cs",
         "Semanticus.VSCode/test/copy-rules.test.mjs",
+        "Semanticus.VSCode/test/impact-one-page.test.mjs",
         "Semanticus.VSCode/test/lineage-actions.test.mjs"
       ]
     },
@@ -2796,8 +3020,7 @@
         "Semanticus.Tests/HarnessFixTests.cs",
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs",
         "Semanticus.Tests/WorkflowActivationTests.cs",
-        "Semanticus.Tests/WorkflowTemplateTests.cs",
-        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
+        "Semanticus.Tests/WorkflowTemplateTests.cs"
       ]
     },
     {
@@ -2854,7 +3077,9 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CalendarWrapperCharacterizationTests.cs",
-        "Semanticus.Tests/DryRunTests.cs"
+        "Semanticus.Tests/DryRunTests.cs",
+        "Semanticus.Tests/FreeSessionContractTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -2898,7 +3123,9 @@
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.VSCode/test/compare-registry-picker.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/reopen-behaviour.mjs",
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs"
       ]
     },
     {
@@ -2923,7 +3150,8 @@
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/DeployFeatureTests.cs",
         "Semanticus.Tests/FabricContainmentTests.cs",
-        "Semanticus.Tests/ResultContractTests.cs"
+        "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
     },
     {
@@ -2977,6 +3205,7 @@
         "Semanticus.LearnSmoke/Program.cs",
         "Semanticus.Tests/KnowledgeStoreTests.cs",
         "Semanticus.Tests/McpAnswerContractTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.VSCode/test/knowledge-surfaces.test.mjs"
       ]
@@ -2988,8 +3217,10 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/ImpactAssessmentTests.cs",
         "Semanticus.Tests/InterviewFastFollowTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/UatC63AuthoringTests.cs"
       ]
     },
@@ -3051,16 +3282,21 @@
         "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
         "Semanticus.Tests/OptimizeMeasureTests.cs",
         "Semanticus.Tests/PerspectiveTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/RemoveSafeObjectsTests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
         "Semanticus.Tests/ReplayCheckTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/SaveHonestyTests.cs",
         "Semanticus.Tests/SearchReplaceTests.cs",
         "Semanticus.Tests/SessionMergeDoorTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/TestSuiteCoverageTests.cs",
         "Semanticus.Tests/TimeIntelligenceVariantsTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
@@ -3115,6 +3351,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs"
       ]
     },
@@ -3124,7 +3361,10 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/PrimerTests.cs"
+        "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -3137,14 +3377,33 @@
       ]
     },
     {
+      "operation": "list_report_scope",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
+      ]
+    },
+    {
       "operation": "list_reports",
       "family": "lineage-and-impact",
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/AgentNonInteractiveTests.cs",
         "Semanticus.Tests/AgentSigninObservedTests.cs",
-        "Semanticus.Tests/CloudReportPublicDoorTests.cs"
+        "Semanticus.Tests/CloudReportPublicDoorTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
       ]
     },
     {
@@ -3153,8 +3412,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/RestorePointTests.cs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.Tests/RestorePointTests.cs"
       ]
     },
     {
@@ -3171,12 +3429,59 @@
       ]
     },
     {
+      "operation": "list_sql_source_usage",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/FreeSessionContractTests.cs",
+        "Semanticus.Tests/McpDescriptionTierTests.cs",
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/SqlSourceUsageTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs",
+        "Semanticus.VSCode/test/rpc-name-parity.test.mjs"
+      ]
+    },
+    {
+      "operation": "list_sql_sources",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/rpc-name-parity.test.mjs",
+        "Semanticus.VSCode/test/tests-new-check-drawer.test.mjs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
+      ]
+    },
+    {
+      "operation": "list_table_mappings",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceUsageTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
+      ]
+    },
+    {
       "operation": "list_test_runs",
       "family": "tests-and-evidence",
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/PublicReadMcpTests.cs"
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.VSCode/test/model-overview.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
       ]
     },
     {
@@ -3185,7 +3490,14 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/PublicReadMcpTests.cs"
+        "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/SqlSourceUsageTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs",
+        "Semanticus.VSCode/test/rpc-name-parity.test.mjs"
       ]
     },
     {
@@ -3197,6 +3509,8 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/BaselineTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ValueBlameTests.cs"
       ]
     },
@@ -3234,7 +3548,8 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/WorkflowProfileTests.cs"
+        "Semanticus.Tests/WorkflowProfileTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -3254,6 +3569,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureGateTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SaveHonestyTests.cs",
         "Semanticus.Tests/WorkflowActivationTests.cs",
@@ -3261,7 +3578,8 @@
         "Semanticus.Tests/WorkflowBindingTests.cs",
         "Semanticus.Tests/WorkflowEnforcementTests.cs",
         "Semanticus.Tests/WorkflowOpsTests.cs",
-        "Semanticus.Tests/WorkflowTemplateTests.cs"
+        "Semanticus.Tests/WorkflowTemplateTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -3272,6 +3590,7 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs"
       ]
     },
@@ -3309,8 +3628,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.AirSmoke/Program.cs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.AirSmoke/Program.cs"
       ]
     },
     {
@@ -3319,7 +3637,9 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.AirSmoke/Program.cs"
+        "Semanticus.AirSmoke/Program.cs",
+        "Semanticus.Tests/EntitlementGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -3355,11 +3675,13 @@
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.Tests/AgentPolicyGateTests.cs",
         "Semanticus.Tests/AgentPolicyTests.cs",
-        "Semanticus.Tests/EntitlementGateTests.cs",
         "Semanticus.Tests/LayoutSidecarTests.cs",
         "Semanticus.Tests/LiveDeployStructureTests.cs",
         "Semanticus.Tests/ModelCompareTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/RestorePointTests.cs",
         "Semanticus.Tests/ReviewFenceTests.cs",
         "Semanticus.Tests/SessionMergeDoorTests.cs",
@@ -3382,6 +3704,7 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.Tests/FreeSessionContractTests.cs",
         "Semanticus.Tests/McpSessionTargetingTests.cs",
         "Semanticus.Tests/SaveHonestyTests.cs"
       ]
@@ -3407,7 +3730,9 @@
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.Tests/SnapshotCleanupTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/reopen-behaviour.mjs"
       ]
     },
     {
@@ -3423,7 +3748,9 @@
         "Semanticus.Tests/PrimerTests.cs",
         "Semanticus.Tests/SnapshotCleanupTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/reopen-behaviour.mjs"
       ]
     },
     {
@@ -3442,12 +3769,16 @@
         "Semanticus.Tests/OrientationTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SessionMergeDoorTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
         "Semanticus.Tests/TestReportExportTests.cs",
         "Semanticus.Tests/UnsavedWorkPromptTests.cs",
         "Semanticus.Tests/WorkflowActivationTests.cs",
         "Semanticus.Tests/WorkflowBindingTests.cs",
         "Semanticus.Tests/WorkflowVerifyExecutorTests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/navigation.test.mjs",
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs",
         "Semanticus.VSCode/test/unsaved-work-prompt.test.mjs"
       ]
     },
@@ -3462,6 +3793,7 @@
         "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
         "Semanticus.Tests/OptimizeMeasureTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ValueBlameTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs"
       ]
@@ -3518,6 +3850,16 @@
       ]
     },
     {
+      "operation": "preview_workflow_edit",
+      "family": "workflows",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/WorkflowDocumentTests.cs",
+        "Semanticus.VSCode/test/workflow-boxes.test.mjs"
+      ]
+    },
+    {
       "operation": "probe_auth_prerequisites",
       "family": "connections",
       "releaseClass": "supported",
@@ -3546,6 +3888,7 @@
       "referenceEvidence": [
         "Semanticus.Tests/OpTaxonomyTests.cs",
         "Semanticus.Tests/ProbeMeasureTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/SkillDebtSafetyTests.cs",
         "Semanticus.Tests/WorkflowCheckTests.cs",
         "Semanticus.Tests/WorkflowEvidenceTests.cs"
@@ -3638,7 +3981,22 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
-        "Semanticus.Tests/ReconcileGateTests.cs"
+        "Semanticus.Tests/ReconcileContractTests.cs",
+        "Semanticus.Tests/ReconcileGateTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs"
+      ]
+    },
+    {
+      "operation": "record_test_run",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
       ]
     },
     {
@@ -3670,7 +4028,10 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
-        "Semanticus.Tests/PrimerTests.cs"
+        "Semanticus.Tests/PrimerTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -3684,8 +4045,7 @@
         "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.Tests/LoopbackIntakeRefusalTests.cs",
-        "Semanticus.VSCode/test/compare-registry-picker.test.mjs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.VSCode/test/compare-registry-picker.test.mjs"
       ]
     },
     {
@@ -3703,8 +4063,14 @@
       "releaseClass": "supported",
       "risk": "high",
       "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
-        "Semanticus.Tests/RemoveSafeObjectsTests.cs"
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs"
       ]
     },
     {
@@ -3746,7 +4112,8 @@
         "Semanticus.Tests/WriteRoutingTests.cs",
         "Semanticus.VSCode/test/column-relationship-safety.test.mjs",
         "Semanticus.VSCode/test/dax-header.test.mjs",
-        "Semanticus.VSCode/test/selection-bus.test.mjs"
+        "Semanticus.VSCode/test/selection-bus.test.mjs",
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs"
       ]
     },
     {
@@ -3810,7 +4177,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
-        "Semanticus.Tests/ReconcileMappingTests.cs"
+        "Semanticus.Tests/ReconcileMappingTests.cs",
+        "Semanticus.VSCode/test/tests-new-check-drawer.test.mjs"
       ]
     },
     {
@@ -3819,8 +4187,7 @@
       "releaseClass": "supported",
       "risk": "high",
       "referenceEvidence": [
-        "Semanticus.Tests/RestorePointTests.cs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.Tests/RestorePointTests.cs"
       ]
     },
     {
@@ -3864,7 +4231,8 @@
         "Semanticus.Tests/InterviewFastFollowTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
         "Semanticus.Tests/RunDaxQueryGateTests.cs",
-        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
       ]
     },
     {
@@ -3878,15 +4246,23 @@
         "Semanticus.Tests/EvidenceLibraryTests.cs",
         "Semanticus.Tests/EvidenceTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
+        "Semanticus.Tests/ProFeatureGateTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
         "Semanticus.Tests/TableRowCountTests.cs",
+        "Semanticus.Tests/TableSourceMappingTests.cs",
         "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
         "Semanticus.Tests/TestReportExportTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/TestSuiteCoverageTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
         "Semanticus.Tests/UatC63AuthoringTests.cs",
-        "Semanticus.VSCode/test/bridge-timeouts.test.mjs"
+        "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
+        "Semanticus.VSCode/test/model-overview.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -3897,6 +4273,7 @@
       "referenceEvidence": [
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/EvidenceLibraryTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.VSCode/test/evidence-library.test.mjs"
       ]
     },
@@ -3941,8 +4318,20 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
-        "Semanticus.Tests/DocumentationExportTests.cs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.Tests/DocumentationExportTests.cs"
+      ]
+    },
+    {
+      "operation": "save_sql_source",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/rpc-name-parity.test.mjs"
       ]
     },
     {
@@ -3954,9 +4343,14 @@
         "Semanticus.Tests/ImpactAssessmentTests.cs",
         "Semanticus.Tests/LinuxFileOpenSaveTests.cs",
         "Semanticus.Tests/PublicReadMcpTests.cs",
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
         "Semanticus.Tests/TestObjectIdentityStoreTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
-        "Semanticus.Tests/UatC63AuthoringTests.cs"
+        "Semanticus.Tests/UatC63AuthoringTests.cs",
+        "Semanticus.VSCode/test/tests-page-surface.test.mjs"
       ]
     },
     {
@@ -3971,6 +4365,7 @@
         "Semanticus.Tests/SaveHonestyTests.cs",
         "Semanticus.Tests/SkillDebtSafetyTests.cs",
         "Semanticus.Tests/UatC63AuthoringTests.cs",
+        "Semanticus.Tests/VerifiedMeasureV7CounterfactualTests.cs",
         "Semanticus.Tests/WorkflowActivationTests.cs",
         "Semanticus.Tests/WorkflowBindingTests.cs",
         "Semanticus.Tests/WorkflowCheckTests.cs",
@@ -4014,6 +4409,7 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CalendarWrapperCharacterizationTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs"
       ]
     },
@@ -4050,8 +4446,10 @@
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
         "Semanticus.Tests/HarnessFixTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ReadinessCatalogCompletionBatch4Tests.cs",
-        "Semanticus.Tests/ReadinessCopyTests.cs"
+        "Semanticus.Tests/ReadinessCopyTests.cs",
+        "Semanticus.VSCode/test/model-overview.test.mjs"
       ]
     },
     {
@@ -4119,14 +4517,17 @@
         "Semanticus.Tests/BaselineTests.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CoreContractTests.cs",
+        "Semanticus.Tests/FreeSessionContractTests.cs",
         "Semanticus.Tests/IncrementalRefreshWiringTests.cs",
         "Semanticus.Tests/LayoutSidecarTests.cs",
         "Semanticus.Tests/LineageTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SaveHonestyTests.cs",
         "Semanticus.Tests/WriteRoutingTests.cs",
-        "Semanticus.VSCode/test/calendar-upgrade.test.mjs"
+        "Semanticus.VSCode/test/calendar-upgrade.test.mjs",
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
     {
@@ -4286,9 +4687,12 @@
         "Semanticus.Tests/ExperienceLogTests.cs",
         "Semanticus.Tests/MeasureFaithfulFidelityTests.cs",
         "Semanticus.Tests/PlanVerifyGateTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/ReadinessCatalogCompletionBatch7Tests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/ReplacePlanTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs"
@@ -4316,6 +4720,7 @@
         "Semanticus.Tests/AgentPolicyTests.cs",
         "Semanticus.Tests/BatchPropertyEditsTests.cs",
         "Semanticus.Tests/DisplayFolderTests.cs",
+        "Semanticus.Tests/PropertyGridPrefillTests.cs",
         "Semanticus.Tests/RenameLsdlCascadeTests.cs",
         "Semanticus.Tests/VerifiedMeasureV7CounterfactualTests.cs"
       ]
@@ -4329,8 +4734,7 @@
         "Semanticus.Tests/ConnectionContextTests.cs",
         "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ReviewFenceTests.cs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs"
       ]
     },
     {
@@ -4359,6 +4763,21 @@
       "risk": "high",
       "referenceEvidence": [
         "Semanticus.Tests/PublicMetadataWriteMcpTests.cs"
+      ]
+    },
+    {
+      "operation": "set_report_scope",
+      "family": "lineage-and-impact",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.McpSmoke/Program.cs",
+        "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs",
+        "Semanticus.VSCode/test/lineage-actions.test.mjs"
       ]
     },
     {
@@ -4404,8 +4823,7 @@
         "Semanticus.Tests/DocumentationExportTests.cs",
         "Semanticus.Tests/FabricSpecPublicDoorTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
-        "Semanticus.Tests/SpecCardinalityTests.cs",
-        "Semanticus.VSCode/test/navigation.test.mjs"
+        "Semanticus.Tests/SpecCardinalityTests.cs"
       ]
     },
     {
@@ -4452,7 +4870,21 @@
         "Semanticus.McpSmoke/Program.cs",
         "Semanticus.Tests/DaxWriteValidationTests.cs",
         "Semanticus.Tests/DualDriveUndoTests.cs",
-        "Semanticus.Tests/RoleSecurityTests.cs"
+        "Semanticus.Tests/RoleSecurityTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs"
+      ]
+    },
+    {
+      "operation": "set_table_source_mapping",
+      "family": "tests-and-evidence",
+      "releaseClass": "supported",
+      "risk": "high",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/TableMappingListTests.cs",
+        "Semanticus.Tests/TableSourceMappingTests.cs",
+        "Semanticus.Tests/TestsFixesTests.cs",
+        "Semanticus.VSCode/test/tests-new-check-drawer.test.mjs"
       ]
     },
     {
@@ -4463,6 +4895,8 @@
       "referenceEvidence": [
         "Semanticus.Tests/DryRunTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/VerifiedEditsAuditTests.cs",
         "Semanticus.Tests/VerifiedModeTests.cs"
       ]
@@ -4545,6 +4979,7 @@
         "Semanticus.Tests/ExpectedValuesVerifyTests.cs",
         "Semanticus.Tests/InterviewTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/SafeRenameWorkflowTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.Tests/UatC61HonestyTests.cs",
@@ -4608,13 +5043,27 @@
       ]
     },
     {
+      "operation": "test_sql_source",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.VSCode/test/connections-hub.test.mjs"
+      ]
+    },
+    {
       "operation": "try_test",
       "family": "tests-and-evidence",
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/ConnectionRegistryTests.cs",
-        "Semanticus.Tests/UatC63AuthoringTests.cs"
+        "Semanticus.Tests/SqlSourceRegistryTests.cs",
+        "Semanticus.Tests/SqlSourceResolutionTests.cs",
+        "Semanticus.Tests/TestsRedesignTests.cs",
+        "Semanticus.Tests/UatC63AuthoringTests.cs",
+        "Semanticus.VSCode/test/tests-fixes.test.mjs"
       ]
     },
     {
@@ -4638,7 +5087,9 @@
         "Semanticus.Tests/FreeMcpSurfaceTests.cs",
         "Semanticus.Tests/LineageTests.cs",
         "Semanticus.Tests/ReadinessCopyTests.cs",
-        "Semanticus.Tests/RemoveSafeObjectsTests.cs"
+        "Semanticus.Tests/RemoveSafeObjectsTests.cs",
+        "Semanticus.Tests/ReportScopeRejectionTests.cs",
+        "Semanticus.Tests/ReportScopeTests.cs"
       ]
     },
     {
@@ -4739,7 +5190,8 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/FreeMcpSurfaceTests.cs",
-        "Semanticus.Tests/OpTaxonomyTests.cs"
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs"
       ]
     },
     {
@@ -4762,6 +5214,8 @@
         "Semanticus.Tests/CustomRulesTests.cs",
         "Semanticus.Tests/HarnessFixTests.cs",
         "Semanticus.Tests/OrphanedWaiverTests.cs",
+        "Semanticus.Tests/ProFeatureMapTests.cs",
+        "Semanticus.Tests/ProGateRemovalTests.cs",
         "Semanticus.Tests/WaiverTests.cs"
       ]
     }

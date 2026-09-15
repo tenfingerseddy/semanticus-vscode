@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using TabularEditor.TOMWrapper;
 
@@ -68,10 +69,214 @@ namespace Semanticus.Engine
                     Path.Combine(AppContext.BaseDirectory, "workflows"));
         }
 
+        private const string RequiredWorkflowRevisionsKey = "requiredWorkflowRevisions";
+
+        private enum WorkflowRevisionFallback { Baseline, Current }
+
+        private sealed class ResolvedWorkflowFile
+        {
+            public string Path;
+            public string Source;
+            public string Revision;
+        }
+
+        private sealed class ResolvedWorkflowLibrary
+        {
+            public Dictionary<string, ResolvedWorkflowFile> Files = new Dictionary<string, ResolvedWorkflowFile>(StringComparer.Ordinal);
+            public Dictionary<string, string> RequiredStockRevisions = new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        private static string WorkflowSettingsFileFor(string userDir) =>
+            userDir == null ? null : Path.Combine(Path.GetDirectoryName(userDir), "workflow-settings.json");
+
+        private static Dictionary<string, string> WorkflowFiles(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                return new Dictionary<string, string>(StringComparer.Ordinal);
+            return Directory.EnumerateFiles(dir, "*.md")
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(Path.GetFileNameWithoutExtension, Path.GetFullPath, StringComparer.Ordinal);
+        }
+
+        private static JsonObject ReadWorkflowResolutionSettings(string file)
+        {
+            if (file == null || !File.Exists(file)) return null;
+            try { return JsonNode.Parse(ReadSettingsStrict(file)) as JsonObject; }
+            catch { return null; } // Existing corrupt-settings handling remains authoritative and fail-closed.
+        }
+
+        private static HashSet<string> RequiredWorkflowNames(JsonObject root)
+        {
+            var required = new HashSet<string>(StringComparer.Ordinal);
+            if (root?["bindings"] is not JsonObject bindings) return required;
+            void Add(JsonObject binding)
+            {
+                if (binding?["require"] is not JsonArray names) return;
+                foreach (var node in names)
+                    if (node is JsonValue value && value.TryGetValue<string>(out var name) && !string.IsNullOrWhiteSpace(name))
+                        required.Add(name.Trim());
+            }
+            foreach (var binding in bindings)
+            {
+                if (binding.Value is JsonObject flat) Add(flat);
+                else if (binding.Value is JsonArray conditional)
+                    foreach (var rule in conditional.OfType<JsonObject>()) Add(rule);
+            }
+            return required;
+        }
+
+        private static bool ReadRequiredWorkflowRevisions(JsonObject root, out Dictionary<string, string> revisions)
+        {
+            revisions = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (root == null || !root.ContainsKey(RequiredWorkflowRevisionsKey)) return false;
+            if (root[RequiredWorkflowRevisionsKey] is not JsonObject map)
+                throw new InvalidOperationException($"{RequiredWorkflowRevisionsKey} must be an object of workflow names to stock revision hashes. Select the binding or profile again to repair it.");
+            foreach (var item in map)
+            {
+                if (item.Value is not JsonValue value || !value.TryGetValue<string>(out var revision) || string.IsNullOrWhiteSpace(revision))
+                    throw new InvalidOperationException($"The saved stock revision for required workflow '{item.Key}' is missing or invalid. Select the binding or profile again to repair it.");
+                revisions[item.Key] = revision;
+            }
+            return true;
+        }
+
+        /// <summary>Every superseded stock definition still shipped, grouped by workflow name. One reader, so the
+        /// run resolver, the pin writer and the document reader cannot disagree about what is available.</summary>
+        private static Dictionary<string, string[]> CompatibleWorkflowFiles()
+        {
+            var root = Path.Combine(AppContext.BaseDirectory, "workflows-compat");
+            if (!Directory.Exists(root)) return new Dictionary<string, string[]>(StringComparer.Ordinal);
+            return Directory.EnumerateFiles(root, "*.md", SearchOption.AllDirectories)
+                .GroupBy(Path.GetFileNameWithoutExtension, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.OrderBy(path => path, StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
+        }
+
+        private static string WorkflowRevision(string path) => WorkflowByteHash(File.ReadAllBytes(path));
+
+        private Dictionary<string, ResolvedWorkflowFile> ResolveRequiredStockFiles(
+            HashSet<string> roots,
+            Dictionary<string, string> pinned,
+            WorkflowRevisionFallback fallback,
+            Dictionary<string, string> users,
+            Dictionary<string, string> current,
+            Dictionary<string, string[]> compatible)
+        {
+            var selected = new Dictionary<string, ResolvedWorkflowFile>(StringComparer.Ordinal);
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var visiting = new HashSet<string>(StringComparer.Ordinal);
+
+            string ResolvePinned(string name, string revision)
+            {
+                if (current.TryGetValue(name, out var currentPath) && string.Equals(WorkflowRevision(currentPath), revision, StringComparison.Ordinal))
+                    return currentPath;
+                if (compatible.TryGetValue(name, out var paths))
+                    foreach (var path in paths)
+                        if (string.Equals(WorkflowRevision(path), revision, StringComparison.Ordinal)) return path;
+                throw new InvalidOperationException($"Required workflow '{name}' is pinned to stock revision '{revision}', but that revision is unavailable. Restore the shipped workflow compatibility files or select the binding/profile again.");
+            }
+
+            void Visit(string name)
+            {
+                if (visited.Contains(name) || !visiting.Add(name)) return;   // seen, or a hand-off cycle
+                try
+                {
+                    string path;
+                    string source;
+                    if (users.TryGetValue(name, out path)) source = "user";  // a project copy still wins outright
+                    else
+                    {
+                        source = "stock";
+                        if (pinned.TryGetValue(name, out var revision)) path = ResolvePinned(name, revision);
+                        else if (fallback == WorkflowRevisionFallback.Baseline)
+                        {
+                            path = compatible.TryGetValue(name, out var paths)
+                                ? paths.FirstOrDefault(p => string.Equals(Path.GetFileName(Path.GetDirectoryName(p)), "v1.1.3", StringComparison.Ordinal))
+                                : null;
+                            // Shipped today but missing from the compatibility set means the install was stripped,
+                            // and silently handing back the NEW definition is the exact swap this exists to prevent.
+                            if (path == null && current.ContainsKey(name))
+                                throw new InvalidOperationException($"Required workflow '{name}' comes from a saved pre-redesign binding, but its v1.1.3 compatibility definition is unavailable. Restore the shipped compatibility files before running it.");
+                        }
+                        // Current. A settings file that already carries a revision map got one written for every
+                        // required STOCK name, so a name missing from it was user-shadowed at that moment and never
+                        // chose a pre-redesign definition. Today's file is the honest answer.
+                        else current.TryGetValue(name, out path);
+
+                        // No file anywhere: a dangling binding entry (a deleted project workflow, or a settings
+                        // file edited by hand). It resolved to nothing before pinning existed and still does --
+                        // binding ENFORCEMENT is where that gets reported, so a library read must not throw.
+                        if (path == null) return;
+                        selected[name] = new ResolvedWorkflowFile { Path = path, Source = source, Revision = WorkflowRevision(path) };
+                    }
+
+                    var def = WorkflowParser.ParseFile(path, source);
+                    foreach (var child in (def.Steps ?? Array.Empty<WorkflowStep>())
+                        .Select(step => step.Call?.Workflow).Where(child => !string.IsNullOrWhiteSpace(child)))
+                        Visit(child);
+                    visited.Add(name);
+                }
+                finally { visiting.Remove(name); }
+            }
+
+            foreach (var root in roots) Visit(root);
+            return selected;
+        }
+
+        private ResolvedWorkflowLibrary ResolveWorkflowLibrary(string userDir, string stockDir)
+        {
+            var users = WorkflowFiles(userDir);
+            var current = WorkflowFiles(stockDir);
+            var compatible = CompatibleWorkflowFiles();
+            var settings = ReadWorkflowResolutionSettings(WorkflowSettingsFileFor(userDir));
+            var roots = RequiredWorkflowNames(settings);
+            var hasPins = ReadRequiredWorkflowRevisions(settings, out var pins);
+            var required = ResolveRequiredStockFiles(roots, pins,
+                hasPins ? WorkflowRevisionFallback.Current : WorkflowRevisionFallback.Baseline,
+                users, current, compatible);
+            var result = new ResolvedWorkflowLibrary();
+            foreach (var item in current)
+                result.Files[item.Key] = new ResolvedWorkflowFile { Path = item.Value, Source = "stock", Revision = WorkflowRevision(item.Value) };
+            foreach (var item in required)
+            {
+                result.Files[item.Key] = item.Value;
+                result.RequiredStockRevisions[item.Key] = item.Value.Revision;
+            }
+            foreach (var item in users)
+                result.Files[item.Key] = new ResolvedWorkflowFile { Path = item.Value, Source = "user" };
+            return result;
+        }
+
+        private Dictionary<string, string> CurrentRequiredWorkflowRevisions(JsonObject root, string userDir, string stockDir)
+        {
+            var users = WorkflowFiles(userDir);
+            var current = WorkflowFiles(stockDir);
+            var compatible = CompatibleWorkflowFiles();
+            var hasPins = ReadRequiredWorkflowRevisions(root, out var pins);
+            return ResolveRequiredStockFiles(RequiredWorkflowNames(root), pins,
+                    hasPins ? WorkflowRevisionFallback.Current : WorkflowRevisionFallback.Baseline,
+                    users, current, compatible)
+                .ToDictionary(item => item.Key, item => item.Value.Revision, StringComparer.Ordinal);
+        }
+
+        private void SelectRequiredWorkflowRevisions(JsonObject root, string userDir, string stockDir,
+            Dictionary<string, string> preserved)
+        {
+            var users = WorkflowFiles(userDir);
+            var current = WorkflowFiles(stockDir);
+            var compatible = CompatibleWorkflowFiles();
+            var revisions = ResolveRequiredStockFiles(RequiredWorkflowNames(root), preserved ?? new Dictionary<string, string>(StringComparer.Ordinal),
+                    WorkflowRevisionFallback.Current, users, current, compatible)
+                .ToDictionary(item => item.Key, item => item.Value.Revision, StringComparer.Ordinal);
+            if (revisions.Count == 0) { root.Remove(RequiredWorkflowRevisionsKey); return; }
+            var map = new JsonObject();
+            foreach (var item in revisions.OrderBy(item => item.Key, StringComparer.Ordinal)) map[item.Key] = item.Value;
+            root[RequiredWorkflowRevisionsKey] = map;
+        }
+
         private string WorkflowSettingsFile()
         {
             var (userDir, _) = WorkflowDirs();
-            return userDir == null ? null : Path.Combine(Path.GetDirectoryName(userDir), "workflow-settings.json");
+            return WorkflowSettingsFileFor(userDir);
         }
 
         private readonly object _settingsFileLock = new object();   // serialize workflow-settings read-modify-write across both doors
@@ -463,7 +668,7 @@ namespace Semanticus.Engine
         // readiness / …) via a top-level `activation:` array in workflow-settings.json — read hot off disk like
         // strictness/enabled/bindings, fail-safe (malformed ⇒ no rules ⇒ every workflow active). It is NOT a lock:
         // a rule-deactivated workflow is still startable on demand (D4); only the manual `enabled:false` kill-switch
-        // hard-refuses. Reading activation is FREE; only WRITING a rule (set_workflow_activation) is Pro (§10.7).
+        // hard-refuses. Reading and writing activation are both Pro: Workflows is one whole feature (Kane 2026-09-15).
 
         private sealed class ActivationRule
         {
@@ -837,6 +1042,7 @@ namespace Semanticus.Engine
 
         public Task<WorkflowEnforcement> GetWorkflowEnforcementAsync()
         {
+            RequireProFeature();
             // A corrupt settings file fails CLOSED: the "off" kill-switch lives in that same unreadable file, so it
             // can't be honored — enforcement stays on and we say so (mode reads null ⇒ per-def default: hard).
             if (WorkflowSettingsCorrupt())
@@ -866,6 +1072,7 @@ namespace Semanticus.Engine
         /// so both doors see cards flip live. mode: "hard" | "warn" | "off" | "default"/null (clear).</summary>
         public async Task<WorkflowEnforcement> SetWorkflowEnforcementAsync(string mode, string origin)
         {
+            RequireProFeature();
             mode = string.IsNullOrWhiteSpace(mode) || mode.Trim().ToLowerInvariant() == "default" ? null : mode.Trim().ToLowerInvariant();
             if (mode != null && mode != "hard" && mode != "warn" && mode != "off")
                 throw new ArgumentException("mode must be 'hard', 'warn', 'off', or 'default' (clear the override and let each workflow's own strictness apply).");
@@ -892,12 +1099,10 @@ namespace Semanticus.Engine
         private List<WorkflowDef> LoadWorkflowDefs()
         {
             var (userDir, stockDir) = WorkflowDirs();
-            var defs = WorkflowParser.LoadDirectory(stockDir, "stock");
-            foreach (var user in WorkflowParser.LoadDirectory(userDir, "user"))
-            {
-                defs.RemoveAll(d => string.Equals(d.Name, user.Name, StringComparison.Ordinal)); // user shadows stock
-                defs.Add(user);
-            }
+            var resolved = ResolveWorkflowLibrary(userDir, stockDir);
+            var defs = resolved.Files.Values
+                .Select(file => WorkflowParser.ParseFile(file.Path, file.Source))
+                .ToList();
             // §10.3 placement guard: a `kind: template` file in the workflows dir is a misplaced RECIPE, not a
             // runnable workflow — surface it as an error (never silently skip), so list_workflows/start_workflow
             // teach the fix instead of trying to run blanks.
@@ -907,10 +1112,15 @@ namespace Semanticus.Engine
             return defs;
         }
 
-        public async Task<WorkflowInfo[]> ListWorkflowsAsync() => await BuildLibraryInfosAsync();
+        public async Task<WorkflowInfo[]> ListWorkflowsAsync()
+        {
+            RequireProFeature();
+            return await BuildLibraryInfosAsync();
+        }
 
         public Task<WorkflowDef> GetWorkflowAsync(string name)
         {
+            RequireProFeature();
             var def = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"Workflow '{name}' not found (list_workflows shows the library).");
             return Task.FromResult(def);
@@ -930,6 +1140,7 @@ namespace Semanticus.Engine
         /// snapshot is a LATER layer — not run here. Free, read-only.</summary>
         public async Task<WorkflowCheckReport> CheckWorkflowAsync(string name)
         {
+            RequireProFeature();
             var wf = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
             if (wf != null) return await CheckWorkflowDefAsync(wf);
 
@@ -943,7 +1154,7 @@ namespace Semanticus.Engine
 
         /// <summary>The admission dry-run over an already-loaded def (extracted so the §10 template
         /// trial-instantiation runs the SAME resolution rules a workflow gets — never a drifting copy).</summary>
-        private async Task<WorkflowCheckReport> CheckWorkflowDefAsync(WorkflowDef def)
+        private async Task<WorkflowCheckReport> CheckWorkflowDefAsync(WorkflowDef def, List<WorkflowDef> candidateLibrary = null)
         {
             var report = new WorkflowCheckReport { Name = def.Name };
             if (def.Error != null) { report.ParseError = def.Error; report.Ok = false; return report; }
@@ -959,7 +1170,7 @@ namespace Semanticus.Engine
             // than the file — does a hand-off resolve, is the chain acyclic and inside the depth limit, is a
             // `when:` term one this version can read. Kept in WorkflowParser so the format's rules live in
             // one place; a parse-level refusal never reaches here, having returned above as ParseError.
-            var library = LoadWorkflowDefs();
+            var library = candidateLibrary ?? LoadWorkflowDefs();
             findings.AddRange(WorkflowParser.V2Findings(def, library, LoadTemplateDefs()));
 
             var catalog = (await GetOpCatalogAsync()).Select(o => o.Name).ToHashSet(StringComparer.Ordinal);
@@ -1061,15 +1272,16 @@ namespace Semanticus.Engine
         /// <summary>Write a user workflow file — PARSE-VALIDATE FIRST: a file the parser refuses is never
         /// written (the designer must not be able to author a broken library entry; the parse error comes
         /// back verbatim). Saving a stock name creates the user shadow (copy-to-customise).</summary>
-        public async Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false)
+        public async Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false, string sessionId = null)
         {
+            RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, _) = WorkflowDirs(context);
             await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                GuardWorkflowDocumentContext(context, null);
+                GuardWorkflowDocumentContext(context, sessionId);
                 lock (WorkflowDocumentLock)
                 {
                     var def = ParseWorkflowDocument(markdown);
@@ -1097,6 +1309,7 @@ namespace Semanticus.Engine
         /// name without a user shadow is refused instructively (customised shadows revert to stock).</summary>
         public async Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin)
         {
+            RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, stockDir) = WorkflowDirs(context);
@@ -1126,6 +1339,7 @@ namespace Semanticus.Engine
         /// disable only narrows the caller's own menu (mirrors set_workflow_enforcement's file discipline).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowEnabledAsync(string name, bool enabled, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required.");
             var def = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"Workflow '{name}' not found: list_workflows shows the library (stock + your .semanticus/workflows).");
@@ -1163,6 +1377,7 @@ namespace Semanticus.Engine
         /// not, and cannot, police the file itself).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowBindingAsync(string op, string[] requireNames, string mode, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(op)) throw new ArgumentException("op is required: the op to route, e.g. 'create_measure'.");
             op = op.Trim();
             mode = string.IsNullOrWhiteSpace(mode) ? "off" : mode.Trim().ToLowerInvariant();
@@ -1171,11 +1386,12 @@ namespace Semanticus.Engine
             var require = (requireNames ?? Array.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToArray();
             var clearing = mode == "off" || require.Length == 0;
 
-            var file = WorkflowSettingsFile()
+            var (userDir, stockDir) = WorkflowDirs();
+            var file = WorkflowSettingsFileFor(userDir)
                 ?? throw new InvalidOperationException("No workspace to hold workflow settings. Open a model (or start the engine with a workspace) first.");
 
             // §9.10C: a committed mandate (userDisablable:false) can't be changed OR cleared from the agent door —
-            // instructive refusal, checked before the Pro gate so the more-specific reason wins. Human/file edits
+            // instructive refusal, checked after the feature gate so a free caller is told the price first. Human/file edits
             // remain possible (origin != "agent"); we deliberately do not try to police the file itself.
             var existing = SettingsBindingFor(op);
             if (existing != null && !existing.UserDisablable && string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase))
@@ -1184,9 +1400,6 @@ namespace Semanticus.Engine
 
             if (!clearing)
             {
-                // §9.8 Pro gate — writing a mandate (hard|warn) is the paid enforcement; reading/curating stays free.
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Requiring an operation to route through a workflow",
-                    "Free alternative: curate the menu with set_workflow_enabled and follow a workflow manually (get_workflow).");
                 // Every required name must exist — a binding to a phantom workflow would be an unstartable trap.
                 var lib = LoadWorkflowDefs().Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
                 var unknown = require.Where(n => !lib.Contains(n)).ToArray();
@@ -1196,6 +1409,10 @@ namespace Semanticus.Engine
 
             MutateWorkflowSettings(file, root =>
             {
+                // Capture the definition set the surviving requirements currently resolve to before changing
+                // the binding. Old files have no revision map, so this is where their v1.1.3 choice becomes
+                // explicit without a read-side migration. Newly required names use today's stock files below.
+                var preserved = CurrentRequiredWorkflowRevisions(root, userDir, stockDir);
                 root.Remove("profile");
                 if (clearing)
                 {
@@ -1210,6 +1427,7 @@ namespace Semanticus.Engine
                     // userDisablable is committed team policy, only ever hand-edited (the op takes no such arg) — leave
                     // any existing key untouched so an update can't silently unlock a locked mandate.
                 }
+                SelectRequiredWorkflowRevisions(root, userDir, stockDir, preserved);
             });
 
             _sessions.Bus.PublishActivity(new ActivityEvent
@@ -1229,6 +1447,7 @@ namespace Semanticus.Engine
         /// are hand-edited in v1 (this op takes a name).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowActivationAsync(string workflow, string when, string set, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workflow)) throw new ArgumentException("workflow is required: the workflow to show or hide with a rule.");
             workflow = workflow.Trim();
             when = string.IsNullOrWhiteSpace(when) ? null : when.Trim();
@@ -1258,9 +1477,6 @@ namespace Semanticus.Engine
                 var stepScope = WorkflowPredicate.StepScopeFacts(parsedWhen);
                 if (stepScope.Count > 0)
                     throw new InvalidOperationException($"That condition can't be used here: '{string.Join("', '", stepScope)}' only means something while a workflow is running, and this rule decides whether the workflow is offered at all. Use a condition about the model, the connection, git, the session or the date. To make a STEP conditional, put 'when:' in that step's 'yaml step' block instead.");
-                // §10.7 Pro gate — writing an activation rule is the paid curation; reading it stays free.
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Showing a workflow only when a condition holds",
-                    "Free alternative: turn workflows on/off with set_workflow_enabled, or edit the activation list in .semanticus/workflow-settings.json.");
             }
 
             MutateWorkflowSettings(file, root =>
@@ -1304,6 +1520,7 @@ namespace Semanticus.Engine
         /// rejection. Free, read-only.</summary>
         public async Task<WorkflowPolicy> GetWorkflowPolicyAsync()
         {
+            RequireProFeature();
             var global = GlobalStrictness();
             var defs = LoadWorkflowDefs();
             var templates = LoadTemplateDefs();
@@ -1532,6 +1749,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowRunView> StartWorkflowAsync(string name, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             // §10.2/§10.12: a template is a recipe with blanks, not runnable — teach the instantiate path before
             // the generic not-found, but only when no workflow of this name exists (a real workflow always wins).
@@ -1597,13 +1815,6 @@ namespace Semanticus.Engine
             }
 
             // ---- PHASE B: the normal start preparation, over the whole frozen closure.
-            // THE entitlement chokepoint (both doors inherit): what's paid is enforcement, not the
-            // playbook — a workflow whose every gate resolves to off runs free (incl. via the
-            // model-wide enforcement toggle: enforcement off ⇒ nothing enforced ⇒ nothing gated).
-            if (ClosureRequiresPro(closure, global))
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Starting an enforced workflow",
-                    "Free alternative: open the playbook and follow its steps by hand.");
-
             // [D4] Started though a rule currently hides it (activation curates the menu, it isn't a lock): record a
             // plain advisory so the run is honest. Skip when force-active (that's "required", not "off the menu").
             if (!active && !forceActive)
@@ -1664,6 +1875,7 @@ namespace Semanticus.Engine
         /// {"declined": true, "reason": "..."}. The gate evaluator's rejection text steers the agent.</summary>
         public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin, string callGate = null)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var answers = ParseAnswers(answersJson);
             await context.WorkflowGate.WaitAsync();
@@ -1738,6 +1950,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowRunView> SkipWorkflowStepAsync(string runId, string stepId, string reason, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             await context.WorkflowGate.WaitAsync();
             try
@@ -1767,6 +1980,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             await context.WorkflowGate.WaitAsync();
             try
@@ -1781,6 +1995,7 @@ namespace Semanticus.Engine
 
         public async Task<Semanticus.Engine.Evidence.EvidenceArtifact> ExportWorkflowEvidenceAsync(string runId)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var session = context.Session;
             if (session == null)

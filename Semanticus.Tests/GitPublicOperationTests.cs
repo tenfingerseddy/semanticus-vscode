@@ -29,7 +29,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
@@ -80,7 +80,7 @@ namespace Semanticus.Tests
             try
             {
                 var looseSessions = new SessionManager();
-                using var looseEngine = new LocalEngine(looseSessions, new Free(), loose);
+                using var looseEngine = new LocalEngine(looseSessions, TestEntitlements.Pro, loose);
                 await looseEngine.OpenAsync(looseModel);
                 var looseActivities = new List<EngineActivityEvent>();
                 looseSessions.Bus.Activity += looseActivities.Add;
@@ -103,7 +103,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
@@ -151,7 +151,10 @@ namespace Semanticus.Tests
                 Assert.False(checkout.ModelReloadNeeded);
                 Assert.Equal(headBefore, Git(repo.Dir, "rev-parse", "HEAD"));
                 Assert.Equal(diskBefore, File.ReadAllBytes(repo.Model));
-                Assert.Equal(5, activities.Count);
+                // Six, not five: the health delta became free on 2026-09-15, so the probe publishes its own
+                // activity record on the set_dax commit above for every tier. The git half is unchanged.
+                Assert.Equal(6, activities.Count);
+                Assert.Single(activities, a => a.Kind == "health_delta");
                 Assert.Equal(0, modelChanges);
             }
             finally { Delete(repo.Root); }
@@ -164,7 +167,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 File.WriteAllText(repo.Model, "local dirty model that must survive");
                 var before = File.ReadAllBytes(repo.Model);
@@ -192,7 +195,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), remote.Work);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, remote.Work);
                 await engine.OpenAsync(remote.WorkModel);
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
@@ -244,7 +247,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), remote.Work);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, remote.Work);
                 await engine.OpenAsync(remote.WorkModel);
 
                 File.AppendAllText(remote.WorkModel, "\n local");
@@ -275,7 +278,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), workspace);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, workspace);
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
                 sessions.Bus.Activity += activities.Add;
@@ -361,7 +364,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 var revision = sessions.Current.Revision;
@@ -436,7 +439,7 @@ namespace Semanticus.Tests
                 Git(remote.Peer, "push", "-q");
 
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), remote.Work);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, remote.Work);
                 await engine.OpenAsync(remote.WorkModel);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 var revision = sessions.Current.Revision;
@@ -473,7 +476,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 var originalDax = measure.Expression;
@@ -512,7 +515,7 @@ namespace Semanticus.Tests
             try
             {
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), repo.Dir);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, repo.Dir);
                 await engine.OpenAsync(repo.Model);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 var revision = sessions.Current.Revision;
@@ -564,7 +567,7 @@ namespace Semanticus.Tests
                 }
 
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), workspace);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, workspace);
                 var activities = new List<EngineActivityEvent>();
                 sessions.Bus.Activity += activities.Add;
 
@@ -605,7 +608,7 @@ namespace Semanticus.Tests
                 }
 
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), workspace);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, workspace);
                 var activities = new List<EngineActivityEvent>();
                 sessions.Bus.Activity += activities.Add;
 
@@ -655,7 +658,7 @@ namespace Semanticus.Tests
                 Git(source, "branch", "-M", "main");
 
                 var sessions = new SessionManager();
-                using var engine = new LocalEngine(sessions, new Free(), workspace);
+                using var engine = new LocalEngine(sessions, TestEntitlements.Pro, workspace);
                 var activities = new List<EngineActivityEvent>();
                 sessions.Bus.Activity += activities.Add;
 

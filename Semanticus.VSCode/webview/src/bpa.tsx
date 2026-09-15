@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { rpc, onDidChange } from './bridge';
 import { useFixState } from './hooks';
 import { GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
-import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
 import { CustomRulesPanel } from './rulesauthor';
 
 interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; }
@@ -15,10 +14,8 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   const [card, setCard] = useState<BpaScorecard | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [upsell, setUpsell] = useState<string | null>(null);   // a free click on Fix-all teaches, never errors
   const [leftOver, setLeftOver] = useState<BpaUnfixed[]>([]);  // what the last press could not clear
   const [waivedOpen, setWaivedOpen] = useState(false);
-  const tier = useTier();
   const { state: work, keyOf, fix, ask } = useFixState('bpaFix', 'bpaGetFixPrompt');
   const timer = useRef<number | undefined>(undefined);
 
@@ -31,30 +28,24 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
     const off = onDidChange(() => { window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void scan(), 350); });
     return () => { off(); window.clearTimeout(timer.current); };
   }, []);
-  // The upsell is a refusal whose only cause is the plan you are on. Activating a licence restarts the engine
-  // and republishes the tier without remounting this tab, so the message used to sit there telling a Pro user
-  // that Fix all is a Pro feature. Clear it the moment the cause is gone (and the moment it never applied).
-  useEffect(() => { setUpsell(null); }, [tier]);
-
   const fixOne = (v: BpaViolation) => fix(v.ruleId, v.objectRef, () => void scan());
   const askClaude = (v: BpaViolation) => ask(v.ruleId, v.objectRef);
   async function fixAll() {
     // Clear both messages BEFORE the attempt: an old refusal (or an old error) must not survive a press that
     // works. Only ever set them from what this press actually saw.
-    setBusy(true); setUpsell(null); setErr(null); setLeftOver([]);
+    setBusy(true); setErr(null); setLeftOver([]);
     try {
       const r = await rpc<{ scorecard: BpaScorecard; applied: number; unfixed?: BpaUnfixed[] }>('bpaFixAll');
       if (r?.scorecard) setCard(r.scorecard);
       setLeftOver(r?.unfixed ?? []);
-    } catch (e) {
-      // A free click on the bulk button gets the plain invitation, not a raw exception in a red banner.
-      if (isEntitlementError(e)) setUpsell(`Each fix below is free. Apply them one at a time, as many as you like. Pro fixes all ${card?.autoFixable ?? 0} in one undoable step.`);
-      else setErr(String((e as Error).message ?? e));
     }
+    // Fixing every auto-fixable violation in one step is FREE from 2026-09-15 (Kane's feature line). There is
+    // no entitlement refusal left to soften, so a failure here is a real failure and reads as one.
+    catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setBusy(false); }
   }
 
-  if (!card) return <div className="sem-evidence-page sem-centered-page text-[12px]" style={{ color: 'var(--sem-muted)' }}>{err ?? 'Running Best Practice Analyzer…'}</div>;
+  if (!card) return <div className="sem-evidence-page sem-centered-page text-[12px]" style={{ color: 'var(--sem-muted)' }}>{err ?? 'Checking the model…'}</div>;
 
   const byRef = new Map(card.violations.map((v) => [v.objectRef + '|' + v.ruleId, v]));
   const toRow = (v: BpaViolation): FindingRow => ({
@@ -82,9 +73,9 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
       : <MiniButton onClick={() => askClaude(v)}>{st === 'copied' ? 'Copied ✓' : 'Ask AI'}</MiniButton>;
     return <span className="flex items-center gap-1">{fixBtn}<WaiveControl onWaive={(reason) => waive(r, reason)} onUnwaive={() => unwaive(r)} /></span>;
   };
-  // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Waive rule" made from the
+  // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Accept for the whole model" made from the
   // same spot it was made (it was a dead no-op before the 2026-07-07 hook-fix batch).
-  const ruleActions = (ruleId: string) => <WaiveControl label="Waive rule" title="Accept every instance of this rule, model-wide (Pro)" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => void rpc('unwaiveFinding', 'bpa', ruleId, '*').then(scan).catch(fail)} />;
+  const ruleActions = (ruleId: string) => <WaiveControl subtle label="Accept for the whole model" title="Accept every instance of this rule across the model (Pro)" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => void rpc('unwaiveFinding', 'bpa', ruleId, '*').then(scan).catch(fail)} />;
 
   return (
     <div className="sem-evidence-page sem-centered-page flex flex-col gap-4">
@@ -95,34 +86,32 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
             <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>issues</div>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold">Best Practice Analyzer</div>
+            <div className="text-[15px] font-semibold">Model quality</div>
             <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-              {card.ruleCount} rules · {card.autoFixable} auto-fixable · the rest fixable by the AI Assistant
-              {card.waivedCount > 0 && <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} waived</button></span>}
+              {card.ruleCount} checks run · this app can fix {card.autoFixable} on its own · your assistant can fix the rest
+              {card.waivedCount > 0 && <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} accepted</button></span>}
             </div>
             {card.ruleErrors.length > 0 && <div className="text-[11px] mt-1" style={{ color: 'var(--sem-bad)' }}>{card.ruleErrors.length} rule error(s)</div>}
           </div>
-          <Button primary disabled={busy || card.autoFixable === 0} onClick={fixAll}
-            title={tier === 'free'
-              ? `Pro fixes all ${card.autoFixable} in one undoable step. Each fix below stays free, one at a time.`
-              : 'Apply every auto-fixable violation in one undoable step.'}>
-            {busy ? 'Fixing…' : `Fix all ${card.autoFixable} auto-fixable`}
-            <ProBadge show={tier === 'free'} variant="onAccent" />
-          </Button>
-          {onReviewAsPlan && card.violationCount > 0 && <Button onClick={onReviewAsPlan} title="Review these fixes as one change plan, then apply in bulk">Review as a plan →</Button>}
-          <Button onClick={scan}>Re-scan</Button>
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <Button primary disabled={busy || card.autoFixable === 0} onClick={fixAll}
+              title="Apply every auto-fixable violation in one undoable step.">
+              {busy ? 'Fixing…' : `Fix the ${card.autoFixable} this app can fix`}
+            </Button>
+            {onReviewAsPlan && card.violationCount > 0 && <Button onClick={onReviewAsPlan} title="Review these fixes as one change plan, then apply in bulk">Review as a plan →</Button>}
+            <Button onClick={scan}>Re-scan</Button>
+          </div>
         </div>
       </Panel>
 
       {err && <Banner color="var(--sem-bad)">{err}</Banner>}
-      {upsell && <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>}
       {leftOver.length > 0 && (
         <Panel>
           <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-warn)' }}>
             {leftOver.length === 1 ? 'One finding could not be fixed' : `${leftOver.length} findings could not be fixed`}
           </div>
           <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            Fix all cleared the rest. These are still on the model, and each one says why it stayed. Fix them one at a time, or ask the AI Assistant.
+            Fix all cleared the rest. These are still on the model, and each one says why it stayed. Fix them one at a time, or ask your assistant.
           </div>
           <ul className="mt-2 flex flex-col gap-1.5">
             {leftOver.map((u) => (
@@ -135,7 +124,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
           </ul>
         </Panel>
       )}
-      {card.violationCount === 0 && <Panel><div className="text-[13px]" style={{ color: 'var(--sem-good)' }}>No active best-practice violations. ✓{card.waivedCount > 0 ? ` (${card.waivedCount} waived)` : ''}</div></Panel>}
+      {card.violationCount === 0 && <Panel><div className="text-[13px]" style={{ color: 'var(--sem-good)' }}>Nothing to fix. ✓{card.waivedCount > 0 ? ` (${card.waivedCount} accepted)` : ''}</div></Panel>}
 
       {card.violationCount > 0 && <Panel><GroupedFindings rows={active} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} /></Panel>}
       <WaivedList rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
@@ -151,8 +140,7 @@ function Panel({ children }: { children: React.ReactNode }) {
 function Button({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
   return (
     <button onClick={onClick} disabled={disabled} title={title}
-      className="text-[12px] px-3 py-1.5 rounded-lg font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={primary ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' } : { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {children}
     </button>
   );
@@ -160,8 +148,7 @@ function Button({ children, onClick, primary, disabled, title }: { children: Rea
 function MiniButton({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2 py-0.5 rounded-md font-medium transition-opacity disabled:opacity-40 whitespace-nowrap"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+      className="sem-btn sem-btn-sm">
       {children}
     </button>
   );

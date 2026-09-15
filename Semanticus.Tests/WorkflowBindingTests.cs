@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Semanticus.Engine;
 using Semanticus.Engine.Entitlement;
@@ -33,8 +35,13 @@ namespace Semanticus.Tests
         }
 
         // A 2-step, UN-GATED vehicle. Step 1 declares ops:[create_measure] (the performing step); step 2 does
-        // not. Un-gated (ops-only fences carry no strictness/inputs/verify) so start_workflow runs FREE — the
-        // binding axis is exercised in isolation from the entitlement + strictness axes.
+        // not. Un-gated (ops-only fences carry no strictness/inputs/verify) so the binding axis is exercised in
+        // isolation from the strictness axis.
+        //
+        // Tiers are mixed here on purpose since 2026-09-15. A test that only writes settings by hand and then
+        // calls the BOUND op stays on free, because create_measure is free and the mandate must bite there too.
+        // A test that calls a workflow op (start, policy, enforcement, set_workflow_binding) holds Pro, because
+        // the whole workflow area is Pro.
         private const string VehicleMd = @"---
 name: bind-vehicle
 title: Binding vehicle
@@ -59,6 +66,14 @@ Review what you made — this step does not perform create_measure.
 
         private static string SettingsFile(string ws) => Path.Combine(ws, ".semanticus", "workflow-settings.json");
         private static void WriteSettings(string ws, string json) => File.WriteAllText(SettingsFile(ws), json);
+        private static string ShippedWorkflow(string library, string name) =>
+            Path.Combine(AppContext.BaseDirectory, library, name + ".md");
+        private static string RevisionOf(string file) =>
+            "sha256:" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file))).ToLowerInvariant();
+        private static JsonObject ReadSettings(string ws) => JsonNode.Parse(File.ReadAllText(SettingsFile(ws))).AsObject();
+        private static string SavedRevision(string ws, string name) =>
+            ReadSettings(ws)["requiredWorkflowRevisions"][name].GetValue<string>();
+        private static string ParsedTitle(string file) => WorkflowParser.ParseFile(file, "stock").Title;
 
         // The two enforced shapes, and a hand-locked committed mandate (§9.10C).
         private const string HardBinding = @"{ ""bindings"": { ""create_measure"": { ""require"": [""bind-vehicle""], ""mode"": ""hard"" } } }";
@@ -145,7 +160,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -224,7 +239,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -247,7 +262,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -348,6 +363,231 @@ Review what you made — this step does not perform create_measure.
             finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
         }
 
+        [Theory]
+        [InlineData("add-relationship", "9a25a07542864cb73f785eaf22e7a9a576cecf8fc01236b175a576780a9f195c")]
+        [InlineData("calendar-setup", "1787b80825ad1be76760e0d417d0dbff9ac441af43b4c710fc2393d9ff1e8450")]
+        [InlineData("check-blast-radius", "9ea7331bc98d14234662d68c83f8e77ab57f482610ff9359e83aae99f5a16f89")]
+        [InlineData("deploy-to-production", "047a9881205d9ad12bb6c2816dfba5d8129bc72ae6984558a24453e5d3e0056b")]
+        [InlineData("governed-rename", "09811863cc7f6a1168476ddc31ac1999be827d440311e60b81838887fe2ace82")]
+        [InlineData("import-table", "321216d6b18ba1911b8c0e9d6f7194f2604a7b572223e930369c8efbff57898a")]
+        [InlineData("incremental-refresh-setup", "ed384367e410ecc6385ad3b55fceb6142f9629c534eb927d9952d364245f9fef")]
+        [InlineData("make-ai-ready", "0d5ee474e07f055a7b4a1d14a58b348f6106d8e3f0ad37f5f582c23203051d77")]
+        [InlineData("model-hygiene-pass", "f878083566a3e18635cd85a1a040ee81503bcf5150b5aa5046b03b3654a70c3d")]
+        [InlineData("new-measure", "8b8eab5c185d10f25524dfb7c4afea97a0f28b015ba371f9acab8f7bc9d48d77")]
+        [InlineData("optimize-dax", "1050e3db40cdcd1975309c4c7fc84498508abb26ba3e7493b766e28a92f49507")]
+        [InlineData("refactor-to-calculation-group", "2a3b9a8f0f5a16e9553d4faa6a41bf88315f47d7fbb803be3ccf3924ec585e87")]
+        [InlineData("secure-with-rls", "76f0cf76890c71eaf08fc26bc518c87cd34de80e8bed66257b74a994cbeabdaf")]
+        [InlineData("time-intelligence-variants", "d8bd38cc036655022f31ada51bc47d06326e7c65b1319ade1d6d2a6be3d97f0b")]
+        [InlineData("verified-measure", "536dd4b781f76eb6f2acd0bc8b849f5fab270990427a4f65706369cc7591bc51")]
+        public void Shipped_v1_1_3_compatibility_files_are_byte_exact(string name, string expectedHash)
+        {
+            Assert.Equal("sha256:" + expectedHash, RevisionOf(ShippedWorkflow("workflows-compat/v1.1.3", name)));
+        }
+
+        [Fact]
+        public async Task Legacy_required_stock_uses_baseline_without_rewriting_settings_and_document_reads_match()
+        {
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""futureKey"": 17, ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""hard"" } } }");
+            var original = File.ReadAllBytes(SettingsFile(ws));
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var required = await engine.GetWorkflowAsync("new-measure");
+                var unrelated = await engine.GetWorkflowAsync("optimize-dax");
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows-compat/v1.1.3", "new-measure")), required.FilePath);
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "optimize-dax")), unrelated.FilePath);
+
+                var ui = await engine.GetWorkflowDocumentAsync("new-measure");
+                var agent = await McpTools.GetWorkflowDocument(engine, "new-measure");
+                Assert.Equal(required.FilePath, ui.Path);
+                Assert.Equal(ui.Path, agent.Path);
+                Assert.Equal(ui.ByteHash, agent.ByteHash);
+                Assert.Equal(ui.ExactText, agent.ExactText);
+                Assert.True(original.SequenceEqual(File.ReadAllBytes(SettingsFile(ws))));
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task Binding_updates_preserve_old_requirements_choose_current_for_new_ones_and_prune_removed_ones()
+        {
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""futureKey"": 17, ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""hard"" } } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.SetWorkflowBindingAsync("create_measure", new[] { "new-measure" }, "warn", "human");
+                var oldRevision = RevisionOf(ShippedWorkflow("workflows-compat/v1.1.3", "new-measure"));
+                Assert.Equal(oldRevision, SavedRevision(ws, "new-measure"));
+                Assert.Equal(17, ReadSettings(ws)["futureKey"].GetValue<int>());
+
+                await engine.SetWorkflowBindingAsync("update_measure", new[] { "optimize-dax" }, "hard", "human");
+                var currentRevision = RevisionOf(ShippedWorkflow("workflows", "optimize-dax"));
+                Assert.Equal(oldRevision, SavedRevision(ws, "new-measure"));
+                Assert.Equal(currentRevision, SavedRevision(ws, "optimize-dax"));
+
+                await engine.SetWorkflowBindingAsync("create_measure", Array.Empty<string>(), "off", "human");
+                var revisions = ReadSettings(ws)["requiredWorkflowRevisions"].AsObject();
+                Assert.False(revisions.ContainsKey("new-measure"));
+                Assert.Equal(currentRevision, revisions["optimize-dax"].GetValue<string>());
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task Conditional_legacy_binding_resolves_a_reachable_stock_child_from_baseline()
+        {
+            var ws = NewWorkspace();
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "compat-caller.md"), @"---
+schemaVersion: 2
+name: compat-caller
+title: Compatibility caller
+---
+## Step 1: Continue in the measure workflow
+Hand off to the required child.
+```yaml step
+id: child
+call:
+  workflow: new-measure
+```
+");
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": [{ ""when"": ""date.dayOfMonth >= 1"", ""require"": [""compat-caller""], ""mode"": ""hard"" }] } }");
+            var original = File.ReadAllText(SettingsFile(ws));
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var child = await engine.GetWorkflowAsync("new-measure");
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows-compat/v1.1.3", "new-measure")), child.FilePath);
+                Assert.Equal(original, File.ReadAllText(SettingsFile(ws)));
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task User_workflow_wins_even_when_the_saved_stock_revision_is_unavailable()
+        {
+            var ws = NewWorkspace();
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "new-measure.md"), @"---
+name: new-measure
+title: Project measure workflow
+---
+## Step 1: Use the project method
+Follow the project-specific steps.
+");
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { ""new-measure"": ""sha256:unavailable"" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var def = await engine.GetWorkflowAsync("new-measure");
+                var doc = await engine.GetWorkflowDocumentAsync("new-measure");
+                Assert.Equal("user", def.Source);
+                Assert.Equal("user", doc.Library);
+                Assert.Equal(Path.Combine(ws, ".semanticus", "workflows", "new-measure.md"), doc.Path);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task Unavailable_required_stock_revision_fails_loudly_for_execution_and_document_reads()
+        {
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { ""new-measure"": ""sha256:unavailable"" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var runRead = await Assert.ThrowsAsync<InvalidOperationException>(async () => await engine.GetWorkflowAsync("new-measure"));
+                var documentRead = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.GetWorkflowDocument(engine, "new-measure"));
+                Assert.Contains("pinned", runRead.Message);
+                Assert.Contains("unavailable", runRead.Message);
+                Assert.Equal(runRead.Message, documentRead.Message);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // A run freezes its whole closure at start (T220). The compatibility resolver feeds that freeze but must
+        // not reach into it afterwards: dropping the pin moves the LIBRARY to today's definition while the
+        // in-flight run keeps the v1.1.3 one it admitted against.
+        [Fact]
+        public async Task A_running_snapshot_keeps_its_baseline_definition_after_the_pin_moves_to_current()
+        {
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""warn"" } } }");
+            var baselineTitle = ParsedTitle(ShippedWorkflow("workflows-compat/v1.1.3", "new-measure"));
+            var currentTitle = ParsedTitle(ShippedWorkflow("workflows", "new-measure"));
+            Assert.NotEqual(baselineTitle, currentTitle);
+
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                using (engine)
+                {
+                    await OpenModelWithFactsAsync(engine);
+                    var run = await engine.StartWorkflowAsync("new-measure", "human");
+                    Assert.Equal(baselineTitle, run.Title);
+
+                    // Clearing the binding prunes the pin, so the library falls back to today's stock file.
+                    await engine.SetWorkflowBindingAsync("create_measure", Array.Empty<string>(), "off", "human");
+                    Assert.Equal(currentTitle, (await engine.GetWorkflowAsync("new-measure")).Title);
+                    Assert.Equal(currentTitle, (await engine.GetWorkflowDocumentAsync("new-measure")).Metadata.Title);
+
+                    // ...and the frozen run is untouched by that move.
+                    var after = await engine.GetWorkflowRunAsync(run.RunId);
+                    Assert.Equal(baselineTitle, after.Title);
+                    Assert.Equal(run.TotalSteps, after.TotalSteps);
+                }
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // A required name that was user-shadowed when the revision map was written is absent from that map. It
+        // never chose a pre-redesign definition, so deleting the project copy must fall to today's stock file --
+        // not refuse, which would take every library read down with it.
+        [Fact]
+        public async Task A_required_name_missing_from_an_existing_revision_map_falls_to_the_current_definition()
+        {
+            var ws = NewWorkspace();
+            var pinned = RevisionOf(ShippedWorkflow("workflows", "optimize-dax"));
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""new-measure"", ""optimize-dax""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { ""optimize-dax"": """ + pinned + @""" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var def = await engine.GetWorkflowAsync("new-measure");
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "new-measure")), def.FilePath);
+                Assert.Equal(def.FilePath, (await engine.GetWorkflowDocumentAsync("new-measure")).Path);
+                Assert.Contains(await engine.ListWorkflowsAsync(), x => x.Name == "new-measure");
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // A legacy binding can name a workflow that no longer exists (the project copy was deleted, or the file
+        // was hand-edited). That resolved to nothing before pinning existed, so the library read must still
+        // succeed and leave the complaint to binding enforcement -- not take every workflow down with it.
+        [Fact]
+        public async Task A_binding_naming_a_workflow_that_does_not_exist_still_reads_the_library()
+        {
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""deleted-project-flow""], ""mode"": ""hard"" } } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var library = await engine.ListWorkflowsAsync();
+                Assert.Contains(library, x => x.Name == "new-measure");
+                Assert.DoesNotContain(library, x => x.Name == "deleted-project-flow");
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "new-measure")),
+                    (await engine.GetWorkflowDocumentAsync("new-measure")).Path);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
         // ---- (g) §9.10C: a userDisablable:false mandate is locked against the AGENT door -----------------------
 
         [Fact]
@@ -355,7 +595,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -389,7 +629,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -439,7 +679,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -507,7 +747,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)
@@ -534,7 +774,7 @@ Review what you made — this step does not perform create_measure.
         {
             var ws = NewWorkspace();
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(pro: false), ws);
+            var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
                 using (engine)

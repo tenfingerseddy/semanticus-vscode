@@ -21,9 +21,10 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
+        // Pro: Docs (get_doc_model) and perspectives are both Pro features since 2026-09-15, reads included.
         private static async Task<LocalEngine> OpenAwAsync()
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake(false));
+            var engine = new LocalEngine(new SessionManager(), new Fake(true));
             await engine.OpenAsync(TestModels.FindBim());
             return engine;
         }

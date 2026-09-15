@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rpc, onConnectionChange } from './bridge';
-import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
 import { useConnection } from './connection';
 import { DiffView } from './diffview';
 import { isSignInError } from './authcopy';
+import { publishedSubsetLine, publishStageName } from './publishcopy';
 
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased). The Compare tab is the general
 // any-two-models differ/merger over compareModels + applyDiff; the Deploy tab's Source-Control diff is a
@@ -30,7 +30,7 @@ const shortEndpoint = (value?: string) => {
 const recordName = (r: ConnRecord) => r.modelName || r.database || shortEndpoint(r.endpoint) || 'Model';
 // An XMLA record's environment chip: its declared label (uat / prod / local), else the fail-closed "Production
 // safeguards" wording for an unlabelled cloud model — the SAME pattern the Connections manager uses (do not reword).
-const envLabel = (r: ConnRecord) => r.label || 'Production safeguards';
+const envLabel = (r: ConnRecord) => (r.label ? publishStageName(r.label) : 'Production safeguards');
 // Build a workspace ModelRef straight from a registry record: no endpoint is ever typed here, and the record threads
 // its own tenant so a cross-tenant compare targets ITS tenant, not az login's default (which the old free-text form lost).
 const workspaceRef = (r: ConnRecord): ModelRef => ({
@@ -221,7 +221,12 @@ function lineHighlight(leftText?: string, rightText?: string): { left: { text: s
 // selectively apply Source→Target (a gated two-step write — the only applyDiff target supported today).
 export type CompareSeed = { left: ModelRef; right: ModelRef | null; note?: string; nonce: number };
 
-export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | null; embedded?: boolean }) {
+export function CompareView({ seed, embedded = false, destinationName, onTargetRead }: {
+  seed?: CompareSeed | null; embedded?: boolean;
+  // The Published page's destination, and a report of whether the last comparison actually read it. Publishing
+  // needs a destination it can reach; a comparison that never reached it must not look like a complete diff.
+  destinationName?: string; onTargetRead?: (state: { ok: boolean; error?: string }) => void;
+}) {
   const [left, setLeft] = useState<ModelRef>({ kind: 'session' });
   const [right, setRight] = useState<ModelRef>({ kind: 'gitref', gitRef: 'HEAD' });
   // A note from a seed that could only fill the Source: e.g. an attached XMLA engine whose dataset can't be named, so
@@ -238,8 +243,6 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   const [forceReviewNonce, setForceReviewNonce] = useState(0);   // a footer/status-bar seed lands on Review
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [upsell, setUpsell] = useState<string | null>(null);   // a free click on a bulk merge teaches, never errors
-  const tier = useTier();
   const { connectXmla, busy: connBusy, openConnections } = useConnection();   // sign-in-and-retry on an auth error (#156) + opening the shared Connections manager to add a model
   // Remembered live models from the engine connection registry — the Workspace side of the picker SELECTS one of these
   // instead of typing an endpoint (Add connection is the only place an endpoint is typed; docs/design-records-2026-07-12.md
@@ -258,11 +261,11 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
     return () => { cancelled = true; off(); };
   }, []);
   const [pending, setPending] = useState<ApplyDiffResult | null>(null);   // apply dry-run awaiting Confirm
+  const [refreshStale, setRefreshStale] = useState(false);   // the write happened but the re-read did not: the grid may be out of date
   const [result, setResult] = useState<ApplyDiffResult | null>(null);
   // A context-bar click seeds Source/Target (editing vs querying). We adopt a seed once per nonce, and never once the
   // user has set up their own comparison by hand — mirroring how the Change Plan seed only acts on an untouched plan.
   const consumedNonce = useRef<number | undefined>(undefined);
-  const gatedWhyRef = useRef<HTMLDivElement>(null);
   const [touched, setTouched] = useState(false);
   const touch = () => { setTouched(true); setSeedNote(null); };
 
@@ -290,18 +293,19 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
   }, [seed?.nonce]);
 
   async function compare(l: ModelRef = left, r: ModelRef = right) {
-    setBusy('compare'); setErr(null); setFailed(undefined); setPending(null); setResult(null);
+    setBusy('compare'); setErr(null); setFailed(undefined); setPending(null); setResult(null); setRefreshStale(false);
     const includeEqual = !onlyDiffs;   // honour the current toggle so a fresh diff already carries identical objects if wanted
     try {
       const d = await rpc<ModelDiff>('compareModels', l, r, includeEqual);
-      if (d.error) { setErr(d.error); setDiff(null); return; }
+      if (d.error) { setErr(d.error); setDiff(null); onTargetRead?.({ ok: false, error: d.error }); return; }
+      onTargetRead?.({ ok: true });
       setDiff(d); setEqualsLoaded(includeEqual);
       // default: every CHANGE selected (ALM-style), except Delete against a published model starts unticked.
       // Identical objects are never selectable — they carry no action.
       const changes = d.items.filter((i) => i.action !== 'Equal');
       const preselected = r.kind === 'workspace' ? changes.filter((i) => i.action !== 'Delete') : changes;
       setSelected(new Set(preselected.map((i) => i.ref)));
-    } catch (e) { setErr(String((e as Error).message ?? e)); setDiff(null); }
+    } catch (e) { const message = String((e as Error).message ?? e); setErr(message); setDiff(null); onTargetRead?.({ ok: false, error: message }); }
     finally { setBusy(null); }
   }
   // #156: the human sign-in-and-retry for an XMLA target that had no live token. Runs the SAME interactive sign-in
@@ -342,26 +346,23 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
     finally { setBusy(null); }
   }
   // Confirm the apply — into a FILE (writes disk, no in-app undo) or the open MODEL (undoable merge).
-  const clickWhy = 'Merging one object at a time is free. Pro merges everything you selected in one step.';
+  // Merging everything you selected in one step is FREE from 2026-09-15 (Kane's feature line), so there is
+  // no plan-shaped refusal left on this path and a failure here is a real failure.
   async function applyConfirm() {
-    const gated = tier === 'free' && selected.size > 1;
-    setBusy('apply'); setErr(null); setUpsell(gated ? clickWhy : null);
+    setBusy('apply'); setErr(null);
     try {
       const r = await rpc<ApplyDiffResult>('applyDiff', left, right, [...selected], true, 'human', undefined, pending?.confirmToken);
       setPending(null); setResult(r); setFailed(new Set(r.failedRefs ?? []));
       if (r.error) { setErr(r.error); return; }
-      setUpsell(null);
-      // refresh the diff so the applied changes drop out of the view (keeping the result line)
-      const d = await rpc<ModelDiff>('compareModels', left, right, !onlyDiffs);
-      if (!d.error) { setDiff(d); setEqualsLoaded(!onlyDiffs); setSelected(new Set(d.items.filter((i) => i.action !== 'Equal').map((i) => i.ref))); }
-    } catch (e) {
-      // A free click on a bulk merge (>1 object, file or open-model target) gets the plain invitation at the click.
-      if (isEntitlementError(e)) {
-        setUpsell(clickWhy);
-        queueMicrotask(() => gatedWhyRef.current?.scrollIntoView({ block: 'nearest' }));
-      }
-      else setErr(String((e as Error).message ?? e));
-    }
+      // Refresh the diff so the applied changes drop out of the view, keeping the result line. The write is done at this
+      // point, so a failed re-read must not read as a failed publish: it marks the grid as possibly out of date instead.
+      let refreshed = false;
+      try {
+        const d = await rpc<ModelDiff>('compareModels', left, right, !onlyDiffs);
+        if (!d.error) { setDiff(d); setEqualsLoaded(!onlyDiffs); setSelected(new Set(d.items.filter((i) => i.action !== 'Equal').map((i) => i.ref))); refreshed = true; }
+      } catch { /* the re-read failed; the result line below says so */ }
+      setRefreshStale(!refreshed);
+    } catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   }
 
@@ -381,8 +382,8 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
     <div className={embedded ? '' : 'h-full overflow-auto'} style={{ color: 'var(--sem-fg)' }}>
       <div className={`${embedded ? '' : 'm-3'} rounded-lg p-3`} style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
         <div className="flex items-baseline gap-2 mb-2">
-          <span className="text-[13px] font-semibold">{embedded ? 'Choose what to publish' : 'Compare'}</span>
-          <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{embedded ? 'review the exact model diff, validate the selection, then confirm the write' : 'diff any two models · drill summary → object → property → code · merge selected changes into the open model or a file'}</span>
+          <span className="text-[13px] font-semibold">{embedded ? 'Tick what goes live' : 'Compare'}</span>
+          <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{embedded ? 'compare your model with the destination, tick the changes you want, then press Publish' : 'diff any two models · drill summary → object → property → code · merge selected changes into the open model or a file'}</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap text-[12px] mb-2">
           <span style={{ color: 'var(--sem-muted)' }}>Source</span>
@@ -390,13 +391,15 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
           <span style={{ color: 'var(--sem-accent)' }}>→</span>
           <span style={{ color: 'var(--sem-muted)' }}>Target</span>
           <ModelRefPicker value={right} records={xmlaRecords} onAddConnection={openConnections} onChange={(r) => { touch(); setRight(r); setDiff(null); }} />
-          <button onClick={() => { touch(); const a = left, b = right; setLeft(b); setRight(a); setDiff(null); }} title="swap source/target" className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>⇄</button>
-          <Btn primary onClick={() => { touch(); void compare(); }} busy={busy === 'compare'}>{embedded ? 'Review' : 'Compare'}</Btn>
+          <button onClick={() => { touch(); const a = left, b = right; setLeft(b); setRight(a); setDiff(null); }} title="swap source/target" className="sem-btn">⇄</button>
+          <Btn primary={!embedded} onClick={() => { touch(); void compare(); }} busy={busy === 'compare'}>{embedded ? 'Compare again' : 'Compare'}</Btn>
         </div>
 
         {seedNote && <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-warn) 12%, transparent)', color: 'var(--sem-warn)', border: '1px solid color-mix(in srgb,var(--sem-warn) 40%, transparent)' }}>{seedNote}</div>}
         {err && (
           <div className="text-[12px] mb-2 rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)' }}>
+            {/* Say what it means before saying what went wrong: nothing below is a comparison with the destination. */}
+            {embedded && <div className="font-semibold">Could not read the destination{destinationName ? ` (${destinationName})` : ''}. Nothing below has been compared with it.</div>}
             <div>{err}</div>
             {/* #156: a sign-in error is not a dead end — offer the one-click sign-in (or name the Connections manager). */}
             {isSignInError(err) && (
@@ -408,7 +411,6 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
             )}
           </div>
         )}
-        {upsell && !pending && <div className="mb-2"><UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice></div>}
 
         {diff && (
           <>
@@ -435,30 +437,25 @@ export function CompareView({ seed, embedded = false }: { seed?: CompareSeed | n
                   : targetIsWorkspace
                     ? <div className="mt-1" style={{ color: 'var(--sem-warn)' }}>Writes to the published model. A restore point is saved first. Nothing is removed unless you selected a Delete.</div>
                     : <div className="mt-1" style={{ color: 'var(--sem-warn)' }}>Writes <span className="font-mono">{right.path}</span> on disk; there is no in-app undo (git is the safety net).</div>}
-                {upsell && (
-                  <div className="mt-1.5" data-testid="compare-pro-gated-why" ref={gatedWhyRef}>
-                    <UpsellNotice onDismiss={() => setUpsell(null)}>{upsell}</UpsellNotice>
-                  </div>
-                )}
                 <div className="flex items-center gap-2 mt-1.5">
-                  <Btn primary onClick={applyConfirm} busy={busy === 'apply'} disabled={pending.count === 0}
-                    title={tier === 'free' && submitCount > 1
-                      ? 'Pro merges everything you selected in one step. Merging one object at a time stays free.'
-                      : undefined}>
+                  <Btn primary onClick={applyConfirm} busy={busy === 'apply'} disabled={pending.count === 0}>
                     {targetIsSession
                       ? (submitCount > pending.count ? `Merge ${pending.count} of ${submitCount} selected → open model` : `Merge ${pending.count} → open model`)
                       : targetIsWorkspace
                         ? `Push ${pending.count} to the published model`
                         : `Apply ${pending.count} → file`}
-                    <ProBadge show={tier === 'free' && submitCount > 1} variant="onAccent" />
                   </Btn>
                   <button className="text-[11px] underline" onClick={() => { setPending(null); setFailed(undefined); }} style={{ color: 'var(--sem-muted)' }}>Cancel</button>
                 </div>
               </div>
             )}
-            {result && !pending && (
+            {result && !pending && busy !== 'apply' && (
               <div className="mt-2 text-[12px] rounded px-2 py-1" style={{ background: 'color-mix(in srgb,var(--sem-' + (result.error ? 'bad' : 'good') + ') 12%, transparent)', color: result.error ? 'var(--sem-bad)' : 'var(--sem-good)' }}>
-                {result.error || `✓ applied ${result.count} change(s) into ${result.target || 'the target'}${(result.failedRefs?.length ?? 0) > 0 ? ` · ${result.failedRefs.length} failed` : ''}.`}
+                {/* A published target is a live write, so it gets the publish wording. Only a fresh comparison may say that
+                    what is still shown is unpublished; after a failed re-read the line says the grid may be out of date. */}
+                {result.error || (targetIsWorkspace
+                  ? publishedSubsetLine({ count: result.count, target: result.target || targetLabel, failed: result.failedRefs?.length ?? 0, refreshed: !refreshStale })
+                  : `✓ applied ${result.count} change(s) into ${result.target || 'the target'}${(result.failedRefs?.length ?? 0) > 0 ? ` · ${result.failedRefs.length} failed` : ''}.`)}
               </div>
             )}
           </>
@@ -565,9 +562,7 @@ function WorkspacePicker({ value, records, onChange, onAddConnection }: {
 
 function Btn({ children, onClick, primary, busy, disabled, title }: { children: React.ReactNode; onClick: () => void; primary?: boolean; busy?: boolean; disabled?: boolean; title?: string }) {
   return (
-    <button onClick={onClick} disabled={busy || disabled} title={title}
-      className="px-2.5 py-1 rounded text-[12px] font-medium disabled:opacity-50"
-      style={{ background: primary ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: primary ? '#000' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+    <button onClick={onClick} disabled={busy || disabled} title={title} className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
       {busy ? '…' : children}
     </button>
   );

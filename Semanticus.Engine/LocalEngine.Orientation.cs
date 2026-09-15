@@ -49,7 +49,11 @@ namespace Semanticus.Engine
                 },
                 Readiness = readiness,
                 Graph = graph,
-                Primer = hasSession ? PrimerBrief.From(await GetPrimerAsync()) : null,
+                // Model notes are Pro, so a free orientation does not carry the Primer. Reading it here would
+                // hand a free agent the whole document that get_model_primer refuses, at every session start.
+                Primer = hasSession && Entitlement.FeatureGrants.Grants(_entitlement, Entitlement.ProFeature.ModelCreate)
+                    ? PrimerBrief.From(await GetPrimerCoreAsync(_sessions.CurrentContext, PrimerLocusFor(_sessions.CurrentContext)))
+                    : null,
                 ActiveWork = await BuildActiveWorkAsync(),
                 LastSession = BuildLastSession(),
                 Note = "Session-start orientation. Drill down per section: connection_status · get_entitlement · get_model_primer · " +

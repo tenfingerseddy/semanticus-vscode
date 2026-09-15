@@ -1,101 +1,71 @@
 ---
 name: add-relationship
-title: Relate two tables and prove the join did not fan out
-description: Relate two tables on their keys at the right cardinality and direction, review the graph for ambiguity or an unintended inactive path, then PROVE a known measure still equals its control total after relating. The relationship equivalent of import-table's control-total proof.
-whenToUse: "Connect two tables so a measure can filter across them (a fact to a dimension, or two dimensions through a bridge). Use it whenever a wrong cardinality or filter direction could silently fan out rows and inflate a total. To bring a single table in and prove its own load, use import-table."
+title: Connect tables
+description: Inspect two endpoints, create the relationship with a deliberate shape, and check one meaningful result.
+whenToUse: "Use when loaded tables need a relationship, such as a fact and dimension. For a new source table, use Import a table; for broad cleanup, use Tidy a model."
 version: 1
 strictness: hard
 triggers: [create_relationship, set_relationship_cardinality, set_relationship_crossfilter]
 ---
 
-## Step 1: State the join and its cardinality
+## Step 1: Choose the endpoints
 
-A relationship is a contract about grain, not just a line between two boxes. Name the
-two tables and the key column on each, and state which side is the ONE and which is the MANY. A
-dimension's key is unique (one); a fact's foreign key repeats (many). Getting this backwards is how a
-join fans out: a many-to-many where you meant one-to-many multiplies rows and inflates every total.
-Confirm both key columns are the same data type and, ideally, integer keys. Never relate on a datetime
-column; join through an integer date key instead.
+Use `get_model_graph` and the object browser to inspect the two key columns. Name the foreign-key and
+lookup-key endpoints, state which side is ONE and which is MANY, and use single direction by default.
+Call out duplicate lookup keys, a many-to-many shape, an inactive role-playing path or a bidirectional
+reason before creating anything. These are relationship risks; unrelated BPA or description findings do
+not belong in this job.
 
 ```yaml gate
+ops: [get_model_graph]
 inputs:
   - name: joinSpec
-    question: "Which two tables and key columns, and which side is the ONE (unique key) vs the MANY (repeating FK)?"
+    question: "Which two key columns are joined, which side is ONE versus MANY, and why is the chosen filter direction safe?"
     type: text
     required: required
-  - name: filterDirection
-    question: "Single-direction (the default, where the dimension filters the fact) or bidirectional, and if bidirectional, the reason it is needed?"
-    type: text
-    required: answer-or-decline
 ```
 
 ## Step 2: Create the relationship
 
-Create it with `create_relationship` at the cardinality from Step 1, single filter direction by
-default. Reach for bidirectional only with the reason you gave, and set it explicitly
-with `set_relationship_crossfilter`. An unjustified bidirectional path is a classic source of
-ambiguity and RLS leaks. If the model already relates these tables another way, decide deliberately
-whether the new relationship is the active one or an inactive role-playing path, and correct the
-cardinality with `set_relationship_cardinality` if the inferred cardinality is wrong.
+Call `create_relationship` with the inspected endpoints, cardinality and single direction. Use
+`set_relationship_cardinality`, `set_relationship_crossfilter` or `set_relationship_active` only when the
+returned shape needs correction. Re-read the graph to ensure the new path did not create an unintended
+duplicate or inactive route.
 
 ```yaml gate
-ops: [create_relationship, set_relationship_cardinality, set_relationship_crossfilter]
+ops: [create_relationship, set_relationship_cardinality, set_relationship_crossfilter, set_relationship_active, get_model_graph]
 ```
 
-## Step 3: Review the graph for ambiguity and stray inactive paths
+## Step 3: Check a representative aggregate
 
-A relationship never lands in isolation. Walk the model with `get_model_graph` and
-confirm this join introduced neither an ambiguous filter path (two routes between the same tables,
-which the engine resolves unpredictably) nor an unintended INACTIVE relationship left behind from a
-prior attempt. Flag any bidirectional relationship that now touches the same tables. An ambiguous or
-duplicated path is a correctness bug you want to catch here, before a measure quietly reads the wrong
-route.
-
-```yaml gate
-ops: [get_model_graph, set_relationship_active, set_relationship_crossfilter]
-inputs:
-  - name: graphReviewed
-    question: "Have you confirmed no ambiguous filter path and no unintended inactive/duplicate relationship between these tables?"
-    type: text
-    required: answer-or-decline
-```
-
-## Step 4: Prove the join did not fan out (HARD GATE)
-
-A relationship is unproven until a known number survives it. Pick a measure whose
-correct total you already know, such as a row count or an additive total the business can confirm
-independently, and give `target` its ref. The wrong cardinality or an accidental bidirectional path
-fans out rows and inflates that total; a dropped-key mismatch deflates it. The hard gate probes the
-measure against the control total you supply: if it no longer matches, the join changed a number it
-must not have, so fix the cardinality or direction and re-probe. A structural `bpa_clean` on the model
-surfaces the ambiguity and inactive-relationship smells alongside the numeric proof. The gate holds on
-this step until the number matches or you decline the check.
+Reuse an existing measure when possible. Give `target` its ref and supply an independently known control
+total or decline it with the reason. Probe the measure in a context that uses the new relationship, such
+as Sales by Customer region. A mismatch or an unexpected many-to-many result requires fixing the endpoint,
+cardinality or direction before saving. A declined value is recorded as unverified; it is not a pass.
 
 ```yaml gate
 strictness: hard
-ops: [create_measure, probe_measure]
+ops: [probe_measure]
 inputs:
   - name: target
-    question: "The ref of a known measure to prove the join did not fan out (e.g. measure:Sales/Order Line Count)."
+    question: "The existing measure to check through this relationship, for example measure:Sales/Net Sales."
     type: objectRef
     required: required
   - name: controlTotal
-    question: "That measure's correct total, confirmed independently by the user, not derived by this model (e.g. 'Order Line Count should be 1,204,882 for 2024')."
+    question: "An independently known result in a relationship-using context; decline when none is available."
     type: verification
     required: answer-or-decline
 verify:
   - kind: dax_probe
     when: inputs.controlTotal.answered
     probe: controlTotal
-  - kind: bpa_clean
-    scope: model
 ```
 
-## Step 5: Save the relationship
+## Step 4: Save the relationship
 
-Persist with `save_model` so the relationship, its cardinality, and its filter direction land in the
-TMDL beside the model. Note which measure and control total you proved the join against, so a future
-refresh or key change has a known re-check point.
+Call `save_model` after the graph and representative result are reviewed. Record the chosen direction,
+cardinality and any unresolved duplicate-key or many-to-many risk so a later model change knows what was
+checked.
 
 ```yaml gate
 ops: [save_model]

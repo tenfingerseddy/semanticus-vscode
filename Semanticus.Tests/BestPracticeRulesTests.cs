@@ -186,7 +186,9 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Date_mark_fires_once_time_intelligence_is_used()
         {
-            using var engine = await CleanModelAsync();
+            // The scan is free; mark_date_table sits in Advanced Modelling, which is Pro, so the fixture has to hold
+            // the tier or the clearing half of this test never runs.
+            using var engine = await CleanModelAsync(pro: true);
             // Build a Date table (unmarked) so TOTALYTD resolves, then add a TI measure.
             var dt = await engine.CreateTableAsync("Date", "human");
             await engine.CreateColumnAsync(dt, "Date", "DateTime", "Date", "human");

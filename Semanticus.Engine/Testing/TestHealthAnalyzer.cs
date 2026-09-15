@@ -34,7 +34,33 @@ namespace Semanticus.Engine
         public string TimingDetail { get; set; }     // names the numbers (duration / budget / error), the E5 Detail
         public string CreatedBy { get; set; }        // provenance: "human" | "agent" (accepted ground truth)
         public string CreatedWhen { get; set; }
+
+        /// <summary>The three numbers the check is ABOUT, as first-class fields rather than one row of a compare
+        /// table: <see cref="Expected"/> is the answer the check was agreed against (the trusted number, or the
+        /// source's grand total), <see cref="Actual"/> is what the model returned, and <see cref="Difference"/> is
+        /// actual minus expected when both are numbers. Added in 1.2.0 because a trusted-answer check has no
+        /// source side at all: it used to fabricate one compare row whose SQL cell was empty, and the page
+        /// printed "SQL result NULL" beside a check that never asked a database anything. Expected is filled as
+        /// soon as it is known, so even a check that could not run still says what it was looking for.</summary>
+        public string Expected { get; set; }
+        public string Actual { get; set; }
+        public decimal? Difference { get; set; }
         public string ToleranceNote { get; set; }    // effective tolerances + blank policy (+ a loose-window warning)
+
+        /// <summary>The filter this run applied on the model side, and the SQL source it RESOLVED to, both as
+        /// they were when it ran. A recorded run used to keep neither, so opening one from History could only
+        /// describe the check as it stands TODAY, which is not what that run asked if the check has since been
+        /// edited (Astra, 2026-09-15). Filled as soon as they are known, so a check that could not run still
+        /// says what it was going to ask with. Absent, never blank, when the check has neither.</summary>
+        public string Filter { get; set; }
+        public string SourceLabel { get; set; }
+
+        /// <summary>Where the check was AUTHORED versus where this run actually ASKED. Authoring is a record, not
+        /// a pin — the run always uses the current connection — so both travel and the UI can say "authored
+        /// against X, ran against Y" when they differ instead of implying the saved endpoint was used.</summary>
+        public string AuthoredAgainst { get; set; }
+        public string AuthoredAgainstLabel { get; set; }
+        public string RanAgainstLabel { get; set; }
 
         /// <summary>E6: the base measure's time-intelligence variants, each judged CONSISTENT with the base
         /// via a deterministic identity (TimeIntelligenceVariants). Evidence about the family, not independent
@@ -58,7 +84,7 @@ namespace Semanticus.Engine
 
     public sealed class TestCategoryHealth
     {
-        public string Category { get; set; }         // Correctness | Integrity | Security | Performance
+        public string Category { get; set; }         // Correctness | Integrity | Performance
         public double Weight { get; set; }
         public bool HasChecks { get; set; }          // false ⇒ dormant: contributes nothing to the overall
         public int Checked { get; set; }             // verdict-bearing checks in this category
@@ -97,19 +123,25 @@ namespace Semanticus.Engine
     public static class TestHealthAnalyzer
     {
         // Weighted like ReadinessAnalyzer.Weights: correctness (the wedge) heaviest, then data integrity,
-        // security, performance. Normalized over PRESENT categories, so a model with no saved reconcile tests
-        // is graded on what was actually testable rather than docked for suite breadth (coverage carries that).
+        // performance. Normalized over PRESENT categories, so a model with no saved reconcile tests is graded
+        // on what was actually testable rather than docked for suite breadth (coverage carries that).
+        //
+        // There is NO security category. Reading a role's saved filter text never signed in as a user and never
+        // proved which rows that user could see, yet it carried a 0.20 weight: with everything else passing,
+        // flipping those static checks from all-passing to all-failing moved the grade from 100/A to 77.8/C
+        // (measured by Astra, 2026-09-15). Kane's decision was to take the whole family out of Tests rather than
+        // hide its tab, which would have left the grade moving for a reason nobody could see. Normalizing over
+        // present categories means the remaining weights simply re-share, so no grade moves invisibly here either.
+        // Model role editing and the assistant permission system are untouched; neither lives in this file.
         private static readonly (string Name, double Weight)[] Categories =
         {
             ("Correctness", 0.40),
             ("Integrity", 0.30),
-            ("Security", 0.20),
             ("Performance", 0.10),   // active only when a user DECLARES budgets (E5): no budget, no timing verdicts, stays dormant
         };
 
         public static TestHealth Analyze(
             RelationshipIntegrityReport relationships,
-            SecurityStaticReport security,
             IReadOnlyList<ReconcileOutcome> reconciles,
             IReadOnlyList<Verdict> timing = null)
         {
@@ -118,7 +150,6 @@ namespace Semanticus.Engine
             var relChecks = relationships?.Relationships?.SelectMany(r => r.Checks).Where(c => c != null).ToList() ?? new List<CheckResult>();
             var tableChecks = relationships?.TableRowCounts?.Select(r => r.Check).Where(c => c != null).ToList() ?? new List<CheckResult>();
             var integrityChecks = relChecks.Concat(tableChecks).ToList();
-            var secChecks = security?.Filters?.Select(f => f.Check).Where(c => c != null).ToList() ?? new List<CheckResult>();
             // MISSING definitions are surfaced in the tally but are NOT verdict-bearing: the test didn't run
             // against anything, so it can move neither the grade nor the coverage denominator dishonestly —
             // it gets its own loud count instead (hard thing #4: the suite rots visibly).
@@ -132,7 +163,6 @@ namespace Semanticus.Engine
                 {
                     "Correctness" => reconVerdicts,
                     "Integrity" => integrityChecks.Select(c => c.Verdict).ToList(),
-                    "Security" => secChecks.Select(c => c.Verdict).ToList(),
                     // Timing verdicts exist only for measures whose test DECLARED a budget (an over-budget run is a
                     // user-defined failure, so it may move the grade); no budgets ⇒ empty ⇒ the category stays dormant.
                     "Performance" => timing.ToList(),
@@ -170,7 +200,13 @@ namespace Semanticus.Engine
             if (integrityFails > 0)
             {
                 overall = Math.Min(overall, 60);
-                gatedBy.Add($"{integrityFails} integrity check(s) failed: capped at D until the data is fixed");
+                // Said as a sentence, in words a person uses. It read "2 integrity check(s) failed: capped at D
+                // until the data is fixed": a bracketed plural nobody writes, and "integrity", which is the
+                // engine's word for it and not anyone else's (Astra, 2026-09-15). This is the ONE wording, here,
+                // because both doors read it from the same field.
+                gatedBy.Add(integrityFails == 1
+                    ? "1 data check failed. The grade cannot rise above D until it is fixed."
+                    : $"{integrityFails} data checks failed. The grade cannot rise above D until they are fixed.");
             }
 
             int checkedAll = cats.Sum(c => c.Checked);
@@ -183,7 +219,8 @@ namespace Semanticus.Engine
             // also have to hold for coverage, and an empty suite is F, not a perfect unused average.
             var graded = checkedAll == 0 ? 0.0 : Math.Min(overall, coveragePct);
             if (graded + 0.05 < overall)
-                gatedBy.Add("Too little of the suite was checked to earn a higher grade");
+                // Same list, same screen, so the same shape: a sentence, ending like one.
+                gatedBy.Add("Too little of the suite was checked to earn a higher grade.");
             return new TestHealth
             {
                 Overall = Math.Round(graded, 1),

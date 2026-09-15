@@ -88,7 +88,7 @@ export function DocumentationView() {
   // Reflect Claude authoring narrative on the same session (onDidChange also reloads; this surfaces an attribution).
   // Auto-dismiss like the "Copied" indicator so the chip doesn't sit stale once Claude has moved on.
   useClaudeReflection('set_doc_section', (e) => {
-    setAgentNote(`AI Assistant added “${e.query ?? 'context'}” to ${e.target ?? 'the model'}`);
+    setAgentNote(`Your assistant added “${e.query ?? 'context'}” to ${e.target ?? 'the model'}`);
     window.clearTimeout(agentNoteTimer.current);
     agentNoteTimer.current = window.setTimeout(() => setAgentNote(null), 4000);
   });
@@ -203,7 +203,7 @@ export function DocumentationView() {
             // sandboxed: no allow-scripts (the doc's inline search is a no-op here by design). allow-same-origin
             // lets the PARENT drive navigation (onPreviewLoad): TOC clicks scroll in place instead of blanking the
             // srcdoc frame, and external links route to the system browser. Print happens host-side (printDoc).
-            <iframe ref={iframeRef} title="Documentation preview" srcDoc={rendered?.html ?? ''} sandbox="allow-same-origin"
+            <iframe ref={iframeRef} title="Documentation preview" srcDoc={rendered?.previewHtml ?? ''} sandbox="allow-same-origin"
               onLoad={onPreviewLoad}
               style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
           ) : (
@@ -249,7 +249,7 @@ function NarrativePane({ dto, outline, onSaved }: { dto: DocModelDto | null; out
     <aside className="w-[320px] shrink-0 overflow-auto border-l p-3 flex flex-col gap-3" style={{ borderColor: 'var(--sem-border)' }}>
       <Section title="Narrative: additional context">
         <div className="mb-1" style={{ color: 'var(--sem-muted)' }}>
-          Add business context that merges into the docs, separate from each object's Description. Edits save with the model and are undoable. Your AI Assistant sees them the next time it works here.
+          Add business context that merges into the docs, separate from each object's Description. Edits save with the model and are undoable. Your assistant sees them the next time it works here.
         </div>
         <select value={current?.ref} onChange={(e) => setSel(e.target.value)} style={{ ...selStyle, width: '100%' }}>
           {objects.map((o) => {
@@ -307,7 +307,7 @@ function SectionEditor({ objRef, objName, sectionKey, value, onSaved }: { objRef
       <div className="flex items-center gap-2 mb-1">
         <span className="font-medium">{prettyKey(sectionKey)}</span>
         {dirty && <span style={{ color: 'var(--sem-warn)' }}>•</span>}
-        <button onClick={ask} className="ml-auto" style={btnGhost} title="Copy a ready prompt for your AI Assistant">{copied ? 'Copied ✓' : 'Ask AI'}</button>
+        <button onClick={ask} className="ml-auto" style={btnGhost} title="Copy a ready prompt for your assistant">{copied ? 'Copied ✓' : 'Ask AI'}</button>
       </div>
       <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder="Markdown… (**bold**, lists, `code`)"
         className="w-full resize-y" style={{ background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, padding: '6px 8px', fontFamily: 'ui-monospace,Consolas,monospace', fontSize: 12 }} />

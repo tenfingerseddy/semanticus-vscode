@@ -32,7 +32,8 @@ function register(home, text) {
 test('coverage oracle rejects an equal-count evidence-file replacement', () => inHome(home => {
   const files = ['tools/coverage-oracle.ps1', 'Semanticus.Engine/McpTools.cs',
     'Semanticus.Engine/EngineRpcTarget.cs', 'Semanticus.Engine/HumanGovernanceRpcTarget.cs',
-    'Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx'];
+    'Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx',
+    'Semanticus.VSCode/webview/src/route.ts'];
   for (const file of files) {
     const dest = put(home, file, '');
     copyFileSync(join(repo, file), dest);
@@ -63,6 +64,10 @@ test('coverage oracle rejects an equal-count evidence-file replacement', () => i
   const regenerated = run();
   assert.equal(regenerated.status, 0, regenerated.stdout + regenerated.stderr);
   assert.deepEqual(inventory().summary.trackedEvidenceFiles, [beta]);
+  put(home, 'Semanticus.VSCode/webview/src/route.ts', "export type ToolId = CoreToolId | 'permissions';");
+  const composed = run();
+  assert.notEqual(composed.status, 0, 'a composed union must not silently record only its literal member');
+  assert.match(composed.stdout + composed.stderr, /Unsupported ToolId declaration/);
 }));
 
 test('task register records the work collection, not just its cardinality', () => inHome(home => {

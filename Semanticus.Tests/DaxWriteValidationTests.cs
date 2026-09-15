@@ -155,7 +155,8 @@ namespace Semanticus.Tests
         public async Task Rls_filter_and_role_member_writes_refuse_bad_values_without_mutation()
         {
             using var sessions = new SessionManager();
-            using var e = new LocalEngine(sessions);
+            // Roles and OLS are Advanced Modelling (Pro) since 2026-09-15; the subject is the validation fence.
+            using var e = new LocalEngine(sessions, TestEntitlements.Pro);
             await e.CreateModelAsync("RlsFence", 1604);
             await e.CreateTableAsync("Sales", "human");
             await e.CreateColumnAsync("table:Sales", "Region", "String", "Region", "human");
@@ -226,7 +227,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Autogenerate_classifies_calculated_tables_by_relationship_role()
         {
-            using var e = await FreshAsync(pro: false);
+            using var e = await FreshAsync(pro: true);   // autogenerate_spec_* and date tables are Pro since 2026-09-15
             // Offline calculated tables do not infer columns from DAX, so add the keys as calculated columns.
             await e.CreateCalculatedTableAsync("Sales", "{1}", "human");
             await e.CreateCalculatedColumnAsync("table:Sales", "CustomerKey", "1", "human");

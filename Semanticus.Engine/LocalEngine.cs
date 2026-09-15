@@ -85,17 +85,35 @@ namespace Semanticus.Engine
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         };
 
-        // The Pro entitlement (offline-verified license). Consulted ONLY at the bulk-apply chokepoints below; the
-        // free tier stays fully usable one-edit-at-a-time. Injected for tests/smokes; defaults to the ambient license.
+        // The Pro entitlement (offline-verified license). Consulted at the feature gate below and nowhere else.
+        // Injected for tests/smokes; defaults to the ambient license.
         private readonly Entitlement.IEntitlement _entitlement;
 
-        // Verified Mode (Pro): a HUMAN-CONTROLLED runtime toggle. OFF by default → normal fast editing (no ceremony
+        /// <summary>The feature gate. Called as the FIRST statement of every Pro operation, so a refusal happens
+        /// before any protected computation, network call or side effect: a free run_tests must not open a SQL
+        /// connection, and a free build_model_from_spec must not read a spec.
+        ///
+        /// It takes no argument on purpose. The caller's own name is the gate key, which is exactly what the feature
+        /// map is keyed on, so the two doors cannot disagree (they reach this same implementation under different
+        /// wire names) and a call site cannot name the wrong feature. A method that is not Pro in
+        /// <see cref="Entitlement.FeatureMap"/> throws loudly rather than silently gating nothing, which is what a
+        /// rename or a copy-pasted gate looks like.</summary>
+        private void RequireProFeature([System.Runtime.CompilerServices.CallerMemberName] string engineMethod = null)
+        {
+            if (!Entitlement.FeatureMap.TryEngineMethod(engineMethod, out var feature, out var tab))
+                throw new InvalidOperationException(
+                    $"RequireProFeature() was called from '{engineMethod}', which FeatureMap does not classify as Pro. " +
+                    "Either the method was renamed and FeatureMap was not, or the gate is on a free operation.");
+            Entitlement.EntitlementGuard.RequirePro(_entitlement, feature, tab);
+        }
+
+        // Verified Mode: a HUMAN-CONTROLLED runtime toggle, free on any tier. OFF by default → normal fast editing (no ceremony
         // on a basic SUM). ON → single-edit DAX ops are STRICTLY validated before they commit (v1 coverage: set_dax +
         // create measure/calc column/calc table/calc item/function; invalid syntax OR unknown refs refused — the
         // probe/blast-radius/regression wrap, and gating the bulk script/plan paths, are the roadmap). Validity only,
         // not an equivalence proof. In-memory + session-scoped (resets on reconnect — persistence is roadmap). One
         // shared state on the OWNER engine; an attaching MCP proxy sets/reads it over RPC, so both doors see the same
-        // mode. Turning it ON requires Pro.
+        // mode. Free on every tier since 2026-09-15; `Available` is now always true.
         private volatile bool _verifiedMode;
 
         public LocalEngine(SessionManager sessions, Entitlement.IEntitlement entitlement = null, string workspaceDir = null)
@@ -112,8 +130,7 @@ namespace Semanticus.Engine
             sessions.ObserverFactory = s => new HealthDeltaProbe(
                 GetBpaRules,
                 e => { try { PublishActivityAsync(e); } catch { /* ride-along */ } },
-                (correlationId, delta) => _agentHealth.Stash(correlationId, s.Id, delta),
-                () => _entitlement?.IsPro == true);
+                (correlationId, delta) => _agentHealth.Stash(correlationId, s.Id, delta));
             AttachDeployGateTracking();
         }
 
@@ -206,24 +223,23 @@ namespace Semanticus.Engine
             try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { /* held open elsewhere — the sweep gets it */ }
         }
 
-        /// <summary>Read-only: the current Pro entitlement (tier + who it's licensed to + why-free). Both doors so the
-        /// UI can show the tier and pre-gate the bulk buttons, and the agent knows what it may bulk-apply.</summary>
-        public Task<Entitlement.EntitlementInfo> GetEntitlementAsync() => Task.FromResult(_entitlement.Info);
+        /// <summary>Read-only: the current Pro entitlement. Tier, who it is licensed to, why it is free, and the
+        /// effective feature grants. Both doors read it, so a page knows what to render and the agent knows what it
+        /// may call. The grants come from <see cref="Entitlement.FeatureGrants"/>, the same function the gate uses,
+        /// so this answer and a refusal can never disagree.</summary>
+        public Task<Entitlement.EntitlementInfo> GetEntitlementAsync() =>
+            Task.FromResult(Entitlement.FeatureGrants.Stamp(_entitlement.Info, _entitlement));
 
         // ---- Verified Mode (Pro toggle) --------------------------------------------------------------
         public Task<VerifiedModeState> GetVerifiedModeAsync() =>
-            Task.FromResult(new VerifiedModeState { Enabled = _verifiedMode, Available = _entitlement?.IsPro ?? false,
+            Task.FromResult(new VerifiedModeState { Enabled = _verifiedMode, Available = true,
                 Note = _verifiedMode
                     ? "ON: DAX writes (set_dax + create measure/calc column/calc table/calc item/function + apply_dax_script) are strictly validated before they commit: invalid syntax OR an unknown table/column/measure reference is refused. Validity only, not an equivalence/drift proof. Session-scoped (resets on reconnect)."
                     : "OFF: a formula with unclosed brackets is still refused." });
 
-        // Turning Verified Mode ON is a Pro feature (thrown before the flip, so free stays intact). Turning it OFF is
-        // always allowed. This is the human's switch — the agent operates under whatever mode the human set.
+        // This is the human's switch, free on any tier. The agent operates under whatever mode the human set.
         public Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin)
         {
-            if (on)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Verified Mode",
-                    "Verified Mode (every AI edit auto-verified before it commits) is a Pro feature. On free you can still verify manually with verify_dax_equivalence / probe_measure.");
             _verifiedMode = on;
             return GetVerifiedModeAsync();
         }
@@ -559,7 +575,7 @@ namespace Semanticus.Engine
             });
         }
 
-        /// <summary>The persisted audit trail + its hash-chain self-check. Free to read (the Pro value is the
+        /// <summary>The persisted audit trail + its hash-chain self-check. Free to read and to export (the
         /// recording pipelines + export); an empty model simply has no records.</summary>
         public async Task<VerifiedEditsChain> ListVerifiedEditsAsync()
         {
@@ -570,8 +586,6 @@ namespace Semanticus.Engine
         /// <summary>Export the audit trail for a boss/auditor (markdown) or CI (json). Pro.</summary>
         public async Task<string> ExportVerifiedEditsAsync(string format)
         {
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Exporting the verified-edits audit trail",
-                "Read it in place with list_verified_edits.");
             var chain = await ListVerifiedEditsAsync();
             // camelCase to match what list_verified_edits already emits over both doors — a CI consumer must be
             // able to parse either surface with one shape.
@@ -1287,11 +1301,11 @@ namespace Semanticus.Engine
         }
 
         // ---- Agent policy + approvals: the ops behind the permissions page. Reads are free + both doors; every mutation
-        // is human-only (enforced in the store/ledger, not just here) and configuring the matrix is Pro (the guardrail
+        // is human-only (enforced in the store/ledger, not just here) and configuring the matrix is free (the guardrail
         // is free, customising it is not).
         public Task<AgentPolicy> GetAgentPolicyAsync() => Task.FromResult(AgentPolicyStore.Get());
-        public Task<AgentPolicy> SetAgentPolicyPresetAsync(string preset, string origin) => Task.FromResult(AgentPolicyStore.SetPreset(preset, origin, _entitlement?.IsPro ?? false));
-        public Task<AgentPolicy> SetAgentPolicyCellAsync(string capability, string label, string action, string origin) => Task.FromResult(AgentPolicyStore.SetCell(capability, label, action, origin, _entitlement?.IsPro ?? false));
+        public Task<AgentPolicy> SetAgentPolicyPresetAsync(string preset, string origin) => Task.FromResult(AgentPolicyStore.SetPreset(preset, origin));
+        public Task<AgentPolicy> SetAgentPolicyCellAsync(string capability, string label, string action, string origin) => Task.FromResult(AgentPolicyStore.SetCell(capability, label, action, origin));
         public Task<AgentPolicy> SetAgentPolicyEnabledAsync(bool enabled, string origin) => Task.FromResult(AgentPolicyStore.SetEnabled(enabled, origin));
         public Task<ApprovalRecord[]> ListPendingApprovalsAsync() => Task.FromResult(ApprovalLedger.List().ToArray());
         public Task<ApprovalRecord> ApproveAgentActionAsync(string id, string origin) => Task.FromResult(ApprovalLedger.Approve(id, origin));
@@ -2083,7 +2097,7 @@ namespace Semanticus.Engine
         // SAME values as the current body across a filter-context matrix (correctness), benchmarks ONLY the proven set
         // (so speed can never buy incorrectness), and applies the fastest that beats the baseline beyond a noise band.
         // It REFUSES to finalize without >=2 candidates / a live connection / a proven winner — so a measure cannot be
-        // "optimized" without evidence. Auto-apply is the Pro value; free returns the full evidence (paused) so the
+        // "optimized" without evidence. Auto-apply is free on every tier since 2026-09-15; a dry run still returns
         // human/agent can apply the winner manually with update_measure (degrade, don't disappear).
         public async Task<OptimizeMeasureResult> OptimizeMeasureAsync(string measureRef, string[] candidates, string[] verifyGroupBy, string[] verifyFilters, bool apply, string origin)
         {
@@ -2156,11 +2170,11 @@ namespace Semanticus.Engine
                 };
             }
 
-            // Audit-trail wing: a REAL Pro attempt (apply=true) is recorded whatever the outcome — "2 candidates,
-            // identical, no gain" is exactly the memory the referee sells. Dry-runs and free-tier evidence runs stay
-            // transient (no annotation side effect from exploration). The compact evidence keeps the honesty flags
-            // (rows compared / truncated / mismatches) so a persisted "proven" can be re-audited later.
-            var recordOutcome = apply && (_entitlement?.IsPro ?? false);
+            // Audit-trail wing: a REAL attempt (apply=true) is recorded whatever the outcome. "2 candidates,
+            // identical, no gain" is exactly the memory worth keeping. Dry runs stay transient, so exploration has
+            // no annotation side effect. The compact evidence keeps the honesty flags (rows compared / truncated /
+            // mismatches) so a persisted "proven" can be re-audited later.
+            var recordOutcome = apply;
             string EvidenceJson(double? baselineMs, double? bandMs) => System.Text.Json.JsonSerializer.Serialize(new
             {
                 measureRef,
@@ -2235,14 +2249,10 @@ namespace Semanticus.Engine
                     Note = "No proven-equivalent candidate beat the current body beyond the noise band. Kept the original." };
             }
 
-            // 8) Dry-run / free-tier gate: never mutate. Return the full evidence so the winner can be applied manually.
+            // 8) Dry run: never mutate. Return the full evidence so the winner can be applied manually.
             if (!apply)
                 return new OptimizeMeasureResult { Verdict = "dry-run", BaselineExpression = baseline, Candidates = evid.ToArray(),
                     WinnerIndex = winner.Index, WinnerExpression = winner.Expression, Note = "Dry run: fastest proven-equivalent candidate identified, not applied." };
-            if (_entitlement == null || !_entitlement.IsPro)
-                return new OptimizeMeasureResult { Verdict = "paused-free", BaselineExpression = baseline, Candidates = evid.ToArray(),
-                    WinnerIndex = winner.Index, WinnerExpression = winner.Expression,
-                    Note = $"Auto-apply is a Pro feature. Candidate {winner.Index} is the fastest proven-equivalent rewrite ({baseMs}ms → {winner.Benchmark.WarmMedianMs}ms warm-median over the verify grid). Apply it with update_measure, or upgrade to auto-apply." };
 
             // 9) Apply the winner as one undoable revision (broadcasts model/didChange to both doors).
             var applied = false;
@@ -2276,7 +2286,7 @@ namespace Semanticus.Engine
         // ERROR per member, coverage, additivity — never "correct". Replicates a real visual via
         // SUMMARIZECOLUMNS(axis, filter args, "v", expr, "__present",1) so context-sensitive functions (ALLSELECTED,
         // SELECTEDVALUE, ISINSCOPE) resolve correctly. Read-only, needs a live connection, no engine inference (the
-        // engine only executes DAX + reads results). Ungated (a read) — the Pro value is the enforced Verified-Mode loop.
+        // engine only executes DAX + reads results). Ungated: a read, and free on every tier.
         private static ProbeFidelity ProbeManifest() => new ProbeFidelity
         {
             Modeled = new[] { "outer slicer/page filters (as filter args)", "the visual axis (group-by)", "ALLSELECTED shadow context at the leaf grain" },
@@ -2434,6 +2444,7 @@ namespace Semanticus.Engine
 
         public async Task<BaselineCaptureResult> CaptureBaselineAsync(string objRef, string[] groupBy, string[] filters, bool includeDependents, int maxMeasures, int rowCap, string label, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             if (string.IsNullOrWhiteSpace(objRef))
@@ -2602,6 +2613,7 @@ namespace Semanticus.Engine
         /// (safe/impact) to the Verified Edits audit trail — a real compare is real evidence.</summary>
         public async Task<BaselineCompareResult> CompareBaselineAsync(string captureId, string label, string origin)
         {
+            RequireProFeature();
             // CERTIFIED TOTALS: a `label` re-checks the PERSISTED certified baseline (month-end close) rather than a
             // session capture — "do the certified figures still hold?" It reuses the SAME diff engine, re-evaluating
             // EACH entry at ITS OWN stated context, so held/moved/missing/not-checkable mean exactly what they mean
@@ -3765,6 +3777,7 @@ namespace Semanticus.Engine
 
         public Task<DocOutline> GetDocOutlineAsync()
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -3788,6 +3801,7 @@ namespace Semanticus.Engine
 
         public Task<string> GetDocSectionAsync(string objRef, string sectionKey)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -3799,6 +3813,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> SetDocSectionAsync(string objRef, string sectionKey, string markdown, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             if (string.IsNullOrWhiteSpace(sectionKey)) throw new InvalidOperationException("setDocSection: a section key is required.");
             var newVal = markdown ?? "";
@@ -3845,6 +3860,7 @@ namespace Semanticus.Engine
 
         public async Task<DocModelDto> GetDocModelAsync(int topN)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var live = _live;                                  // snapshot the volatile once (a concurrent disconnect must not race us)
             var generatedUtc = DateTime.UtcNow.ToString("o");
@@ -4325,6 +4341,7 @@ namespace Semanticus.Engine
                 DiskDiverged = diskDiverged,
                 Tables = m.Tables.Count,
                 Measures = m.AllMeasures.Count(),
+                CompatibilityLevel = m.Database?.CompatibilityLevel ?? 0,
                 LiveBound = origin != null,
                 LiveEndpoint = origin?.Endpoint,
                 LiveDatabase = origin?.Database,
@@ -4698,6 +4715,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreateFunctionAsync(string name, string expression, string origin)
         {
+            RequireProFeature();
             var verified = await FunctionGuardAsync(expression);
             var s = _sessions.Require();
             string newRef = null;
@@ -4764,6 +4782,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreateDataSourceAsync(string name, string server, string database, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             string result = null;
             await s.MutateAsync(origin, $"create data source {name}", m => result = CreateDataSourceCore(m, name, server, database));
@@ -4785,6 +4804,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreateNamedExpressionAsync(string name, string expression, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             string result = null;
             await s.MutateAsync(origin, $"create expression {name}", m =>
@@ -4812,6 +4832,7 @@ namespace Semanticus.Engine
 
         public Task<PartitionInfo[]> ListPartitionsAsync(string tableRef)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -4827,6 +4848,7 @@ namespace Semanticus.Engine
 
         public Task<string> GetPartitionMAsync(string partitionRef)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -4840,6 +4862,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> SetPartitionMAsync(string partitionRef, string mExpression, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             long rev;
@@ -4862,6 +4885,7 @@ namespace Semanticus.Engine
 
         public Task<DocExpression[]> ListNamedExpressionsAsync()
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m => m.Expressions
                 .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
@@ -4871,6 +4895,7 @@ namespace Semanticus.Engine
 
         public Task<string> GetNamedExpressionAsync(string name)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -4882,6 +4907,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> UpdateNamedExpressionAsync(string name, string expression, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             long rev;
@@ -4988,6 +5014,7 @@ namespace Semanticus.Engine
         // marker + the [Value1..3] source columns were verified against Power BI Desktop's own output.
         public async Task<string> CreateFieldParameterAsync(string name, FieldParameterItem[] items, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A field-parameter table name is required.");
             if (items == null || items.Length == 0) throw new ArgumentException("A field parameter needs at least one field (a measure or column).");
             var s = _sessions.Require();
@@ -5088,6 +5115,7 @@ namespace Semanticus.Engine
 
         public async Task<SpecView> GetSpecAsync()
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             await context.SpecGate.WaitAsync();
             try
@@ -5100,6 +5128,7 @@ namespace Semanticus.Engine
 
         public Task<SpecView> SetSpecAsync(string specJson, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var spec = ParseSpec(specJson, "spec JSON");
             return PublishSpec(context, () => context.Spec.Set(spec, "manual"), "Spec update");
@@ -5107,6 +5136,7 @@ namespace Semanticus.Engine
 
         public Task<SpecView> ClearSpecAsync(string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             return PublishSpec(context, () => context.Spec.Clear(), "Spec clear");
         }
@@ -5121,6 +5151,7 @@ namespace Semanticus.Engine
 
         public async Task<SpecView> SaveSpecAsync(string path)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required to save the spec.");
             var full = Path.GetFullPath(CollapseDuplicateJsonExtension(path.Trim()));
             var context = _sessions.CurrentContext;
@@ -5139,6 +5170,7 @@ namespace Semanticus.Engine
 
         public Task<SpecView> LoadSpecAsync(string path, string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required to load a spec.");
             var full = Path.GetFullPath(path);
@@ -5163,6 +5195,7 @@ namespace Semanticus.Engine
         // for from-scratch.
         public async Task<SpecBuildReport> BuildModelFromSpecAsync(string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             ModelSpec spec;
@@ -5174,10 +5207,6 @@ namespace Semanticus.Engine
             }
             finally { context.SpecGate.Release(); }
 
-            // Pro gate: "build the whole model from a spec in one shot" is the spec→build bulk primitive (the Pro
-            // value); free authors objects individually. Thrown before the mutate, so a refusal leaves the model intact.
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Building a model from a spec",
-                "Author objects individually (create_table / create_measure / …).");
             var created = new System.Collections.Generic.List<string>();
             var skipped = new System.Collections.Generic.List<string>();
             var errors = new System.Collections.Generic.List<string>();
@@ -5404,6 +5433,7 @@ namespace Semanticus.Engine
 
         public async Task<SpecView> AutogenerateSpecFromModelAsync(string origin)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             var spec = await s.ReadAsync(AutogenerateSpecFromModel);
@@ -5515,6 +5545,7 @@ namespace Semanticus.Engine
         // ---- autogenerate_spec_from_fabric: introspect a Fabric SQL endpoint (TDS) and propose a starter spec -----
         public async Task<SpecView> AutogenerateSpecFromFabricAsync(string server, string database, string authMode, string storageMode, string origin, string tenantId = null)
         {
+            RequireProFeature();
             var context = _sessions.CurrentContext;
             if (string.IsNullOrWhiteSpace(server))
                 throw new ArgumentException("A Fabric SQL endpoint is required.");
@@ -5684,13 +5715,20 @@ namespace Semanticus.Engine
         }
 
         public async Task<GitDiffResult> GitDiffAsync(string path, bool staged)
-            => await GitCli.DiffAsync(GitWorkingDir(), path, staged);
+        {
+            RequireProFeature();
+            return await GitCli.DiffAsync(GitWorkingDir(), path, staged);
+        }
 
         public async Task<GitLogEntry[]> GitLogAsync(int max)
-            => await GitCli.LogAsync(GitWorkingDir(), max);
+        {
+            RequireProFeature();
+            return await GitCli.LogAsync(GitWorkingDir(), max);
+        }
 
         public async Task<GitCommitResult> GitCommitAsync(string message, string[] files, bool commit, string origin)
         {
+            RequireProFeature();
             var dir = GitWorkingDir();
             var s = _sessions.Require();
             if (!await GitCli.IsRepoAsync(dir)) return new GitCommitResult { Error = "Not a git repository." };
@@ -5727,6 +5765,7 @@ namespace Semanticus.Engine
 
         public async Task<GitActionResult> GitBranchAsync(string name, bool create, bool checkout, string origin)
         {
+            RequireProFeature();
             var guard = checkout ? await GitStateChangeGuardAsync() : (null, null, null);
             if (guard.Error != null) return GitActionError(guard.Error);
             using var stateLease = guard.Lease;
@@ -5788,6 +5827,7 @@ namespace Semanticus.Engine
 
         public async Task<GitActionResult> GitCheckoutAsync(string @ref, string origin)
         {
+            RequireProFeature();
             var guard = await GitStateChangeGuardAsync();
             if (guard.Error != null) return GitActionError(guard.Error);
             using var stateLease = guard.Lease;
@@ -5820,6 +5860,7 @@ namespace Semanticus.Engine
 
         public async Task<GitActionResult> GitPullAsync(string origin)
         {
+            RequireProFeature();
             var guard = await GitStateChangeGuardAsync();
             if (guard.Error != null) return GitActionError(guard.Error);
             using var stateLease = guard.Lease;
@@ -5847,6 +5888,7 @@ namespace Semanticus.Engine
 
         public async Task<GitActionResult> GitPushAsync(string remote, string branch, bool confirm, string origin)
         {
+            RequireProFeature();
             var dir = GitWorkingDir();
             if (!confirm)
             {
@@ -5862,6 +5904,7 @@ namespace Semanticus.Engine
 
         public async Task<GitActionResult> GitCloneAsync(string url, string directory, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(url)) return new GitActionResult { Ok = false, Error = "A repository URL is required." };
             if (string.IsNullOrWhiteSpace(directory)) return new GitActionResult { Ok = false, Error = "A target directory is required." };
             url = url.Trim();
@@ -6360,14 +6403,6 @@ namespace Semanticus.Engine
                 if (fence != null)
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = right.Path, Error = fence };
 
-                // Pro gate — same rule as the session path (:3162): merging MULTIPLE objects in one commit is the
-                // bulk/atomic primitive. Without this, bulk merge-to-file was a free route around the session gate
-                // (write the file, reopen it). A single-ref commit stays free; the commit=false preview above is
-                // read-only + free. Thrown before Apply touches the in-memory target, so a refusal writes nothing.
-                if (applicable.Length > 1)
-                    Entitlement.EntitlementGuard.RequirePro(_entitlement, "Merging multiple objects into a model file at once",
-                        "Merge one object at a time (pass a single ref in selectedRefs); previewing all changes stays free.");
-
                 var outcome = ModelCompare.Apply(ldb.Model, rdb.Model, diff, selected);
                 var failedRefs = outcome.Failed.Select(f => f.Ref).ToArray();
                 // Validate the MERGED model in memory BEFORE touching the target file: a corrupt merge (e.g. an
@@ -6431,12 +6466,6 @@ namespace Semanticus.Engine
                 var fence = ReviewFence.Refusal(true, confirmToken, expectedToken);
                 if (fence != null)
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), Target = "open model", Error = fence };
-                // Pro gate: merging MULTIPLE objects into the open model in one undoable batch is the bulk/atomic
-                // primitive (the Pro value); a single-ref merge stays free, and the commit=false preview above is
-                // read-only + free. Thrown before the mutate, so a refusal leaves the model intact.
-                if (items.Count > 1)
-                    Entitlement.EntitlementGuard.RequirePro(_entitlement, "Merging multiple objects into the open model at once",
-                        "Merge one object at a time (pass a single ref in selectedRefs), or use the individual edit tools.");
                 var applied = new System.Collections.Generic.List<string>(); var failed = new System.Collections.Generic.List<string>();
                 await s.MutateAsync(origin, $"merge {items.Count} change(s) into the open model", m =>
                 {
@@ -6847,12 +6876,6 @@ namespace Semanticus.Engine
                     return new CherryPickResult { Applied = false, Count = pv.ok.Count, AppliedRefs = pv.ok.ToArray(), Conflicts = pv.conflicts.ToArray(), FailedRefs = pv.fail.ToArray(), Source = slabel,
                         Note = $"Preview: {pv.ok.Count} object(s) would copy into the open model" + (pv.conflicts.Count > 0 ? $", {pv.conflicts.Count} overwriting an existing object" : "") + (pv.fail.Count > 0 ? $"; {pv.fail.Count} cannot" : "") + ". Pass commit=true to apply." };
                 }
-                // Pro gate: copying MULTIPLE objects from another model in one undoable batch is the bulk/atomic
-                // primitive (the Pro value); a single-object copy stays free, and the commit=false preview above is
-                // read-only + free. Thrown before the mutate, so a refusal leaves the model intact.
-                if (parsed.Count > 1)
-                    Entitlement.EntitlementGuard.RequirePro(_entitlement, "Copying multiple objects into the open model at once",
-                        "Copy one object at a time (pass a single ref), or use the individual edit tools.");
                 var applied = new System.Collections.Generic.List<string>(); var failed = new System.Collections.Generic.List<string>();
                 await s.MutateAsync(origin, $"copy {parsed.Count} object(s) from {slabel}", m =>
                 {
@@ -7244,7 +7267,11 @@ namespace Semanticus.Engine
                 {
                     SessionId = gateSession.Id, Revision = 0, Origin = origin, Op = "deploy_stage",   // 0: a promotion is not a model mutation
                     Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                    Summary = $"gate RED ({string.Join("; ", gate.Blockers ?? Array.Empty<string>())}): override accepted to promote {srcName}→{tgtName}",
+                    // The live-publish twin of this line is LocalEngine.LivePublish.cs; the two say the same
+                    // thing the same way on purpose, because a person reads them in the same list. Plain words,
+                    // every fact kept: what the check found, that the move went ahead on a written reason, and
+                    // which stage went where. The machine-readable fields below are untouched.
+                    Summary = $"Red safety check ({string.Join("; ", gate.Blockers ?? Array.Empty<string>())}). Moved to the next stage anyway with a written reason, from {srcName} to {tgtName}",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new { pipelineId, sourceStageId, targetStageId, gate.Grade, gate.Blockers }),
                 });
             }
@@ -7284,6 +7311,7 @@ namespace Semanticus.Engine
         // .Error, so a failure is NEVER thrown across the RPC/MCP door (and the MCP Emit still fires with Ok=false).
         public async Task<FabricGitConnection> FabricGitConnectionAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             try
             {
                 var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
@@ -7294,6 +7322,7 @@ namespace Semanticus.Engine
 
         public async Task<FabricGitStatus> FabricGitStatusAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             try
             {
                 var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
@@ -7304,6 +7333,7 @@ namespace Semanticus.Engine
 
         public async Task<FabricGitResult> FabricGitCommitAsync(string workspaceId, string comment, string[] items, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "commit", Error = "A workspaceId is required." };
             string token; FabricGitStatus status;
             try
@@ -7348,6 +7378,7 @@ namespace Semanticus.Engine
 
         public async Task<FabricGitResult> FabricGitUpdateAsync(string workspaceId, string conflictPolicy, bool allowOverride, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "update", Error = "A workspaceId is required." };
             // Safety gate (mirrors the deploy lane's agent-can't-do-the-destructive-thing rule, DeployGuard): an agent
             // must never FORCE-overwrite uncommitted workspace changes from git. allowOverride is the one irreversible
@@ -7398,6 +7429,7 @@ namespace Semanticus.Engine
 
         public async Task<FabricGitResult> FabricGitConnectAsync(string workspaceId, string provider, string organization, string project, string repository, string branch, string directory, string connectionId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(repository))
                 return new FabricGitResult { Action = "connect", Error = "workspaceId, provider (AzureDevOps|GitHub) and repository are required." };
             var isGh = string.Equals(provider, "GitHub", System.StringComparison.OrdinalIgnoreCase);
@@ -7437,6 +7469,7 @@ namespace Semanticus.Engine
 
         public async Task<FabricGitResult> FabricGitDisconnectAsync(string workspaceId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId)) return new FabricGitResult { Action = "disconnect", Error = "A workspaceId is required." };
             // Tearing a workspace off source control is an Admin op, not routine authoring — an agent must not
             // self-serve it; a human confirms from the Deploy tab. (Reconnect is possible, but the linkage +
@@ -7465,6 +7498,7 @@ namespace Semanticus.Engine
         // failure is reported on the DTO, never thrown.
         public async Task<CicdPublishResult> CicdPublishAsync(string workspaceId, string itemId, bool commit, string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken = default)
         {
+            RequireProFeature();
             var report = new CicdPublishResult { Action = "publish", WorkspaceId = workspaceId, ItemId = itemId };
             if (commit && DeployGuard.IsAgent(origin))
             {
@@ -7522,6 +7556,7 @@ namespace Semanticus.Engine
         // the workflow). The engine adds NO Python dependency — it only emits the YAML/py that CI executes.
         public async Task<CicdScaffold> CicdGenerateAsync(string target, string workspaceId, string environment, bool write)
         {
+            RequireProFeature();
             var ado = string.Equals(target, "ado", StringComparison.OrdinalIgnoreCase) || string.Equals(target, "azuredevops", StringComparison.OrdinalIgnoreCase);
             var env = string.IsNullOrWhiteSpace(environment) ? "PROD" : environment.Trim();
             // The env name becomes a YAML key (parameter.yml) + a CI scalar — restrict it to a safe charset so it can't
@@ -7836,6 +7871,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreateCalculationGroupAsync(string name, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A calculation group name is required.");
             var s = _sessions.Require();
             string newRef = null;
@@ -7851,6 +7887,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreateCalculationItemAsync(string calcGroupRef, string name, string expression, string origin)
         {
+            RequireProFeature();
             await EnforceBindingAsync("create_calculation_item", origin);   // §9c op→workflow binding
             var verified = await VerifiedGuardAsync(expression, "this new calculation item");   // Verified Mode: refuse invalid DAX before it commits
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A calculation item name is required.");
@@ -7870,8 +7907,10 @@ namespace Semanticus.Engine
         // List the model's calculation groups + their ordered items (with DAX + format-string), for the
         // Advanced-Modelling calc-group editor. Read-only; the write ops (create group/item, precedence,
         // format) already exist.
-        public Task<CalcGroupInfo[]> ListCalculationGroupsAsync() =>
-            _sessions.Require().ReadAsync(m => m.Tables.OfType<CalculationGroupTable>()
+        public Task<CalcGroupInfo[]> ListCalculationGroupsAsync()
+        {
+            RequireProFeature();
+            return _sessions.Require().ReadAsync(m => m.Tables.OfType<CalculationGroupTable>()
                 .OrderBy(cg => cg.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(cg => new CalcGroupInfo
                 {
@@ -7887,6 +7926,7 @@ namespace Semanticus.Engine
                         FormatStringExpression = ci.FormatStringExpression,
                     }).ToArray(),
                 }).ToArray());
+        }
 
         // --- Perspectives (Studio v2 Advanced Modelling) -------------------------------------------------
         // A perspective is a named, curated subset of the model's objects (a focused Q&A / report view). The
@@ -7896,6 +7936,7 @@ namespace Semanticus.Engine
 
         public async Task<string> CreatePerspectiveAsync(string name, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A perspective name is required.");
             var s = _sessions.Require();
             string newRef = null;
@@ -7909,6 +7950,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> SetPerspectiveMemberAsync(string perspectiveRef, string objRef, bool include, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var rev = await s.MutateAsync(origin, $"{(include ? "add to" : "remove from")} perspective {perspectiveRef}", m =>
             {
@@ -7923,8 +7965,11 @@ namespace Semanticus.Engine
             return new SetResult { Revision = rev, Changed = true };
         }
 
-        public Task<PerspectiveInfo[]> GetPerspectivesAsync() =>
-            _sessions.Require().ReadAsync(BuildPerspectiveInfos);
+        public Task<PerspectiveInfo[]> GetPerspectivesAsync()
+        {
+            RequireProFeature();
+            return _sessions.Require().ReadAsync(BuildPerspectiveInfos);
+        }
 
         private static PerspectiveInfo[] BuildPerspectiveInfos(Model m) =>
             m.Perspectives.Select(p => new PerspectiveInfo
@@ -7952,6 +7997,7 @@ namespace Semanticus.Engine
         /// (the item falls back to the base/model format). Change-tracked + undoable via the wrapper setter.</summary>
         public async Task<SetResult> SetCalcItemFormatStringAsync(string calcItemRef, string formatExpression, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             long rev;
@@ -7980,6 +8026,7 @@ namespace Semanticus.Engine
         /// several calc groups combine). Distinct precedences make the combination order deterministic. Undoable.</summary>
         public async Task<SetResult> SetCalcGroupPrecedenceAsync(string calcGroupRef, int precedence, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var rev = await s.MutateAsync(origin, $"set calc-group precedence {calcGroupRef}", m =>
             {
@@ -8221,12 +8268,24 @@ namespace Semanticus.Engine
             return s.ReadAsync(m => Lineage.LineageGraph.Impact(m, objRef));
         }
 
-        /// <summary>Read-only reverse "safe-to-remove" sweep over every measure/column — the Measure-Killer headline.
-        /// Conservative + tri-state (safe / used-only-by-an-unused-object / caution); MODEL-ONLY in Phase 1.</summary>
-        public Task<UnusedResult> UnusedObjectsAsync()
+        /// <summary>Read-only reverse "safe-to-remove" sweep over every measure/column — the cleanup-candidate list.
+        /// Conservative + tri-state (safe / used-only-by-an-unused-object / caution). It reads the model's OWN report
+        /// scope, so it is report-aware exactly when reports have been checked, and says so in the caveat rather than
+        /// leaving the caller to work out which basis the list carries.</summary>
+        public async Task<UnusedResult> UnusedObjectsAsync()
         {
             var s = _sessions.Require();
-            return s.ReadAsync(Lineage.LineageGraph.Unused);
+            var coverage = CheckedCoverageFor(s);
+            // R1. Three states, and the middle one is the repair. NO reports chosen is an honest model-only sweep.
+            // Every chosen report read is a report-aware sweep. A report CHOSEN BUT NOT READ is neither: the
+            // protection was asked for and has not been established, so nothing here may be called unused yet.
+            var result = coverage.Parts.Count == 0
+                ? await s.ReadAsync(Lineage.LineageGraph.Unused)
+                : await s.ReadAsync(m => Lineage.LineageGraph.AnalyzeReports(m, coverage.Parts).Unused);
+            if (!coverage.HasChoices || coverage.Complete) return result;
+            return Lineage.LineageGraph.WithMissingCoverage(result,
+                "A report chosen for this model has not been checked yet, so its use of this field is not known.",
+                coverage.Caveat);
         }
 
         /// <summary>Read-only report-aware lineage: parse local PBIR report definition(s), reconcile their field
@@ -8491,12 +8550,6 @@ namespace Semanticus.Engine
             if (blocks.Count == 0)
                 throw new InvalidOperationException("apply_dax_script: no '// @object <ref>' blocks found. Script with format='dax' first, then edit and apply.");
 
-            // Pro gate: applying a MULTI-object DAX script in one atomic batch is the bulk primitive; a single-block
-            // script (one object) stays free. Thrown before the mutate, so a refusal leaves the model intact.
-            if (blocks.Count > 1)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying a multi-object DAX script at once",
-                    "Apply one object's DAX at a time (update_measure / set_dax).");
-
             var applied = new List<string>();
             var s = _sessions.Require();
             var rev = await s.MutateAsync(origin, "apply DAX script", m =>
@@ -8576,12 +8629,6 @@ namespace Semanticus.Engine
             var docs = ParseTmdlDocuments(script);
             if (docs.Count == 0)
                 throw new InvalidOperationException("apply_tmdl: no top-level TMDL object or sentinel-owned measure found. Use Script > TMDL from the Model tree, edit that document, then apply.");
-
-            // Pro gate: applying MULTIPLE selected objects in one batch is the bulk primitive; a single table/role or
-            // measure stays free. Thrown before the mutate, so a refusal leaves the model intact.
-            if (docs.Count > 1)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying a multi-object TMDL script at once",
-                    "Apply one object at a time, or use the individual edit tools.");
 
             var applied = new List<string>();
             var skipped = new List<string>();
@@ -9458,7 +9505,7 @@ namespace Semanticus.Engine
         // decisions live HERE (never in the UI): an ObjectName replace becomes a reference-aware RENAME (FormulaFixup
         // rewrites every DAX/RLS reference); a match on a DAX IDENTIFIER (or other code) is REFUSED with the
         // "rename the object instead" hint; only plain text / string-literals / comments / M are literal-substituted.
-        // A single edit → free (no bulk Pro gate). Undoable on the shared timeline like any other mutation.
+        // Free, like every edit. Undoable on the shared timeline like any other mutation.
         private sealed class ReplaceCtx
         {
             public string Field, MatchClass, Raw, New, Note, NewRef, Culture, DescProp;
@@ -10158,9 +10205,7 @@ namespace Semanticus.Engine
         public async Task<BpaFixAllResult> BpaFixAllAsync(string origin)
         {
             var s = _sessions.Require();
-            // Pro gate: "fix every BPA violation in one click" is a bulk primitive; free fixes one at a time (bpa_fix).
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Fixing all BPA violations at once",
-                "Fix violations one at a time with bpa_fix.");
+            // Free on every tier since 2026-09-15; bpa_fix is still the one-at-a-time path.
             var applied = 0;
             var reasons = new Dictionary<string, string>(StringComparer.Ordinal);   // ruleId␟objectRef -> why it survived
             var rev = await s.MutateAsync(origin, "BPA: apply all auto-fixes", m =>
@@ -10222,8 +10267,7 @@ namespace Semanticus.Engine
         // always surfaced (tagged + reasoned) so the grade can't be silently inflated, and hard gates still evaluate on
         // the raw count. Persisted on the model (Semanticus_Waivers annotation, undoable, travels with the model);
         // per-instance BPA waivers also mirror to TE's BestPracticeAnalyzer_IgnoreRules. A reason is required.
-        // Rule-level (objRef null/'*' = every instance, model-wide) is the bulk lever → Pro; per-instance is free.
-
+        // Rule-level (objRef null/'*' = every instance, model-wide) and per-instance are both free.
         public async Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin)
         {
             system = (system ?? "").Trim().ToLowerInvariant();
@@ -10231,10 +10275,6 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(ruleId)) throw new ArgumentException("A rule id is required.");
             if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A reason is required to waive a finding (it's an audited, accepted decision, not a silent suppression).");
             bool ruleLevel = WaiverStore.IsRuleLevel(objRef);
-            if (ruleLevel)   // waiving an entire rule (every instance) at once is the bulk primitive — the Pro value
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Waiving an entire rule (all instances) at once",
-                    "Waive findings one at a time (pass a specific object ref).");
-
             var s = _sessions.Require();
             var changed = false;
             string warning = null;
@@ -10329,10 +10369,8 @@ namespace Semanticus.Engine
         public async Task<SafeFixResult> ApplySafeFixesAsync(string origin)
         {
             var s = _sessions.Require();
-            // Pro gate: "apply every safe AI-readiness fix in one click" is a bulk primitive; free fixes one at a
+            // Free on every tier since 2026-09-15; apply_fix is still the one-at-a
             // time (apply_fix). Thrown before the mutate batch, so a refusal leaves the model intact.
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying all safe fixes at once",
-                "Apply fixes one at a time with apply_fix.");
             List<string> applied = null;
             var rev = await s.MutateAsync(origin, "AI-readiness: safe fixes", m => { applied = SafeFixes.Apply(m); });
             var card = await s.ReadAsync(m => new ReadinessAnalyzer().Analyze(m));
@@ -10589,6 +10627,7 @@ namespace Semanticus.Engine
         /// <see cref="MarkDateTableCore"/> so the plan door applies the SAME contract (F-029).</summary>
         public async Task<SetResult> MarkDateTableAsync(string tableRef, string dateColumn, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "mark date table", m =>
@@ -10702,6 +10741,7 @@ namespace Semanticus.Engine
 
         public Task<RefreshPolicyInfo> GetIncrementalRefreshPolicyAsync(string tableRef)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -10735,6 +10775,7 @@ namespace Semanticus.Engine
             int? incrementalPeriods, string incrementalGranularity,
             int? incrementalPeriodsOffset, string mode, string pollingExpression, bool autoWire, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             string warning = null;
@@ -10833,6 +10874,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> RemoveIncrementalRefreshPolicyAsync(string tableRef, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "remove incremental refresh policy", m =>
@@ -10975,12 +11017,14 @@ namespace Semanticus.Engine
 
         public Task<RoleInfo[]> ListRolesAsync()
         {
+            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m => m.Roles.Select(BuildRoleInfo).ToArray());
         }
 
         public async Task<RoleInfo> CreateRoleAsync(string name, string modelPermission, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A role name is required.");
             var s = _sessions.Require();
             RoleInfo info = null;
@@ -10996,6 +11040,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> DeleteRoleAsync(string name, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             // Resolve first: deleting a missing role is a true net-zero (no revision bump, no broadcast).
             var exists = await s.ReadAsync(m => FindRole(m, name) != null);
@@ -11010,6 +11055,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> SetRolePermissionAsync(string name, string modelPermission, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var p = ParsePermission(modelPermission);
@@ -11034,6 +11080,7 @@ namespace Semanticus.Engine
         /// the result echoes the resulting permission and flags that promotion so the elevation isn't silent.</summary>
         public async Task<SetTablePermissionResult> SetTablePermissionAsync(string roleName, string tableRef, string filterDax, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             if (!string.IsNullOrWhiteSpace(filterDax))
             {
@@ -11077,6 +11124,7 @@ namespace Semanticus.Engine
         /// <summary>Add or remove an (Azure AD / external) member of a role.</summary>
         public async Task<SetResult> SetRoleMemberAsync(string roleName, string memberName, bool add, string origin)
         {
+            RequireProFeature();
             if (string.IsNullOrWhiteSpace(memberName)) throw new ArgumentException("A member name is required.");
             var identity = memberName.Trim();
             if (add && !IsRoleMemberIdentity(identity))
@@ -11138,6 +11186,7 @@ namespace Semanticus.Engine
         /// from the role, <c>Read</c> grants it, <c>Default</c> removes the override. Requires CL ≥ 1400.</summary>
         public async Task<SetResult> SetTableObjectPermissionAsync(string roleName, string tableRef, string permission, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "set table OLS", m =>
@@ -11168,6 +11217,7 @@ namespace Semanticus.Engine
         /// role, <c>Read</c> grants it, <c>Default</c> removes the override. Requires CL ≥ 1400.</summary>
         public async Task<SetResult> SetColumnObjectPermissionAsync(string roleName, string columnRef, string permission, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "set column OLS", m =>
@@ -11245,12 +11295,10 @@ namespace Semanticus.Engine
         public async Task<ReadinessPlan> MakeAiReadyAsync(string origin, int maxQueue)
         {
             var s = _sessions.Require();
-            // Pro gate: "make the whole model AI-ready in one click" runs the SAME bulk SafeFixes.Apply as
+            // Free on every tier since 2026-09-15. It runs the SAME bulk SafeFixes.Apply as
             // apply_safe_fixes — gate it identically so the tool name can't bypass the gate (free scans with
             // ai_readiness_scan and applies fixes one at a time with apply_fix). Thrown before the mutate, so a
             // refusal leaves the model intact.
-            Entitlement.EntitlementGuard.RequirePro(_entitlement, "Making the whole model AI-ready in one click",
-                "Scan with ai_readiness_scan, then apply fixes one at a time with apply_fix.");
             List<string> applied = null;
             var rev = await s.MutateAsync(origin, "AI-readiness: safe fixes", m => { applied = SafeFixes.Apply(m); });
             return await s.ReadAsync(m =>
@@ -11585,6 +11633,7 @@ namespace Semanticus.Engine
 
         public async Task<GenerateResult> GenerateDateTableAsync(string tableName, string startExpr, string endExpr, bool markAsDate, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             tableName = string.IsNullOrWhiteSpace(tableName) ? "Date" : tableName.Trim();
             var start = string.IsNullOrWhiteSpace(startExpr) ? "DATE(YEAR(TODAY())-5,1,1)" : startExpr.Trim();
@@ -11638,6 +11687,7 @@ $@"ADDCOLUMNS(
 
         public async Task<GenerateResult> GenerateTimeIntelligenceAsync(string baseMeasureRef, string dateColumn, string[] variants, string displayFolder, string origin)
         {
+            RequireProFeature();
             var s = _sessions.Require();
             var created = new List<GeneratedObject>();
             var skipped = new List<string>();
@@ -11784,7 +11834,7 @@ $@"ADDCOLUMNS(
         /// literals/comments (spliced span-wise so reference spans are never touched), <c>set_m</c> for M bodies.
         /// DAX-reference / DAX-code / RLS matches produce NO items (the plan Note reports them honestly — rename the
         /// referenced object instead). NOTHING mutates here; review with get_plan, apply via apply_plan (the existing
-        /// Pro gate on &gt;1 item — a single item stays free).</summary>
+        /// free on every tier since 2026-09-15).</summary>
         public async Task<ChangePlanView> ProposeReplaceAsync(SearchOptions find, string replace, int maxItems, string origin)
         {
             if (find == null || string.IsNullOrWhiteSpace(find.Query))
@@ -12040,6 +12090,10 @@ $@"ADDCOLUMNS(
                     VerifyFilters = verifyFilters,
                     Status = status,
                     Generated = after != null,
+                    // R2: a removal is reviewed against a set of checked reports. Bind that basis to the proposal
+                    // so apply can tell whether the person is applying the answer they actually read.
+                    ReviewedScope = string.Equals(kind, "delete_if_unused", StringComparison.Ordinal)
+                        ? ReportScopeSignature(s) : null,
                 };
                 plan.Add(it);
                 return PublishPlan(plan, s.Revision);
@@ -12143,12 +12197,6 @@ $@"ADDCOLUMNS(
                 toApply.Add(it);
             }
 
-            // Pro gate: applying MULTIPLE changes in one shot is the one-click bulk primitive (the Pro value); the
-            // free tier applies items one at a time. Thrown BEFORE any mutation, so a refusal leaves the model intact.
-            if (toApply.Count > 1)
-                Entitlement.EntitlementGuard.RequirePro(_entitlement, "Applying multiple changes at once",
-                    "Apply one approved change at a time, or use Pro to apply the whole set in one step.");
-
             // Re-read the CURRENT body of each gated set_dax target at apply time, so the equivalence proof
             // is against the body actually in the model NOW — not the (possibly stale) baseline captured at
             // add time (the other door, or an earlier item in this batch, may have changed it since).
@@ -12221,6 +12269,13 @@ $@"ADDCOLUMNS(
             var before = await s.ReadAsync(m => (bpa: BpaAnalyzer.Analyze(m, GetBpaRules(m)).ViolationCount, card: new ReadinessAnalyzer().Analyze(m)));
 
             var applied = 0; var failed = 0;
+            // The SAME checked reports the proposal was made against. The report PARTS are read off the dispatcher,
+            // before the mutate (parsing them is file IO), so the apply-time recheck of a delete_if_unused is "same
+            // model, same checked reports" and not a quietly model-only re-verification (Astra's UAT, the trust
+            // problem at deletion). B2: that reading is the basis as it was when this call started, and it is not
+            // the one the deletion is finally judged against: the delegate re-takes it below.
+            var entryBasis = CaptureScopeBasis(s);
+            var applyScopeParts = entryBasis.Coverage.Parts.Count > 0 ? entryBasis.Coverage.Parts : null;
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             // The exact renamed object per rename item, keyed by reference identity: a cascade warning carries the
             // object it concerns, so it attributes to the RIGHT item even when two items rename same-named objects on
@@ -12236,6 +12291,12 @@ $@"ADDCOLUMNS(
                 // reference to a delete target). The wrapper POSTPONES its dependency-tree rebuild to EndUpdate, so
                 // ReferencedBy is stale mid-batch — the sweep is fed a flushed tree (DependencyMaintenance.RebuildNow)
                 // so a target a same-batch edit just referenced reads as used and SKIPS, never a stale delete.
+                //
+                // B2: the report basis is re-taken HERE, once, and every removal in this batch is judged against
+                // that one snapshot. A scope write rides this same single-writer dispatcher now, so a basis read
+                // at the top of the turn cannot move again before the deletes run at the end of it.
+                var applyBasis = CaptureScopeBasis(s);
+                var applyCoverage = applyBasis.Coverage;
                 Dictionary<string, UnusedItem> unusedByRef = null;
                 foreach (var it in toApply)
                 {
@@ -12261,15 +12322,46 @@ $@"ADDCOLUMNS(
                         // since the caller's scan SKIPS with the honest per-item reason, never a stale delete.
                         if (string.Equals(it.Kind, "delete_if_unused", StringComparison.OrdinalIgnoreCase))
                         {
+                            // B2. The selection moved between the start of this call and this turn, so the parts
+                            // the candidate set above was built from describe a basis that is gone. Refuse before
+                            // the per-item comparison, because that comparison would otherwise be made against a
+                            // signature the report parts no longer match.
+                            if (applyBasis.MovedSince(entryBasis))
+                            {
+                                it.Status = "skipped";
+                                it.Note = "not removed: " + ReportScopeCoverage.SelectionChanged;
+                                continue;
+                            }
+                            // R2. The report selection moved between the review and this apply, so the answer the
+                            // person approved was about a different set of reports. Refuse rather than silently
+                            // re-deciding it against whatever happens to be current.
+                            if (it.ReviewedScope != null && !string.Equals(it.ReviewedScope, applyBasis.Signature, StringComparison.Ordinal))
+                            {
+                                it.Status = "skipped";
+                                it.Note = "not removed: " + ReportScopeCoverage.SelectionChanged;
+                                continue;
+                            }
+                            // R1. Reports were chosen for this model and one of them has never been read, so the
+                            // apply-time recheck cannot establish the protection the proposal was made under.
+                            if (applyCoverage.HasChoices && !applyCoverage.Complete)
+                            {
+                                it.Status = "skipped";
+                                it.Note = "not removed: " + ReportScopeCoverage.NothingRemoved;
+                                continue;
+                            }
                             if (unusedByRef == null)
                             {
                                 TabularEditor.TOMWrapper.Utils.DependencyMaintenance.RebuildNow();   // flush postponed deps so same-batch referencers are visible
-                                unusedByRef = Lineage.LineageGraph.Unused(m).Items.ToDictionary(x => x.Ref, StringComparer.OrdinalIgnoreCase);
+                                unusedByRef = (applyScopeParts == null || applyScopeParts.Count == 0
+                                        ? Lineage.LineageGraph.Unused(m)
+                                        : Lineage.LineageGraph.AnalyzeReports(m, applyScopeParts).Unused)
+                                    .Items.ToDictionary(x => x.Ref, StringComparer.OrdinalIgnoreCase);
                             }
                             if (!unusedByRef.TryGetValue(it.ObjectRef, out var now) || now.Verdict != "safe")
                             {
                                 it.Status = "skipped";
-                                it.Note = "not removed: the unused verdict no longer holds at apply time. " + NotSafeReason(m, it.ObjectRef, unusedByRef, false);
+                                it.Note = "not removed: the unused verdict no longer holds at apply time. "
+                                    + NotSafeReason(m, it.ObjectRef, unusedByRef, applyScopeParts != null && applyScopeParts.Count > 0);
                                 continue;
                             }
                             DeleteResolvedObject(m, ObjectRefs.Resolve(m, it.ObjectRef), it.ObjectRef);

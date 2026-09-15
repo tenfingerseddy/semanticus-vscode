@@ -57,7 +57,7 @@ namespace Semanticus.Tests
         /// the corpus the guard covers.</summary>
         private static readonly (string Dir, int Count)[] Corpora =
         {
-            ("Semanticus.Engine/workflows", 15),
+            ("Semanticus.Engine/workflows", 16),
             ("Semanticus.Engine/workflow-templates", 4),
             ("Semanticus.Engine/workflows-parked", 7),
         };
@@ -120,6 +120,12 @@ namespace Semanticus.Tests
                 Assert.True(def.Error == null, $"{rel} failed to parse: {def.Error}");
         }
 
+        // REGENERATING THE AMENDMENT GOLDEN. There is no helper in this file and there must not be one:
+        // F059_the_v1_golden_guard_never_writes_the_thing_it_compares_against asserts over this SOURCE that
+        // it contains no write at all, and that guard is worth more than the convenience. When a named
+        // amendment's file changes, run the guard below, take the "actual" block it prints for that file,
+        // and paste it into goldens/workflow-v1-amendments.txt by hand. The corpus golden is different: it
+        // comes from pwsh -File Semanticus.Tests/tools/prev2-oracle/capture.ps1, never from a hand edit.
         [Fact]
         public void Every_shipped_workflow_file_parses_byte_identically_to_the_pre_v2_parser()
         {

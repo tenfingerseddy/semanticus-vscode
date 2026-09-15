@@ -32,21 +32,15 @@ namespace Semanticus.Tests
                 },
             }));
 
-        private static SecurityStaticReport Sec(params (string filter, string err)[] filters)
-            => SecurityStaticChecks.Evaluate(filters.Select((f, i) => new RoleFilterInput
-            { Role = "role" + i, Table = "T", FilterExpression = f.filter, ErrorMessage = f.err }));
-
         private static ReconcileOutcome Recon(Verdict v, bool missing = false)
             => new ReconcileOutcome { DefId = Guid.NewGuid().ToString("N"), Title = "t", Verdict = v, Missing = missing };
-
-        private static readonly SecurityStaticReport NoSec = SecurityStaticChecks.Evaluate(Array.Empty<RoleFilterInput>());
 
         // ---- I1: NotVerifiable / Suspect move the grade in NEITHER direction ----
         [Fact]
         public void I1_notverifiable_is_excluded_from_the_grade()
         {
             // 1 passing RI probe + 2 unprobed relationships: the unknowns must not dilute (or inflate) the grade.
-            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
+            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable), null);
             Assert.Equal(100.0, h.Categories.Single(c => c.Category == "Integrity").Score);
             Assert.True(h.NotVerifiable > 0);
             Assert.True(h.CoveragePct < 100.0);
@@ -58,12 +52,12 @@ namespace Semanticus.Tests
         [Fact]
         public void I1_allunknown_category_is_dormant_not_perfect()
         {
-            var allUnknown = TestHealthAnalyzer.Analyze(Rels(Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
+            var allUnknown = TestHealthAnalyzer.Analyze(Rels(Verdict.NotVerifiable, Verdict.NotVerifiable), null);
             var withFail = TestHealthAnalyzer.Analyze(Rels(Verdict.NotVerifiable, Verdict.NotVerifiable),
-                Sec(("1=1", null)), null);   // one decided (failing) security check
+                new[] { Recon(Verdict.Fail) });   // one decided (failing) correctness check
             Assert.False(allUnknown.Categories.Single(c => c.Category == "Integrity").HasChecks);
-            // The failing security check must own the whole grade — the dormant Integrity can't prop it up.
-            Assert.Equal(0.0, withFail.Categories.Single(c => c.Category == "Security").Score);
+            // The failing correctness check must own the whole grade: the dormant Integrity can't prop it up.
+            Assert.Equal(0.0, withFail.Categories.Single(c => c.Category == "Correctness").Score);
             Assert.Equal("F", withFail.Grade);
         }
 
@@ -72,7 +66,7 @@ namespace Semanticus.Tests
         public void I2_grade_and_coverage_are_one_unit()
         {
             var h = TestHealthAnalyzer.Analyze(
-                Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable, Verdict.NotVerifiable), NoSec, null);
+                Rels(Verdict.Pass, Verdict.NotVerifiable, Verdict.NotVerifiable, Verdict.NotVerifiable), null);
             Assert.True(h.CoveragePct <= 25.0);
             Assert.True(h.Overall <= h.CoveragePct + 0.05);
             Assert.NotEqual("A", h.Grade);
@@ -99,7 +93,7 @@ namespace Semanticus.Tests
             Assert.Equal(Verdict.Suspect, rel.ReferentialIntegrity.Verdict);   // demoted, root cause named
             Assert.NotNull(rel.ReferentialIntegrity.RootCause);
 
-            var h = TestHealthAnalyzer.Analyze(report, NoSec, null);
+            var h = TestHealthAnalyzer.Analyze(report, null);
             Assert.Equal(1, h.RootFailures);            // the duplicate-key defect — ONE row that matters
             Assert.Equal(1, h.Suspect);
         }
@@ -111,7 +105,7 @@ namespace Semanticus.Tests
             var h = TestHealthAnalyzer.Analyze(
                 Rels(Verdict.Fail, Verdict.Pass, Verdict.Pass, Verdict.Pass, Verdict.Pass, Verdict.Pass,
                      Verdict.Pass, Verdict.Pass, Verdict.Pass, Verdict.Pass),
-                Sec(("[Region] = USERNAME()", null)), new[] { Recon(Verdict.Pass) });
+                new[] { Recon(Verdict.Pass) });
             Assert.True(h.Overall <= 60.0);
             Assert.Equal("D", h.Grade);
             Assert.NotEmpty(h.GatedBy);
@@ -121,7 +115,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Missing_binding_is_surfaced_not_graded()
         {
-            var h = TestHealthAnalyzer.Analyze(Rels(), NoSec,
+            var h = TestHealthAnalyzer.Analyze(Rels(),
                 new[] { Recon(Verdict.Pass), Recon(Verdict.NotVerifiable, missing: true) });
             Assert.Equal(1, h.Missing);
             Assert.Equal("A", h.Grade);                 // the missing test is not a pass AND not a fail
@@ -131,28 +125,10 @@ namespace Semanticus.Tests
         [Fact]
         public void Empty_suite_is_honest_zero_coverage()
         {
-            var h = TestHealthAnalyzer.Analyze(Rels(), NoSec, null);
+            var h = TestHealthAnalyzer.Analyze(Rels(), null);
             Assert.Equal(0.0, h.CoveragePct);
             Assert.Equal(0, h.Checked);
             Assert.Equal("F", h.Grade);
-        }
-
-        // ---- static security semantics ----
-        [Fact]
-        public void Tautology_and_error_filters_fail_a_real_filter_passes()
-        {
-            var rep = Sec(("1 = 1", null), ("TRUE()", null), ("[Region] = \"AU\"", null), ("[X] ==", "syntax error"));
-            Assert.Equal(3, rep.Summary.Failed);
-            Assert.Equal(1, rep.Summary.Passed);
-            Assert.Equal(100.0, rep.Summary.CoveragePct);   // all four were decidable statically
-        }
-
-        [Fact]
-        public void Filterless_permissions_are_not_tests()
-        {
-            var rep = SecurityStaticChecks.Evaluate(new[]
-            { new RoleFilterInput { Role = "viewer", Table = "T", FilterExpression = "  " } });
-            Assert.Empty(rep.Filters);                   // metadata-only permission — nothing to test, no fake coverage
         }
 
         // ---- E5 wiring: the Performance category exists only when budgets were DECLARED ----
@@ -160,7 +136,7 @@ namespace Semanticus.Tests
         public void Performance_stays_dormant_without_timing_verdicts()
         {
             // No timing (no budgets set) ⇒ the pre-declared 0.10 weight must not dilute or prop up the grade.
-            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), NoSec, null);
+            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), null);
             var perf = h.Categories.Single(c => c.Category == "Performance");
             Assert.False(perf.HasChecks);
             Assert.Equal(0, perf.Checked);
@@ -172,8 +148,8 @@ namespace Semanticus.Tests
         {
             // Same reports, plus one over-budget timing Fail: Performance activates (weight 0.10 vs
             // Integrity 0.30, normalized) and the declared-budget failure drags the average down.
-            var without = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), NoSec, null);
-            var with = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), NoSec, null, new[] { Verdict.Fail });
+            var without = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), null);
+            var with = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), null, new[] { Verdict.Fail });
             var perf = with.Categories.Single(c => c.Category == "Performance");
             Assert.True(perf.HasChecks);
             Assert.Equal(0.0, perf.Score);
@@ -188,7 +164,7 @@ namespace Semanticus.Tests
         {
             // A budgeted measure whose cache-clear was refused arrives NotVerifiable: Performance must stay
             // DORMANT (nothing decided), the grade must not move, and the unknown must still show in coverage.
-            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), NoSec, null, new[] { Verdict.NotVerifiable });
+            var h = TestHealthAnalyzer.Analyze(Rels(Verdict.Pass), null, new[] { Verdict.NotVerifiable });
             var perf = h.Categories.Single(c => c.Category == "Performance");
             Assert.False(perf.HasChecks);
             Assert.Equal(1, perf.NotVerifiable);

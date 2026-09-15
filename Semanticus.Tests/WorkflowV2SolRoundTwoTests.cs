@@ -30,7 +30,7 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-sol2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            return (new LocalEngine(new SessionManager(), ent ?? new Free(), ws), ws);
+            return (new LocalEngine(new SessionManager(), ent ?? TestEntitlements.Pro, ws), ws);
         }
 
         private static string Md(params string[] lines) => string.Join("\n", lines);

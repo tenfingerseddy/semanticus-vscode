@@ -7,6 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const scenarios = read('webview/src/workflowscenarios.tsx');
 const designer = read('webview/src/workflowdesign.tsx');
+const forms = read('webview/src/workflowforms.tsx');
 const workflows = read('webview/src/workflows.tsx');
 const template = read('../Semanticus.Engine/workflow-templates/hard-measure.md');
 const canonical = read('../Semanticus.Engine/workflows/verified-measure.md');
@@ -23,10 +24,12 @@ assert.match(scenarios, /Define the business rule[\s\S]*trusted answers from sou
 for (const [name, text] of [['featured template', template], ['executable workflow', canonical]]) {
   assert.match(text, /## Step 1: Fix the specification[\s\S]*## Step 2: Lock the expected values/,
     `${name} must use the requirement-first, test-first spine`);
-  assert.match(text, /contextLedger[\s\S]*expectedValues[\s\S]*witnessDax[\s\S]*certificate/,
-    `${name} must require a context ledger, locked expected values, a locked witness, and an honest certificate`);
-  assert.match(text, /## Step 6: HARD gate[\s\S]*probe: witnessDax[\s\S]*openShapesFrom: open/,
-    `${name} must hard-gate candidate equality against the locked witness on the pinned partition`);
+  // The two files share the spine but not the step count: the featured template is still the seven-step v5
+  // contract, while the shipped seed was cut to four person-facing steps at UX16. The ledger-and-witness
+  // assertions that named v5's own input names now live with the template below, and the shipped seed's
+  // equivalent guarantees are asserted step by step further down. Neither file lost a guard.
+  assert.match(text, /CONTEXT LEDGER[\s\S]*PINNED[\s\S]*OPEN[\s\S]*expectedValues[\s\S]*witnessDax[\s\S]*certificate/,
+    `${name} must require a pinned-or-open context ledger, locked expected values, a locked witness, and an honest certificate`);
   assert.doesNotMatch(text, /control_total|control total|raw-row oracle/i,
     `${name} must not fall back to the superseded control-total or v4 oracle framing`);
   assert.doesNotMatch(text, /[—–]/, `${name} must carry no em or en dashes (product copy rule)`);
@@ -39,42 +42,126 @@ assert.match(template, /## Step 7: Performance when attested, then finalize for 
   'the featured template must retain its attested-timing performance pass');
 assert.match(template, /openShapesFrom: openShapes/,
   'the v5 template must keep its Step-6-declared open-shape partition');
+assert.match(template, /## Step 6: HARD gate[\s\S]*probe: witnessDax[\s\S]*openShapesFrom: open/,
+  'the featured template must hard-gate candidate equality against the locked witness on the pinned partition');
 
 assert.match(canonical, /version: 7/, 'the executable stock workflow must carry the v7 shaped-anchor coverage contract as version 7');
-assert.match(canonical, /name: equivalenceGrid[\s\S]*name: openGrains[\s\S]*kind: anchor_coverage\s*\r?\n\s*anchors: expectedValues/,
+
+// =====================================================================================================
+// THE SHIPPED SEED IS FOUR PERSON-FACING STEPS, AND EACH ONE IS ASSERTED WHERE IT LIVES.
+// UX16 cut the seven-step v7 file to four (requirement, expected values, candidate, reconcile-and-finish);
+// the context ledger moved into the Step-1 instructions and the old Step 4-7 work was folded into Step 4.
+// Every guarantee the old assertions made is still asserted below, but against a SLICE of the step that
+// must carry it rather than against the whole file, so a guard can no longer be satisfied by wording that
+// drifted into a different step. The featured v5 template is asserted separately above; it did not change.
+// =====================================================================================================
+const stepsOf = (text) => Object.fromEntries(text.split(/^(?=##\s*Step\s+\d+\s*:)/m)
+  .filter((s) => /^##\s*Step\s+\d+\s*:/.test(s))
+  .map((s) => [s.match(/^##\s*Step\s+(\d+)/)[1], s]));
+const cs = stepsOf(canonical);
+assert.deepEqual(Object.keys(cs), ['1', '2', '3', '4'],
+  'the shipped verified-measure seed is four person-facing steps; a step added or lost invalidates every slice below');
+
+// Step 1 fixes the requirement, and nothing is authored against anything else.
+assert.match(cs['1'], /## Step 1: Fix the specification\. The requirement text is the only source/,
+  'Step 1 must fix the specification from the requirement text');
+assert.match(cs['1'], /CONTEXT LEDGER[\s\S]*- PINNED:[\s\S]*- OPEN:[\s\S]*name: requirement\s*\r?\n\s*question:[\s\S]*required: required/,
+  'Step 1 must build the pinned-or-open context ledger and require the restated requirement');
+assert.match(cs['1'], /Your own interpretation never pins a context/,
+  'only the requirement or the user may pin a context, never the assistant');
+
+// Step 2 locks the expected values BEFORE a candidate exists, and gates them with anchor_coverage.
+assert.match(cs['2'], /## Step 2: Lock the expected values before any candidate exists/,
+  'Step 2 must lock the expected values before authoring');
+assert.match(cs['2'], /name: equivalenceGrid[\s\S]*name: openGrains[\s\S]*verify:\s*\r?\n\s*- kind: anchor_coverage\s*\r?\n\s*anchors: expectedValues/,
   'Step 2 must declare the proof lattice and requirement-silent grains and gate them through anchor_coverage');
-assert.match(canonical, /openShapesFrom: openGrains/,
+assert.match(cs['2'], /This partition is declared before authoring and cannot later shrink/,
   'the open partition must be born at Step 2, never declared after evidence');
-assert.match(canonical, /optional axis/i,
-  'the anchor recipe must offer the shaped (axis) anchor form');
-assert.match(canonical, /OUTSIDE DAX[\s\S]*small GROUPED row extract/i,
-  'the stock workflow must derive anchors from small grouped extracts with arithmetic outside DAX');
-assert.match(canonical, /kind: expected_values[\s\S]*anchors: expectedValues/,
-  'the stock workflow must enforce its locked expected values through the structured anchor gate');
-assert.match(canonical, /## Step 3: Author ONE canonical candidate[\s\S]*name: expectedValues[\s\S]*REQUIRED RECEIPT[\s\S]*required: optional[\s\S]*kind: expected_values[\s\S]*anchors: expectedValues/,
-  'Step 3 must expose an optional receipted anchor revision that shadows Step 2 only when answered');
-assert.match(canonical, /Every changed anchor object must contain originalExpect[\s\S]*correctedExpect[\s\S]*row-returning extractQuery/,
+assert.match(cs['2'], /optional axis/i, 'the anchor recipe must offer the shaped (axis) anchor form');
+assert.match(cs['2'], /OUTSIDE DAX[\s\S]*small GROUPED\s+row extract/i,
+  'Step 2 must derive anchors from small grouped extracts with arithmetic outside DAX');
+
+// Step 3 authors ONE candidate and enforces the locked anchors through the structured gate.
+assert.match(cs['3'], /## Step 3: Author ONE canonical candidate[\s\S]*name: expectedValues[\s\S]*REQUIRED RECEIPT[\s\S]*required: optional[\s\S]*verify:\s*\r?\n\s*- kind: expected_values\s*\r?\n\s*anchors: expectedValues/,
+  'Step 3 must expose an optional receipted anchor revision that shadows Step 2 only when answered, and always enforce the latest set');
+assert.match(cs['3'], /Every changed anchor object must contain originalExpect[\s\S]*correctedExpect[\s\S]*row-returning extractQuery/,
   'anchor revisions must name the engine-enforced receipt fields and live row-returning query');
-assert.match(canonical, /without changing its contexts[\s\S]*scalar-constant extracts are refused/,
+assert.match(cs['3'], /without changing its contexts[\s\S]*scalar-constant extracts are refused/,
   'anchor revisions must preserve locked contexts and reject non-extract receipts');
-assert.match(canonical, /## Step 4: Lock the witness\. Independent AND efficient[\s\S]*SARGable[\s\S]*witnessTiming/,
-  'the stock workflow must require an independent, efficient, timed witness');
-assert.match(canonical, /no bare FILTER over ALL|Do NOT wrap a[\s\S]*bare FILTER over ALL/i,
-  'the stock workflow must forbid a bare FILTER over ALL of the large fact table');
-assert.match(canonical, /## Step 6: HARD gate[\s\S]*Restate the Step-5 witness verbatim[\s\S]*required: required[\s\S]*probe: witnessDax/,
-  'the hard equality gate must keep the repair window without allowing a decline to shadow the witness');
-assert.match(canonical, /## Step 7: Performance against the model floor[\s\S]*candidate-vs-model-floor/i,
-  'the final performance pass must grade against the base-aggregation model floor');
-assert.match(canonical, /## Step 7: Performance against the model floor[\s\S]*name: expectedValues[\s\S]*REQUIRED RECEIPT[\s\S]*required: optional[\s\S]*verify:\s*\n\s*- kind: expected_values\s*\n\s*anchors: expectedValues/,
-  'Step 7 must inherit or explicitly revise anchors and always enforce the latest set');
+
+// Step 4 is the hard gate: an independent witness, proven equal over the locked grid, then finalized.
+assert.match(cs['4'], /## Step 4: Reconcile against an independent witness, then finalize honestly/,
+  'Step 4 must reconcile the candidate against an independent witness and finish honestly');
+assert.match(cs['4'], /```yaml gate\s*\r?\n\s*strictness: hard/,
+  'Step 4 must carry the hard gate; the shipped seed has exactly one and this is it');
+assert.match(cs['4'], /verify:\s*\r?\n\s*- kind: dax_equivalence\s*\r?\n\s*probe: witnessDax\s*\r?\n\s*openShapesFrom: openGrains/,
+  'the hard gate must prove candidate-against-witness equality over the Step-2 open-grain partition');
+assert.match(cs['4'], /- kind: expected_values\s*\r?\n\s*anchors: expectedValues/,
+  'the hard gate must also re-enforce the locked expected values, so equality alone cannot pass the step');
+assert.match(cs['4'], /name: witnessDax[\s\S]*required: required\s*\r?\n\s*daxPurity: no-bare-measures/,
+  'the witness must be required and engine-checked for bare measure references, so it cannot be declined or faked');
+assert.match(cs['4'], /SARGable[\s\S]*grouped SUMMARIZECOLUMNS extracts/,
+  'the witness must be independent AND efficient, not merely independent');
+assert.match(cs['4'], /Never wrap a\s*\r?\n?\s*bare FILTER over ALL of a large fact table/,
+  'the seed must forbid a bare FILTER over ALL of the large fact table');
+assert.match(cs['4'], /MODEL FLOOR[\s\S]*base aggregation the metric sits on at the SAME grid/,
+  'the performance pass must grade against the base-aggregation model floor, not a bare time threshold');
+assert.match(cs['4'], /A skipped, offline or zero-coverage verify is not a pass[\s\S]*OVERRIDDEN/,
+  'a skipped hard gate must downgrade the certificate rather than pass quietly');
+
 assert.doesNotMatch(canonical, /verified-measure-v51|prowfv|probench|23M-row|v1 record|v5 witness/i,
   'benchmark arm names and benchmark-specific wording must not leak into the stock workflow');
 
-assert.match(designer, /evidenceQuickAdd/, 'workflow steps must expose evidence as a first-class addable action');
-assert.match(designer, /\+ evidence report/, 'the action must use an analyst-facing label');
-assert.match(designer, /Evidence exports only after the run is completed or aborted/, 'the designer must explain when evidence becomes final');
-assert.match(workflows, /'check-blast-radius': 'Quality'/, 'Check blast radius must live in the Quality rail, not Custom');
-assert.match(workflows, /'governed-rename': 'Quality'/, 'Safe rename must live beside the blast-radius workflow in Quality');
+assert.match(forms, /Add evidence report/, 'workflow steps must expose evidence as a first-class addable action');
+assert.match(forms, /Evidence exports only after the run is completed or aborted/, 'the designer must explain when evidence becomes final');
+
+// =====================================================================================================
+// THE ADD-A-STEP CONTROLS. 1.2.0 shipped with the only add control inside a selected step's form
+// (workflowforms.tsx "Add step after"). A new workflow has zero steps, so nothing could be selected and
+// nothing could be added: Kane's "under author there is no add step button". Each assertion below names
+// one control that must not disappear again. What they prove is that the source still declares them;
+// that they render and work is Semanticus.VSCode/tools/drive-authoring.mjs, which clicks all four
+// journeys in the built bundle, and the zero-step draft test in workflow-document.test.mjs.
+// =====================================================================================================
+const canvas = read('webview/src/workflowcanvas.tsx');
+assert.match(forms, /export function WorkflowEmptySteps/,
+  'the form area needs its own empty state, or a zero-step workflow is a dead end where the settings form used to sit');
+assert.match(forms, /No steps yet[\s\S]{0,400}Add the first step/,
+  'the empty state must say what a step is and carry the primary add action');
+assert.match(designer, /Add the first step<\/button>/,
+  'the Steps rail must carry an add action when the workflow has no steps at all');
+assert.match(designer, /\+ Add step<\/button>/,
+  'the Steps rail must keep a persistent add control at its end at every step count, the way the 1.1.3 outline did');
+assert.match(designer, /aria-label=\{`Insert a step after step \$\{index \+ 1\}`\}/,
+  'the rail must offer an insert control between steps, not only an append at the end');
+assert.match(designer, /steps\.length === 0[\s\S]{0,200}addFirstStep/,
+  'the zero-step case must be what decides the rail add control, not the selection');
+// Canvas used to carry a third WorkflowEmptySteps card in its right-hand form column. That column is
+// gone (the step editor is a drawer that only exists while a step is chosen, 2026-09-15), so the Canvas
+// zero-step add action is the canvas's own centred empty state instead. Both paths are still asserted:
+// two cards in Steps, and the canvas empty state below.
+assert.match(designer, /<WorkflowEmptySteps[\s\S]{0,4000}<WorkflowEmptySteps/,
+  'Steps (settings selected) and Steps (no step selected) must each offer the empty-state add action');
+assert.match(canvas, /data-wf-canvas-empty="true"[\s\S]{0,600}Add the first step/,
+  'Canvas must offer the same add action from its own empty state, since it no longer has a form column');
+assert.match(designer, /onAddStep=\{steps\.length \? addStepAtEnd : addFirstStep\}/,
+  'Canvas must get an add control of its own, because with zero steps no step can be selected to add from');
+assert.match(canvas, /data-wf-canvas-empty/,
+  'the canvas body must show its own empty state rather than an empty grid');
+assert.match(canvas, /onAddStep && <Button primary disabled=\{addDisabled\}/,
+  'the canvas empty state must use the shared Button, so a control restyle reaches this surface too');
+assert.match(designer, /const STOCK_EDIT_NOTE = 'Copy to this project to edit';/,
+  'a read-only built-in must explain how to get an editable copy');
+assert.match(designer, /\{stock && <small className="sem-wf-restriction">\{STOCK_EDIT_NOTE\}<\/small>\}/,
+  'the read-only note must sit beside the disabled rail controls, not replace them');
+assert.match(forms, /\{readOnlyNote && <small className="sem-wf-restriction">\{readOnlyNote\}<\/small>\}/,
+  'the read-only note must sit beside the disabled step actions, so a built-in shows controls and a reason, never an absence');
+assert.match(forms, /focusKey !== step\.key \|\| !titleRef\.current/,
+  'a step added from any control must land with the caret in its title');
+assert.doesNotMatch(designer, /[\u2014\u2013]/, 'the designer must carry no em or en dashes (product copy rule)');
+assert.doesNotMatch(forms, /[\u2014\u2013]/, 'the step forms must carry no em or en dashes (product copy rule)');
+assert.match(workflows, /'check-blast-radius': 'Review a change'/, 'Check blast radius must live with change review');
+assert.match(workflows, /'governed-rename': 'Review a change'/, 'Safe rename must live beside the blast-radius workflow');
 assert.match(workflows, /data-workflow=\{w\.name\}/, 'the workflow rail must remain directly targetable by the visual harness');
 
 // =====================================================================================================

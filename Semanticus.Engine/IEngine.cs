@@ -88,7 +88,7 @@ namespace Semanticus.Engine
         Task<GroundingBundle> GetGroundingAsync(string objRef);
 
         // --- Finding waivers (accepted findings) — both BPA and AI-readiness, persisted on the model ---
-        Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin);   // objRef null/'*' = rule-level (Pro)
+        Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin);   // objRef null/'*' = rule-level; free either way
         Task<SetResult> UnwaiveFindingAsync(string system, string ruleId, string objRef, string origin);
         Task<WaiverRecord[]> ListWaiversAsync();
         Task<DaxValidation> ValidateDaxAsync(string expression);
@@ -173,6 +173,10 @@ namespace Semanticus.Engine
         // (a stale "safe" downgrades to skipped). refs narrows to the caller's candidates (null/empty = the whole
         // current safe set); reportPaths makes verification report-aware. >1 item = Pro; a single item stays free.
         Task<RemoveSafeReport> RemoveSafeObjectsAsync(string[] refs, string[] reportPaths, string origin);
+        // The model's own report scope: which reports its answers are checked against, and what came of reading them.
+        Task<Lineage.ReportScopeResult> ListReportScopeAsync();
+        Task<Lineage.ReportScopeResult> SetReportScopeAsync(Lineage.ReportScopeChoice[] choices, string origin);
+        Task<Lineage.ReportScopeResult> CheckReportsAsync(string[] ids, bool consent, string authMode, string tenantId, string runId, string origin, System.Threading.CancellationToken cancellationToken);
         // Cloud report layer (Phase 3): discover published reports + report-aware safe-to-remove over their cloud PBIR.
         Task<CloudReport[]> ListReportsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);   // read-only (Power BI scope)
         Task<ReportAnalysisResult> AnalyzeCloudReportsAsync(string workspaceId, string[] reportIds, bool consent, string authMode, string tenantId, string runId = null, string origin = "human", CancellationToken cancellationToken = default);
@@ -267,8 +271,9 @@ namespace Semanticus.Engine
         Task<string> ExportVerifiedEditsAsync(string format);
 
         // --- Tests tab (the Prove intent, docs/tests-tab-spec.md): the suite coordinator over the E1/E4
-        //     evaluators + E2 store + E3 analyzer. run = FREE (ambient relationship-integrity probes + static
-        //     security + saved reconciles, every verdict + evidence shown); persisted suite / run history = Pro.
+        //     evaluators + E2 store + E3 analyzer. run = FREE (ambient relationship-integrity probes +
+        //     table row counts + saved reconciles, every verdict + evidence shown); persisted suite / run
+        //     history = Pro. Role-filter checks and the Model interview replay left this run in 1.2.0.
         //     Read-only w.r.t. the model — a run never mutates, so no undo/broadcast rides these. ---
         Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null);
         Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin);
@@ -276,6 +281,9 @@ namespace Semanticus.Engine
         Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin);
         Task<bool> DeleteTestDefinitionAsync(string id, string origin);
         Task<TestHistoryInfo> ListTestRunsAsync(int last);
+        Task<TestRunDetail> GetTestRunAsync(string runId);
+        Task<TestRunRecordResult> RecordTestRunAsync(string runId, string origin);
+        Task<UnmatchedRowsResult> GetUnmatchedRowsAsync(string relationship, int limit, string origin);
         Task<TestReportResult> ExportTestReportAsync();
 
         // --- model-scoped shared evidence: explicit persistence of the existing sealed artifact, stored under
@@ -298,15 +306,16 @@ namespace Semanticus.Engine
         Task<WorkflowEnforcement> GetWorkflowEnforcementAsync();
         Task<WorkflowEnforcement> SetWorkflowEnforcementAsync(string mode, string origin);
         Task<WorkflowInfo[]> SetWorkflowEnabledAsync(string name, bool enabled, string origin);
-        // §9c op→workflow binding (mandatory routing): setting a hard|warn binding is Pro; the policy read is free.
+        // §9c op→workflow binding (mandatory routing). Workflows is one whole Pro feature, the policy read included.
         Task<WorkflowInfo[]> SetWorkflowBindingAsync(string op, string[] requireNames, string mode, string origin);
-        // §10.6 dynamic activation (D5): show a workflow only when a condition holds; writing a rule is Pro.
+        // §10.6 dynamic activation (D5): show a workflow only when a condition holds. Pro, with the rest of Workflows.
         Task<WorkflowInfo[]> SetWorkflowActivationAsync(string workflow, string when, string set, string origin);
         Task<WorkflowPolicy> GetWorkflowPolicyAsync();
         Task<WorkflowProfileInfo[]> ListWorkflowProfilesAsync();
         Task<WorkflowProfileResult> ActivateWorkflowProfileAsync(string name, string origin);
         Task<WorkflowDef> GetWorkflowAsync(string name);
         Task<WorkflowDocumentResult> GetWorkflowDocumentAsync(string name, string sessionId = null);
+        Task<WorkflowEditPreviewResult> PreviewWorkflowEditAsync(string name, string expectByteHash, string expectPath, string editsJson, string draftText = null, bool create = false, string sessionId = null);
         Task<WorkflowUpgradeResult> UpgradeWorkflowAsync(string name, bool dryRun = true, string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null);
         Task<WorkflowDocumentEditResult> EditWorkflowDocumentAsync(string name, string expectByteHash, string exactText, string expectPath, string origin, string sessionId = null);
         Task<WorkflowLayout> GetWorkflowLayoutAsync(string name);
@@ -318,7 +327,7 @@ namespace Semanticus.Engine
         Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin);
         Task<Semanticus.Engine.Evidence.EvidenceArtifact> ExportWorkflowEvidenceAsync(string runId);
         // designer/authoring surface — free (authoring is content); parse-validate-before-write
-        Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false);
+        Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false, string sessionId = null);
         Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin);
         // §10 workflow TEMPLATES (the customisation layer) — all FREE (authoring is content). A template is a
         // recipe with declared slots the user fills; instantiate renders it into a concrete workflow through a
@@ -370,7 +379,7 @@ namespace Semanticus.Engine
         // --- Change-Plan engine ("analyse → review → fix everything" / incremental edits) ---
         Task<ChangePlanView> ProposePlanAsync(string scope, bool includeAi, int maxAiItems, string origin);
         // Bulk find & replace as a plan (Phase 3): search hits → rename/set_*/set_dax/set_m items; DAX-reference,
-        // DAX-code and RLS matches yield NO items (reported in the view's Note). Apply rides apply_plan's Pro gate.
+        // DAX-code and RLS matches yield NO items (reported in the view's Note). Apply rides apply_plan, now free.
         Task<ChangePlanView> ProposeReplaceAsync(SearchOptions find, string replace, int maxItems, string origin);
         Task<ChangePlanView> GetPlanAsync();
         Task<ChangePlanView> AddPlanItemAsync(string objRef, string kind, string after, string title, string[] verifyGroupBy, string[] verifyFilters, string origin);
@@ -419,6 +428,18 @@ namespace Semanticus.Engine
 
         // --- Connections: one registry, doing double duty as the agent-permissions target registry ---
         Task<ModelConnectionRecord[]> ListConnectionsAsync();
+
+        // --- Named SQL sources: the fourth ROLE in Connections, beside Editing, Tests and Publish to ---
+        // Saved once and picked by name from a check or a table mapping, so an endpoint is typed once rather
+        // than per check. Holds no credential: a source carries a sign-in mode NAME, never a token.
+        Task<SqlSourceRecord[]> ListSqlSourcesAsync();
+        Task<SqlSourceUsage[]> ListSqlSourceUsageAsync();
+        Task<SqlSourceRecord> SaveSqlSourceAsync(string id, string name, string server, string database, string authMode, string tenantId, string origin = "human");
+        Task<SqlSourceDeleteResult> DeleteSqlSourceAsync(string id, string origin = "human");
+        Task<SqlSourceTestResult> TestSqlSourceAsync(string id, string origin = "human");
+        Task<TableSourceMappingInfo> SetTableSourceMappingAsync(string table, string sqlSourceId, string schema, string entity, string origin = "human");
+        Task<bool> ClearTableSourceMappingAsync(string table, string origin = "human");
+        Task<TableSourceMappingList> ListTableSourceMappingsAsync();
         Task<ConnectionHistoryEvent[]> ListConnectionHistoryAsync(string connectionId = null);
         Task<ConnectionAccountProbe[]> ProbeConnectionAccountsAsync();
         // ADVANCED sign-in prerequisite PREVIEW (read-only): what the engine can actually SEE for a mode (serviceprincipal

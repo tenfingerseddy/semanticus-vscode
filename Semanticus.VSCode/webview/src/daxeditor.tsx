@@ -220,7 +220,7 @@ export function DaxField({ value, onChange, scope, table, minHeight = 92, placeh
       <div className="flex items-center gap-2">
         <ValidityPill checked={diags !== null} empty={!value.trim()} errors={errors} warns={warns}
           messages={(diags ?? []).map((d) => d.message)} />
-        <button onClick={() => void ask()} title="Copy a grounded prompt for the AI Assistant"
+        <button onClick={() => void ask()} title="Copy a grounded prompt for your assistant"
           className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
           {copied ? 'Copied ✓' : 'Ask AI'}
         </button>

@@ -435,18 +435,23 @@ function 'Sample.Mul' = (a: INT64, b: INT64) => a * b
         }
 
         [Fact]
-        public async Task Install_works_on_the_free_tier()
+        public async Task Install_is_refused_on_the_free_tier()
         {
-            // Kane 2026-07-04: DaxLib install is FREE (adoption funnel, not the bulk-referee value) —
-            // pin that a free-tier engine installs a package end to end.
+            // Kane 2026-07-04 made DaxLib install free as an adoption funnel. Kane 2026-09-15 replaced that line:
+            // daxlib is part of Advanced Modelling, so install and its reads are Pro. The end-to-end install lives
+            // in Install_creates_the_udfs_raises_cl_records_provenance_and_is_one_undo; this pins the tier boundary.
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, new Fake(false));   // FREE
             using (engine)
             {
                 await engine.CreateModelAsync("DL", 1702);
-                ServeSamplePackage();
-                var res = await engine.DaxLibInstallAsync("Sample", "1.0.0", false, "human");
-                Assert.True(res.Functions.Length > 0);
+                ServeSamplePackage();   // served on purpose: if the gate ever goes, this fails as an assert, not a hang
+                var ex = await Assert.ThrowsAsync<EntitlementException>(
+                    () => engine.DaxLibInstallAsync("Sample", "1.0.0", false, "human"));
+                Assert.Contains("Advanced Modelling is a Semanticus Pro feature", ex.Message);
+                // Refused at the entry, so nothing was installed on the way to the refusal. Read the model
+                // directly: daxlib_list_installed is a Pro read too, and a free engine cannot call it.
+                Assert.Equal(0, await sessions.Require().ReadAsync(m => m.Functions.Count));
             }
         }
 

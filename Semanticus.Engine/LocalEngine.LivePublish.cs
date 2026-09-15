@@ -181,7 +181,15 @@ namespace Semanticus.Engine
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "deploy_live",   // 0: a deploy is not a model mutation
                         Verdict = "overridden", OverrideReason = overrideReason.Trim(),
-                        Summary = $"gate RED ({string.Join("; ", gate.Blockers)}): override accepted to deploy to {endpoint}/{database}",
+                        // The one line a PERSON reads off this record, on both doors. It used to open "gate RED
+                        // (…): override accepted to deploy to …" — three pieces of engine vocabulary in the
+                        // sentence a non-technical owner has to understand, and the thing that made Kane ask what
+                        // all the gate stuff meant. Same facts, plain words: what the check found (the gate's own
+                        // blocker text, unedited), that the publish still went ahead because a reason was written,
+                        // and where it went. NO full stop after the destination: an endpoint is an address a
+                        // person may copy, and a period glued to it changes it. The machine-readable fields below
+                        // are untouched.
+                        Summary = $"Red safety check ({string.Join("; ", gate.Blockers)}). Published anyway with a written reason, to {endpoint}/{database}",
                         Evidence = System.Text.Json.JsonSerializer.Serialize(new { gate.Grade, gate.BpaViolations, gate.BpaBlocking, gate.Blockers }),
                     });
                 }
@@ -314,7 +322,7 @@ namespace Semanticus.Engine
 
         // apply_diff into a PUBLISHED model on an XMLA endpoint — the ALM-Toolkit-style selective push. Merge the
         // chosen diff items from `left` onto a snapshot of the live target, then push ONLY those objects. Preview + a
-        // single-object push are FREE; a multi-object atomic push is Pro (IDENTICAL rule to the file/session paths).
+        // single-object and multi-object pushes are all FREE (Kane 2026-09-15), the same as the file/session paths.
         // Deployment itself is never surcharged. A drift guard runs for BOTH tiers (safety is never paywalled): if the
         // target changed under us between the diff and the commit, we REFUSE unless overrideReason is supplied (the
         // accountable override, recorded on the audit trail). Explicitly-selected Delete refs ARE pushed (real removals
@@ -346,7 +354,7 @@ namespace Semanticus.Engine
                 // RETAG/REPUBLISH: a selected item that exists on both sides under a DIFFERENT lineage tag — Match emits a
                 // Delete + Create pair (sharing a name-based ref). Deleting/replacing would drop the LIVE object and its
                 // data (usually the model was republished under us). REFUSED (both halves) — held OUT of the push pipeline
-                // (so they never count toward the Pro gate / drift / apply) and reported. Deduped by ref.
+                // (so they never count toward drift / apply) and reported. Deduped by ref.
                 var republishDeleteRefs = selectedItems.Where(i => i.LikelyRepublished).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
                 string RepublishReason(string r) => r + " (refused as a likely republish: a same-named object exists on the target with a DIFFERENT lineage tag; deleting or replacing it would drop the live object and its data. This usually means the model was republished under you. Re-diff against the current model, or push the update instead.)";
                 var applicableItems = selectedItems.Where(i => !i.LikelyRepublished).ToList();
@@ -375,13 +383,6 @@ namespace Semanticus.Engine
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
                         Note = $"Nothing to push: the selection matched no pending difference between the source and {right.Database} on {right.Endpoint}." };
                 }
-
-                // Pro gate — IDENTICAL rule to file/session (applicable.Length > 1): the atomic multi-object push is the
-                // bulk primitive; a single-object push stays free and the preview above is read-only + free. Deletes
-                // gate the same as any object — no extra gate. Thrown before any snapshot mutation → a refusal writes nothing.
-                if (applicable.Length > 1)
-                    Entitlement.EntitlementGuard.RequirePro(_entitlement, "Pushing multiple objects to a published model at once",
-                        "Push one object at a time (pass a single ref in selectedRefs); previewing all changes stays free.");
 
                 // ---- Agent-permissions gate. Same governance the deploy_live hole exposed, on the selective-push path.
                 // A push that DELETES escalates to the delete capability, so a policy can forbid an agent deleting from
@@ -426,7 +427,7 @@ namespace Semanticus.Engine
                 // current-live + selected changes" literally true, so SyncSessionToLive emits changes ONLY for the
                 // selected objects and unrelated concurrent edits are PRESERVED — the per-object last-writer-wins policy
                 // of docs/op-routing-map.md, with the drift guard as the explicit revision-guard on the objects we touch.
-                // The A-diff drives the preview + the Pro gate count (what the user previewed is what they're gated on);
+                // The A-diff drives the preview count (what the user previewed is what they push);
                 // the B-diff drives what is actually applied.
                 var bdiff = ModelCompare.Diff(ldb.Model, bdb.Model, llabel, tlabel);
                 var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).ToList();
